@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Card } from "../ui/card";
 import { Button } from "../ui/button";
@@ -30,6 +30,10 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import {
+  getServerHealth,
+  type ServerHealthResponse,
+} from "@/lib/apis/mcp-servers-api";
+import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
 } from "./server-card-utils";
@@ -56,6 +60,8 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { ShareServerDialog } from "./ShareServerDialog";
+
+const SERVER_HEALTH_POLL_INTERVAL_MS = 30000;
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -112,6 +118,11 @@ export function ServerConnectionCard({
   const [isClosingTunnel, setIsClosingTunnel] = useState(false);
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+  const [serverHealth, setServerHealth] = useState<ServerHealthResponse | null>(
+    null,
+  );
+  const [isCheckingHealth, setIsCheckingHealth] = useState(false);
+  const healthCheckRequestIdRef = useRef(0);
 
   const { label: connectionStatusLabel, indicatorColor } =
     getConnectionStatusMeta(server.connectionStatus);
@@ -147,6 +158,7 @@ export function ServerConnectionCard({
   const isTunnelEnabled = !HOSTED_MODE;
   const canManageTunnels = isAuthenticated;
   const showTunnelActions = isConnected && isTunnelEnabled;
+  const showHealthStatus = isConnected && !HOSTED_MODE;
   const hasTunnel = Boolean(tunnelUrl);
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
@@ -199,6 +211,39 @@ export function ServerConnectionCard({
     }
   }, [serverTunnelUrl]);
 
+  const handleHealthCheck = useCallback(async () => {
+    if (!showHealthStatus) {
+      return;
+    }
+
+    const requestId = ++healthCheckRequestIdRef.current;
+    setIsCheckingHealth(true);
+
+    try {
+      const result = await getServerHealth(server.name);
+      if (healthCheckRequestIdRef.current !== requestId) {
+        return;
+      }
+      setServerHealth(result);
+    } catch (error) {
+      if (healthCheckRequestIdRef.current !== requestId) {
+        return;
+      }
+      setServerHealth({
+        success: false,
+        serverId: server.name,
+        connectionStatus: server.connectionStatus,
+        healthStatus: "unhealthy",
+        checkedAt: new Date().toISOString(),
+        error: error instanceof Error ? error.message : "Health check failed",
+      });
+    } finally {
+      if (healthCheckRequestIdRef.current === requestId) {
+        setIsCheckingHealth(false);
+      }
+    }
+  }, [server.connectionStatus, server.name, showHealthStatus]);
+
   useEffect(() => {
     let isCancelled = false;
 
@@ -224,6 +269,27 @@ export function ServerConnectionCard({
       isCancelled = true;
     };
   }, [getAccessToken, server.name, serverTunnelUrl, showTunnelActions]);
+
+  useEffect(() => {
+    healthCheckRequestIdRef.current += 1;
+
+    if (!showHealthStatus) {
+      setServerHealth(null);
+      setIsCheckingHealth(false);
+      return;
+    }
+
+    void handleHealthCheck();
+
+    const intervalId = window.setInterval(() => {
+      void handleHealthCheck();
+    }, SERVER_HEALTH_POLL_INTERVAL_MS);
+
+    return () => {
+      healthCheckRequestIdRef.current += 1;
+      window.clearInterval(intervalId);
+    };
+  }, [handleHealthCheck, showHealthStatus]);
 
   const copyToClipboard = async (text: string, fieldName: string) => {
     try {
@@ -363,6 +429,29 @@ export function ServerConnectionCard({
       setIsClosingTunnel(false);
     }
   };
+
+  const healthStatusClasses =
+    serverHealth?.success === false
+      ? "border-red-300/40 bg-red-500/10 text-red-700 dark:text-red-300"
+      : serverHealth?.success === true
+        ? "border-emerald-300/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+        : "border-border/70 bg-muted/30 text-muted-foreground";
+
+  const healthLabel =
+    serverHealth?.success === false
+      ? "Ping failed"
+      : serverHealth?.success === true
+        ? `Ping ok ${serverHealth.latencyMs} ms`
+        : isCheckingHealth
+          ? "Checking ping..."
+          : "Ping pending";
+
+  const healthTitle =
+    serverHealth?.success === false
+      ? serverHealth.error
+      : serverHealth?.success === true
+        ? `Last ping ${new Date(serverHealth.checkedAt).toLocaleTimeString()}`
+        : "Checks whether the server responds to MCP ping";
 
   return (
     <>
@@ -585,9 +674,51 @@ export function ServerConnectionCard({
             </button>
           </div>
 
-          <div className="mt-3 flex items-center justify-end">
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {showHealthStatus && (
+              <div
+                className="flex items-center gap-1.5"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div
+                  className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] ${healthStatusClasses}`}
+                  title={healthTitle}
+                >
+                  {isCheckingHealth ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : serverHealth?.success === false ? (
+                    <AlertCircle className="h-3 w-3" />
+                  ) : serverHealth?.success === true ? (
+                    <Check className="h-3 w-3" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
+                  <span>{healthLabel}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    posthog.capture("server_health_refresh_clicked", {
+                      location: "server_connection_card",
+                      platform: detectPlatform(),
+                      environment: detectEnvironment(),
+                      server_id: server.name,
+                    });
+                    void handleHealthCheck();
+                  }}
+                  disabled={isCheckingHealth}
+                  className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-border/70 bg-muted/30 text-muted-foreground transition-colors hover:bg-accent/60 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer"
+                  aria-label="Refresh server health"
+                  title="Refresh server health"
+                >
+                  <RefreshCw
+                    className={`h-3 w-3 ${isCheckingHealth ? "animate-spin" : ""}`}
+                  />
+                </button>
+              </div>
+            )}
             <div
-              className="flex items-center gap-2"
+              className="ml-auto flex items-center gap-2"
               onClick={(e) => e.stopPropagation()}
             >
               {hasInitInfo && (

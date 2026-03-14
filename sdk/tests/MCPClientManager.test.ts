@@ -130,6 +130,11 @@ describe("MCPClientManager", () => {
       expect((result as any).content[0].text).toBe("Result: 30");
     }, 10000);
 
+    it("should ping the HTTP server", async () => {
+      const result = await manager.pingServer("http-server");
+      expect(result).toEqual({});
+    }, 10000);
+
     it("should list resources from HTTP server", async () => {
       const result = await manager.listResources("http-server");
       expect(result.resources.length).toBe(MOCK_RESOURCES.length);

@@ -23,6 +23,17 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn().mockResolvedValue({ tools: [], toolsMetadata: {} }),
 }));
 
+vi.mock("@/lib/apis/mcp-servers-api", () => ({
+  getServerHealth: vi.fn().mockResolvedValue({
+    success: false,
+    serverId: "test-server",
+    connectionStatus: "connected",
+    healthStatus: "unhealthy",
+    checkedAt: "2026-03-13T12:00:00.000Z",
+    error: "Server health checks are only available in local mode",
+  }),
+}));
+
 vi.mock("@/lib/apis/mcp-export-api", () => ({
   exportServerApi: vi.fn().mockResolvedValue({}),
 }));

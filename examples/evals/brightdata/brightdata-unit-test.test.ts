@@ -72,8 +72,10 @@ describe("SDK Features with shared connection", () => {
     expect(brightdataSummary?.config).toBeDefined();
   });
 
-  test("SDK Feature: pingServer - verifies server is responsive", () => {
-    expect(() => clientManager.pingServer("brightdata-ecommerce")).not.toThrow();
+  test("SDK Feature: pingServer - verifies server is responsive", async () => {
+    await expect(
+      clientManager.pingServer("brightdata-ecommerce")
+    ).resolves.toEqual({});
   });
 
   test("SDK Feature: listTools - returns available ecommerce tools", async () => {

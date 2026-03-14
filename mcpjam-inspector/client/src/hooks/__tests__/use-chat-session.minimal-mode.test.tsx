@@ -309,7 +309,9 @@ describe("useChatSession minimal mode parity", () => {
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
     expect(latestTransport.options.fetch).toBeUndefined();
-    expect(await resolveConfig(latestTransport.options.headers)).toBeUndefined();
+    expect(
+      await resolveConfig(latestTransport.options.headers),
+    ).toBeUndefined();
 
     act(() => {
       result.current.sendMessage({ text: "hello" });
@@ -353,9 +355,9 @@ describe("useChatSession minimal mode parity", () => {
     expect(await resolveConfig(latestTransport.options.headers)).toEqual({
       Authorization: "Bearer convex-token",
     });
-    expect(await resolveConfig(latestTransport.options.headers)).not.toHaveProperty(
-      "X-MCP-Session-Auth",
-    );
+    expect(
+      await resolveConfig(latestTransport.options.headers),
+    ).not.toHaveProperty("X-MCP-Session-Auth");
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 });
