@@ -193,3 +193,14 @@ export type TagGroupAggregate = {
   passRate: number; // 0-100
   entries: EvalSuiteOverviewEntry[];
 };
+
+export type CommitGroup = {
+  commitSha: string;
+  shortSha: string; // first 7 chars
+  branch: string | null;
+  timestamp: number; // most recent run time
+  status: "passed" | "failed" | "running" | "mixed";
+  runs: EvalSuiteRun[];
+  suiteMap: Map<string, string>; // suiteId → suite name
+  summary: { total: number; passed: number; failed: number; running: number };
+};

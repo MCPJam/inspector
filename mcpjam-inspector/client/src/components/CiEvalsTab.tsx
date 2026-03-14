@@ -11,13 +11,14 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { aggregateSuite, groupSuitesByTag } from "./evals/helpers";
+import { aggregateSuite, groupSuitesByTag, groupRunsByCommit } from "./evals/helpers";
 import { OverviewPanel } from "./evals/overview-panel";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
-import { CiSuiteListSidebar } from "./evals/ci-suite-list-sidebar";
+import { CiSuiteListSidebar, type SidebarMode } from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
+import { CommitDetailView } from "./evals/commit-detail-view";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 
@@ -35,6 +36,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("suites");
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -88,6 +90,21 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const tagGroups = useMemo(() => groupSuitesByTag(sdkSuites), [sdkSuites]);
   const hasTags = tagGroups.some((g) => g.tag !== "Untagged");
+
+  const commitGroups = useMemo(
+    () => groupRunsByCommit(sdkSuites),
+    [sdkSuites],
+  );
+
+  const selectedCommitSha =
+    route.type === "commit-detail" ? route.commitSha : null;
+
+  const selectedCommitGroup = useMemo(() => {
+    if (!selectedCommitSha) return null;
+    return (
+      commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null
+    );
+  }, [commitGroups, selectedCommitSha]);
   const allTags = useMemo(
     () =>
       Array.from(new Set(sdkSuites.flatMap((e) => e.suite.tags ?? []))).sort(),
@@ -139,6 +156,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const handleSelectOverview = useCallback(() => {
     navigateToCiEvalsRoute({ type: "list" });
+  }, []);
+
+  const handleSelectCommit = useCallback((commitSha: string) => {
+    navigateToCiEvalsRoute({ type: "commit-detail", commitSha });
   }, []);
 
   const handleDeleteSuite = useCallback(
@@ -261,10 +282,15 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
             onSelectOverview={handleSelectOverview}
-            isOverviewSelected={!selectedSuiteId}
+            isOverviewSelected={!selectedSuiteId && route.type !== "commit-detail"}
             isLoading={queries.isOverviewLoading}
             filterTag={filterTag}
             hasTags={true}
+            sidebarMode={sidebarMode}
+            onSidebarModeChange={setSidebarMode}
+            commitGroups={commitGroups}
+            selectedCommitSha={selectedCommitSha}
+            onSelectCommit={handleSelectCommit}
           />
         </ResizablePanel>
 
@@ -274,7 +300,12 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           defaultSize={70}
           className="flex flex-col overflow-hidden"
         >
-          {sdkSuites.length === 0 ? (
+          {route.type === "commit-detail" && selectedCommitGroup ? (
+            <CommitDetailView
+              commitGroup={selectedCommitGroup}
+              allCommitGroups={commitGroups}
+            />
+          ) : sdkSuites.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center max-w-md mx-auto p-8">
                 <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
