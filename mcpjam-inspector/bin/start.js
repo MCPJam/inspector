@@ -149,20 +149,28 @@ function waitForServerReady(port, host, timeoutMs = 30000) {
       }
 
       const socket = createConnection({ port, host });
+      let settled = false;
+
+      function cleanup() {
+        if (settled) return;
+        settled = true;
+        socket.removeAllListeners();
+        socket.destroy();
+      }
 
       socket.once("connect", () => {
-        socket.destroy();
+        cleanup();
         resolve(true);
       });
 
       socket.once("error", () => {
-        socket.destroy();
+        cleanup();
         setTimeout(attempt, intervalMs);
       });
 
       socket.setTimeout(1000);
       socket.once("timeout", () => {
-        socket.destroy();
+        cleanup();
         setTimeout(attempt, intervalMs);
       });
     }
