@@ -25,24 +25,25 @@ interface CiSuiteListSidebarProps {
   hasTags: boolean;
 }
 
-function getStatusDot(entry: EvalSuiteOverviewEntry): {
+function getStatusInfo(entry: EvalSuiteOverviewEntry): {
   label: string;
   dotClass: string;
+  labelClass: string;
 } {
   const latestRun = entry.latestRun;
   if (!latestRun) {
-    return { label: "No runs", dotClass: "bg-muted-foreground/40" };
+    return { label: "No runs", dotClass: "bg-muted-foreground/40", labelClass: "text-muted-foreground" };
   }
   if (latestRun.status === "running" || latestRun.status === "pending") {
-    return { label: "Running", dotClass: "bg-warning animate-pulse" };
+    return { label: "Running", dotClass: "bg-warning animate-pulse", labelClass: "text-warning" };
   }
   if (latestRun.result === "passed") {
-    return { label: "Passed", dotClass: "bg-emerald-500" };
+    return { label: "Passed", dotClass: "bg-emerald-500", labelClass: "text-emerald-500" };
   }
   if (latestRun.result === "failed") {
-    return { label: "Failed", dotClass: "bg-destructive" };
+    return { label: "Failed", dotClass: "bg-destructive", labelClass: "text-destructive" };
   }
-  return { label: latestRun.status, dotClass: "bg-muted-foreground/40" };
+  return { label: latestRun.status, dotClass: "bg-muted-foreground/40", labelClass: "text-muted-foreground" };
 }
 
 function toPercent(value: number): number {
@@ -83,7 +84,14 @@ export function CiSuiteListSidebar({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">Eval suites</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold">Eval suites</h2>
+          {filteredSuites.length > 0 && (
+            <span className="text-[10px] text-muted-foreground tabular-nums">
+              {filteredSuites.length}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-y-auto">
@@ -100,9 +108,19 @@ export function CiSuiteListSidebar({
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">Overview</div>
                 <div className="text-[11px] text-muted-foreground">
-                  Compare suite groups
+                  Suite health & status
                 </div>
               </div>
+              {(() => {
+                const failCount = suites.filter(
+                  (e) => e.latestRun?.result === "failed",
+                ).length;
+                return failCount > 0 ? (
+                  <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
+                    {failCount}
+                  </span>
+                ) : null;
+              })()}
             </div>
           </button>
         )}
@@ -118,7 +136,7 @@ export function CiSuiteListSidebar({
           <div>
             {filteredSuites.map((entry) => {
               const latestRun = entry.latestRun;
-              const status = getStatusDot(entry);
+              const status = getStatusInfo(entry);
               const trend = entry.passRateTrend
                 .slice(-12)
                 .map((value) => toPercent(value));
@@ -138,13 +156,17 @@ export function CiSuiteListSidebar({
                   )}
                 >
                   <div className="flex items-center gap-2.5">
-                    <div
-                      className={cn(
-                        "h-2 w-2 shrink-0 rounded-full",
-                        status.dotClass,
-                      )}
-                      title={status.label}
-                    />
+                    <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
+                      <div
+                        className={cn(
+                          "h-2 w-2 rounded-full",
+                          status.dotClass,
+                        )}
+                      />
+                      <span className={cn("text-[9px] font-medium leading-none", status.labelClass)}>
+                        {status.label}
+                      </span>
+                    </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium">
                         {entry.suite.name || "Untitled suite"}

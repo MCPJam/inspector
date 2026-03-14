@@ -12,7 +12,7 @@ import {
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { aggregateSuite, groupSuitesByTag } from "./evals/helpers";
-import { TagAggregationPanel } from "./evals/tag-aggregation-panel";
+import { OverviewPanel } from "./evals/overview-panel";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
@@ -261,10 +261,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
             onSelectOverview={handleSelectOverview}
-            isOverviewSelected={!selectedSuiteId && hasTags}
+            isOverviewSelected={!selectedSuiteId}
             isLoading={queries.isOverviewLoading}
             filterTag={filterTag}
-            hasTags={hasTags}
+            hasTags={true}
           />
         </ResizablePanel>
 
@@ -290,30 +290,17 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               </div>
             </div>
           ) : route.type === "list" || !selectedSuite ? (
-            hasTags ? (
-              <TagAggregationPanel
-                tagGroups={tagGroups.filter((g) => g.tag !== "Untagged")}
-                allTags={allTags}
-                filterTag={filterTag}
-                onFilterTagChange={setFilterTag}
-                onSelectSuite={handleSelectSuite}
-              />
-            ) : (
-              <div className="flex-1 flex items-center justify-center">
-                <div className="text-center max-w-md mx-auto p-8">
-                  <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-                    <GitBranch className="h-10 w-10 text-muted-foreground" />
-                  </div>
-                  <h2 className="text-2xl font-semibold text-foreground mb-2">
-                    Select a suite
-                  </h2>
-                  <p className="text-sm text-muted-foreground">
-                    Choose a CI suite from the sidebar to inspect runs and test
-                    iterations.
-                  </p>
-                </div>
-              </div>
-            )
+            <OverviewPanel
+              suites={sdkSuites}
+              allTags={allTags}
+              filterTag={filterTag}
+              onFilterTagChange={setFilterTag}
+              onSelectSuite={handleSelectSuite}
+              onRerunSuite={(suiteId) => {
+                const entry = sdkSuites.find((e) => e.suite._id === suiteId);
+                if (entry) handlers.handleRerun(entry.suite);
+              }}
+            />
           ) : queries.isSuiteDetailsLoading ? (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">
