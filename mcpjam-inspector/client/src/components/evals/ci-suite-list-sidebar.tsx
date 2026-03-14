@@ -114,17 +114,6 @@ export function CiSuiteListSidebar({
         </div>
         <div className="mt-2 flex rounded-md border bg-muted/50 p-0.5">
           <button
-            onClick={() => onSidebarModeChange("suites")}
-            className={cn(
-              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
-              sidebarMode === "suites"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            Suites
-          </button>
-          <button
             onClick={() => onSidebarModeChange("runs")}
             className={cn(
               "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
@@ -135,8 +124,48 @@ export function CiSuiteListSidebar({
           >
             Runs
           </button>
+          <button
+            onClick={() => onSidebarModeChange("suites")}
+            className={cn(
+              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
+              sidebarMode === "suites"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Suites
+          </button>
         </div>
       </div>
+
+      {/* Overview button — always visible regardless of sidebar mode */}
+      <button
+        onClick={onSelectOverview}
+        className={cn(
+          "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50 border-b",
+          isOverviewSelected && "bg-accent",
+        )}
+      >
+        <div className="flex items-center gap-2.5">
+          <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">Overview</div>
+            <div className="text-[11px] text-muted-foreground">
+              Suite health & status
+            </div>
+          </div>
+          {(() => {
+            const failCount = suites.filter(
+              (e) => e.latestRun?.result === "failed",
+            ).length;
+            return failCount > 0 ? (
+              <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
+                {failCount}
+              </span>
+            ) : null;
+          })()}
+        </div>
+      </button>
 
       {sidebarMode === "runs" ? (
         <CommitListSidebar
@@ -147,35 +176,6 @@ export function CiSuiteListSidebar({
         />
       ) : (
       <div className="flex-1 overflow-y-auto">
-        {hasTags && (
-          <button
-            onClick={onSelectOverview}
-            className={cn(
-              "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50 border-b",
-              isOverviewSelected && "bg-accent",
-            )}
-          >
-            <div className="flex items-center gap-2.5">
-              <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">Overview</div>
-                <div className="text-[11px] text-muted-foreground">
-                  Suite health & status
-                </div>
-              </div>
-              {(() => {
-                const failCount = suites.filter(
-                  (e) => e.latestRun?.result === "failed",
-                ).length;
-                return failCount > 0 ? (
-                  <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
-                    {failCount}
-                  </span>
-                ) : null;
-              })()}
-            </div>
-          </button>
-        )}
         {isLoading ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             Loading suites...
