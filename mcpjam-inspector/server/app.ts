@@ -186,10 +186,10 @@ export function createHonoApp() {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Guest JWT JWKS endpoint — public, cacheable, no auth required.
+  // Guest JWT JWKS endpoint — public, no auth required, avoid edge caching.
   // Convex uses this to verify guest JWTs natively.
   app.get("/guest/jwks", (c) => {
-    c.header("Cache-Control", "public, max-age=3600");
+    c.header("Cache-Control", "no-store");
     return c.json(getGuestJwks());
   });
 
