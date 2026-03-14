@@ -13,7 +13,6 @@ import {
   TrendingUp,
   TrendingDown,
   Sparkles,
-  RefreshCw,
 } from "lucide-react";
 import {
   Collapsible,
@@ -25,11 +24,10 @@ import { Badge } from "@/components/ui/badge";
 import { TagBadges } from "./tag-editor";
 import type { EvalSuiteOverviewEntry, EvalSuiteRun, CommitGroup } from "./types";
 import {
-  buildOverviewTriageContext,
   classifyFailure,
   type FailureTag,
 } from "./ai-insights";
-import { useOverviewAiTriage } from "./use-ai-triage";
+import { useCommitTriage } from "./use-ai-triage";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -269,30 +267,21 @@ export function OverviewPanel({
   // ---------------------------------------------------------------------------
   // AI Overview Triage
   // ---------------------------------------------------------------------------
-  const overviewTriageCtx = useMemo(
-    () => buildOverviewTriageContext(filteredSuites, allCommitGroups),
-    [filteredSuites, allCommitGroups],
-  );
+  // Collect run IDs from suites with failures for backend triage
+  const failedOverviewRunIds = useMemo(() => {
+    return filteredSuites
+      .filter((e) => (e.totals.failed > 0 || e.latestRun?.result === "failed") && e.latestRun)
+      .map((e) => e.latestRun!._id);
+  }, [filteredSuites]);
 
-  const aiOverviewTriage = useOverviewAiTriage(
-    overviewTriageCtx.failingSuites.length > 0 ? overviewTriageCtx : null,
-  );
+  const aiOverviewTriage = useCommitTriage(failedOverviewRunIds);
 
-  // Auto-generate on first load when there are suites with failed cases
+  // Auto-request triage when failures exist
   useEffect(() => {
-    if (
-      overviewTriageCtx.failingSuites.length > 0 &&
-      !aiOverviewTriage.result &&
-      !aiOverviewTriage.loading
-    ) {
-      aiOverviewTriage.generate();
+    if (failedOverviewRunIds.length > 0 && !aiOverviewTriage.summary && !aiOverviewTriage.loading) {
+      aiOverviewTriage.requestTriage();
     }
-  }, [
-    overviewTriageCtx.failingSuites.length,
-    aiOverviewTriage.result,
-    aiOverviewTriage.loading,
-    aiOverviewTriage.generate,
-  ]);
+  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.requestTriage]);
 
   // Pre-compute inline failure tags for the failure feed
   // Tags suites with failed cases OR failed result
@@ -500,15 +489,15 @@ export function OverviewPanel({
         )}
       </div>
 
-      {/* AI Overview Summary — only when failures exist */}
-      {overviewTriageCtx.failingSuites.length > 0 && (
-        <div className="relative rounded-lg border border-violet-200 bg-violet-50/50 shadow-sm dark:border-violet-800 dark:bg-violet-950/20">
-          <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg bg-gradient-to-r from-violet-500 via-purple-400 to-violet-500 opacity-50" />
+      {/* AI Overview Summary — only when failures exist and triage is active */}
+      {failedOverviewRunIds.length > 0 && (aiOverviewTriage.summary || aiOverviewTriage.loading || aiOverviewTriage.error) && (
+        <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
+          <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
           <div className="px-4 py-3">
             <div className="flex items-center gap-2 mb-2">
               <Badge
                 variant="outline"
-                className="border-violet-300 bg-violet-100 text-violet-600 text-[10px] font-bold uppercase tracking-wider dark:border-violet-700 dark:bg-violet-900/50 dark:text-violet-400"
+                className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
               >
                 <Sparkles className="mr-1 h-3 w-3" />
                 AI
@@ -522,27 +511,16 @@ export function OverviewPanel({
                   {stats.totalSuites} suite{stats.totalSuites !== 1 ? "s" : ""}
                 </span>
               )}
-              <span className="ml-auto flex items-center gap-2 text-[10px] text-muted-foreground">
-                {aiOverviewTriage.loading && (
-                  <span className="flex items-center gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    analyzing...
-                  </span>
-                )}
-                {!aiOverviewTriage.loading && (
-                  <button
-                    onClick={() => aiOverviewTriage.generate()}
-                    className="p-0.5 rounded hover:bg-violet-200/50 transition-colors"
-                    title="Regenerate AI insights"
-                  >
-                    <RefreshCw className="h-3 w-3" />
-                  </button>
-                )}
-              </span>
+              {aiOverviewTriage.loading && (
+                <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  analyzing...
+                </span>
+              )}
             </div>
-            <div className="text-xs leading-relaxed">
-              {aiOverviewTriage.result ? (
-                <p>{aiOverviewTriage.result.summary}</p>
+            <div className="text-[13px] leading-relaxed">
+              {aiOverviewTriage.summary ? (
+                <p>{aiOverviewTriage.summary}</p>
               ) : aiOverviewTriage.error ? (
                 <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
                   <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
@@ -557,7 +535,7 @@ export function OverviewPanel({
                 <div className="flex items-center gap-2 text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   <span>
-                    Analyzing {overviewTriageCtx.failingSuites.length} suite{overviewTriageCtx.failingSuites.length !== 1 ? "s" : ""} with failures...
+                    Analyzing {failedOverviewRunIds.length} suite{failedOverviewRunIds.length !== 1 ? "s" : ""} with failures...
                   </span>
                 </div>
               )}
@@ -987,7 +965,7 @@ function InlineFailureTag({ tag }: { tag: FailureTag }) {
     },
     new: {
       label: "new",
-      className: "text-violet-600 bg-violet-50 border-violet-200 dark:bg-violet-950/50 dark:border-violet-800",
+      className: "text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-950/50 dark:border-blue-800",
     },
   }[tag];
 
