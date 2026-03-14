@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CommitGroup, EvalSuiteOverviewEntry } from "./types";
@@ -94,25 +94,37 @@ export function CiSuiteListSidebar({
     ? suites.filter((e) => e.suite.tags?.includes(filterTag))
     : suites;
 
+  // Group suites by name, keeping the most recent one as the "primary" entry
+  const groupedSuites = useMemo(() => {
+    const groups = new Map<string, EvalSuiteOverviewEntry[]>();
+    for (const entry of filteredSuites) {
+      const name = entry.suite.name || "Untitled suite";
+      if (!groups.has(name)) {
+        groups.set(name, []);
+      }
+      groups.get(name)!.push(entry);
+    }
+    // Sort each group by latest run time (most recent first)
+    for (const entries of groups.values()) {
+      entries.sort((a, b) => {
+        const aTime = a.latestRun?.completedAt ?? a.latestRun?.createdAt ?? a.suite.updatedAt ?? 0;
+        const bTime = b.latestRun?.completedAt ?? b.latestRun?.createdAt ?? b.suite.updatedAt ?? 0;
+        return bTime - aTime;
+      });
+    }
+    return groups;
+  }, [filteredSuites]);
+
+  const uniqueSuiteCount = groupedSuites.size;
+
+  const failCount = suites.filter(
+    (e) => e.latestRun?.result === "failed",
+  ).length;
+
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b px-4 py-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">
-            {sidebarMode === "suites" ? "Eval suites" : "Runs by commit"}
-          </h2>
-          {sidebarMode === "suites" && filteredSuites.length > 0 && (
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              {filteredSuites.length}
-            </span>
-          )}
-          {sidebarMode === "runs" && commitGroups.length > 0 && (
-            <span className="text-[10px] text-muted-foreground tabular-nums">
-              {commitGroups.length}
-            </span>
-          )}
-        </div>
-        <div className="mt-2 flex rounded-md border bg-muted/50 p-0.5">
+      <div className="border-b px-4 py-3 space-y-2">
+        <div className="flex rounded-md border bg-muted/50 p-0.5">
           <button
             onClick={() => onSidebarModeChange("runs")}
             className={cn(
@@ -122,7 +134,7 @@ export function CiSuiteListSidebar({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            Runs
+            By Commit
           </button>
           <button
             onClick={() => onSidebarModeChange("suites")}
@@ -133,39 +145,31 @@ export function CiSuiteListSidebar({
                 : "text-muted-foreground hover:text-foreground",
             )}
           >
-            Suites
+            By Suite
           </button>
         </div>
       </div>
 
-      {/* Overview button — always visible regardless of sidebar mode */}
-      <button
-        onClick={onSelectOverview}
-        className={cn(
-          "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50 border-b",
-          isOverviewSelected && "bg-accent",
-        )}
-      >
-        <div className="flex items-center gap-2.5">
-          <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <div className="min-w-0 flex-1">
-            <div className="text-sm font-medium">Overview</div>
-            <div className="text-[11px] text-muted-foreground">
-              Suite health & status
-            </div>
-          </div>
-          {(() => {
-            const failCount = suites.filter(
-              (e) => e.latestRun?.result === "failed",
-            ).length;
-            return failCount > 0 ? (
-              <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
-                {failCount}
-              </span>
-            ) : null;
-          })()}
-        </div>
-      </button>
+      {/* Dashboard button — always visible regardless of sidebar mode */}
+      <div className="px-3 py-2 border-b">
+        <button
+          onClick={onSelectOverview}
+          className={cn(
+            "w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-medium transition-colors cursor-pointer border border-transparent",
+            isOverviewSelected
+              ? "bg-primary/15 text-primary border-primary/30"
+              : "text-muted-foreground hover:bg-accent hover:text-foreground hover:border-border",
+          )}
+        >
+          <BarChart3 className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">Dashboard</span>
+          {failCount > 0 && (
+            <span className="shrink-0 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
+              {failCount}
+            </span>
+          )}
+        </button>
+      </div>
 
       {sidebarMode === "runs" ? (
         <CommitListSidebar
@@ -186,71 +190,196 @@ export function CiSuiteListSidebar({
           </div>
         ) : (
           <div>
-            {filteredSuites.map((entry) => {
-              const latestRun = entry.latestRun;
-              const status = getStatusInfo(entry);
-              const trend = entry.passRateTrend
-                .slice(-12)
-                .map((value) => toPercent(value));
-              const timestamp = formatRelativeTime(
-                latestRun?.completedAt ??
-                  latestRun?.createdAt ??
-                  entry.suite.updatedAt,
-              );
-
-              return (
-                <button
-                  key={entry.suite._id}
-                  onClick={() => onSelectSuite(entry.suite._id)}
-                  className={cn(
-                    "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
-                    selectedSuiteId === entry.suite._id && "bg-accent",
-                  )}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
-                      <div
-                        className={cn(
-                          "h-2 w-2 rounded-full",
-                          status.dotClass,
-                        )}
-                      />
-                      <span className={cn("text-[9px] font-medium leading-none", status.labelClass)}>
-                        {status.label}
-                      </span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">
-                        {entry.suite.name || "Untitled suite"}
-                      </div>
-                      {entry.suite.tags && entry.suite.tags.length > 0 && (
-                        <TagBadges tags={entry.suite.tags} className="mt-0.5" />
-                      )}
-                      <div className="text-[11px] text-muted-foreground">
-                        {timestamp}
-                      </div>
-                    </div>
-                    {trend.length > 0 && (
-                      <div className="flex h-5 shrink-0 items-end gap-px">
-                        {trend.map((value, idx) => (
-                          <div
-                            key={`${entry.suite._id}-t-${idx}`}
-                            className="w-1 rounded-sm bg-primary/70"
-                            style={{
-                              height: `${Math.max(3, (value / 100) * 20)}px`,
-                            }}
-                          />
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
+            {Array.from(groupedSuites.entries()).map(([suiteName, entries]) => (
+              <SuiteGroupItem
+                key={suiteName}
+                suiteName={suiteName}
+                entries={entries}
+                selectedSuiteId={selectedSuiteId}
+                onSelectSuite={onSelectSuite}
+              />
+            ))}
           </div>
         )}
       </div>
       )}
     </div>
+  );
+}
+
+function SuiteGroupItem({
+  suiteName,
+  entries,
+  selectedSuiteId,
+  onSelectSuite,
+}: {
+  suiteName: string;
+  entries: EvalSuiteOverviewEntry[];
+  selectedSuiteId: string | null;
+  onSelectSuite: (suiteId: string) => void;
+}) {
+  const primary = entries[0]; // most recent
+  const hasMultiple = entries.length > 1;
+  const isAnySelected = entries.some((e) => e.suite._id === selectedSuiteId);
+  const [expanded, setExpanded] = useState(false);
+
+  const latestRun = primary.latestRun;
+  const status = getStatusInfo(primary);
+  const trend = primary.passRateTrend.slice(-12).map((value) => toPercent(value));
+  const timestamp = formatRelativeTime(
+    latestRun?.completedAt ?? latestRun?.createdAt ?? primary.suite.updatedAt,
+  );
+
+  // For single-entry groups, render directly
+  if (!hasMultiple) {
+    return (
+      <SuiteEntryButton
+        entry={primary}
+        isSelected={selectedSuiteId === primary.suite._id}
+        onSelect={() => onSelectSuite(primary.suite._id)}
+        status={status}
+        trend={trend}
+        timestamp={timestamp}
+      />
+    );
+  }
+
+  // For multi-entry groups, render as expandable group
+  return (
+    <div>
+      <button
+        onClick={() => {
+          if (!isAnySelected) {
+            // Click selects the most recent entry
+            onSelectSuite(primary.suite._id);
+          } else {
+            setExpanded(!expanded);
+          }
+        }}
+        className={cn(
+          "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+          isAnySelected && "bg-accent shadow-sm",
+        )}
+      >
+        <div className="flex items-center gap-2.5">
+          <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
+            <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
+            <span className={cn("text-[9px] font-medium leading-none", status.labelClass)}>
+              {status.label}
+            </span>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className={cn("truncate text-sm font-medium", isAnySelected && "font-semibold")}>
+                {suiteName}
+              </span>
+              <span className="shrink-0 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-muted px-1 text-[9px] font-medium text-muted-foreground">
+                {entries.length}
+              </span>
+            </div>
+            {primary.suite.tags && primary.suite.tags.length > 0 && (
+              <TagBadges tags={primary.suite.tags} className="mt-0.5" />
+            )}
+            <div className="text-[11px] text-muted-foreground">{timestamp}</div>
+          </div>
+          {trend.length >= 3 && (
+            <div className="flex h-5 shrink-0 items-end gap-px">
+              {trend.map((value, idx) => (
+                <div
+                  key={`${primary.suite._id}-t-${idx}`}
+                  className={cn("w-1 rounded-sm", value >= 80 ? "bg-emerald-500/70" : value >= 50 ? "bg-amber-500/70" : "bg-destructive/70")}
+                  style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      </button>
+      {(expanded || isAnySelected) && entries.length > 1 && (
+        <div className="border-l-2 border-muted ml-6">
+          {entries.map((entry) => {
+            const entryStatus = getStatusInfo(entry);
+            const entryTimestamp = formatRelativeTime(
+              entry.latestRun?.completedAt ?? entry.latestRun?.createdAt ?? entry.suite.updatedAt,
+            );
+            return (
+              <button
+                key={entry.suite._id}
+                onClick={() => onSelectSuite(entry.suite._id)}
+                className={cn(
+                  "w-full px-3 py-1.5 text-left transition-colors hover:bg-accent/50",
+                  selectedSuiteId === entry.suite._id && "bg-primary/10 border-r-2 border-r-primary",
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <div className={cn("h-1.5 w-1.5 rounded-full shrink-0", entryStatus.dotClass)} />
+                  <span className="text-[11px] text-muted-foreground truncate flex-1">
+                    {entryTimestamp}
+                  </span>
+                  <span className={cn("text-[10px] font-medium", entryStatus.labelClass)}>
+                    {entryStatus.label}
+                  </span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SuiteEntryButton({
+  entry,
+  isSelected,
+  onSelect,
+  status,
+  trend,
+  timestamp,
+}: {
+  entry: EvalSuiteOverviewEntry;
+  isSelected: boolean;
+  onSelect: () => void;
+  status: { label: string; dotClass: string; labelClass: string };
+  trend: number[];
+  timestamp: string;
+}) {
+  return (
+    <button
+      onClick={onSelect}
+      className={cn(
+        "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+        isSelected && "bg-accent shadow-sm",
+      )}
+    >
+      <div className="flex items-center gap-2.5">
+        <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
+          <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
+          <span className={cn("text-[9px] font-medium leading-none", status.labelClass)}>
+            {status.label}
+          </span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className={cn("truncate text-sm font-medium", isSelected && "font-semibold")}>
+            {entry.suite.name || "Untitled suite"}
+          </div>
+          {entry.suite.tags && entry.suite.tags.length > 0 && (
+            <TagBadges tags={entry.suite.tags} className="mt-0.5" />
+          )}
+          <div className="text-[11px] text-muted-foreground">{timestamp}</div>
+        </div>
+        {trend.length >= 3 && (
+          <div className="flex h-5 shrink-0 items-end gap-px">
+            {trend.map((value, idx) => (
+              <div
+                key={`${entry.suite._id}-t-${idx}`}
+                className="w-1 rounded-sm bg-primary/70"
+                style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </button>
   );
 }
