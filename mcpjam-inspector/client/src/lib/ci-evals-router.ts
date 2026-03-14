@@ -75,7 +75,7 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
       return {
         type: "suite-overview",
         suiteId,
-        view: view === "test-cases" ? "test-cases" : "runs",
+        view: view === "runs" ? "runs" : "test-cases",
       };
     }
   }
@@ -98,7 +98,7 @@ export function navigateToCiEvalsRoute(
       break;
     case "suite-overview": {
       const params = new URLSearchParams();
-      if (route.view && route.view !== "runs") {
+      if (route.view && route.view !== "test-cases") {
         params.set("view", route.view);
       }
       const query = params.toString();
