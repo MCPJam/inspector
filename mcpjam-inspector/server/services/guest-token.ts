@@ -33,13 +33,14 @@ import { logger } from "../utils/logger.js";
 const GUEST_TOKEN_TTL_S = 24 * 60 * 60; // 24 hours in seconds
 const GUEST_ISSUER = "https://api.mcpjam.com/guest";
 const KID = "guest-2";
+const LEGACY_KID = "guest-1";
+const GUEST_JWT_KID_ROTATED_AT_ENV = "GUEST_JWT_KID_ROTATED_AT";
 const DEFAULT_HOSTED_GUEST_JWKS_URL =
   "https://app.mcpjam.com/api/web/guest-jwks";
 const HOSTED_GUEST_JWKS_CACHE_MS = 5 * 60 * 1000;
 
 let privateKey: KeyObject;
 let publicKey: KeyObject;
-let jwks: { keys: JsonWebKey[] };
 let hostedGuestPublicKeysCache:
   | {
       fetchedAt: number;
@@ -141,6 +142,50 @@ function base64urlDecode(str: string): Buffer {
 
 function getHostedGuestJwksUrl(): string {
   return process.env.MCPJAM_GUEST_JWKS_URL || DEFAULT_HOSTED_GUEST_JWKS_URL;
+}
+
+function shouldPublishLegacyKid(now = Date.now()): boolean {
+  if (process.env.NODE_ENV !== "production" || KID === LEGACY_KID) {
+    return false;
+  }
+
+  const rotatedAt = process.env[GUEST_JWT_KID_ROTATED_AT_ENV];
+  if (!rotatedAt) {
+    return true;
+  }
+
+  const rotatedAtMs = Date.parse(rotatedAt);
+  if (Number.isNaN(rotatedAtMs)) {
+    logger.warn(
+      `Guest JWT: invalid ${GUEST_JWT_KID_ROTATED_AT_ENV}; continuing to publish legacy kid ${LEGACY_KID} until it is fixed.`,
+    );
+    return true;
+  }
+
+  return now < rotatedAtMs + GUEST_TOKEN_TTL_S * 1000;
+}
+
+function buildGuestJwks(now = Date.now()): { keys: JsonWebKey[] } {
+  const jwk = publicKey.export({ format: "jwk" });
+  const keys: JsonWebKey[] = [
+    {
+      ...jwk,
+      kid: KID,
+      alg: "RS256",
+      use: "sig",
+    },
+  ];
+
+  if (shouldPublishLegacyKid(now)) {
+    keys.push({
+      ...jwk,
+      kid: LEGACY_KID,
+      alg: "RS256",
+      use: "sig",
+    });
+  }
+
+  return { keys };
 }
 
 function verifyGuestTokenSignature(
@@ -354,18 +399,6 @@ export function initGuestTokenSecret(): void {
     generateEphemeralKeyPair();
   }
 
-  // Build JWKS from the public key
-  const jwk = publicKey.export({ format: "jwk" });
-  jwks = {
-    keys: [
-      {
-        ...jwk,
-        kid: KID,
-        alg: "RS256",
-        use: "sig",
-      },
-    ],
-  };
 }
 
 function generateEphemeralKeyPair(): void {
@@ -378,12 +411,12 @@ function generateEphemeralKeyPair(): void {
  * Serve this at /api/web/guest-jwks.
  */
 export function getGuestJwks(): { keys: JsonWebKey[] } {
-  if (!jwks) {
+  if (!publicKey) {
     throw new Error(
       "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
     );
   }
-  return jwks;
+  return buildGuestJwks();
 }
 
 /** Returns the guest token issuer URL. */
