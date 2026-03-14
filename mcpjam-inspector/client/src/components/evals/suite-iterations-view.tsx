@@ -311,6 +311,13 @@ export function SuiteIterationsView({
                   serverNames={(suite.environment?.servers || []).filter(
                     (name) => connectedServerNames.has(name),
                   )}
+                  suiteName={suite.name}
+                  onNavigateToSuite={() => {
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                    });
+                  }}
                   onBack={() => {
                     navigateToEvalsRoute({
                       type: "suite-overview",

@@ -15,12 +15,6 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
-import { PieChart, Pie, Label } from "recharts";
 import { BarChart3, Loader2, Plus, RotateCw, Trash2, X } from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
@@ -32,7 +26,7 @@ import {
 } from "./types";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
-import { computeIterationResult } from "./pass-criteria";
+
 import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
@@ -189,65 +183,6 @@ export function SuiteHeader({
     [suiteModels, onUpdateModels],
   );
 
-  // Calculate accuracy chart data from active runs
-  const accuracyChartData = useMemo(() => {
-    if (!runs || !allIterations || runs.length === 0) {
-      return null;
-    }
-
-    // Filter to active runs only
-    const activeRuns = runs.filter((run) => run.isActive !== false);
-    if (activeRuns.length === 0) {
-      return null;
-    }
-
-    // Get all iterations from active runs
-    const activeRunIds = new Set(activeRuns.map((run) => run._id));
-    const activeIterations = allIterations.filter(
-      (iter) => iter.suiteRunId && activeRunIds.has(iter.suiteRunId),
-    );
-
-    if (activeIterations.length === 0) {
-      return null;
-    }
-
-    // Calculate passed/failed counts using consistent computation
-    // Only count completed iterations - exclude pending/cancelled
-    const iterationResults = activeIterations.map((iter) =>
-      computeIterationResult(iter),
-    );
-    const passed = iterationResults.filter((r) => r === "passed").length;
-    const failed = iterationResults.filter((r) => r === "failed").length;
-    const total = passed + failed; // Only count completed iterations for accuracy
-
-    if (total === 0) {
-      return null;
-    }
-
-    // Build donut chart data
-    const donutData = [];
-    if (passed > 0) {
-      donutData.push({
-        name: "passed",
-        value: passed,
-        fill: "hsl(142.1 76.2% 36.3%)",
-      });
-    }
-    if (failed > 0) {
-      donutData.push({
-        name: "failed",
-        value: failed,
-        fill: "hsl(0 84.2% 60.2%)",
-      });
-    }
-
-    return {
-      donutData,
-      total,
-      accuracy: Math.round((passed / total) * 100),
-    };
-  }, [runs, allIterations]);
-
   const latestRunForMetadata = useMemo(() => {
     if (!runs || runs.length === 0) return null;
     return [...runs].sort((a, b) => {
@@ -342,19 +277,22 @@ export function SuiteHeader({
 
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
-        <h2 className="text-lg font-semibold">
-          Run {formatRunId(selectedRunDetails._id)}
-        </h2>
+        <div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+            <button
+              onClick={() => onViewModeChange("overview")}
+              className="hover:text-foreground hover:underline transition-colors cursor-pointer"
+            >
+              {suite.name}
+            </button>
+            <span className="text-muted-foreground/50">/</span>
+            <span className="text-primary font-medium">Run</span>
+          </div>
+          <h2 className="text-lg font-semibold">
+            Run {formatRunId(selectedRunDetails._id)}
+          </h2>
+        </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setShowRunSummarySidebar(!showRunSummarySidebar)}
-            className="gap-2"
-          >
-            <BarChart3 className="h-4 w-4" />
-            View run summary
-          </Button>
           {!readOnlyConfig &&
             (isRunInProgress ? (
               <Tooltip>
@@ -412,18 +350,6 @@ export function SuiteHeader({
             ))}
           <Button
             variant="outline"
-            size="sm"
-            onClick={() => onDeleteRun(selectedRunDetails._id)}
-            disabled={deletingRunId === selectedRunDetails._id}
-            className="gap-2"
-          >
-            <Trash2 className="h-4 w-4" />
-            {deletingRunId === selectedRunDetails._id
-              ? "Deleting..."
-              : "Delete"}
-          </Button>
-          <Button
-            variant="outline"
             size="icon"
             onClick={() => onViewModeChange("overview")}
           >
@@ -468,68 +394,6 @@ export function SuiteHeader({
             ciMetadata={latestRunForMetadata.ciMetadata}
             compact={true}
           />
-        )}
-        {/* Accuracy Chart */}
-        {accuracyChartData && accuracyChartData.donutData.length > 0 && (
-          <div className="flex items-center gap-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className="text-sm font-medium text-foreground">
-                  Suite Accuracy:
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p className="text-xs">Calculated across all active runs.</p>
-              </TooltipContent>
-            </Tooltip>
-            <ChartContainer
-              config={{
-                passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
-                failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
-                cancelled: {
-                  label: "Cancelled",
-                  color: "hsl(240 3.7% 15.9%)",
-                },
-              }}
-              className="h-12 w-12"
-            >
-              <PieChart>
-                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                <Pie
-                  data={accuracyChartData.donutData}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={15}
-                  outerRadius={22}
-                  strokeWidth={1}
-                >
-                  <Label
-                    content={({ viewBox }) => {
-                      if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                        return (
-                          <text
-                            x={viewBox.cx}
-                            y={viewBox.cy}
-                            textAnchor="middle"
-                            dominantBaseline="middle"
-                          >
-                            <tspan
-                              x={viewBox.cx}
-                              y={viewBox.cy}
-                              className="fill-foreground text-[10px] font-bold"
-                            >
-                              {accuracyChartData.accuracy}%
-                            </tspan>
-                          </text>
-                        );
-                      }
-                    }}
-                  />
-                </Pie>
-              </PieChart>
-            </ChartContainer>
-          </div>
         )}
         {!readOnlyConfig && (
           <TagEditor
@@ -750,21 +614,6 @@ export function SuiteHeader({
             </TooltipContent>
           </Tooltip>
         )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onDelete(suite)}
-              disabled={isDeleting}
-              className="gap-2"
-            >
-              <Trash2 className="h-4 w-4" />
-              {isDeleting ? "Deleting..." : "Delete"}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Delete this test suite</TooltipContent>
-        </Tooltip>
       </div>
     </div>
   );
