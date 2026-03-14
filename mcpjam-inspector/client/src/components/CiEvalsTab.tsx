@@ -37,6 +37,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("runs");
+  const [hasAutoSwitchedMode, setHasAutoSwitchedMode] = useState(false);
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -95,6 +96,17 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     () => groupRunsByCommit(sdkSuites),
     [sdkSuites],
   );
+
+  // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
+  useEffect(() => {
+    if (hasAutoSwitchedMode) return;
+    if (commitGroups.length === 0) return;
+    const allManual = commitGroups.every((g) => g.commitSha === "manual");
+    if (allManual) {
+      setSidebarMode("suites");
+      setHasAutoSwitchedMode(true);
+    }
+  }, [commitGroups, hasAutoSwitchedMode]);
 
   const selectedCommitSha =
     route.type === "commit-detail" ? route.commitSha : null;
