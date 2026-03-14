@@ -71,72 +71,65 @@ export function CommitListSidebar({
                 onClick={() => onSelectCommit(group.commitSha)}
                 className={cn(
                   "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
-                  selectedCommitSha === group.commitSha && "bg-accent",
+                  selectedCommitSha === group.commitSha && "bg-accent shadow-sm",
                 )}
               >
-                <div className="flex items-center gap-2.5">
-                  <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
-                    <div
-                      className={cn("h-2 w-2 rounded-full", status.dotClass)}
-                    />
-                    <span
-                      className={cn(
-                        "text-[9px] font-medium leading-none",
-                        status.labelClass,
-                      )}
-                    >
-                      {status.label}
-                    </span>
-                  </div>
+                <div className="flex items-start gap-2.5">
+                  {/* Status dot */}
+                  <div className={cn("h-2 w-2 rounded-full mt-1.5 shrink-0", status.dotClass)} />
+
+                  {/* Content */}
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5">
+                    {/* Row 1: SHA + timestamp */}
+                    <div className="flex items-center justify-between gap-2">
                       {isManual ? (
                         <span className="text-sm font-medium text-muted-foreground">
-                          Manual Runs
+                          Manual
                         </span>
                       ) : (
-                        <>
+                        <div className="flex items-center gap-1">
                           <GitCommit className="h-3 w-3 shrink-0 text-muted-foreground" />
                           <span className="text-sm font-mono font-medium truncate">
                             {group.shortSha}
                           </span>
-                        </>
+                        </div>
                       )}
-                    </div>
-                    {group.branch && (
-                      <div className="flex items-center gap-1 mt-0.5">
-                        <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
-                        <span className="text-[11px] text-muted-foreground truncate">
-                          {group.branch}
-                        </span>
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-[11px] text-muted-foreground">
+                      <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
                         {formatRelativeTime(group.timestamp)}
                       </span>
-                      <span className="text-[10px] text-muted-foreground tabular-nums">
+                    </div>
+
+                    {/* Row 2: branch + pass/fail summary */}
+                    <div className="flex items-center justify-between gap-2 mt-0.5">
+                      {group.branch ? (
+                        <div className="flex items-center gap-1 min-w-0">
+                          <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                          <span className="text-[11px] text-muted-foreground truncate">
+                            {group.branch}
+                          </span>
+                        </div>
+                      ) : (
+                        <div />
+                      )}
+                      <div className="flex items-center gap-1.5 shrink-0 text-[10px] tabular-nums">
                         {group.summary.passed > 0 && (
-                          <span className="text-emerald-500">
-                            {group.summary.passed}✓
+                          <span className="text-emerald-500 font-medium">
+                            {group.summary.passed} passed
                           </span>
                         )}
                         {group.summary.failed > 0 && (
-                          <span className="text-destructive ml-1">
-                            {group.summary.failed}✕
+                          <span className="text-destructive font-medium">
+                            {group.summary.failed} failed
                           </span>
                         )}
                         {group.summary.running > 0 && (
-                          <span className="text-warning ml-1">
-                            {group.summary.running}⟳
+                          <span className="text-warning font-medium">
+                            {group.summary.running} running
                           </span>
                         )}
-                      </span>
+                      </div>
                     </div>
                   </div>
-                  <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-                    {group.summary.total} run{group.summary.total !== 1 ? "s" : ""}
-                  </span>
                 </div>
               </button>
             );
