@@ -23,6 +23,7 @@ import { logger } from "../../utils/logger.js";
 const ORIGINAL_GUEST_JWT_PRIVATE_KEY = process.env.GUEST_JWT_PRIVATE_KEY;
 const ORIGINAL_GUEST_JWT_PUBLIC_KEY = process.env.GUEST_JWT_PUBLIC_KEY;
 const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
+const ORIGINAL_GUEST_JWT_KID_ROTATED_AT = process.env.GUEST_JWT_KID_ROTATED_AT;
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 
 function restoreEnv() {
@@ -44,6 +45,12 @@ function restoreEnv() {
     process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
   }
 
+  if (ORIGINAL_GUEST_JWT_KID_ROTATED_AT === undefined) {
+    delete process.env.GUEST_JWT_KID_ROTATED_AT;
+  } else {
+    process.env.GUEST_JWT_KID_ROTATED_AT = ORIGINAL_GUEST_JWT_KID_ROTATED_AT;
+  }
+
   if (ORIGINAL_NODE_ENV === undefined) {
     delete process.env.NODE_ENV;
   } else {
@@ -58,6 +65,7 @@ describe("guest-token service", () => {
     restoreEnv();
     delete process.env.GUEST_JWT_PRIVATE_KEY;
     delete process.env.GUEST_JWT_PUBLIC_KEY;
+    delete process.env.GUEST_JWT_KID_ROTATED_AT;
     testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "guest-token-test-"));
     process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
     initGuestTokenSecret();
@@ -194,7 +202,7 @@ describe("guest-token service", () => {
 
       expect(header.alg).toBe("RS256");
       expect(header.typ).toBe("JWT");
-      expect(header.kid).toBe("guest-1");
+      expect(header.kid).toBe("guest-2");
     });
 
     it("payload contains iss, sub, iat, and exp", () => {
@@ -445,7 +453,7 @@ describe("guest-token service", () => {
       expect(key.kty).toBe("RSA");
       expect(key.alg).toBe("RS256");
       expect(key.use).toBe("sig");
-      expect(key.kid).toBe("guest-1");
+      expect(key.kid).toBe("guest-2");
       expect(key.n).toBeDefined(); // RSA modulus
       expect(key.e).toBeDefined(); // RSA exponent
     });
@@ -461,6 +469,32 @@ describe("guest-token service", () => {
       expect(key.dp).toBeUndefined();
       expect(key.dq).toBeUndefined();
       expect(key.qi).toBeUndefined();
+    });
+
+    it("publishes both guest-2 and guest-1 during the production rotation grace window", () => {
+      process.env.NODE_ENV = "production";
+      initGuestTokenSecret();
+
+      const jwksDoc = getGuestJwks();
+
+      expect(jwksDoc.keys.map((key) => key.kid)).toEqual([
+        "guest-2",
+        "guest-1",
+      ]);
+      expect(jwksDoc.keys[0].n).toBe(jwksDoc.keys[1].n);
+      expect(jwksDoc.keys[0].e).toBe(jwksDoc.keys[1].e);
+    });
+
+    it("retires guest-1 after the token TTL grace window elapses", () => {
+      process.env.NODE_ENV = "production";
+      process.env.GUEST_JWT_KID_ROTATED_AT = new Date(
+        Date.now() - 24 * 60 * 60 * 1000 - 1000,
+      ).toISOString();
+      initGuestTokenSecret();
+
+      const jwksDoc = getGuestJwks();
+
+      expect(jwksDoc.keys.map((key) => key.kid)).toEqual(["guest-2"]);
     });
   });
 
