@@ -25,6 +25,15 @@ const EMPTY_CONTEXT: HostedApiContext = {
 };
 
 let hostedApiContext: HostedApiContext = EMPTY_CONTEXT;
+
+/**
+ * Holds server-name → server-ID mappings injected by injectHostedServerMapping()
+ * that have not yet appeared in the subscription data passed to setHostedApiContext().
+ * This map survives setHostedApiContext() calls, ensuring the race between
+ * a Convex mutation completing and the subscription propagating can't lose mappings.
+ */
+const pendingInjections = new Map<string, string>();
+
 let cachedBearerToken: { token: string; expiresAt: number } | null = null;
 
 const TOKEN_CACHE_TTL_MS = 30_000;
@@ -123,7 +132,30 @@ export function buildGuestServerRequest(
 }
 
 export function setHostedApiContext(next: HostedApiContext | null): void {
-  hostedApiContext = next ?? EMPTY_CONTEXT;
+  const base = next ?? EMPTY_CONTEXT;
+
+  // Self-clean: remove pending injections that the subscription now confirms.
+  // Safe: Map spec allows delete of the current entry during for..of iteration.
+  for (const [name, id] of pendingInjections) {
+    if (base.serverIdsByName[name] === id) {
+      pendingInjections.delete(name);
+    }
+  }
+
+  // Merge any remaining pending injections so they survive stale subscription
+  // updates that haven't caught up to the Convex mutation yet.
+  if (pendingInjections.size > 0) {
+    hostedApiContext = {
+      ...base,
+      serverIdsByName: {
+        ...base.serverIdsByName,
+        ...Object.fromEntries(pendingInjections),
+      },
+    };
+  } else {
+    hostedApiContext = base;
+  }
+
   resetTokenCache();
 }
 
@@ -132,14 +164,18 @@ export function setHostedApiContext(next: HostedApiContext | null): void {
  * bridging the gap between when a Convex mutation completes and when the
  * reactive subscription propagates the update through React.
  *
- * The next `setHostedApiContext` call from the subscription will overwrite
- * this with identical data, so there is no risk of stale entries.
+ * The mapping is stored in `pendingInjections` so it survives any
+ * `setHostedApiContext()` calls that arrive with stale subscription data.
+ * Once the subscription confirms the mapping, it is auto-removed.
  */
 export function injectHostedServerMapping(
   serverName: string,
   serverId: string,
 ): void {
   if (!HOSTED_MODE) return;
+
+  pendingInjections.set(serverName, serverId);
+
   hostedApiContext = {
     ...hostedApiContext,
     serverIdsByName: {
@@ -319,4 +355,9 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
   }
 
   return null;
+}
+
+/** @internal Exposed for testing only. */
+export function _clearPendingInjections(): void {
+  pendingInjections.clear();
 }
