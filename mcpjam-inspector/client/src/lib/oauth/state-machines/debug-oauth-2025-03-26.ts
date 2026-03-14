@@ -27,6 +27,8 @@ import {
   loadPreregisteredCredentials,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
+  mergeHeaders,
+  mergeHeadersForAuthServer,
 } from "./shared/helpers";
 
 // Re-export types for backward compatibility
@@ -363,12 +365,9 @@ export const createDebugOAuthStateMachine = (
   const redirectUri =
     redirectUrl || `${window.location.origin}/oauth/callback/debug`;
 
-  const mergeHeaders = (requestHeaders: Record<string, string> = {}) => {
-    return {
-      ...customHeaders,
-      ...requestHeaders,
-    };
-  };
+  // Note: Unlike the 2025-06-18 and 2025-11-25 machines, this spec version
+  // does not support Protected Resource Metadata (RFC 9728), so there is no
+  // loggingFetch / discoverOAuthProtectedResourceMetadata path here.
 
   const getCurrentState = () => (getState ? getState() : initialState);
 
@@ -406,7 +405,7 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: mergeHeaders({
+                headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
                 }),
                 body: JSON.stringify({
@@ -486,7 +485,7 @@ export const createDebugOAuthStateMachine = (
             const authServerRequest = {
               method: "GET",
               url: authServerUrls[0],
-              headers: mergeHeaders({}),
+              headers: mergeHeadersForAuthServer(customHeaders, {}),
             };
 
             updateState({
@@ -524,7 +523,10 @@ export const createDebugOAuthStateMachine = (
 
             for (const url of urlsToTry) {
               try {
-                const requestHeaders = mergeHeaders({});
+                const requestHeaders = mergeHeadersForAuthServer(
+                  customHeaders,
+                  {},
+                );
 
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
                 if (updatedHistoryForRetry.length > 0) {
@@ -548,7 +550,7 @@ export const createDebugOAuthStateMachine = (
 
                 const response = await proxyFetch(url, {
                   method: "GET",
-                  headers: mergeHeaders({
+                  headers: mergeHeadersForAuthServer(customHeaders, {
                     "MCP-Protocol-Version": "2025-03-26",
                   }),
                 });
@@ -774,7 +776,7 @@ export const createDebugOAuthStateMachine = (
               const registrationRequest = {
                 method: "POST",
                 url: state.authorizationServerMetadata.registration_endpoint,
-                headers: mergeHeaders({
+                headers: mergeHeadersForAuthServer(customHeaders, {
                   "Content-Type": "application/json",
                 }),
                 body: clientMetadata,
@@ -823,7 +825,7 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
+                  headers: mergeHeadersForAuthServer(customHeaders, {
                     "Content-Type": "application/json",
                   }),
                   body: JSON.stringify(state.lastRequest.body),
@@ -907,7 +909,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders({}),
+                headers: mergeHeaders(customHeaders, {}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1153,7 +1155,7 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
-                  headers: mergeHeaders({
+                  headers: mergeHeadersForAuthServer(customHeaders, {
                     "Content-Type": "application/x-www-form-urlencoded",
                   }),
                   body: tokenRequestBody.toString(),
@@ -1341,7 +1343,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders({}),
+                headers: mergeHeaders(customHeaders, {}),
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1435,7 +1437,7 @@ export const createDebugOAuthStateMachine = (
             try {
               const response = await proxyFetch(state.serverUrl, {
                 method: "POST",
-                headers: mergeHeaders({
+                headers: mergeHeaders(customHeaders, {
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
                   Accept: "application/json, text/event-stream",
@@ -1680,7 +1682,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders({}),
+                headers: mergeHeaders(customHeaders, {}),
                 body: {
                   error: errorDetails.message,
                   details: errorDetails.details,

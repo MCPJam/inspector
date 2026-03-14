@@ -226,6 +226,41 @@ export function loadPreregisteredCredentials(serverName: string): {
 }
 
 /**
+ * Merge custom headers with per-request headers.
+ * Request headers override custom headers.
+ */
+export function mergeHeaders(
+  customHeaders: Record<string, string> | undefined,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+  return {
+    ...customHeaders,
+    ...requestHeaders,
+  };
+}
+
+/**
+ * Merge custom headers with per-request headers, then strip any
+ * Authorization header (case-insensitive, per RFC 7230 §3.2).
+ *
+ * Use this for requests to the Authorization Server (token endpoint,
+ * registration endpoint, metadata discovery) to prevent connection-level
+ * Bearer tokens (meant for the MCP/resource server) from leaking.
+ */
+export function mergeHeadersForAuthServer(
+  customHeaders: Record<string, string> | undefined,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+  const merged = mergeHeaders(customHeaders, requestHeaders);
+  for (const key of Object.keys(merged)) {
+    if (key.toLowerCase() === "authorization") {
+      delete merged[key];
+    }
+  }
+  return merged;
+}
+
+/**
  * Build well-known resource metadata URL from server URL (RFC 9728)
  */
 export function buildResourceMetadataUrl(serverUrl: string): string {
