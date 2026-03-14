@@ -476,6 +476,7 @@ function shouldUseOneShotUpload(
     externalRunId: input.externalRunId,
     framework: input.framework,
     ci: input.ci,
+    tags: input.tags,
     results: input.results,
   };
   const bytes = getByteLength(JSON.stringify(body));
@@ -519,6 +520,7 @@ async function reportEvalResultsInternal(
         framework: input.framework,
         ci: input.ci,
         expectedIterations: input.expectedIterations,
+        tags: input.tags,
         results: resultsWithIterationIds,
       }
     );
@@ -534,6 +536,7 @@ async function reportEvalResultsInternal(
     framework: input.framework,
     ci: input.ci,
     expectedIterations: input.expectedIterations,
+    tags: input.tags,
   });
 
   if (
