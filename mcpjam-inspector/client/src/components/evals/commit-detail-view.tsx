@@ -11,10 +11,8 @@ import {
   Sparkles,
   ExternalLink,
   RotateCcw,
-  FileText,
   Loader2,
   AlertTriangle,
-  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -28,10 +26,9 @@ import { formatDuration } from "./helpers";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import {
   classifyAllFailures,
-  buildTriageContext,
   type FailureTag,
 } from "./ai-insights";
-import { useCommitAiTriage } from "./use-ai-triage";
+import { useCommitTriage } from "./use-ai-triage";
 
 interface CommitDetailViewProps {
   commitGroup: CommitGroup;
@@ -199,21 +196,21 @@ export function CommitDetailView({
     [runsWithFailedCases, commitGroup.suiteMap, allCommitGroups],
   );
 
-  // Build triage context for LLM
-  const triageCtx = useMemo(() => {
-    if (totalCases.failed === 0) return null;
-    return buildTriageContext(commitGroup, classifiedFailures, passed, notRun);
-  }, [commitGroup, classifiedFailures, passed, notRun, totalCases.failed]);
+  // IDs of runs with failures — used to request backend triage
+  const failedRunIds = useMemo(
+    () => runsWithFailedCases.map((r) => r._id),
+    [runsWithFailedCases],
+  );
 
-  // AI triage hook
-  const aiTriage = useCommitAiTriage(triageCtx);
+  // AI triage via Convex backend
+  const aiTriage = useCommitTriage(failedRunIds);
 
-  // Auto-generate triage when any failed cases exist
+  // Auto-request triage when failures exist and no result yet
   useEffect(() => {
-    if (triageCtx && !aiTriage.result && !aiTriage.loading) {
-      aiTriage.generate();
+    if (failedRunIds.length > 0 && !aiTriage.summary && !aiTriage.loading) {
+      aiTriage.requestTriage();
     }
-  }, [triageCtx, aiTriage.result, aiTriage.loading, aiTriage.generate]);
+  }, [failedRunIds.length, aiTriage.summary, aiTriage.loading, aiTriage.requestTriage]);
 
   // Triage summary — shows when any cases failed
   const triageSummary = useMemo(() => {
@@ -311,9 +308,9 @@ export function CommitDetailView({
                     <div
                       className={cn(
                         "h-full rounded-full transition-all duration-500",
-                        totalCases.failed === 0
+                        commitGroup.status === "passed"
                           ? "bg-emerald-500"
-                          : totalCases.passed === 0
+                          : failed.length > 0 && passed.length === 0
                             ? "bg-destructive"
                             : "bg-amber-500",
                       )}
@@ -352,8 +349,8 @@ export function CommitDetailView({
           )}
 
           {/* Action buttons */}
-          <div className="mt-4 pt-4 border-t border-border/50 flex flex-wrap gap-2">
-            {failed.length > 0 && (
+          {failed.length > 0 && (
+            <div className="mt-4 pt-4 border-t border-border/50">
               <button
                 onClick={() => {
                   for (const run of failed) {
@@ -370,30 +367,58 @@ export function CommitDetailView({
                 <RotateCcw className="h-3 w-3" />
                 View failures
               </button>
-            )}
-            {commitGroup.runs[0]?.ciMetadata?.runUrl && (
-              <a
-                href={commitGroup.runs[0].ciMetadata.runUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-              >
-                <FileText className="h-3 w-3" />
-                CI Pipeline
-              </a>
-            )}
-            <button
-              onClick={() => {
-                const url = window.location.href;
-                navigator.clipboard.writeText(url);
-              }}
-              className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-            >
-              <ExternalLink className="h-3 w-3" />
-              Share
-            </button>
-          </div>
+            </div>
+          )}
         </div>
+
+        {/* === AI TRIAGE PANEL === */}
+        {triageSummary && (aiTriage.summary || aiTriage.loading || aiTriage.error) && (
+          <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 p-6 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
+            <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
+            <div className="flex items-center gap-2.5 mb-4">
+              <Badge
+                variant="outline"
+                className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
+              >
+                <Sparkles className="mr-1 h-3 w-3" />
+                AI
+              </Badge>
+              <span className="text-sm font-semibold">Triage Summary</span>
+              {aiTriage.loading && (
+                <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-1">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  analyzing...
+                </span>
+              )}
+            </div>
+
+            {/* AI-generated summary */}
+            <div className="rounded-md border border-border/40 bg-white/60 p-4 text-[13px] leading-relaxed dark:bg-black/20">
+              {aiTriage.summary ? (
+                <p>{aiTriage.summary}</p>
+              ) : aiTriage.error ? (
+                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-xs">AI triage unavailable</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{aiTriage.error}</p>
+                    <p className="text-xs mt-2">
+                      <strong>{triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""} detected</strong>{" "}
+                      across {triageSummary.failedSuiteNames.join(", ")} with{" "}
+                      {triageSummary.totalFailedCases} failed case{triageSummary.totalFailedCases !== 1 ? "s" : ""}.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Analyzing {triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""}...</span>
+                </div>
+              )}
+            </div>
+
+          </div>
+        )}
 
         {/* === COMPARE BAR === */}
         {compareOptions.length > 0 && (
@@ -453,132 +478,63 @@ export function CommitDetailView({
           </div>
         )}
 
-        {/* === AI TRIAGE PANEL === */}
-        {triageSummary && (
-          <div className="relative rounded-lg border border-violet-200 bg-violet-50/50 p-6 shadow-sm dark:border-violet-800 dark:bg-violet-950/20">
-            <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg bg-gradient-to-r from-violet-500 via-purple-400 to-violet-500 opacity-50" />
-            <div className="flex items-center gap-2.5 mb-4">
-              <Badge
-                variant="outline"
-                className="border-violet-300 bg-violet-100 text-violet-600 text-[10px] font-bold uppercase tracking-wider dark:border-violet-700 dark:bg-violet-900/50 dark:text-violet-400"
-              >
-                <Sparkles className="mr-1 h-3 w-3" />
-                AI
-              </Badge>
-              <span className="text-sm font-semibold">Triage Summary</span>
-              <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-2">
-                {aiTriage.result && (
-                  <span>
-                    generated{" "}
-                    {Math.round(
-                      (Date.now() - aiTriage.result.generatedAt) / 1000,
-                    )}
-                    s ago
-                  </span>
-                )}
-                {aiTriage.loading && (
-                  <span className="flex items-center gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    analyzing...
-                  </span>
-                )}
-                {!aiTriage.loading && (
+        {/* === FAILURE DETAILS === */}
+        {classifiedFailures.length > 0 && (
+          <div className="rounded-lg border bg-card shadow-sm">
+            <div className="px-6 py-4 border-b">
+              <div className="flex items-center gap-2">
+                <XCircle className="h-4 w-4 text-destructive" />
+                <span className="text-sm font-semibold">Failure Details</span>
+                <span className="text-xs text-muted-foreground">
+                  · {classifiedFailures.length} suite{classifiedFailures.length !== 1 ? "s" : ""} with failures
+                </span>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2.5 p-4">
+              {classifiedFailures.slice(0, 4).map((cf) => {
+                const passRate = cf.run.summary
+                  ? Math.round(
+                      (cf.run.summary.passed / Math.max(cf.run.summary.total, 1)) *
+                        100,
+                    )
+                  : 0;
+                return (
                   <button
-                    onClick={() => aiTriage.generate()}
-                    className="p-0.5 rounded hover:bg-violet-200/50 transition-colors"
-                    title="Regenerate AI triage"
+                    key={cf.run._id}
+                    onClick={() =>
+                      navigateToCiEvalsRoute({
+                        type: "run-detail",
+                        suiteId: cf.run.suiteId,
+                        runId: cf.run._id,
+                      })
+                    }
+                    className="rounded-md border bg-card p-4 text-left transition-shadow hover:shadow-md hover:border-border"
                   >
-                    <RefreshCw className="h-3 w-3" />
+                    <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                      {cf.tags.map((tag) => (
+                        <FailureTagBadge key={tag} tag={tag} />
+                      ))}
+                      {cf.tags.length === 0 && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider text-destructive">
+                          Investigate
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-sm font-semibold mb-1">
+                      {cf.suiteName}
+                    </div>
+                    <div className="text-[11px] text-muted-foreground">
+                      <span className="text-destructive font-medium">{cf.run.summary?.failed ?? 0} failed</span> of{" "}
+                      {cf.run.summary?.total ?? 0} cases · {passRate}% pass rate
+                    </div>
+                    <span className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-orange-600 dark:text-orange-400">
+                      <ExternalLink className="h-3 w-3" />
+                      View run details
+                    </span>
                   </button>
-                )}
-              </span>
+                );
+              })}
             </div>
-
-            {/* AI-generated summary */}
-            <div className="rounded-md border border-violet-200/40 bg-white/60 p-4 text-sm leading-relaxed dark:bg-black/20">
-              {aiTriage.result ? (
-                <p>{aiTriage.result.summary}</p>
-              ) : aiTriage.error ? (
-                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium text-xs">AI triage unavailable</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{aiTriage.error}</p>
-                    <p className="text-xs mt-2">
-                      <strong>{triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""} detected</strong>{" "}
-                      across {triageSummary.failedSuiteNames.join(", ")} with{" "}
-                      {triageSummary.totalFailedCases} failed case{triageSummary.totalFailedCases !== 1 ? "s" : ""}.
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Analyzing {triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""}...</span>
-                </div>
-              )}
-            </div>
-
-            {/* Action cards grid with classification tags */}
-            {classifiedFailures.length > 0 && (
-              <div className="mt-4 grid grid-cols-2 gap-2.5">
-                {classifiedFailures.slice(0, 4).map((cf) => {
-                  const passRate = cf.run.summary
-                    ? Math.round(
-                        (cf.run.summary.passed / Math.max(cf.run.summary.total, 1)) *
-                          100,
-                      )
-                    : 0;
-                  return (
-                    <button
-                      key={cf.run._id}
-                      onClick={() =>
-                        navigateToCiEvalsRoute({
-                          type: "run-detail",
-                          suiteId: cf.run.suiteId,
-                          runId: cf.run._id,
-                        })
-                      }
-                      className="rounded-md border border-violet-200/50 bg-white/70 p-4 text-left transition-shadow hover:shadow-md dark:bg-black/20"
-                    >
-                      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
-                        {cf.tags.map((tag) => (
-                          <FailureTagBadge key={tag} tag={tag} />
-                        ))}
-                        {cf.tags.length === 0 && (
-                          <span className="text-[10px] font-bold uppercase tracking-wider text-destructive">
-                            Investigate
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-sm font-semibold mb-1">
-                        {cf.suiteName}
-                      </div>
-                      <div className="text-[11px] text-muted-foreground">
-                        {cf.run.summary?.failed ?? 0} failed of{" "}
-                        {cf.run.summary?.total ?? 0} cases · {passRate}% pass rate
-                      </div>
-                      <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-violet-600 dark:text-violet-400">
-                        <ExternalLink className="h-3 w-3" />
-                        View run details
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Placeholder action links */}
-            {classifiedFailures.length > 0 && (
-              <div className="mt-3 flex gap-3">
-                <button className="text-[11px] font-medium text-violet-600 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 transition-colors">
-                  → Create issue with context
-                </button>
-                <button className="text-[11px] font-medium text-violet-600 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 transition-colors">
-                  → View config requirements
-                </button>
-              </div>
-            )}
           </div>
         )}
 
@@ -1056,7 +1012,7 @@ function FailureTagBadge({ tag }: { tag: FailureTag }) {
     new: {
       label: "new",
       className:
-        "bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-950/50 dark:text-violet-400 dark:border-violet-800",
+        "bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/50 dark:text-blue-400 dark:border-blue-800",
     },
   }[tag];
 
