@@ -787,11 +787,7 @@ async function main() {
       let url = process.env.BASE_URL || `http://${host}:${PORT}`;
 
       // Wait until the server is actually accepting connections
-      const ready = await waitForServerReady(
-        parseInt(PORT, 10),
-        host,
-        30000,
-      );
+      const ready = await waitForServerReady(parseInt(PORT, 10), host, 30000);
 
       if (!ready) {
         logWarning(
