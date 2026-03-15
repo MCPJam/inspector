@@ -3,7 +3,7 @@
 import { resolve, dirname } from "path";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
-import { createServer } from "net";
+import { createServer, createConnection } from "net";
 import { execSync } from "child_process";
 import { existsSync, readFileSync } from "fs";
 import open from "open";
@@ -134,6 +134,48 @@ function isPortAvailable(port) {
       // Port is not available
       resolve(false);
     });
+  });
+}
+
+function waitForServerReady(port, host, timeoutMs = 30000) {
+  const intervalMs = 200;
+  const startTime = Date.now();
+
+  return new Promise((resolve) => {
+    function attempt() {
+      if (Date.now() - startTime >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+
+      const socket = createConnection({ port, host });
+      let settled = false;
+
+      function cleanup() {
+        if (settled) return;
+        settled = true;
+        socket.removeAllListeners();
+        socket.destroy();
+      }
+
+      socket.once("connect", () => {
+        cleanup();
+        resolve(true);
+      });
+
+      socket.once("error", () => {
+        cleanup();
+        setTimeout(attempt, intervalMs);
+      });
+
+      socket.setTimeout(1000);
+      socket.once("timeout", () => {
+        cleanup();
+        setTimeout(attempt, intervalMs);
+      });
+    }
+
+    attempt();
   });
 }
 
@@ -737,30 +779,34 @@ async function main() {
       serverProcess.kill("SIGTERM");
     });
 
-    // Wait a bit for the server to start up
-    await delay(2000);
-
     if (!cancelled) {
-      // Open the browser automatically
-      // Use BASE_URL if set, otherwise construct from HOST and PORT
       // Default: localhost in development, 127.0.0.1 in production
       const defaultHost =
         process.env.ENVIRONMENT === "dev" ? "localhost" : "127.0.0.1";
       const host = process.env.HOST || defaultHost;
       let url = process.env.BASE_URL || `http://${host}:${PORT}`;
 
-      // Append initial tab hash if specified
-      if (initialTab) {
-        url = `${url}#${initialTab}`;
-      }
+      // Wait until the server is actually accepting connections
+      const ready = await waitForServerReady(parseInt(PORT, 10), host, 30000);
 
-      try {
-        await open(url);
-        logSuccess(`🌐 Browser opened at ${url}`);
-      } catch (error) {
+      if (!ready) {
         logWarning(
-          `Could not open browser automatically. Please visit ${url} manually.`,
+          `Server did not become ready within 30s. Please visit ${url} manually.`,
         );
+      } else if (!cancelled) {
+        // Append initial tab hash if specified
+        if (initialTab) {
+          url = `${url}#${initialTab}`;
+        }
+
+        try {
+          await open(url);
+          logSuccess(`🌐 Browser opened at ${url}`);
+        } catch (error) {
+          logWarning(
+            `Could not open browser automatically. Please visit ${url} manually.`,
+          );
+        }
       }
     }
 
