@@ -42,11 +42,11 @@ describe("GET /api/web/guest-jwks", () => {
     rmSync(testGuestKeyDir, { recursive: true, force: true });
   });
 
-  it("returns a public, cacheable JWKS document", async () => {
+  it("returns a non-cacheable JWKS document", async () => {
     const response = await app.request("/api/web/guest-jwks");
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("content-type")).toContain("application/json");
 
     const body = await response.json();
