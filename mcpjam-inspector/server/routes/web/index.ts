@@ -39,7 +39,7 @@ web.route("/guest-session", guestSession);
 
 // Public JWKS endpoint for guest JWT verification.
 web.get("/guest-jwks", (c) => {
-  c.header("Cache-Control", "public, max-age=3600");
+  c.header("Cache-Control", "no-store");
   return c.json(getGuestJwks());
 });
 
