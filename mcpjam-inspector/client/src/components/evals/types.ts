@@ -144,6 +144,19 @@ export type EvalSuiteRun = {
   isActive?: boolean; // Mark runs as inactive when suite is edited
   expectedIterations?: number;
   _creationTime?: number;
+  triageStatus?: "pending" | "completed" | "failed";
+  triageSummary?: {
+    summary: string;
+    failureCategories: Array<{
+      category: string;
+      count: number;
+      testCaseTitles: string[];
+      recommendation: string;
+    }>;
+    topRecommendations: string[];
+    generatedAt: number;
+    modelUsed: string;
+  };
 };
 
 export type EvalSuiteOverviewEntry = {
