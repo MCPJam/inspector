@@ -63,7 +63,7 @@ export function CommitListSidebar({
         <div>
           {commitGroups.map((group) => {
             const status = getCommitStatusInfo(group);
-            const isManual = group.commitSha === "manual";
+            const isManual = group.commitSha.startsWith("manual-");
 
             return (
               <button
@@ -114,6 +114,10 @@ export function CommitListSidebar({
                             {group.branch}
                           </span>
                         </div>
+                      ) : isManual ? (
+                        <span className="text-[11px] text-muted-foreground truncate">
+                          {Array.from(group.suiteMap.values()).join(", ")}
+                        </span>
                       ) : (
                         <div />
                       )}

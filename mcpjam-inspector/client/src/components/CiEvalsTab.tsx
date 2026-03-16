@@ -96,7 +96,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   useEffect(() => {
     if (hasAutoSwitchedMode) return;
     if (commitGroups.length === 0) return;
-    const allManual = commitGroups.every((g) => g.commitSha === "manual");
+    const allManual = commitGroups.every((g) => g.commitSha.startsWith("manual-"));
     if (allManual) {
       setSidebarMode("suites");
       setHasAutoSwitchedMode(true);
@@ -294,7 +294,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           {route.type === "commit-detail" && selectedCommitGroup ? (
             <CommitDetailView
               commitGroup={selectedCommitGroup}
-              allCommitGroups={commitGroups}
+              route={route}
             />
           ) : sdkSuites.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">

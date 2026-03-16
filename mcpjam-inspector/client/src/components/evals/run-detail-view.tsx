@@ -38,6 +38,7 @@ interface RunDetailViewProps {
   serverNames?: string[];
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  hideCiMetadata?: boolean;
 }
 
 export function RunDetailView({
@@ -52,6 +53,7 @@ export function RunDetailView({
   serverNames = [],
   selectedIterationId,
   onSelectIteration,
+  hideCiMetadata,
 }: RunDetailViewProps) {
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
@@ -104,13 +106,14 @@ export function RunDetailView({
     <div className="relative flex h-full flex-col">
       {/* Run Header (sticky) */}
       <div className="sticky top-0 z-10 bg-background shrink-0">
-        {(selectedRunDetails.ciMetadata?.branch ||
-          selectedRunDetails.ciMetadata?.commitSha ||
-          selectedRunDetails.ciMetadata?.runUrl) && (
-          <div className="mb-4">
-            <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
-          </div>
-        )}
+        {!hideCiMetadata &&
+          (selectedRunDetails.ciMetadata?.branch ||
+            selectedRunDetails.ciMetadata?.commitSha ||
+            selectedRunDetails.ciMetadata?.runUrl) && (
+            <div className="mb-4">
+              <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
+            </div>
+          )}
 
         {/* Run Metrics and Chart */}
         <div className="rounded-xl border bg-card text-card-foreground">
@@ -218,13 +221,8 @@ export function RunDetailView({
         </div>
       </div>
 
-      {/* AI Triage */}
-      <div className="mt-3">
-        <AiTriagePanel
-          run={selectedRunDetails}
-          failedCount={computedStats.failed}
-        />
-      </div>
+      {/* AI Triage — shown between summary and iteration panes */}
+      <AiTriagePanel run={selectedRunDetails} failedCount={computedStats.failed} />
 
       {/* Two-pane body */}
       <div className="flex h-0 flex-1 mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden">
