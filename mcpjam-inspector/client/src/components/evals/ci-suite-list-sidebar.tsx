@@ -32,18 +32,38 @@ function getStatusInfo(entry: EvalSuiteOverviewEntry): {
 } {
   const latestRun = entry.latestRun;
   if (!latestRun) {
-    return { label: "No runs", dotClass: "bg-muted-foreground/40", labelClass: "text-muted-foreground" };
+    return {
+      label: "No runs",
+      dotClass: "bg-muted-foreground/40",
+      labelClass: "text-muted-foreground",
+    };
   }
   if (latestRun.status === "running" || latestRun.status === "pending") {
-    return { label: "Running", dotClass: "bg-warning animate-pulse", labelClass: "text-warning" };
+    return {
+      label: "Running",
+      dotClass: "bg-warning animate-pulse",
+      labelClass: "text-warning",
+    };
   }
   if (latestRun.result === "passed") {
-    return { label: "Passed", dotClass: "bg-emerald-500", labelClass: "text-emerald-500" };
+    return {
+      label: "Passed",
+      dotClass: "bg-emerald-500",
+      labelClass: "text-emerald-500",
+    };
   }
   if (latestRun.result === "failed") {
-    return { label: "Failed", dotClass: "bg-destructive", labelClass: "text-destructive" };
+    return {
+      label: "Failed",
+      dotClass: "bg-destructive",
+      labelClass: "text-destructive",
+    };
   }
-  return { label: latestRun.status, dotClass: "bg-muted-foreground/40", labelClass: "text-muted-foreground" };
+  return {
+    label: latestRun.status,
+    dotClass: "bg-muted-foreground/40",
+    labelClass: "text-muted-foreground",
+  };
 }
 
 function toPercent(value: number): number {
@@ -158,12 +178,14 @@ export function CiSuiteListSidebar({
                   <div className="flex items-center gap-2.5">
                     <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
                       <div
-                        className={cn(
-                          "h-2 w-2 rounded-full",
-                          status.dotClass,
-                        )}
+                        className={cn("h-2 w-2 rounded-full", status.dotClass)}
                       />
-                      <span className={cn("text-[9px] font-medium leading-none", status.labelClass)}>
+                      <span
+                        className={cn(
+                          "text-[9px] font-medium leading-none",
+                          status.labelClass,
+                        )}
+                      >
                         {status.label}
                       </span>
                     </div>

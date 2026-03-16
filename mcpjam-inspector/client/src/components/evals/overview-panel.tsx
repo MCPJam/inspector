@@ -200,8 +200,7 @@ export function OverviewPanel({
     const neverRun = filteredSuites.filter((e) => !e.latestRun);
 
     const lastRunTime = filteredSuites.reduce((max, e) => {
-      const t =
-        e.latestRun?.completedAt ?? e.latestRun?.createdAt ?? 0;
+      const t = e.latestRun?.completedAt ?? e.latestRun?.createdAt ?? 0;
       return t > max ? t : max;
     }, 0);
 
@@ -229,7 +228,8 @@ export function OverviewPanel({
 
   // Auto-select latest bucket
   const activeBucketId =
-    selectedBucketId ?? (timeline.length > 0 ? timeline[timeline.length - 1].id : null);
+    selectedBucketId ??
+    (timeline.length > 0 ? timeline[timeline.length - 1].id : null);
 
   // ---------------------------------------------------------------------------
   // Section D: Suite Table — severity-sorted, filtered, searchable
@@ -335,11 +335,12 @@ export function OverviewPanel({
   // ---------------------------------------------------------------------------
   // Banner state
   // ---------------------------------------------------------------------------
-  const bannerState = stats.failedCount > 0
-    ? "failure"
-    : stats.runningCount > 0
-      ? "running"
-      : "success";
+  const bannerState =
+    stats.failedCount > 0
+      ? "failure"
+      : stats.runningCount > 0
+        ? "running"
+        : "success";
 
   const bannerConfig = {
     failure: {
@@ -434,7 +435,10 @@ export function OverviewPanel({
       )}
 
       {/* Section C: Failure Feed (Needs Attention) */}
-      <Collapsible open={hasFailures && failureFeedOpen} onOpenChange={setFailureFeedOpen}>
+      <Collapsible
+        open={hasFailures && failureFeedOpen}
+        onOpenChange={setFailureFeedOpen}
+      >
         <div className="rounded-xl border bg-card">
           <CollapsibleTrigger className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors rounded-xl">
             <div className="flex items-center gap-2">
@@ -496,7 +500,11 @@ export function OverviewPanel({
                             {entry.latestRun.ciMetadata.commitSha && (
                               <span>
                                 {" "}
-                                @ {entry.latestRun.ciMetadata.commitSha.slice(0, 7)}
+                                @{" "}
+                                {entry.latestRun.ciMetadata.commitSha.slice(
+                                  0,
+                                  7,
+                                )}
                               </span>
                             )}
                             {" · "}
@@ -623,7 +631,8 @@ export function OverviewPanel({
                   onClick={() => onSelectSuite?.(entry.suite._id)}
                   className={cn(
                     "w-full grid grid-cols-[36px_1fr_auto_72px_64px_80px_80px_40px] items-center gap-2 px-4 py-2.5 text-left hover:bg-muted/50 transition-colors",
-                    isFailed && "bg-destructive/5 border-l-2 border-l-destructive",
+                    isFailed &&
+                      "bg-destructive/5 border-l-2 border-l-destructive",
                   )}
                 >
                   {/* Status icon */}
@@ -668,20 +677,24 @@ export function OverviewPanel({
                       delta.colorClass,
                     )}
                   >
-                    {delta.value !== null && delta.value !== 0 && (
-                      delta.value > 0 ? (
+                    {delta.value !== null &&
+                      delta.value !== 0 &&
+                      (delta.value > 0 ? (
                         <TrendingUp className="h-3 w-3" />
                       ) : (
                         <TrendingDown className="h-3 w-3" />
-                      )
-                    )}
+                      ))}
                     {delta.label}
                   </div>
 
                   {/* Last Run */}
                   <div
                     className="text-right text-xs text-muted-foreground"
-                    title={lastRunTs ? new Date(lastRunTs).toLocaleString() : undefined}
+                    title={
+                      lastRunTs
+                        ? new Date(lastRunTs).toLocaleString()
+                        : undefined
+                    }
                   >
                     {lastRunTs ? formatRelativeTime(lastRunTs) : "—"}
                   </div>

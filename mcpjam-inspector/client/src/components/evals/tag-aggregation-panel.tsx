@@ -190,7 +190,9 @@ export function TagAggregationPanel({
   const passRateBarData = useMemo(
     () =>
       visibleGroups
-        .filter((g) => g.totals.passed + g.totals.failed > 0 || g.totals.runs > 0)
+        .filter(
+          (g) => g.totals.passed + g.totals.failed > 0 || g.totals.runs > 0,
+        )
         .map((g) => ({
           tag: g.tag,
           passRate: g.passRate,
@@ -224,7 +226,13 @@ export function TagAggregationPanel({
         <h2 className="text-lg font-semibold">Overview</h2>
         <p className="text-xs text-muted-foreground mt-0.5">
           Latest pass rates across all suite groups
-          {filterTag && <> &middot; Filtered to <span className="font-medium text-foreground">{filterTag}</span></>}
+          {filterTag && (
+            <>
+              {" "}
+              &middot; Filtered to{" "}
+              <span className="font-medium text-foreground">{filterTag}</span>
+            </>
+          )}
         </p>
       </div>
 
@@ -331,9 +339,7 @@ export function TagAggregationPanel({
                   <span
                     className={cn(
                       "flex items-center gap-1 text-xs",
-                      trendDelta > 0
-                        ? "text-emerald-500"
-                        : "text-destructive",
+                      trendDelta > 0 ? "text-emerald-500" : "text-destructive",
                     )}
                   >
                     {trendDelta > 0 ? (
@@ -622,10 +628,14 @@ export function TagAggregationPanel({
                             {group.totals.failed} failed
                           </span>
                         </span>
-                        <span className="text-sm font-bold">{group.passRate}%</span>
+                        <span className="text-sm font-bold">
+                          {group.passRate}%
+                        </span>
                       </>
                     ) : (
-                      <span className="text-xs text-muted-foreground">No data</span>
+                      <span className="text-xs text-muted-foreground">
+                        No data
+                      </span>
                     )}
                   </div>
                 </CollapsibleTrigger>
@@ -711,7 +721,12 @@ export function TagAggregationPanel({
                               <span>—</span>
                             )}
                           </div>
-                          <span className={cn("w-14 text-right font-mono text-xs font-medium", rateColorClass)}>
+                          <span
+                            className={cn(
+                              "w-14 text-right font-mono text-xs font-medium",
+                              rateColorClass,
+                            )}
+                          >
                             {suitePassRate !== null ? `${suitePassRate}%` : "—"}
                           </span>
                         </button>
