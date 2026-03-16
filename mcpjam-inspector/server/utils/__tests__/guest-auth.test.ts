@@ -130,4 +130,37 @@ describe("guest-auth", () => {
     expect(await getProductionGuestAuthHeader()).toBe("Bearer cached-token");
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
+
+  it("reuses a still-valid cached token when refresh fails", async () => {
+    process.env.NODE_ENV = "production";
+    vi.mocked(global.fetch)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            guestId: "guest-prod",
+            token: "stale-but-valid-token",
+            expiresAt: Date.now() + 60_000,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ error: "nope" }), { status: 503 }),
+      );
+
+    const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
+    expect(await getProductionGuestAuthHeader()).toBe(
+      "Bearer stale-but-valid-token",
+    );
+    expect(await getProductionGuestAuthHeader()).toBe(
+      "Bearer stale-but-valid-token",
+    );
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      "[guest-auth] Failed to refresh guest token; reusing cached token until expiry",
+    );
+  });
 });

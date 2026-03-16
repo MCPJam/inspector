@@ -26,7 +26,7 @@ import {
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
-import { provisionGuestAuthConfigToConvex } from "./utils/convex-guest-auth-sync";
+import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
@@ -187,7 +187,7 @@ warnOnConvexDevMisconfiguration(loadedEnv);
 // Generate session token for API authentication
 generateSessionToken();
 
-await provisionGuestAuthConfigToConvex();
+startGuestAuthProvisioningInBackground();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 

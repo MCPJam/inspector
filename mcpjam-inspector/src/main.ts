@@ -54,7 +54,7 @@ async function startHonoServer(): Promise<number> {
       : app.getAppPath();
     process.env.NODE_ENV = app.isPackaged ? "production" : "development";
 
-    const honoApp = await createHonoApp();
+    const honoApp = createHonoApp();
 
     // Bind to 127.0.0.1 when packaged to avoid IPv6-only localhost issues
     const hostname = app.isPackaged ? "127.0.0.1" : "localhost";

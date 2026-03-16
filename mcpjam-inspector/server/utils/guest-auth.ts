@@ -24,6 +24,12 @@ export async function getProductionGuestAuthHeader(): Promise<string | null> {
 
   const session = await fetchRemoteGuestSession();
   if (!session) {
+    if (cachedToken && cachedToken.expiresAt > Date.now()) {
+      logger.warn(
+        "[guest-auth] Failed to refresh guest token; reusing cached token until expiry",
+      );
+      return `Bearer ${cachedToken.token}`;
+    }
     return null;
   }
 

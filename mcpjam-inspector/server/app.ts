@@ -34,13 +34,13 @@ import {
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
 import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env.js";
-import { provisionGuestAuthConfigToConvex } from "./utils/convex-guest-auth-sync.js";
+import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export async function createHonoApp() {
+export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
@@ -54,7 +54,7 @@ export async function createHonoApp() {
   // Generate session token for API authentication
   generateSessionToken();
 
-  await provisionGuestAuthConfigToConvex();
+  startGuestAuthProvisioningInBackground();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>

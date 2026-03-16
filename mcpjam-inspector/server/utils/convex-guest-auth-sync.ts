@@ -7,6 +7,7 @@ import { getGuestSessionSharedSecret } from "./guest-session-secret.js";
 import { logger } from "./logger.js";
 
 let provisioningPromise: Promise<void> | null = null;
+let provisioningStarted = false;
 
 function getConvexDeploymentForProvisioning(): string {
   if (process.env.CONVEX_DEPLOYMENT) {
@@ -114,4 +115,20 @@ export async function provisionGuestAuthConfigToConvex(): Promise<void> {
   }
 
   await provisioningPromise;
+}
+
+export function startGuestAuthProvisioningInBackground(): void {
+  if (!shouldProvisionGuestAuthToConvex() || provisioningStarted) {
+    return;
+  }
+
+  provisioningStarted = true;
+  void provisionGuestAuthConfigToConvex().catch((error) => {
+    provisioningStarted = false;
+    logger.warn(
+      `[guest-auth] Failed to provision Convex guest auth env in background: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
 }
