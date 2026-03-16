@@ -15,6 +15,7 @@ import {
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { AiTriagePanel } from "./ai-triage-panel";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -310,6 +311,11 @@ export function RunDetailView({
             </div>
           )}
         </div>
+      </div>
+
+      {/* AI Triage */}
+      <div className="mt-3">
+        <AiTriagePanel run={selectedRunDetails} />
       </div>
 
       {/* Two-pane body */}

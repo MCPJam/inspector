@@ -1,32 +1,65 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useMutation } from "convex/react";
+import type { EvalSuiteRun } from "./types";
 
 // ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface TriageResult {
-  _id: string;
-  suiteRunId: string;
-  summary: string;
-  status: "pending" | "generating" | "completed" | "failed";
-  error?: string;
-  generatedAt?: number;
-}
-
-// ---------------------------------------------------------------------------
-// Hook: triage for a commit (multiple runs)
+// Hook: triage for a single suite run (used in RunDetailView)
 // ---------------------------------------------------------------------------
 
 /**
- * Hook to request AI triage for failed runs via the Convex backend.
+ * Hook to request and manage AI triage for a suite run.
  *
- * Calls `testSuites:requestTriage` mutation for each failed run.
- * The backend generates the summary asynchronously (action → AI SDK → save).
- *
- * Until the backend mutation is deployed, requests fail gracefully and the
- * panel stays hidden instead of flashing briefly.
+ * Triage results are reactive — they live on the `testSuiteRun` document
+ * (`triageStatus` / `triageSummary`), so no polling or separate query is needed.
+ * This hook only manages the mutation call and local error state.
  */
+export function useAiTriage(run: EvalSuiteRun | null) {
+  const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+
+  const requestTriageMutation = useMutation(
+    "triage:requestTriage" as any,
+  );
+
+  const canTriage =
+    run != null &&
+    run.status === "completed" &&
+    (run.summary?.failed ?? 0) > 0 &&
+    run.triageStatus !== "pending" &&
+    !unavailable;
+
+  const requestTriage = useCallback(() => {
+    if (!run) return;
+
+    setError(null);
+
+    const force = run.triageStatus === "completed" || run.triageStatus === "failed";
+
+    requestTriageMutation({ suiteRunId: run._id, force } as any).catch(
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          message.includes("Could not find") ||
+          message.includes("not found") ||
+          message.includes("is not a function") ||
+          message.includes("Server Error")
+        ) {
+          setUnavailable(true);
+        } else {
+          setError(message);
+        }
+      },
+    );
+  }, [run, requestTriageMutation]);
+
+  return { canTriage, error, unavailable, requestTriage };
+}
+
+// ---------------------------------------------------------------------------
+// Hook: triage for a commit (multiple runs) — used by commit-detail-view
+// and overview-panel
+// ---------------------------------------------------------------------------
+
 export function useCommitTriage(failedRunIds: string[]): {
   summary: string | null;
   loading: boolean;
@@ -40,11 +73,9 @@ export function useCommitTriage(failedRunIds: string[]): {
   const [unavailable, setUnavailable] = useState(false);
   const hasAttemptedRef = useRef(false);
 
-  // Always call useMutation (React hooks rules) — if the function doesn't
-  // exist on the backend, the call itself will fail, which we handle below.
-  const requestTriageMutation = useMutation("testSuites:requestTriage" as any);
+  const requestTriageMutation = useMutation("triage:requestTriage" as any);
 
-  // Reset state when the run IDs actually change (navigating to a different commit)
+  // Reset state when the run IDs change
   const runKey = failedRunIds.join(",");
   const prevRunKeyRef = useRef(runKey);
   useEffect(() => {
@@ -54,8 +85,6 @@ export function useCommitTriage(failedRunIds: string[]): {
       setError(null);
       setLoading(false);
       hasAttemptedRef.current = false;
-      // Keep unavailable sticky — if the mutation doesn't exist, it won't
-      // magically appear when switching commits
     }
   }, [runKey]);
 
@@ -67,16 +96,13 @@ export function useCommitTriage(failedRunIds: string[]): {
     setLoading(true);
     setError(null);
 
-    // Request triage for the primary (first) failed run
     const primaryRunId = failedRunIds[0];
     requestTriageMutation({ suiteRunId: primaryRunId } as any)
       .then((result: any) => {
-        // If the mutation returns a summary directly, use it
         if (result?.summary) {
           setSummary(result.summary);
           setLoading(false);
         } else {
-          // Backend will generate async — for now show as pending
           setLoading(false);
           setSummary(
             "Triage requested — results will appear when backend processing completes.",
@@ -85,7 +111,6 @@ export function useCommitTriage(failedRunIds: string[]): {
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        // Detect backend errors that mean triage isn't available — mark permanently unavailable
         if (
           message.includes("Could not find") ||
           message.includes("not found") ||
