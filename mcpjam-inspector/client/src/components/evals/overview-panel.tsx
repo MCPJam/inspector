@@ -33,6 +33,11 @@ import { useCommitTriage } from "./use-ai-triage";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Strip trailing timestamp suffixes from suite names for display, e.g. "Suite (2026-03-12 15:20:43)" → "Suite" */
+function stripTimestampSuffix(name: string): string {
+  return name.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() || name;
+}
+
 function toPercent(value: number): number {
   const n = value <= 1 ? value * 100 : value;
   return Math.max(0, Math.min(100, Math.round(n)));
@@ -209,6 +214,7 @@ export function OverviewPanel({
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
   const [failuresOnly, setFailuresOnly] = useState(false);
   const [suiteSearch, setSuiteSearch] = useState("");
+  const [failurePageSize, setFailurePageSize] = useState(10);
 
   // Apply tag filter
   const filteredSuites = useMemo(
@@ -276,12 +282,18 @@ export function OverviewPanel({
 
   const aiOverviewTriage = useCommitTriage(failedOverviewRunIds);
 
-  // Auto-request triage when failures exist (skip if already unavailable)
+  // Auto-request triage when failures exist (skip if already unavailable or errored)
   useEffect(() => {
-    if (failedOverviewRunIds.length > 0 && !aiOverviewTriage.summary && !aiOverviewTriage.loading && !aiOverviewTriage.unavailable) {
+    if (
+      failedOverviewRunIds.length > 0 &&
+      !aiOverviewTriage.summary &&
+      !aiOverviewTriage.loading &&
+      !aiOverviewTriage.unavailable &&
+      !aiOverviewTriage.error
+    ) {
       aiOverviewTriage.requestTriage();
     }
-  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.unavailable, aiOverviewTriage.requestTriage]);
+  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.unavailable, aiOverviewTriage.error, aiOverviewTriage.requestTriage]);
 
   // Pre-compute inline failure tags for the failure feed
   // Tags suites with failed cases OR failed result
@@ -647,9 +659,12 @@ export function OverviewPanel({
 
             <CollapsibleContent>
               <div className="border-t divide-y">
-                {failureEntries.map((entry) => {
+                {failureEntries.slice(0, failurePageSize).map((entry) => {
                   const isFailed = entry.latestRun?.result === "failed";
                   const isNeverRun = !entry.latestRun;
+                  const passRate = isFailed && entry.latestRun?.summary
+                    ? toPercent(entry.latestRun.summary.passRate ?? 0)
+                    : null;
 
                   return (
                     <button
@@ -666,7 +681,7 @@ export function OverviewPanel({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="text-sm font-medium truncate">
-                              {entry.suite.name}
+                              {stripTimestampSuffix(entry.suite.name)}
                             </span>
                             {isFailed &&
                               failureTagMap.get(entry.suite._id)?.map((tag) => (
@@ -674,11 +689,20 @@ export function OverviewPanel({
                               ))}
                           </div>
                           {isFailed && entry.latestRun?.summary && (
-                            <div className="text-xs text-muted-foreground mt-0.5">
-                              {entry.latestRun.summary.passed}/
-                              {entry.latestRun.summary.total} tests passed
-                              {entry.latestRun.summary.passRate !== undefined &&
-                                ` (${Math.round(entry.latestRun.summary.passRate)}%)`}
+                            <div className="flex items-center gap-2 mt-1">
+                              <div className="flex-1 h-1.5 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className={cn(
+                                    "h-full rounded-full transition-all",
+                                    passRate! >= 75 ? "bg-amber-500" : "bg-destructive",
+                                  )}
+                                  style={{ width: `${passRate}%` }}
+                                />
+                              </div>
+                              <span className="text-xs text-muted-foreground shrink-0 tabular-nums">
+                                {entry.latestRun.summary.passed}/
+                                {entry.latestRun.summary.total} ({passRate}%)
+                              </span>
                             </div>
                           )}
                           {isFailed && entry.latestRun?.ciMetadata && (
@@ -719,6 +743,14 @@ export function OverviewPanel({
                   );
                 })}
               </div>
+              {failureEntries.length > failurePageSize && (
+                <button
+                  onClick={() => setFailurePageSize((s) => s + 20)}
+                  className="w-full py-2 text-xs text-primary hover:bg-muted/50 transition-colors border-t font-medium"
+                >
+                  Show more ({failureEntries.length - failurePageSize} remaining)
+                </button>
+              )}
             </CollapsibleContent>
           </div>
         </Collapsible>
@@ -840,7 +872,7 @@ export function OverviewPanel({
                   {/* Suite name */}
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {entry.suite.name || "Untitled suite"}
+                      {stripTimestampSuffix(entry.suite.name) || "Untitled suite"}
                     </div>
                   </div>
 

@@ -114,15 +114,18 @@ export function CiSuiteListSidebar({
     ? suites.filter((e) => e.suite.tags?.includes(filterTag))
     : suites;
 
-  // Group suites by name, keeping the most recent one as the "primary" entry
+  // Group suites by base name (strip trailing timestamps/parenthetical suffixes
+  // that some SDK users append, e.g. "Suite Name (2026-03-12 15:20:43)")
   const groupedSuites = useMemo(() => {
     const groups = new Map<string, EvalSuiteOverviewEntry[]>();
     for (const entry of filteredSuites) {
-      const name = entry.suite.name || "Untitled suite";
-      if (!groups.has(name)) {
-        groups.set(name, []);
+      const rawName = entry.suite.name || "Untitled suite";
+      // Strip trailing " (YYYY-MM-DD ...)" or " (timestamp)" patterns
+      const baseName = rawName.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() || rawName;
+      if (!groups.has(baseName)) {
+        groups.set(baseName, []);
       }
-      groups.get(name)!.push(entry);
+      groups.get(baseName)!.push(entry);
     }
     // Sort each group by latest run time (most recent first)
     for (const entries of groups.values()) {
