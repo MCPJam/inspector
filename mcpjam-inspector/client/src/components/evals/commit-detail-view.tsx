@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -12,6 +12,9 @@ import {
   ExternalLink,
   RotateCcw,
   FileText,
+  Loader2,
+  AlertTriangle,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -23,6 +26,12 @@ import {
 import type { CommitGroup, EvalSuiteRun } from "./types";
 import { formatDuration } from "./helpers";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import {
+  classifyAllFailures,
+  buildTriageContext,
+  type FailureTag,
+} from "./ai-insights";
+import { useCommitAiTriage } from "./use-ai-triage";
 
 interface CommitDetailViewProps {
   commitGroup: CommitGroup;
@@ -176,22 +185,48 @@ export function CommitDetailView({
     };
   }, [commitGroup.runs, models]);
 
-  // Generate triage summary from actual failure data
+  // Runs that have any failed cases — includes suites that "passed" overall
+  // (due to pass rate thresholds) but still have individual case failures
+  const runsWithFailedCases = useMemo(
+    () => commitGroup.runs.filter((r) => (r.summary?.failed ?? 0) > 0),
+    [commitGroup.runs],
+  );
+
+  // Classify failures with regression/flaky/new tags
+  const classifiedFailures = useMemo(
+    () =>
+      classifyAllFailures(runsWithFailedCases, commitGroup.suiteMap, allCommitGroups),
+    [runsWithFailedCases, commitGroup.suiteMap, allCommitGroups],
+  );
+
+  // Build triage context for LLM
+  const triageCtx = useMemo(() => {
+    if (totalCases.failed === 0) return null;
+    return buildTriageContext(commitGroup, classifiedFailures, passed, notRun);
+  }, [commitGroup, classifiedFailures, passed, notRun, totalCases.failed]);
+
+  // AI triage hook
+  const aiTriage = useCommitAiTriage(triageCtx);
+
+  // Auto-generate triage when any failed cases exist
+  useEffect(() => {
+    if (triageCtx && !aiTriage.result && !aiTriage.loading) {
+      aiTriage.generate();
+    }
+  }, [triageCtx, aiTriage.result, aiTriage.loading, aiTriage.generate]);
+
+  // Triage summary — shows when any cases failed
   const triageSummary = useMemo(() => {
-    if (failed.length === 0) return null;
-    const failedSuiteNames = failed.map(
+    if (totalCases.failed === 0) return null;
+    const suiteNames = runsWithFailedCases.map(
       (r) => commitGroup.suiteMap.get(r.suiteId) || "Unknown suite",
     );
-    const totalFailedCases = failed.reduce(
-      (sum, r) => sum + (r.summary?.failed ?? 0),
-      0,
-    );
     return {
-      failCount: failed.length,
-      failedSuiteNames,
-      totalFailedCases,
+      failCount: runsWithFailedCases.length,
+      failedSuiteNames: suiteNames,
+      totalFailedCases: totalCases.failed,
     };
-  }, [failed, commitGroup.suiteMap]);
+  }, [runsWithFailedCases, commitGroup.suiteMap, totalCases.failed]);
 
   return (
     <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
@@ -431,60 +466,97 @@ export function CommitDetailView({
                 AI
               </Badge>
               <span className="text-sm font-semibold">Triage Summary</span>
-              <span className="ml-auto text-[10px] text-muted-foreground">
-                generated from {commitGroup.runs.length} runs
+              <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-2">
+                {aiTriage.result && (
+                  <span>
+                    generated{" "}
+                    {Math.round(
+                      (Date.now() - aiTriage.result.generatedAt) / 1000,
+                    )}
+                    s ago
+                  </span>
+                )}
+                {aiTriage.loading && (
+                  <span className="flex items-center gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    analyzing...
+                  </span>
+                )}
+                {!aiTriage.loading && (
+                  <button
+                    onClick={() => aiTriage.generate()}
+                    className="p-0.5 rounded hover:bg-violet-200/50 transition-colors"
+                    title="Regenerate AI triage"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                )}
               </span>
             </div>
+
+            {/* AI-generated summary */}
             <div className="rounded-md border border-violet-200/40 bg-white/60 p-4 text-sm leading-relaxed dark:bg-black/20">
-              <strong>{triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""} detected.</strong>{" "}
-              {triageSummary.failedSuiteNames.length > 0 && (
-                <>
-                  Failed suites:{" "}
-                  {triageSummary.failedSuiteNames.map((name, i) => (
-                    <span key={i}>
-                      {i > 0 && ", "}
-                      <strong className="text-destructive">{name}</strong>
-                    </span>
-                  ))}
-                  {" "}with {triageSummary.totalFailedCases} failed case{triageSummary.totalFailedCases !== 1 ? "s" : ""} total.
-                </>
+              {aiTriage.result ? (
+                <p>{aiTriage.result.summary}</p>
+              ) : aiTriage.error ? (
+                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-xs">AI triage unavailable</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">{aiTriage.error}</p>
+                    <p className="text-xs mt-2">
+                      <strong>{triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""} detected</strong>{" "}
+                      across {triageSummary.failedSuiteNames.join(", ")} with{" "}
+                      {triageSummary.totalFailedCases} failed case{triageSummary.totalFailedCases !== 1 ? "s" : ""}.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  <span>Analyzing {triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""}...</span>
+                </div>
               )}
             </div>
 
-            {/* Action cards grid */}
-            {failed.length > 0 && (
+            {/* Action cards grid with classification tags */}
+            {classifiedFailures.length > 0 && (
               <div className="mt-4 grid grid-cols-2 gap-2.5">
-                {failed.slice(0, 4).map((run) => {
-                  const suiteName =
-                    commitGroup.suiteMap.get(run.suiteId) || "Unknown suite";
-                  const passRate = run.summary
+                {classifiedFailures.slice(0, 4).map((cf) => {
+                  const passRate = cf.run.summary
                     ? Math.round(
-                        (run.summary.passed / Math.max(run.summary.total, 1)) *
+                        (cf.run.summary.passed / Math.max(cf.run.summary.total, 1)) *
                           100,
                       )
                     : 0;
                   return (
                     <button
-                      key={run._id}
+                      key={cf.run._id}
                       onClick={() =>
                         navigateToCiEvalsRoute({
                           type: "run-detail",
-                          suiteId: run.suiteId,
-                          runId: run._id,
+                          suiteId: cf.run.suiteId,
+                          runId: cf.run._id,
                         })
                       }
                       className="rounded-md border border-violet-200/50 bg-white/70 p-4 text-left transition-shadow hover:shadow-md dark:bg-black/20"
                     >
-                      <div className="flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-destructive mb-1">
-                        <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
-                        P0 · Investigate
+                      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+                        {cf.tags.map((tag) => (
+                          <FailureTagBadge key={tag} tag={tag} />
+                        ))}
+                        {cf.tags.length === 0 && (
+                          <span className="text-[10px] font-bold uppercase tracking-wider text-destructive">
+                            Investigate
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm font-semibold mb-1">
-                        {suiteName}
+                        {cf.suiteName}
                       </div>
                       <div className="text-[11px] text-muted-foreground">
-                        {run.summary?.failed ?? 0} failed of{" "}
-                        {run.summary?.total ?? 0} cases · {passRate}% pass rate
+                        {cf.run.summary?.failed ?? 0} failed of{" "}
+                        {cf.run.summary?.total ?? 0} cases · {passRate}% pass rate
                       </div>
                       <span className="mt-2 inline-flex items-center gap-1 text-[11px] font-semibold text-violet-600 dark:text-violet-400">
                         <ExternalLink className="h-3 w-3" />
@@ -493,6 +565,18 @@ export function CommitDetailView({
                     </button>
                   );
                 })}
+              </div>
+            )}
+
+            {/* Placeholder action links */}
+            {classifiedFailures.length > 0 && (
+              <div className="mt-3 flex gap-3">
+                <button className="text-[11px] font-medium text-violet-600 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 transition-colors">
+                  → Create issue with context
+                </button>
+                <button className="text-[11px] font-medium text-violet-600 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-300 transition-colors">
+                  → View config requirements
+                </button>
               </div>
             )}
           </div>
@@ -539,18 +623,26 @@ export function CommitDetailView({
             onOpenChange={setFailedOpen}
             defaultOpen
           >
-            {failed.map((run) => (
-              <FailedRunRow
-                key={run._id}
-                run={run}
-                suiteName={commitGroup.suiteMap.get(run.suiteId) || "Unknown"}
-                sparkline={getSuiteSparkline(
-                  run.suiteId,
-                  commitGroup.commitSha,
-                  allCommitGroups,
-                )}
-              />
-            ))}
+            {failed.map((run) => {
+              const cf = classifiedFailures.find(
+                (c) => c.run._id === run._id,
+              );
+              return (
+                <FailedRunRow
+                  key={run._id}
+                  run={run}
+                  suiteName={
+                    commitGroup.suiteMap.get(run.suiteId) || "Unknown"
+                  }
+                  sparkline={getSuiteSparkline(
+                    run.suiteId,
+                    commitGroup.commitSha,
+                    allCommitGroups,
+                  )}
+                  tags={cf?.tags ?? []}
+                />
+              );
+            })}
           </RunSection>
         )}
 
@@ -738,10 +830,12 @@ function FailedRunRow({
   run,
   suiteName,
   sparkline,
+  tags = [],
 }: {
   run: EvalSuiteRun;
   suiteName: string;
   sparkline: Array<{ passRate: number; isCurrent: boolean }>;
+  tags?: FailureTag[];
 }) {
   const duration = getRunDuration(run);
   const passRate = run.summary
@@ -766,6 +860,13 @@ function FailedRunRow({
         >
           {suiteName}
         </button>
+        {tags.length > 0 && (
+          <div className="flex gap-1">
+            {tags.map((tag) => (
+              <FailureTagBadge key={tag} tag={tag} />
+            ))}
+          </div>
+        )}
         <span className="ml-auto text-xs text-muted-foreground font-mono">
           {run.summary?.passed ?? 0}/{run.summary?.total ?? 0} · {passRate}%
         </span>
@@ -937,5 +1038,36 @@ function EnvCell({ label, value }: { label: string; value: string }) {
       </div>
       <div className="text-xs font-mono font-medium truncate">{value}</div>
     </div>
+  );
+}
+
+function FailureTagBadge({ tag }: { tag: FailureTag }) {
+  const config = {
+    regression: {
+      label: "regression",
+      className:
+        "bg-red-50 text-destructive border-red-200 dark:bg-red-950/50 dark:text-red-400 dark:border-red-800",
+    },
+    flaky: {
+      label: "flaky",
+      className:
+        "bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/50 dark:text-amber-400 dark:border-amber-800",
+    },
+    new: {
+      label: "new",
+      className:
+        "bg-violet-50 text-violet-600 border-violet-200 dark:bg-violet-950/50 dark:text-violet-400 dark:border-violet-800",
+    },
+  }[tag];
+
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-full border px-2 py-0.5 text-[10px] font-semibold",
+        config.className,
+      )}
+    >
+      {config.label}
+    </span>
   );
 }

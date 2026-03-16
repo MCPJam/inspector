@@ -36,7 +36,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [filterTag, setFilterTag] = useState<string | null>(null);
-  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("suites");
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("runs");
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -331,6 +331,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 const entry = sdkSuites.find((e) => e.suite._id === suiteId);
                 if (entry) handlers.handleRerun(entry.suite);
               }}
+              allCommitGroups={commitGroups}
             />
           ) : queries.isSuiteDetailsLoading ? (
             <div className="flex h-full items-center justify-center">
