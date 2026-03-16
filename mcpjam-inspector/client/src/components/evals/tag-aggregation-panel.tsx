@@ -5,6 +5,8 @@ import {
   TrendingUp,
   TrendingDown,
   Minus,
+  Search,
+  AlertCircle,
 } from "lucide-react";
 import {
   Area,
@@ -184,16 +186,20 @@ export function TagAggregationPanel({
     }));
   }, [visibleGroups, groupTrends]);
 
-  // Bar chart fallback data
+  // Bar chart fallback data — exclude groups with no data
   const passRateBarData = useMemo(
     () =>
-      visibleGroups.map((g) => ({
-        tag: g.tag,
-        passRate: g.passRate,
-        suiteCount: g.suiteCount,
-        passed: g.totals.passed,
-        failed: g.totals.failed,
-      })),
+      visibleGroups
+        .filter(
+          (g) => g.totals.passed + g.totals.failed > 0 || g.totals.runs > 0,
+        )
+        .map((g) => ({
+          tag: g.tag,
+          passRate: g.passRate,
+          suiteCount: g.suiteCount,
+          passed: g.totals.passed,
+          failed: g.totals.failed,
+        })),
     [visibleGroups],
   );
 
@@ -210,9 +216,25 @@ export function TagAggregationPanel({
 
   const isMultiGroup = visibleGroups.length > 1;
 
+  // Search state for suite breakdown
+  const [suiteSearch, setSuiteSearch] = useState("");
+
   return (
     <div className="flex-1 overflow-y-auto p-6 space-y-6">
-      <h2 className="text-lg font-semibold">Suite Group Comparison</h2>
+      {/* Header with context */}
+      <div>
+        <h2 className="text-lg font-semibold">Overview</h2>
+        <p className="text-xs text-muted-foreground mt-0.5">
+          Latest pass rates across all suite groups
+          {filterTag && (
+            <>
+              {" "}
+              &middot; Filtered to{" "}
+              <span className="font-medium text-foreground">{filterTag}</span>
+            </>
+          )}
+        </p>
+      </div>
 
       {/* Tag filter chips */}
       <div className="flex flex-wrap gap-1.5">
@@ -261,27 +283,63 @@ export function TagAggregationPanel({
               ? toPercent(trend[trend.length - 1]) - toPercent(trend[0])
               : null;
 
+          const totalTests = group.totals.passed + group.totals.failed;
+          const hasData = totalTests > 0 || group.totals.runs > 0;
+
+          // Color-code card border/accent by pass rate
+          const cardBorderClass = !hasData
+            ? "border-muted-foreground/20"
+            : group.passRate >= 95
+              ? "border-emerald-500/40"
+              : group.passRate >= 75
+                ? "border-amber-500/40"
+                : "border-destructive/40";
+
+          const barColorClass = !hasData
+            ? "bg-muted-foreground/30"
+            : group.passRate >= 95
+              ? "bg-emerald-500/70"
+              : group.passRate >= 75
+                ? "bg-amber-500/70"
+                : "bg-destructive/70";
+
           return (
             <div
               key={group.tag}
-              className="rounded-xl border bg-card text-card-foreground p-4 space-y-3"
+              className={cn(
+                "rounded-xl border bg-card text-card-foreground p-4 space-y-3",
+                cardBorderClass,
+              )}
             >
               <div className="flex items-center justify-between">
                 <span className="text-sm font-semibold">{group.tag}</span>
-                <span className="text-2xl font-bold">{group.passRate}%</span>
+                {hasData ? (
+                  <span className="text-2xl font-bold">{group.passRate}%</span>
+                ) : (
+                  <span className="flex items-center gap-1.5 text-sm text-muted-foreground">
+                    <AlertCircle className="h-3.5 w-3.5" />
+                    No data
+                  </span>
+                )}
               </div>
 
               <div className="flex items-center justify-between">
                 <div className="text-xs text-muted-foreground">
                   {group.suiteCount}{" "}
-                  {group.suiteCount === 1 ? "suite" : "suites"} ·{" "}
-                  {group.totals.passed + group.totals.failed} tests ·{" "}
-                  {group.totals.runs} runs
+                  {group.suiteCount === 1 ? "suite" : "suites"}
+                  {hasData && (
+                    <>
+                      {" · "}
+                      {totalTests} tests · {group.totals.runs} runs
+                    </>
+                  )}
+                  {!hasData && " · Never run"}
                 </div>
                 {trendDelta !== null && trendDelta !== 0 && (
                   <span
                     className={cn(
-                      "flex items-center gap-1 text-xs text-muted-foreground",
+                      "flex items-center gap-1 text-xs",
+                      trendDelta > 0 ? "text-emerald-500" : "text-destructive",
                     )}
                   >
                     {trendDelta > 0 ? (
@@ -295,10 +353,10 @@ export function TagAggregationPanel({
                 )}
               </div>
 
-              {group.totals.passed + group.totals.failed > 0 && (
+              {hasData && (
                 <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
                   <div
-                    className="h-full rounded-full bg-primary/70"
+                    className={cn("h-full rounded-full", barColorClass)}
                     style={{ width: `${group.passRate}%` }}
                   />
                 </div>
@@ -501,19 +559,39 @@ export function TagAggregationPanel({
 
       {/* Section 3 — Enriched Suite Breakdown */}
       <div className="space-y-2">
-        <h3 className="text-sm font-medium text-muted-foreground">
-          Suite Breakdown
-        </h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-medium text-muted-foreground">
+            Suite Breakdown
+          </h3>
+          <div className="relative w-48">
+            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="Filter suites..."
+              value={suiteSearch}
+              onChange={(e) => setSuiteSearch(e.target.value)}
+              className="h-7 w-full rounded-md border bg-background pl-8 pr-3 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+            />
+          </div>
+        </div>
         {visibleGroups.map((group) => {
           const isOpen = expandedTags.has(group.tag);
           const trend = groupTrends.get(group.tag) ?? [];
-          const sortedEntries = [...group.entries].sort((a, b) => {
-            const aTotal = a.totals.passed + a.totals.failed;
-            const bTotal = b.totals.passed + b.totals.failed;
-            const aRate = aTotal > 0 ? a.totals.passed / aTotal : 0;
-            const bRate = bTotal > 0 ? b.totals.passed / bTotal : 0;
-            return aRate - bRate; // worst first
-          });
+          const sortedEntries = [...group.entries]
+            .filter((entry) =>
+              suiteSearch
+                ? entry.suite.name
+                    .toLowerCase()
+                    .includes(suiteSearch.toLowerCase())
+                : true,
+            )
+            .sort((a, b) => {
+              const aTotal = a.totals.passed + a.totals.failed;
+              const bTotal = b.totals.passed + b.totals.failed;
+              const aRate = aTotal > 0 ? a.totals.passed / aTotal : 0;
+              const bRate = bTotal > 0 ? b.totals.passed / bTotal : 0;
+              return aRate - bRate; // worst first
+            });
 
           return (
             <Collapsible
@@ -531,24 +609,34 @@ export function TagAggregationPanel({
                     )}
                     <span className="text-sm font-semibold">{group.tag}</span>
                     <span className="text-xs text-muted-foreground">
-                      {group.suiteCount}{" "}
-                      {group.suiteCount === 1 ? "suite" : "suites"}
+                      {sortedEntries.length}{" "}
+                      {sortedEntries.length === 1 ? "suite" : "suites"}
                     </span>
                   </div>
                   <div className="flex items-center gap-4">
                     {trend.length >= 2 && (
                       <Sparkline data={trend} className="h-5 shrink-0" />
                     )}
-                    <span className="text-xs text-muted-foreground">
-                      <span className="text-emerald-600">
-                        {group.totals.passed} passed
+                    {group.totals.passed + group.totals.failed > 0 ? (
+                      <>
+                        <span className="text-xs text-muted-foreground">
+                          <span className="text-emerald-600">
+                            {group.totals.passed} passed
+                          </span>
+                          {" · "}
+                          <span className="text-destructive">
+                            {group.totals.failed} failed
+                          </span>
+                        </span>
+                        <span className="text-sm font-bold">
+                          {group.passRate}%
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        No data
                       </span>
-                      {" · "}
-                      <span className="text-destructive">
-                        {group.totals.failed} failed
-                      </span>
-                    </span>
-                    <span className="text-sm font-bold">{group.passRate}%</span>
+                    )}
                   </div>
                 </CollapsibleTrigger>
 
@@ -568,9 +656,18 @@ export function TagAggregationPanel({
                       const suitePassRate =
                         total > 0
                           ? Math.round((entry.totals.passed / total) * 100)
-                          : 0;
+                          : null;
                       const status = getStatusDot(entry);
                       const suiteTrend = entry.passRateTrend.slice(-8);
+
+                      const rateColorClass =
+                        suitePassRate === null
+                          ? "text-muted-foreground"
+                          : suitePassRate >= 95
+                            ? "text-emerald-500"
+                            : suitePassRate >= 75
+                              ? "text-amber-500"
+                              : "text-destructive";
 
                       return (
                         <button
@@ -610,16 +707,27 @@ export function TagAggregationPanel({
                             />
                           </div>
                           <div className="w-20 text-right text-xs text-muted-foreground">
-                            <span className="text-emerald-600">
-                              {entry.totals.passed}
-                            </span>
-                            {" / "}
-                            <span className="text-destructive">
-                              {entry.totals.failed}
-                            </span>
+                            {total > 0 ? (
+                              <>
+                                <span className="text-emerald-600">
+                                  {entry.totals.passed}
+                                </span>
+                                {" / "}
+                                <span className="text-destructive">
+                                  {entry.totals.failed}
+                                </span>
+                              </>
+                            ) : (
+                              <span>—</span>
+                            )}
                           </div>
-                          <span className="w-14 text-right font-mono text-xs font-medium text-foreground">
-                            {suitePassRate}%
+                          <span
+                            className={cn(
+                              "w-14 text-right font-mono text-xs font-medium",
+                              rateColorClass,
+                            )}
+                          >
+                            {suitePassRate !== null ? `${suitePassRate}%` : "—"}
                           </span>
                         </button>
                       );
