@@ -11,12 +11,14 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { aggregateSuite, groupSuitesByTag, groupRunsByCommit } from "./evals/helpers";
-import { OverviewPanel } from "./evals/overview-panel";
+import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
-import { CiSuiteListSidebar, type SidebarMode } from "./evals/ci-suite-list-sidebar";
+import {
+  CiSuiteListSidebar,
+  type SidebarMode,
+} from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
@@ -35,7 +37,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
-  const [filterTag, setFilterTag] = useState<string | null>(null);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("runs");
   const [hasAutoSwitchedMode, setHasAutoSwitchedMode] = useState(false);
 
@@ -89,13 +90,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [queries.sortedSuites],
   );
 
-  const tagGroups = useMemo(() => groupSuitesByTag(sdkSuites), [sdkSuites]);
-  const hasTags = tagGroups.some((g) => g.tag !== "Untagged");
-
-  const commitGroups = useMemo(
-    () => groupRunsByCommit(sdkSuites),
-    [sdkSuites],
-  );
+  const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
 
   // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
   useEffect(() => {
@@ -113,16 +108,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const selectedCommitGroup = useMemo(() => {
     if (!selectedCommitSha) return null;
-    return (
-      commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null
-    );
+    return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
   }, [commitGroups, selectedCommitSha]);
-  const allTags = useMemo(
-    () =>
-      Array.from(new Set(sdkSuites.flatMap((e) => e.suite.tags ?? []))).sort(),
-    [sdkSuites],
-  );
-
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
     return (
@@ -164,10 +151,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigateToCiEvalsRoute({ type: "suite-overview", suiteId });
-  }, []);
-
-  const handleSelectOverview = useCallback(() => {
-    navigateToCiEvalsRoute({ type: "list" });
   }, []);
 
   const handleSelectCommit = useCallback((commitSha: string) => {
@@ -293,11 +276,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             suites={sdkSuites}
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
-            onSelectOverview={handleSelectOverview}
-            isOverviewSelected={!selectedSuiteId && route.type !== "commit-detail"}
             isLoading={queries.isOverviewLoading}
-            filterTag={filterTag}
-            hasTags={true}
             sidebarMode={sidebarMode}
             onSidebarModeChange={setSidebarMode}
             commitGroups={commitGroups}
@@ -333,18 +312,20 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               </div>
             </div>
           ) : route.type === "list" || !selectedSuite ? (
-            <OverviewPanel
-              suites={sdkSuites}
-              allTags={allTags}
-              filterTag={filterTag}
-              onFilterTagChange={setFilterTag}
-              onSelectSuite={handleSelectSuite}
-              onRerunSuite={(suiteId) => {
-                const entry = sdkSuites.find((e) => e.suite._id === suiteId);
-                if (entry) handlers.handleRerun(entry.suite);
-              }}
-              allCommitGroups={commitGroups}
-            />
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-center max-w-md mx-auto p-8">
+                <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
+                  <GitBranch className="h-10 w-10 text-muted-foreground" />
+                </div>
+                <h2 className="text-2xl font-semibold text-foreground mb-2">
+                  Select a suite
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Choose a CI suite or commit from the sidebar to inspect runs
+                  and test iterations.
+                </p>
+              </div>
+            </div>
           ) : queries.isSuiteDetailsLoading ? (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">

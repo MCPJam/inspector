@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-import { BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CommitGroup, EvalSuiteOverviewEntry } from "./types";
 import { TagBadges } from "./tag-editor";
@@ -20,12 +19,7 @@ interface CiSuiteListSidebarProps {
   suites: EvalSuiteOverviewEntry[];
   selectedSuiteId: string | null;
   onSelectSuite: (suiteId: string) => void;
-  onSelectOverview: () => void;
-  isOverviewSelected: boolean;
   isLoading?: boolean;
-  filterTag?: string | null;
-  onFilterTagChange?: (tag: string | null) => void;
-  hasTags: boolean;
   sidebarMode: SidebarMode;
   onSidebarModeChange: (mode: SidebarMode) => void;
   commitGroups: CommitGroup[];
@@ -97,11 +91,7 @@ export function CiSuiteListSidebar({
   suites,
   selectedSuiteId,
   onSelectSuite,
-  onSelectOverview,
-  isOverviewSelected,
   isLoading = false,
-  filterTag,
-  hasTags,
   sidebarMode,
   onSidebarModeChange,
   commitGroups,
@@ -110,18 +100,16 @@ export function CiSuiteListSidebar({
 }: CiSuiteListSidebarProps) {
   useTick(); // keep "Xm ago" labels ticking
 
-  const filteredSuites = filterTag
-    ? suites.filter((e) => e.suite.tags?.includes(filterTag))
-    : suites;
-
   // Group suites by base name (strip trailing timestamps/parenthetical suffixes
   // that some SDK users append, e.g. "Suite Name (2026-03-12 15:20:43)")
   const groupedSuites = useMemo(() => {
     const groups = new Map<string, EvalSuiteOverviewEntry[]>();
-    for (const entry of filteredSuites) {
+    for (const entry of suites) {
       const rawName = entry.suite.name || "Untitled suite";
       // Strip trailing " (YYYY-MM-DD ...)" or " (timestamp)" patterns
-      const baseName = rawName.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() || rawName;
+      const baseName =
+        rawName.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() ||
+        rawName;
       if (!groups.has(baseName)) {
         groups.set(baseName, []);
       }
@@ -130,19 +118,21 @@ export function CiSuiteListSidebar({
     // Sort each group by latest run time (most recent first)
     for (const entries of groups.values()) {
       entries.sort((a, b) => {
-        const aTime = a.latestRun?.completedAt ?? a.latestRun?.createdAt ?? a.suite.updatedAt ?? 0;
-        const bTime = b.latestRun?.completedAt ?? b.latestRun?.createdAt ?? b.suite.updatedAt ?? 0;
+        const aTime =
+          a.latestRun?.completedAt ??
+          a.latestRun?.createdAt ??
+          a.suite.updatedAt ??
+          0;
+        const bTime =
+          b.latestRun?.completedAt ??
+          b.latestRun?.createdAt ??
+          b.suite.updatedAt ??
+          0;
         return bTime - aTime;
       });
     }
     return groups;
-  }, [filteredSuites]);
-
-  const uniqueSuiteCount = groupedSuites.size;
-
-  const failCount = suites.filter(
-    (e) => e.latestRun?.result === "failed",
-  ).length;
+  }, [suites]);
 
   return (
     <div className="flex h-full flex-col">
@@ -173,27 +163,6 @@ export function CiSuiteListSidebar({
         </div>
       </div>
 
-      {/* Dashboard button — always visible regardless of sidebar mode */}
-      <div className="px-3 py-2 border-b">
-        <button
-          onClick={onSelectOverview}
-          className={cn(
-            "w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-medium transition-colors cursor-pointer border border-transparent",
-            isOverviewSelected
-              ? "bg-primary/15 text-primary border-primary/30"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground hover:border-border",
-          )}
-        >
-          <BarChart3 className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">Dashboard</span>
-          {failCount > 0 && (
-            <span className="shrink-0 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
-              {failCount}
-            </span>
-          )}
-        </button>
-      </div>
-
       {sidebarMode === "runs" ? (
         <CommitListSidebar
           commitGroups={commitGroups}
@@ -202,29 +171,31 @@ export function CiSuiteListSidebar({
           isLoading={isLoading}
         />
       ) : (
-      <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            Loading suites...
-          </div>
-        ) : filteredSuites.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            No SDK suites found.
-          </div>
-        ) : (
-          <div>
-            {Array.from(groupedSuites.entries()).map(([suiteName, entries]) => (
-              <SuiteGroupItem
-                key={suiteName}
-                suiteName={suiteName}
-                entries={entries}
-                selectedSuiteId={selectedSuiteId}
-                onSelectSuite={onSelectSuite}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        <div className="flex-1 overflow-y-auto">
+          {isLoading ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              Loading suites...
+            </div>
+          ) : suites.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              No SDK suites found.
+            </div>
+          ) : (
+            <div>
+              {Array.from(groupedSuites.entries()).map(
+                ([suiteName, entries]) => (
+                  <SuiteGroupItem
+                    key={suiteName}
+                    suiteName={suiteName}
+                    entries={entries}
+                    selectedSuiteId={selectedSuiteId}
+                    onSelectSuite={onSelectSuite}
+                  />
+                ),
+              )}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
@@ -248,7 +219,9 @@ function SuiteGroupItem({
 
   const latestRun = primary.latestRun;
   const status = getStatusInfo(primary);
-  const trend = primary.passRateTrend.slice(-12).map((value) => toPercent(value));
+  const trend = primary.passRateTrend
+    .slice(-12)
+    .map((value) => toPercent(value));
   const timestamp = formatRelativeTime(
     latestRun?.completedAt ?? latestRun?.createdAt ?? primary.suite.updatedAt,
   );
@@ -287,13 +260,23 @@ function SuiteGroupItem({
         <div className="flex items-center gap-2.5">
           <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
             <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
-            <span className={cn("text-[9px] font-medium leading-none", status.labelClass)}>
+            <span
+              className={cn(
+                "text-[9px] font-medium leading-none",
+                status.labelClass,
+              )}
+            >
               {status.label}
             </span>
           </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
-              <span className={cn("truncate text-sm font-medium", isAnySelected && "font-semibold")}>
+              <span
+                className={cn(
+                  "truncate text-sm font-medium",
+                  isAnySelected && "font-semibold",
+                )}
+              >
                 {suiteName}
               </span>
               <span className="shrink-0 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-muted px-1 text-[9px] font-medium text-muted-foreground">
@@ -310,7 +293,14 @@ function SuiteGroupItem({
               {trend.map((value, idx) => (
                 <div
                   key={`${primary.suite._id}-t-${idx}`}
-                  className={cn("w-1 rounded-sm", value >= 80 ? "bg-emerald-500/70" : value >= 50 ? "bg-amber-500/70" : "bg-destructive/70")}
+                  className={cn(
+                    "w-1 rounded-sm",
+                    value >= 80
+                      ? "bg-emerald-500/70"
+                      : value >= 50
+                        ? "bg-amber-500/70"
+                        : "bg-destructive/70",
+                  )}
                   style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
                 />
               ))}
@@ -323,7 +313,9 @@ function SuiteGroupItem({
           {entries.map((entry) => {
             const entryStatus = getStatusInfo(entry);
             const entryTimestamp = formatRelativeTime(
-              entry.latestRun?.completedAt ?? entry.latestRun?.createdAt ?? entry.suite.updatedAt,
+              entry.latestRun?.completedAt ??
+                entry.latestRun?.createdAt ??
+                entry.suite.updatedAt,
             );
             return (
               <button
@@ -331,15 +323,26 @@ function SuiteGroupItem({
                 onClick={() => onSelectSuite(entry.suite._id)}
                 className={cn(
                   "w-full px-3 py-1.5 text-left transition-colors hover:bg-accent/50",
-                  selectedSuiteId === entry.suite._id && "bg-primary/10 border-r-2 border-r-primary",
+                  selectedSuiteId === entry.suite._id &&
+                    "bg-primary/10 border-r-2 border-r-primary",
                 )}
               >
                 <div className="flex items-center gap-2">
-                  <div className={cn("h-1.5 w-1.5 rounded-full shrink-0", entryStatus.dotClass)} />
+                  <div
+                    className={cn(
+                      "h-1.5 w-1.5 rounded-full shrink-0",
+                      entryStatus.dotClass,
+                    )}
+                  />
                   <span className="text-[11px] text-muted-foreground truncate flex-1">
                     {entryTimestamp}
                   </span>
-                  <span className={cn("text-[10px] font-medium", entryStatus.labelClass)}>
+                  <span
+                    className={cn(
+                      "text-[10px] font-medium",
+                      entryStatus.labelClass,
+                    )}
+                  >
                     {entryStatus.label}
                   </span>
                 </div>
@@ -378,12 +381,22 @@ function SuiteEntryButton({
       <div className="flex items-center gap-2.5">
         <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
           <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
-          <span className={cn("text-[9px] font-medium leading-none", status.labelClass)}>
+          <span
+            className={cn(
+              "text-[9px] font-medium leading-none",
+              status.labelClass,
+            )}
+          >
             {status.label}
           </span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className={cn("truncate text-sm font-medium", isSelected && "font-semibold")}>
+          <div
+            className={cn(
+              "truncate text-sm font-medium",
+              isSelected && "font-semibold",
+            )}
+          >
             {entry.suite.name || "Untitled suite"}
           </div>
           {entry.suite.tags && entry.suite.tags.length > 0 && (

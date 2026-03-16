@@ -243,7 +243,10 @@ export const formatters = {
 export function groupRunsByCommit(
   overview: EvalSuiteOverviewEntry[],
 ): CommitGroup[] {
-  const buckets = new Map<string, { runs: EvalSuiteRun[]; suiteMap: Map<string, string> }>();
+  const buckets = new Map<
+    string,
+    { runs: EvalSuiteRun[]; suiteMap: Map<string, string> }
+  >();
 
   for (const entry of overview) {
     for (const run of entry.recentRuns) {
@@ -268,7 +271,8 @@ export function groupRunsByCommit(
       const ts = run.completedAt ?? run.createdAt;
       if (ts > latestTimestamp) latestTimestamp = ts;
       if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
-      if (run.status === "running" || run.status === "pending") summary.running++;
+      if (run.status === "running" || run.status === "pending")
+        summary.running++;
       else if (run.result === "passed") summary.passed++;
       else if (run.result === "failed") summary.failed++;
     }

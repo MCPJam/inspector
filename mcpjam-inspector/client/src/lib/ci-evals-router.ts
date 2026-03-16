@@ -38,7 +38,10 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
 
   const commitMatch = path.match(/^\/ci-evals\/commit\/([^/]+)$/);
   if (commitMatch) {
-    return { type: "commit-detail", commitSha: decodeURIComponent(commitMatch[1]) };
+    return {
+      type: "commit-detail",
+      commitSha: decodeURIComponent(commitMatch[1]),
+    };
   }
 
   const suiteMatch = path.match(/^\/ci-evals\/suite\/([^/]+)(?:\/(.*))?$/);
