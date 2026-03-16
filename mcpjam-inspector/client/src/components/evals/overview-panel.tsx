@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -12,6 +12,8 @@ import {
   ArrowRight,
   TrendingUp,
   TrendingDown,
+  Sparkles,
+  RefreshCw,
 } from "lucide-react";
 import {
   Collapsible,
@@ -19,8 +21,15 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
+import { Badge } from "@/components/ui/badge";
 import { TagBadges } from "./tag-editor";
-import type { EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
+import type { EvalSuiteOverviewEntry, EvalSuiteRun, CommitGroup } from "./types";
+import {
+  buildOverviewTriageContext,
+  classifyFailure,
+  type FailureTag,
+} from "./ai-insights";
+import { useOverviewAiTriage } from "./use-ai-triage";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -159,6 +168,7 @@ interface OverviewPanelProps {
   onFilterTagChange: (tag: string | null) => void;
   onSelectSuite?: (suiteId: string) => void;
   onRerunSuite?: (suiteId: string) => void;
+  allCommitGroups?: CommitGroup[];
 }
 
 export function OverviewPanel({
@@ -168,6 +178,7 @@ export function OverviewPanel({
   onFilterTagChange,
   onSelectSuite,
   onRerunSuite,
+  allCommitGroups = [],
 }: OverviewPanelProps) {
   const [failureFeedOpen, setFailureFeedOpen] = useState(true);
   const [selectedBucketId, setSelectedBucketId] = useState<string | null>(null);
@@ -199,10 +210,18 @@ export function OverviewPanel({
     );
     const neverRun = filteredSuites.filter((e) => !e.latestRun);
 
-    const lastRunTime = filteredSuites.reduce((max, e) => {
+    let lastRunTime = 0;
+    let latestCommitSha: string | null = null;
+    let latestBranch: string | null = null;
+
+    for (const e of filteredSuites) {
       const t = e.latestRun?.completedAt ?? e.latestRun?.createdAt ?? 0;
-      return t > max ? t : max;
-    }, 0);
+      if (t > lastRunTime) {
+        lastRunTime = t;
+        latestCommitSha = e.latestRun?.ciMetadata?.commitSha ?? null;
+        latestBranch = e.latestRun?.ciMetadata?.branch ?? null;
+      }
+    }
 
     return {
       failed,
@@ -215,8 +234,57 @@ export function OverviewPanel({
       runningCount: running.length,
       neverRunCount: neverRun.length,
       lastRunTime: lastRunTime || undefined,
+      latestCommitSha,
+      latestBranch,
     };
   }, [filteredSuites]);
+
+  // ---------------------------------------------------------------------------
+  // AI Overview Triage
+  // ---------------------------------------------------------------------------
+  const overviewTriageCtx = useMemo(
+    () => buildOverviewTriageContext(filteredSuites, allCommitGroups),
+    [filteredSuites, allCommitGroups],
+  );
+
+  const aiOverviewTriage = useOverviewAiTriage(
+    overviewTriageCtx.failingSuites.length > 0 ? overviewTriageCtx : null,
+  );
+
+  // Auto-generate on first load when there are suites with failed cases
+  useEffect(() => {
+    if (
+      overviewTriageCtx.failingSuites.length > 0 &&
+      !aiOverviewTriage.result &&
+      !aiOverviewTriage.loading
+    ) {
+      aiOverviewTriage.generate();
+    }
+  }, [
+    overviewTriageCtx.failingSuites.length,
+    aiOverviewTriage.result,
+    aiOverviewTriage.loading,
+    aiOverviewTriage.generate,
+  ]);
+
+  // Pre-compute inline failure tags for the failure feed
+  // Tags suites with failed cases OR failed result
+  const failureTagMap = useMemo(() => {
+    const map = new Map<string, FailureTag[]>();
+    for (const entry of filteredSuites) {
+      const hasFailedCases = entry.totals.failed > 0;
+      const suiteResultFailed = entry.latestRun?.result === "failed";
+      if ((hasFailedCases || suiteResultFailed) && entry.latestRun) {
+        const classified = classifyFailure(
+          entry.latestRun,
+          entry.suite.name,
+          allCommitGroups,
+        );
+        map.set(entry.suite._id, classified.tags);
+      }
+    }
+    return map;
+  }, [filteredSuites, allCommitGroups]);
 
   // ---------------------------------------------------------------------------
   // Section B: Run Timeline
@@ -382,6 +450,12 @@ export function OverviewPanel({
               {stats.neverRunCount > 0 && (
                 <> &middot; {stats.neverRunCount} never run</>
               )}
+              {stats.latestBranch && (
+                <> &middot; {stats.latestBranch}</>
+              )}
+              {stats.latestCommitSha && (
+                <> @ <span className="font-mono">{stats.latestCommitSha.slice(0, 7)}</span></>
+              )}
             </span>
           </div>
         </div>
@@ -391,6 +465,72 @@ export function OverviewPanel({
           </span>
         )}
       </div>
+
+      {/* AI Overview Summary — only when failures exist */}
+      {overviewTriageCtx.failingSuites.length > 0 && (
+        <div className="relative rounded-lg border border-violet-200 bg-violet-50/50 shadow-sm dark:border-violet-800 dark:bg-violet-950/20">
+          <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg bg-gradient-to-r from-violet-500 via-purple-400 to-violet-500 opacity-50" />
+          <div className="px-4 py-3">
+            <div className="flex items-center gap-2 mb-2">
+              <Badge
+                variant="outline"
+                className="border-violet-300 bg-violet-100 text-violet-600 text-[10px] font-bold uppercase tracking-wider dark:border-violet-700 dark:bg-violet-900/50 dark:text-violet-400"
+              >
+                <Sparkles className="mr-1 h-3 w-3" />
+                AI
+              </Badge>
+              <span className="text-xs font-semibold">Overview Insights</span>
+              {stats.latestCommitSha && (
+                <span className="text-[10px] text-muted-foreground font-mono">
+                  {stats.latestBranch && <>{stats.latestBranch} @ </>}
+                  {stats.latestCommitSha.slice(0, 7)}
+                  {" · "}
+                  {stats.totalSuites} suite{stats.totalSuites !== 1 ? "s" : ""}
+                </span>
+              )}
+              <span className="ml-auto flex items-center gap-2 text-[10px] text-muted-foreground">
+                {aiOverviewTriage.loading && (
+                  <span className="flex items-center gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    analyzing...
+                  </span>
+                )}
+                {!aiOverviewTriage.loading && (
+                  <button
+                    onClick={() => aiOverviewTriage.generate()}
+                    className="p-0.5 rounded hover:bg-violet-200/50 transition-colors"
+                    title="Regenerate AI insights"
+                  >
+                    <RefreshCw className="h-3 w-3" />
+                  </button>
+                )}
+              </span>
+            </div>
+            <div className="text-xs leading-relaxed">
+              {aiOverviewTriage.result ? (
+                <p>{aiOverviewTriage.result.summary}</p>
+              ) : aiOverviewTriage.error ? (
+                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium">AI insights unavailable</p>
+                    <p className="text-[11px] text-muted-foreground mt-0.5">
+                      {aiOverviewTriage.error}
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span>
+                    Analyzing {overviewTriageCtx.failingSuites.length} suite{overviewTriageCtx.failingSuites.length !== 1 ? "s" : ""} with failures...
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Section B: Run Timeline Chips */}
       {timeline.length > 0 && (
@@ -481,8 +621,14 @@ export function OverviewPanel({
                         <MinusCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                       )}
                       <div className="min-w-0 flex-1">
-                        <div className="text-sm font-medium truncate">
-                          {entry.suite.name}
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-sm font-medium truncate">
+                            {entry.suite.name}
+                          </span>
+                          {isFailed &&
+                            failureTagMap.get(entry.suite._id)?.map((tag) => (
+                              <InlineFailureTag key={tag} tag={tag} />
+                            ))}
                         </div>
                         {isFailed && entry.latestRun?.summary && (
                           <div className="text-xs text-muted-foreground mt-0.5">
@@ -696,7 +842,16 @@ export function OverviewPanel({
                         : undefined
                     }
                   >
-                    {lastRunTs ? formatRelativeTime(lastRunTs) : "—"}
+                    {entry.latestRun?.ciMetadata?.commitSha ? (
+                      <div>
+                        <span className="font-mono">{entry.latestRun.ciMetadata.commitSha.slice(0, 7)}</span>
+                        {lastRunTs && (
+                          <div className="text-[10px]">{formatRelativeTime(lastRunTs)}</div>
+                        )}
+                      </div>
+                    ) : (
+                      lastRunTs ? formatRelativeTime(lastRunTs) : "—"
+                    )}
                   </div>
 
                   {/* Trend sparkline */}
@@ -740,5 +895,37 @@ export function OverviewPanel({
         </div>
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inline failure tag for the failure feed
+// ---------------------------------------------------------------------------
+
+function InlineFailureTag({ tag }: { tag: FailureTag }) {
+  const config = {
+    regression: {
+      label: "regression",
+      className: "text-destructive bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800",
+    },
+    flaky: {
+      label: "flaky",
+      className: "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-800",
+    },
+    new: {
+      label: "new",
+      className: "text-violet-600 bg-violet-50 border-violet-200 dark:bg-violet-950/50 dark:border-violet-800",
+    },
+  }[tag];
+
+  return (
+    <span
+      className={cn(
+        "inline-flex shrink-0 items-center rounded-full border px-1.5 py-0 text-[9px] font-semibold leading-4",
+        config.className,
+      )}
+    >
+      {config.label}
+    </span>
   );
 }
