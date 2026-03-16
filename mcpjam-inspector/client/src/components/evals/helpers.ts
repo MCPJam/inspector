@@ -1,8 +1,10 @@
 import {
+  CommitGroup,
   EvalCase,
   EvalIteration,
   EvalSuite,
   EvalSuiteOverviewEntry,
+  EvalSuiteRun,
   SuiteAggregate,
   TagGroupAggregate,
 } from "./types";
@@ -233,6 +235,88 @@ export const formatters = {
   percentage: formatPercentage,
   tokens: formatTokens,
 } as const;
+
+/**
+ * Flatten recentRuns across all suites and group by commitSha.
+ * Runs without a commitSha go into a "manual" group.
+ */
+export function groupRunsByCommit(
+  overview: EvalSuiteOverviewEntry[],
+): CommitGroup[] {
+  const buckets = new Map<string, { runs: EvalSuiteRun[]; suiteMap: Map<string, string> }>();
+
+  for (const entry of overview) {
+    for (const run of entry.recentRuns) {
+      const sha = run.ciMetadata?.commitSha?.trim() || "__manual__";
+      if (!buckets.has(sha)) {
+        buckets.set(sha, { runs: [], suiteMap: new Map() });
+      }
+      const bucket = buckets.get(sha)!;
+      bucket.runs.push(run);
+      bucket.suiteMap.set(entry.suite._id, entry.suite.name);
+    }
+  }
+
+  const groups: CommitGroup[] = [];
+  for (const [sha, { runs, suiteMap }] of buckets) {
+    const isManual = sha === "__manual__";
+    const summary = { total: runs.length, passed: 0, failed: 0, running: 0 };
+    let latestTimestamp = 0;
+    let branch: string | null = null;
+
+    for (const run of runs) {
+      const ts = run.completedAt ?? run.createdAt;
+      if (ts > latestTimestamp) latestTimestamp = ts;
+      if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
+      if (run.status === "running" || run.status === "pending") summary.running++;
+      else if (run.result === "passed") summary.passed++;
+      else if (run.result === "failed") summary.failed++;
+    }
+
+    let status: CommitGroup["status"];
+    if (summary.running > 0) status = "running";
+    else if (summary.failed > 0 && summary.passed > 0) status = "mixed";
+    else if (summary.failed > 0) status = "failed";
+    else status = "passed";
+
+    groups.push({
+      commitSha: isManual ? "manual" : sha,
+      shortSha: isManual ? "Manual" : sha.slice(0, 7),
+      branch: isManual ? null : branch,
+      timestamp: latestTimestamp,
+      status,
+      runs,
+      suiteMap,
+      summary,
+    });
+  }
+
+  // Sort by most recent first, manual always last
+  groups.sort((a, b) => {
+    if (a.commitSha === "manual") return 1;
+    if (b.commitSha === "manual") return -1;
+    return b.timestamp - a.timestamp;
+  });
+
+  return groups;
+}
+
+/**
+ * Format relative time for sidebar display
+ */
+export function formatRelativeTime(timestamp?: number): string {
+  if (!timestamp) return "No runs yet";
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
 
 /**
  * Group overview entries by tag and compute aggregated stats per tag.

@@ -17,7 +17,8 @@ export type CiEvalsRoute =
       suiteId: string;
       testId: string;
       iteration?: string;
-    };
+    }
+  | { type: "commit-detail"; commitSha: string };
 
 /**
  * Parse the current hash to extract CI evals route information.
@@ -33,6 +34,11 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
 
   if (path === "/ci-evals") {
     return { type: "list" };
+  }
+
+  const commitMatch = path.match(/^\/ci-evals\/commit\/([^/]+)$/);
+  if (commitMatch) {
+    return { type: "commit-detail", commitSha: decodeURIComponent(commitMatch[1]) };
   }
 
   const suiteMatch = path.match(/^\/ci-evals\/suite\/([^/]+)(?:\/(.*))?$/);
@@ -117,6 +123,9 @@ export function navigateToCiEvalsRoute(
       hash = `#/ci-evals/suite/${route.suiteId}/test/${route.testId}${query ? `?${query}` : ""}`;
       break;
     }
+    case "commit-detail":
+      hash = `#/ci-evals/commit/${encodeURIComponent(route.commitSha)}`;
+      break;
   }
 
   if (options?.replace) {
