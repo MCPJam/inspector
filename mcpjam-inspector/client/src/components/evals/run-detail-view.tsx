@@ -679,11 +679,17 @@ function IterationListItem({
     const expectedArgs = testInfo.expectedToolCalls?.[0]?.arguments;
     if (expectedArgs && Object.keys(expectedArgs).length > 0) {
       const entries = Object.entries(expectedArgs).slice(0, 2);
-      return entries.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ');
+      return entries
+        .map(
+          ([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`,
+        )
+        .join(", ");
     }
     // Fall back to first ~60 chars of query if different from title
     if (testInfo.query && testInfo.query !== testInfo.title) {
-      return testInfo.query.length > 60 ? testInfo.query.slice(0, 57) + '...' : testInfo.query;
+      return testInfo.query.length > 60
+        ? testInfo.query.slice(0, 57) + "..."
+        : testInfo.query;
     }
     return null;
   }, [testInfo]);
