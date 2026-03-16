@@ -54,13 +54,6 @@ function formatRelativeTime(timestamp?: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
-function formatShortDate(timestamp: number): string {
-  return new Date(timestamp).toLocaleDateString(undefined, {
-    month: "short",
-    day: "numeric",
-  });
-}
-
 /** Tiny inline sparkline rendered as CSS bars. */
 function Sparkline({
   data,
@@ -91,11 +84,14 @@ function Sparkline({
 
 interface RunBucket {
   id: string;
-  label: string;
-  date: string;
+  commitSha: string | null;
+  branch: string | null;
   timestamp: number;
   result: "passed" | "failed" | "mixed" | "running" | "pending";
   runs: EvalSuiteRun[];
+  suiteIds: Set<string>;
+  passedCount: number;
+  failedCount: number;
 }
 
 function buildRunTimeline(
@@ -108,23 +104,48 @@ function buildRunTimeline(
   // Sort by creation time
   const sorted = [...allRuns].sort((a, b) => a.createdAt - b.createdAt);
 
-  // Group runs that happened within 60s of each other (same batch)
-  const buckets: EvalSuiteRun[][] = [];
-  let currentBucket: EvalSuiteRun[] = [sorted[0]];
+  // Group runs by commit SHA when available, else by 60s time proximity
+  const commitGroups = new Map<string, EvalSuiteRun[]>();
+  const manualRuns: EvalSuiteRun[] = [];
 
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = currentBucket[currentBucket.length - 1];
-    if (sorted[i].createdAt - prev.createdAt < 60_000) {
-      currentBucket.push(sorted[i]);
+  for (const run of sorted) {
+    const sha = run.ciMetadata?.commitSha;
+    if (sha) {
+      const group = commitGroups.get(sha) ?? [];
+      group.push(run);
+      commitGroups.set(sha, group);
     } else {
-      buckets.push(currentBucket);
-      currentBucket = [sorted[i]];
+      manualRuns.push(run);
     }
   }
-  buckets.push(currentBucket);
 
-  // Dedupe by taking the latest N buckets
-  const recentBuckets = buckets.slice(-maxBuckets);
+  // Time-bucket manual runs (no commit SHA)
+  const manualBuckets: EvalSuiteRun[][] = [];
+  if (manualRuns.length > 0) {
+    let currentBucket: EvalSuiteRun[] = [manualRuns[0]];
+    for (let i = 1; i < manualRuns.length; i++) {
+      const prev = currentBucket[currentBucket.length - 1];
+      if (manualRuns[i].createdAt - prev.createdAt < 60_000) {
+        currentBucket.push(manualRuns[i]);
+      } else {
+        manualBuckets.push(currentBucket);
+        currentBucket = [manualRuns[i]];
+      }
+    }
+    manualBuckets.push(currentBucket);
+  }
+
+  // Merge commit groups + manual buckets, sort by latest timestamp
+  const allBucketRuns: EvalSuiteRun[][] = [
+    ...Array.from(commitGroups.values()),
+    ...manualBuckets,
+  ].sort(
+    (a, b) =>
+      Math.max(...a.map((r) => r.createdAt)) -
+      Math.max(...b.map((r) => r.createdAt)),
+  );
+
+  const recentBuckets = allBucketRuns.slice(-maxBuckets);
 
   return recentBuckets.map((runs, idx) => {
     const hasFailure = runs.some((r) => r.result === "failed");
@@ -142,17 +163,23 @@ function buildRunTimeline(
           : "mixed";
 
     const timestamp = Math.max(...runs.map((r) => r.createdAt));
-    // Use runNumber from first run if available
-    const runNum = runs[0]?.runNumber;
-    const label = runNum ? `#${runNum}` : `#${idx + 1}`;
+    const commitSha = runs[0]?.ciMetadata?.commitSha ?? null;
+    const branch = runs[0]?.ciMetadata?.branch ?? null;
+    const suiteIds = new Set(runs.map((r) => r.suiteId));
+
+    const passedCount = runs.filter((r) => r.result === "passed").length;
+    const failedCount = runs.filter((r) => r.result === "failed").length;
 
     return {
-      id: `bucket-${idx}`,
-      label,
-      date: formatShortDate(timestamp),
+      id: commitSha ?? `manual-${idx}`,
+      commitSha,
+      branch,
       timestamp,
       result,
       runs,
+      suiteIds,
+      passedCount,
+      failedCount,
     };
   });
 }
@@ -294,16 +321,20 @@ export function OverviewPanel({
     [filteredSuites],
   );
 
-  // Auto-select latest bucket
-  const activeBucketId =
-    selectedBucketId ??
-    (timeline.length > 0 ? timeline[timeline.length - 1].id : null);
+  // null = show all suites (no filter)
+  const activeBucketId = selectedBucketId;
+  const activeBucket = timeline.find((b) => b.id === activeBucketId) ?? null;
 
   // ---------------------------------------------------------------------------
   // Section D: Suite Table — severity-sorted, filtered, searchable
   // ---------------------------------------------------------------------------
   const tableSuites = useMemo(() => {
     let list = [...filteredSuites];
+
+    // Filter by selected timeline bucket
+    if (activeBucket) {
+      list = list.filter((e) => activeBucket.suiteIds.has(e.suite._id));
+    }
 
     // Search filter
     if (suiteSearch) {
@@ -334,14 +365,18 @@ export function OverviewPanel({
     });
 
     return list;
-  }, [filteredSuites, suiteSearch, failuresOnly]);
+  }, [filteredSuites, suiteSearch, failuresOnly, activeBucket]);
 
-  // Failure feed entries
+  // Failure feed entries (also filtered by active bucket)
   const failureEntries = useMemo(() => {
-    return filteredSuites.filter(
+    let list = filteredSuites;
+    if (activeBucket) {
+      list = list.filter((e) => activeBucket.suiteIds.has(e.suite._id));
+    }
+    return list.filter(
       (e) => e.latestRun?.result === "failed" || !e.latestRun,
     );
-  }, [filteredSuites]);
+  }, [filteredSuites, activeBucket]);
 
   // Auto-collapse failure feed when no failures
   const hasFailures = failureEntries.length > 0;
@@ -536,6 +571,24 @@ export function OverviewPanel({
       {timeline.length > 0 && (
         <div className="rounded-xl border bg-card p-3">
           <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            {/* "All" chip to clear filter */}
+            <button
+              onClick={() => setSelectedBucketId(null)}
+              className={cn(
+                "flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-all shrink-0 min-w-[48px]",
+                activeBucketId === null
+                  ? "bg-accent ring-2 ring-primary/30 shadow-sm"
+                  : "hover:bg-accent/50",
+              )}
+            >
+              <span className="text-xs font-medium">All</span>
+              <span className="text-[10px] text-muted-foreground">
+                {timeline.reduce((n, b) => n + b.runs.length, 0)} runs
+              </span>
+            </button>
+
+            <div className="w-px h-6 bg-border shrink-0" />
+
             {timeline.map((bucket) => {
               const isActive = bucket.id === activeBucketId;
               const chipColor =
@@ -547,12 +600,31 @@ export function OverviewPanel({
                       ? "bg-emerald-500"
                       : "bg-muted-foreground";
 
+              const chipLabel = bucket.commitSha
+                ? bucket.commitSha.slice(0, 7)
+                : "manual";
+
+              const totalRuns = bucket.runs.length;
+              const summaryParts: string[] = [];
+              if (bucket.passedCount > 0) summaryParts.push(`${bucket.passedCount}✓`);
+              if (bucket.failedCount > 0) summaryParts.push(`${bucket.failedCount}✗`);
+              const summaryText = summaryParts.length > 0
+                ? summaryParts.join(" ")
+                : `${totalRuns} run${totalRuns !== 1 ? "s" : ""}`;
+
+              const tooltipParts = [
+                bucket.branch ? `${bucket.branch} @ ${chipLabel}` : chipLabel,
+                `${bucket.passedCount} passed, ${bucket.failedCount} failed of ${totalRuns}`,
+                new Date(bucket.timestamp).toLocaleString(),
+              ];
+
               return (
                 <button
                   key={bucket.id}
-                  onClick={() => setSelectedBucketId(bucket.id)}
+                  onClick={() => setSelectedBucketId(bucket.id === activeBucketId ? null : bucket.id)}
+                  title={tooltipParts.join("\n")}
                   className={cn(
-                    "flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-all shrink-0 min-w-[60px]",
+                    "flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-all shrink-0 min-w-[68px]",
                     isActive
                       ? "bg-accent ring-2 ring-primary/30 shadow-sm"
                       : "hover:bg-accent/50",
@@ -562,10 +634,13 @@ export function OverviewPanel({
                     <div
                       className={cn("h-2.5 w-2.5 rounded-full", chipColor)}
                     />
-                    <span className="text-xs font-medium">{bucket.label}</span>
+                    <span className="text-xs font-mono font-medium">{chipLabel}</span>
                   </div>
                   <span className="text-[10px] text-muted-foreground">
-                    {bucket.date}
+                    {formatRelativeTime(bucket.timestamp)}
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    {summaryText}
                   </span>
                 </button>
               );
@@ -688,6 +763,17 @@ export function OverviewPanel({
       <div className="rounded-xl border bg-card">
         {/* Table toolbar */}
         <div className="flex items-center gap-2 px-4 py-2.5 border-b flex-wrap">
+          {activeBucket && (
+            <button
+              onClick={() => setSelectedBucketId(null)}
+              className="text-xs px-2.5 py-1 rounded-full border bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 transition-colors flex items-center gap-1"
+            >
+              <span className="font-mono">
+                {activeBucket.commitSha ? activeBucket.commitSha.slice(0, 7) : "manual"}
+              </span>
+              <span>&times;</span>
+            </button>
+          )}
           <button
             onClick={() => setFailuresOnly(!failuresOnly)}
             className={cn(
