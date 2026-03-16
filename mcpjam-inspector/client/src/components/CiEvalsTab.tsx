@@ -15,7 +15,10 @@ import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
-import { CiSuiteListSidebar, type SidebarMode } from "./evals/ci-suite-list-sidebar";
+import {
+  CiSuiteListSidebar,
+  type SidebarMode,
+} from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
@@ -87,10 +90,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [queries.sortedSuites],
   );
 
-  const commitGroups = useMemo(
-    () => groupRunsByCommit(sdkSuites),
-    [sdkSuites],
-  );
+  const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
 
   // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
   useEffect(() => {
@@ -108,9 +108,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const selectedCommitGroup = useMemo(() => {
     if (!selectedCommitSha) return null;
-    return (
-      commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null
-    );
+    return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
   }, [commitGroups, selectedCommitSha]);
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
@@ -323,7 +321,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                   Select a suite
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Choose a CI suite or commit from the sidebar to inspect runs and test iterations.
+                  Choose a CI suite or commit from the sidebar to inspect runs
+                  and test iterations.
                 </p>
               </div>
             </div>

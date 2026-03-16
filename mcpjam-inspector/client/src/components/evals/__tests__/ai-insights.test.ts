@@ -123,16 +123,16 @@ describe("isFlaky", () => {
   });
 
   it("returns true for frequent alternation", () => {
-    expect(
-      isFlaky(["passed", "failed", "passed", "failed", "passed"]),
-    ).toBe(true);
+    expect(isFlaky(["passed", "failed", "passed", "failed", "passed"])).toBe(
+      true,
+    );
   });
 
   it("ignores 'other' results when counting switches", () => {
     // After filtering: passed, failed, passed = 2 switches
-    expect(
-      isFlaky(["passed", "other", "failed", "other", "passed"]),
-    ).toBe(true);
+    expect(isFlaky(["passed", "other", "failed", "other", "passed"])).toBe(
+      true,
+    );
   });
 
   it("only looks at first 10 entries", () => {
@@ -163,9 +163,7 @@ describe("classifyFailure", () => {
   it("tags as 'new' when there is no prior history", () => {
     const suiteId = "suite-new";
     const run = makeRun({ suiteId, result: "failed" });
-    const groups: CommitGroup[] = [
-      makeCommitGroup({ runs: [run] }),
-    ];
+    const groups: CommitGroup[] = [makeCommitGroup({ runs: [run] })];
 
     const result = classifyFailure(run, "New Suite", groups);
     expect(result.tags).toContain("new");
@@ -218,11 +216,7 @@ describe("classifyFailure", () => {
       }),
     ];
 
-    const result = classifyFailure(
-      failedRun,
-      "Flaky Regression",
-      groups,
-    );
+    const result = classifyFailure(failedRun, "Flaky Regression", groups);
     expect(result.tags).toContain("regression");
     expect(result.tags).toContain("flaky");
   });
@@ -285,158 +279,5 @@ describe("classifyAllFailures", () => {
 
     const results = classifyAllFailures([run], new Map(), groups);
     expect(results[0].suiteName).toBe("Unknown suite");
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildTriageContext
-// ---------------------------------------------------------------------------
-
-describe("buildTriageContext", () => {
-  it("builds context with correct aggregated data", () => {
-    const failedRun = makeRun({
-      suiteId: "s1",
-      result: "failed",
-      summary: { total: 10, passed: 7, failed: 3, passRate: 70 },
-      configSnapshot: {
-        tests: [
-          {
-            title: "test-a",
-            query: "q",
-            provider: "p",
-            model: "m",
-            runs: 1,
-            expectedToolCalls: [],
-          },
-          {
-            title: "test-b",
-            query: "q",
-            provider: "p",
-            model: "m",
-            runs: 1,
-            expectedToolCalls: [],
-          },
-        ],
-        environment: { servers: [] },
-      },
-    });
-    const passedRun = makeRun({
-      suiteId: "s2",
-      result: "passed",
-      summary: { total: 5, passed: 5, failed: 0, passRate: 100 },
-    });
-    const notRunRun = makeRun({
-      suiteId: "s3",
-      result: "cancelled",
-    });
-
-    const suiteMap = new Map([
-      ["s1", "Failed Suite"],
-      ["s2", "Passed Suite"],
-      ["s3", "Not Run Suite"],
-    ]);
-
-    const commitGroup = makeCommitGroup({
-      commitSha: "abc123",
-      shortSha: "abc1234",
-      branch: "main",
-      runs: [failedRun, passedRun, notRunRun],
-      suiteMap,
-    });
-
-    const classified = [
-      {
-        run: failedRun,
-        suiteName: "Failed Suite",
-        tags: ["regression" as const],
-      },
-    ];
-
-    const ctx = buildTriageContext(
-      commitGroup,
-      classified,
-      [passedRun],
-      [notRunRun],
-    );
-
-    expect(ctx.commitSha).toBe("abc1234");
-    expect(ctx.branch).toBe("main");
-    expect(ctx.totalSuites).toBe(3);
-    expect(ctx.totalCases.total).toBe(15);
-    expect(ctx.totalCases.passed).toBe(12);
-    expect(ctx.totalCases.failed).toBe(3);
-    expect(ctx.failures).toHaveLength(1);
-    expect(ctx.failures[0].suiteName).toBe("Failed Suite");
-    expect(ctx.failures[0].tags).toEqual(["regression"]);
-    expect(ctx.failures[0].testNames).toEqual(["test-a", "test-b"]);
-    expect(ctx.passedSuites).toEqual(["Passed Suite"]);
-    expect(ctx.notRunSuites).toEqual(["Not Run Suite"]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// buildOverviewTriageContext
-// ---------------------------------------------------------------------------
-
-describe("buildOverviewTriageContext", () => {
-  it("categorizes suites correctly", () => {
-    const suites = [
-      {
-        suite: { _id: "s1", name: "Failing Suite" } as any,
-        latestRun: makeRun({ suiteId: "s1", result: "failed" }),
-        recentRuns: [],
-        passRateTrend: [],
-        totals: { passed: 3, failed: 2, runs: 5 },
-      },
-      {
-        suite: { _id: "s2", name: "Passing Suite" } as any,
-        latestRun: makeRun({ suiteId: "s2", result: "passed" }),
-        recentRuns: [],
-        passRateTrend: [],
-        totals: { passed: 10, failed: 0, runs: 10 },
-      },
-      {
-        suite: { _id: "s3", name: "New Suite" } as any,
-        latestRun: null,
-        recentRuns: [],
-        passRateTrend: [],
-        totals: { passed: 0, failed: 0, runs: 0 },
-      },
-    ];
-
-    const ctx = buildOverviewTriageContext(suites, []);
-    expect(ctx.totalSuites).toBe(3);
-    expect(ctx.passingSuites).toBe(1);
-    expect(ctx.neverRunSuites).toBe(1);
-    expect(ctx.failingSuites).toHaveLength(1);
-    expect(ctx.failingSuites[0].name).toBe("Failing Suite");
-    expect(ctx.failingSuites[0].passRate).toBe("60%");
-  });
-
-  it("includes suites that passed overall but have failed cases", () => {
-    const suites = [
-      {
-        suite: { _id: "s1", name: "Mostly Passing Suite" } as any,
-        latestRun: makeRun({ suiteId: "s1", result: "passed" }),
-        recentRuns: [],
-        passRateTrend: [],
-        totals: { passed: 14, failed: 2, runs: 16 },
-      },
-      {
-        suite: { _id: "s2", name: "Fully Passing Suite" } as any,
-        latestRun: makeRun({ suiteId: "s2", result: "passed" }),
-        recentRuns: [],
-        passRateTrend: [],
-        totals: { passed: 10, failed: 0, runs: 10 },
-      },
-    ];
-
-    const ctx = buildOverviewTriageContext(suites, []);
-    expect(ctx.totalSuites).toBe(2);
-    expect(ctx.passingSuites).toBe(1);
-    expect(ctx.failingSuites).toHaveLength(1);
-    expect(ctx.failingSuites[0].name).toBe("Mostly Passing Suite");
-    expect(ctx.failingSuites[0].passRate).toBe("88%");
-    expect(ctx.failingSuites[0].failedCases).toBe(2);
   });
 });

@@ -27,9 +27,7 @@ export interface TriageResult {
  * Until the backend mutation is deployed, requests fail gracefully and the
  * panel stays hidden instead of flashing briefly.
  */
-export function useCommitTriage(
-  failedRunIds: string[],
-): {
+export function useCommitTriage(failedRunIds: string[]): {
   summary: string | null;
   loading: boolean;
   error: string | null;
@@ -62,7 +60,8 @@ export function useCommitTriage(
   }, [runKey]);
 
   const requestTriage = useCallback(() => {
-    if (failedRunIds.length === 0 || unavailable || hasAttemptedRef.current) return;
+    if (failedRunIds.length === 0 || unavailable || hasAttemptedRef.current)
+      return;
 
     hasAttemptedRef.current = true;
     setLoading(true);
@@ -79,7 +78,9 @@ export function useCommitTriage(
         } else {
           // Backend will generate async — for now show as pending
           setLoading(false);
-          setSummary("Triage requested — results will appear when backend processing completes.");
+          setSummary(
+            "Triage requested — results will appear when backend processing completes.",
+          );
         }
       })
       .catch((err: unknown) => {

@@ -71,12 +71,18 @@ export function CommitListSidebar({
                 onClick={() => onSelectCommit(group.commitSha)}
                 className={cn(
                   "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
-                  selectedCommitSha === group.commitSha && "bg-accent shadow-sm",
+                  selectedCommitSha === group.commitSha &&
+                    "bg-accent shadow-sm",
                 )}
               >
                 <div className="flex items-start gap-2.5">
                   {/* Status dot */}
-                  <div className={cn("h-2 w-2 rounded-full mt-1.5 shrink-0", status.dotClass)} />
+                  <div
+                    className={cn(
+                      "h-2 w-2 rounded-full mt-1.5 shrink-0",
+                      status.dotClass,
+                    )}
+                  />
 
                   {/* Content */}
                   <div className="min-w-0 flex-1">
