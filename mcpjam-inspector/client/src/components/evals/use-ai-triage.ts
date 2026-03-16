@@ -18,9 +18,7 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
   const [unavailable, setUnavailable] = useState(false);
   const [requested, setRequested] = useState(false);
 
-  const requestTriageMutation = useMutation(
-    "triage:requestTriage" as any,
-  );
+  const requestTriageMutation = useMutation("triage:requestTriage" as any);
 
   const failed = failedCount ?? run?.summary?.failed ?? 0;
 
@@ -37,7 +35,8 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
     setError(null);
     setRequested(true);
 
-    const force = run.triageStatus === "completed" || run.triageStatus === "failed";
+    const force =
+      run.triageStatus === "completed" || run.triageStatus === "failed";
 
     requestTriageMutation({ suiteRunId: run._id, force } as any).catch(
       (err: unknown) => {

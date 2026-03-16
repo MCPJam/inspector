@@ -9,7 +9,8 @@ interface AiTriagePanelProps {
 }
 
 export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
-  const { canTriage, error, unavailable, requested, requestTriage } = useAiTriage(run, failedCount);
+  const { canTriage, error, unavailable, requested, requestTriage } =
+    useAiTriage(run, failedCount);
 
   // Don't render anything if the backend isn't available
   if (unavailable) return null;
@@ -113,7 +114,9 @@ export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
               <ol className="space-y-1.5">
                 {triageSummary.topRecommendations.map((rec, i) => (
                   <li key={i} className="text-xs leading-relaxed flex gap-2">
-                    <span className="font-mono text-orange-500/70 shrink-0">{i + 1}.</span>
+                    <span className="font-mono text-orange-500/70 shrink-0">
+                      {i + 1}.
+                    </span>
                     <span>{rec}</span>
                   </li>
                 ))}
@@ -155,9 +158,7 @@ export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
         <Sparkles className="h-3.5 w-3.5" />
         Triage Failures
       </Button>
-      {error && (
-        <span className="ml-3 text-xs text-destructive">{error}</span>
-      )}
+      {error && <span className="ml-3 text-xs text-destructive">{error}</span>}
     </div>
   );
 }

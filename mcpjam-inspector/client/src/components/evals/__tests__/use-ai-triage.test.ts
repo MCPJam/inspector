@@ -70,7 +70,9 @@ describe("useAiTriage", () => {
 
     it("is false when summary has 0 failures", async () => {
       const useAiTriage = await getHook();
-      const run = makeRun({ summary: { total: 5, passed: 5, failed: 0, passRate: 1 } });
+      const run = makeRun({
+        summary: { total: 5, passed: 5, failed: 0, passRate: 1 },
+      });
       const { result } = renderHook(() => useAiTriage(run));
       expect(result.current.canTriage).toBe(false);
     });
@@ -85,7 +87,9 @@ describe("useAiTriage", () => {
     it("uses failedCount prop over run.summary.failed", async () => {
       const useAiTriage = await getHook();
       // summary says 0 failures, but failedCount override says 1
-      const run = makeRun({ summary: { total: 5, passed: 5, failed: 0, passRate: 1 } });
+      const run = makeRun({
+        summary: { total: 5, passed: 5, failed: 0, passRate: 1 },
+      });
       const { result } = renderHook(() => useAiTriage(run, 1));
       expect(result.current.canTriage).toBe(true);
     });
@@ -108,7 +112,10 @@ describe("useAiTriage", () => {
         result.current.requestTriage();
       });
 
-      expect(mockMutate).toHaveBeenCalledWith({ suiteRunId: "run-1", force: false });
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: false,
+      });
     });
 
     it("calls mutation with force=true when re-triaging a completed triage", async () => {
@@ -120,7 +127,10 @@ describe("useAiTriage", () => {
         result.current.requestTriage();
       });
 
-      expect(mockMutate).toHaveBeenCalledWith({ suiteRunId: "run-1", force: true });
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: true,
+      });
     });
 
     it("calls mutation with force=true when retrying a failed triage", async () => {
@@ -132,7 +142,10 @@ describe("useAiTriage", () => {
         result.current.requestTriage();
       });
 
-      expect(mockMutate).toHaveBeenCalledWith({ suiteRunId: "run-1", force: true });
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: true,
+      });
     });
 
     it("sets requested=true after first call", async () => {
@@ -154,9 +167,15 @@ describe("useAiTriage", () => {
       const run = makeRun();
       const { result } = renderHook(() => useAiTriage(run));
 
-      await act(async () => { result.current.requestTriage(); });
-      await act(async () => { result.current.requestTriage(); });
-      await act(async () => { result.current.requestTriage(); });
+      await act(async () => {
+        result.current.requestTriage();
+      });
+      await act(async () => {
+        result.current.requestTriage();
+      });
+      await act(async () => {
+        result.current.requestTriage();
+      });
 
       expect(mockMutate).toHaveBeenCalledTimes(1);
     });
@@ -175,7 +194,9 @@ describe("useAiTriage", () => {
 
   describe("error handling", () => {
     it("sets unavailable when mutation reports function not found", async () => {
-      mockMutate.mockRejectedValue(new Error("Could not find function triage:requestTriage"));
+      mockMutate.mockRejectedValue(
+        new Error("Could not find function triage:requestTriage"),
+      );
       const useAiTriage = await getHook();
       const run = makeRun();
       const { result } = renderHook(() => useAiTriage(run));

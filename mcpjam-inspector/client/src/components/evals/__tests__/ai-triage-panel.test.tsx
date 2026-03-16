@@ -63,7 +63,9 @@ describe("AiTriagePanel", () => {
   describe("visibility", () => {
     it("renders nothing when there are no failures (summary)", async () => {
       const AiTriagePanel = await getPanel();
-      const run = makeRun({ summary: { total: 5, passed: 5, failed: 0, passRate: 1 } });
+      const run = makeRun({
+        summary: { total: 5, passed: 5, failed: 0, passRate: 1 },
+      });
       const { container } = render(<AiTriagePanel run={run} />);
       expect(container.firstChild).toBeNull();
     });
@@ -77,16 +79,22 @@ describe("AiTriagePanel", () => {
 
     it("shows triage button when failedCount overrides a zero summary", async () => {
       const AiTriagePanel = await getPanel();
-      const run = makeRun({ summary: { total: 5, passed: 5, failed: 0, passRate: 1 } });
+      const run = makeRun({
+        summary: { total: 5, passed: 5, failed: 0, passRate: 1 },
+      });
       render(<AiTriagePanel run={run} failedCount={1} />);
-      expect(screen.getByRole("button", { name: /triage failures/i })).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: /triage failures/i }),
+      ).toBeTruthy();
     });
 
     it("shows triage button for completed run with failures and no prior triage", async () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun();
       render(<AiTriagePanel run={run} />);
-      expect(screen.getByRole("button", { name: /triage failures/i })).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: /triage failures/i }),
+      ).toBeTruthy();
     });
 
     it("renders nothing when run is still running", async () => {
@@ -109,7 +117,9 @@ describe("AiTriagePanel", () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun({ triageStatus: "pending" });
       render(<AiTriagePanel run={run} />);
-      expect(screen.queryByRole("button", { name: /triage failures/i })).toBeNull();
+      expect(
+        screen.queryByRole("button", { name: /triage failures/i }),
+      ).toBeNull();
     });
   });
 
@@ -140,7 +150,9 @@ describe("AiTriagePanel", () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun({ triageStatus: "completed", triageSummary });
       render(<AiTriagePanel run={run} />);
-      expect(screen.getByText(triageSummary.topRecommendations[0])).toBeTruthy();
+      expect(
+        screen.getByText(triageSummary.topRecommendations[0]),
+      ).toBeTruthy();
     });
 
     it("renders model name in header", async () => {
@@ -171,7 +183,10 @@ describe("AiTriagePanel", () => {
       const run = makeRun({ triageStatus: "completed", triageSummary });
       render(<AiTriagePanel run={run} />);
       fireEvent.click(screen.getByRole("button", { name: /re-triage/i }));
-      expect(mockMutate).toHaveBeenCalledWith({ suiteRunId: "run-1", force: true });
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: true,
+      });
     });
   });
 
@@ -195,7 +210,10 @@ describe("AiTriagePanel", () => {
       const run = makeRun({ triageStatus: "failed" });
       render(<AiTriagePanel run={run} />);
       fireEvent.click(screen.getByRole("button", { name: /retry/i }));
-      expect(mockMutate).toHaveBeenCalledWith({ suiteRunId: "run-1", force: true });
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: true,
+      });
     });
   });
 
@@ -205,7 +223,10 @@ describe("AiTriagePanel", () => {
       const run = makeRun();
       render(<AiTriagePanel run={run} />);
       fireEvent.click(screen.getByRole("button", { name: /triage failures/i }));
-      expect(mockMutate).toHaveBeenCalledWith({ suiteRunId: "run-1", force: false });
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: false,
+      });
     });
 
     it("disables button after first click", async () => {
@@ -230,7 +251,9 @@ describe("AiTriagePanel", () => {
 
   describe("unavailable backend", () => {
     it("renders nothing when mutation returns a not-found error", async () => {
-      mockMutate.mockRejectedValue(new Error("Could not find function triage:requestTriage"));
+      mockMutate.mockRejectedValue(
+        new Error("Could not find function triage:requestTriage"),
+      );
       const AiTriagePanel = await getPanel();
       const run = makeRun();
       const { container } = render(<AiTriagePanel run={run} />);
