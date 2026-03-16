@@ -166,112 +166,118 @@ export function CiSuiteListSidebar({
           isLoading={isLoading}
         />
       ) : (
-      <div className="flex-1 overflow-y-auto">
-        {hasTags && (
-          <button
-            onClick={onSelectOverview}
-            className={cn(
-              "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50 border-b",
-              isOverviewSelected && "bg-accent",
-            )}
-          >
-            <div className="flex items-center gap-2.5">
-              <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium">Overview</div>
-                <div className="text-[11px] text-muted-foreground">
-                  Suite health & status
-                </div>
-              </div>
-              {(() => {
-                const failCount = suites.filter(
-                  (e) => e.latestRun?.result === "failed",
-                ).length;
-                return failCount > 0 ? (
-                  <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
-                    {failCount}
-                  </span>
-                ) : null;
-              })()}
-            </div>
-          </button>
-        )}
-        {isLoading ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            Loading suites...
-          </div>
-        ) : filteredSuites.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            No SDK suites found.
-          </div>
-        ) : (
-          <div>
-            {filteredSuites.map((entry) => {
-              const latestRun = entry.latestRun;
-              const status = getStatusInfo(entry);
-              const trend = entry.passRateTrend
-                .slice(-12)
-                .map((value) => toPercent(value));
-              const timestamp = formatRelativeTime(
-                latestRun?.completedAt ??
-                  latestRun?.createdAt ??
-                  entry.suite.updatedAt,
-              );
-
-              return (
-                <button
-                  key={entry.suite._id}
-                  onClick={() => onSelectSuite(entry.suite._id)}
-                  className={cn(
-                    "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
-                    selectedSuiteId === entry.suite._id && "bg-accent",
-                  )}
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
-                      <div
-                        className={cn("h-2 w-2 rounded-full", status.dotClass)}
-                      />
-                      <span
-                        className={cn(
-                          "text-[9px] font-medium leading-none",
-                          status.labelClass,
-                        )}
-                      >
-                        {status.label}
-                      </span>
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">
-                        {entry.suite.name || "Untitled suite"}
-                      </div>
-                      {entry.suite.tags && entry.suite.tags.length > 0 && (
-                        <TagBadges tags={entry.suite.tags} className="mt-0.5" />
-                      )}
-                      <div className="text-[11px] text-muted-foreground">
-                        {timestamp}
-                      </div>
-                    </div>
-                    {trend.length > 0 && (
-                      <div className="flex h-5 shrink-0 items-end gap-px">
-                        {trend.map((value, idx) => (
-                          <div
-                            key={`${entry.suite._id}-t-${idx}`}
-                            className="w-1 rounded-sm bg-primary/70"
-                            style={{
-                              height: `${Math.max(3, (value / 100) * 20)}px`,
-                            }}
-                          />
-                        ))}
-                      </div>
-                    )}
+        <div className="flex-1 overflow-y-auto">
+          {hasTags && (
+            <button
+              onClick={onSelectOverview}
+              className={cn(
+                "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50 border-b",
+                isOverviewSelected && "bg-accent",
+              )}
+            >
+              <div className="flex items-center gap-2.5">
+                <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium">Overview</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    Suite health & status
                   </div>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </div>
+                </div>
+                {(() => {
+                  const failCount = suites.filter(
+                    (e) => e.latestRun?.result === "failed",
+                  ).length;
+                  return failCount > 0 ? (
+                    <span className="shrink-0 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-destructive px-1.5 text-[10px] font-bold text-destructive-foreground">
+                      {failCount}
+                    </span>
+                  ) : null;
+                })()}
+              </div>
+            </button>
+          )}
+          {isLoading ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              Loading suites...
+            </div>
+          ) : filteredSuites.length === 0 ? (
+            <div className="p-4 text-center text-xs text-muted-foreground">
+              No SDK suites found.
+            </div>
+          ) : (
+            <div>
+              {filteredSuites.map((entry) => {
+                const latestRun = entry.latestRun;
+                const status = getStatusInfo(entry);
+                const trend = entry.passRateTrend
+                  .slice(-12)
+                  .map((value) => toPercent(value));
+                const timestamp = formatRelativeTime(
+                  latestRun?.completedAt ??
+                    latestRun?.createdAt ??
+                    entry.suite.updatedAt,
+                );
+
+                return (
+                  <button
+                    key={entry.suite._id}
+                    onClick={() => onSelectSuite(entry.suite._id)}
+                    className={cn(
+                      "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+                      selectedSuiteId === entry.suite._id && "bg-accent",
+                    )}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
+                        <div
+                          className={cn(
+                            "h-2 w-2 rounded-full",
+                            status.dotClass,
+                          )}
+                        />
+                        <span
+                          className={cn(
+                            "text-[9px] font-medium leading-none",
+                            status.labelClass,
+                          )}
+                        >
+                          {status.label}
+                        </span>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium">
+                          {entry.suite.name || "Untitled suite"}
+                        </div>
+                        {entry.suite.tags && entry.suite.tags.length > 0 && (
+                          <TagBadges
+                            tags={entry.suite.tags}
+                            className="mt-0.5"
+                          />
+                        )}
+                        <div className="text-[11px] text-muted-foreground">
+                          {timestamp}
+                        </div>
+                      </div>
+                      {trend.length > 0 && (
+                        <div className="flex h-5 shrink-0 items-end gap-px">
+                          {trend.map((value, idx) => (
+                            <div
+                              key={`${entry.suite._id}-t-${idx}`}
+                              className="w-1 rounded-sm bg-primary/70"
+                              style={{
+                                height: `${Math.max(3, (value / 100) * 20)}px`,
+                              }}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );
