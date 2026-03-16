@@ -33,6 +33,11 @@ import { useCommitTriage } from "./use-ai-triage";
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Strip trailing timestamp suffixes from suite names for display, e.g. "Suite (2026-03-12 15:20:43)" → "Suite" */
+function stripTimestampSuffix(name: string): string {
+  return name.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() || name;
+}
+
 function toPercent(value: number): number {
   const n = value <= 1 ? value * 100 : value;
   return Math.max(0, Math.min(100, Math.round(n)));
@@ -277,12 +282,18 @@ export function OverviewPanel({
 
   const aiOverviewTriage = useCommitTriage(failedOverviewRunIds);
 
-  // Auto-request triage when failures exist (skip if already unavailable)
+  // Auto-request triage when failures exist (skip if already unavailable or errored)
   useEffect(() => {
-    if (failedOverviewRunIds.length > 0 && !aiOverviewTriage.summary && !aiOverviewTriage.loading && !aiOverviewTriage.unavailable) {
+    if (
+      failedOverviewRunIds.length > 0 &&
+      !aiOverviewTriage.summary &&
+      !aiOverviewTriage.loading &&
+      !aiOverviewTriage.unavailable &&
+      !aiOverviewTriage.error
+    ) {
       aiOverviewTriage.requestTriage();
     }
-  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.unavailable, aiOverviewTriage.requestTriage]);
+  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.unavailable, aiOverviewTriage.error, aiOverviewTriage.requestTriage]);
 
   // Pre-compute inline failure tags for the failure feed
   // Tags suites with failed cases OR failed result
@@ -670,7 +681,7 @@ export function OverviewPanel({
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5">
                             <span className="text-sm font-medium truncate">
-                              {entry.suite.name}
+                              {stripTimestampSuffix(entry.suite.name)}
                             </span>
                             {isFailed &&
                               failureTagMap.get(entry.suite._id)?.map((tag) => (
@@ -861,7 +872,7 @@ export function OverviewPanel({
                   {/* Suite name */}
                   <div className="min-w-0">
                     <div className="text-sm font-medium truncate">
-                      {entry.suite.name || "Untitled suite"}
+                      {stripTimestampSuffix(entry.suite.name) || "Untitled suite"}
                     </div>
                   </div>
 

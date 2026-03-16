@@ -40,49 +40,31 @@ export function useCommitTriage(
   const [error, setError] = useState<string | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const hasAttemptedRef = useRef(false);
 
-  // Track whether the mutation exists at the module level (survives re-renders)
-  let requestTriageMutation: ReturnType<typeof useMutation> | null = null;
-  let mutationExists = true;
-  try {
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    requestTriageMutation = useMutation("testSuites:requestTriage" as any);
-  } catch {
-    // Mutation not registered yet — backend not deployed
-    mutationExists = false;
-  }
+  // Always call useMutation (React hooks rules) — if the function doesn't
+  // exist on the backend, the call itself will fail, which we handle below.
+  const requestTriageMutation = useMutation("testSuites:requestTriage" as any);
 
-  // Once we know the mutation doesn't exist, mark unavailable permanently
-  // (no state update needed on subsequent renders since unavailable is already true)
-  const mutationExistsRef = useRef(mutationExists);
-  mutationExistsRef.current = mutationExists;
-
-  useEffect(() => {
-    if (!mutationExistsRef.current) {
-      setUnavailable(true);
-    }
-  }, []);
-
-  // Reset state when the run IDs change (navigating to a different commit),
-  // but preserve unavailable if the mutation doesn't exist
+  // Reset state when the run IDs actually change (navigating to a different commit)
   const runKey = failedRunIds.join(",");
+  const prevRunKeyRef = useRef(runKey);
   useEffect(() => {
-    setSummary(null);
-    setError(null);
-    setLoading(false);
-    // Only reset unavailable if the mutation actually exists
-    if (mutationExistsRef.current) {
-      setUnavailable(false);
+    if (prevRunKeyRef.current !== runKey) {
+      prevRunKeyRef.current = runKey;
+      setSummary(null);
+      setError(null);
+      setLoading(false);
+      hasAttemptedRef.current = false;
+      // Keep unavailable sticky — if the mutation doesn't exist, it won't
+      // magically appear when switching commits
     }
   }, [runKey]);
 
   const requestTriage = useCallback(() => {
-    if (failedRunIds.length === 0 || unavailable) return;
-    if (!requestTriageMutation) {
-      setUnavailable(true);
-      return;
-    }
+    if (failedRunIds.length === 0 || unavailable || hasAttemptedRef.current) return;
 
+    hasAttemptedRef.current = true;
     setLoading(true);
     setError(null);
 
@@ -96,16 +78,21 @@ export function useCommitTriage(
           setLoading(false);
         } else {
           // Backend will generate async — for now show as pending
-          // In future, a reactive query subscription will update this
           setLoading(false);
-          setError("Triage requested — results will appear when backend processing completes.");
+          setSummary("Triage requested — results will appear when backend processing completes.");
         }
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        // Detect "function not found" errors from Convex
-        if (message.includes("Could not find") || message.includes("not found")) {
+        // Detect backend errors that mean triage isn't available — mark permanently unavailable
+        if (
+          message.includes("Could not find") ||
+          message.includes("not found") ||
+          message.includes("is not a function") ||
+          message.includes("Server Error")
+        ) {
           setUnavailable(true);
+          setError(null);
         } else {
           setError(message);
         }
