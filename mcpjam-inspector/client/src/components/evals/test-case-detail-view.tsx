@@ -2,13 +2,6 @@ import { useMemo, useState } from "react";
 import { X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { AccuracyChart } from "./accuracy-chart";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { computeIterationResult } from "./pass-criteria";
 import { getIterationBorderColor, formatRunId } from "./helpers";
 import { IterationDetails } from "./iteration-details";
@@ -21,6 +14,8 @@ interface TestCaseDetailViewProps {
   onBack: () => void;
   onViewRun?: (runId: string) => void;
   serverNames?: string[];
+  suiteName?: string;
+  onNavigateToSuite?: () => void;
 }
 
 export function TestCaseDetailView({
@@ -30,6 +25,8 @@ export function TestCaseDetailView({
   onBack,
   onViewRun,
   serverNames = [],
+  suiteName,
+  onNavigateToSuite,
 }: TestCaseDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
@@ -42,59 +39,6 @@ export function TestCaseDetailView({
       (iter) => !iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId),
     );
   }, [iterations, runs]);
-
-  // Performance trend data
-  const trendData = useMemo(() => {
-    const iterationsByRun = new Map<string, EvalIteration[]>();
-    activeIterations.forEach((iteration) => {
-      if (iteration.suiteRunId) {
-        if (!iterationsByRun.has(iteration.suiteRunId)) {
-          iterationsByRun.set(iteration.suiteRunId, []);
-        }
-        iterationsByRun.get(iteration.suiteRunId)!.push(iteration);
-      }
-    });
-
-    const data: Array<{
-      runId: string;
-      runIdDisplay: string;
-      passRate: number;
-      label: string;
-    }> = [];
-
-    runs.forEach((run) => {
-      // Skip inactive runs
-      if (run.isActive === false) return;
-
-      const runIters = iterationsByRun.get(run._id);
-      if (runIters && runIters.length > 0) {
-        // Only count completed iterations - exclude pending/cancelled
-        const iterationResults = runIters.map((iter) =>
-          computeIterationResult(iter),
-        );
-        const passed = iterationResults.filter((r) => r === "passed").length;
-        const total = iterationResults.filter(
-          (r) => r === "passed" || r === "failed",
-        ).length;
-        const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
-
-        data.push({
-          runId: run._id,
-          runIdDisplay: run._id.slice(-6),
-          passRate,
-          label: new Date(run.completedAt ?? run.createdAt).toLocaleString(),
-        });
-      }
-    });
-
-    return data.sort((a, b) => {
-      const runA = runs.find((r) => r._id === a.runId);
-      const runB = runs.find((r) => r._id === b.runId);
-      const timeA = runA?.createdAt ?? 0;
-      const timeB = runB?.createdAt ?? 0;
-      return timeA - timeB;
-    });
-  }, [activeIterations, runs]);
 
   // Model breakdown
   const modelBreakdown = useMemo(() => {
@@ -152,18 +96,57 @@ export function TestCaseDetailView({
       .sort((a, b) => b.passRate - a.passRate);
   }, [activeIterations]);
 
-  const modelChartConfig = {
-    passRate: {
-      label: "Pass Rate",
-      color: "var(--chart-1)",
-    },
+  // Compute overall stats
+  const overallStats = useMemo(() => {
+    const results = activeIterations.map((i) => computeIterationResult(i));
+    const passed = results.filter((r) => r === "passed").length;
+    const failed = results.filter((r) => r === "failed").length;
+    const total = passed + failed;
+    const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
+
+    // Avg duration
+    const completed = activeIterations.filter(
+      (i) => i.startedAt && i.updatedAt && i.result !== "pending",
+    );
+    const avgDuration =
+      completed.length > 0
+        ? completed.reduce(
+            (sum, i) => sum + ((i.updatedAt ?? 0) - (i.startedAt ?? 0)),
+            0,
+          ) / completed.length
+        : 0;
+
+    return { passed, failed, total, passRate, avgDuration };
+  }, [activeIterations]);
+
+  const formatDurationHelper = (ms: number) => {
+    if (ms < 1000) return `${Math.round(ms)}ms`;
+    const s = Math.round(ms / 1000);
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return sec ? `${m}m ${sec}s` : `${m}m`;
   };
 
   return (
-    <div className="space-y-4">
-      {/* Header */}
+    <div className="space-y-4 overflow-y-auto h-full p-0.5">
+      {/* Breadcrumb + Header */}
       <div className="flex items-center justify-between">
         <div>
+          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
+            {suiteName && onNavigateToSuite && (
+              <>
+                <button
+                  onClick={onNavigateToSuite}
+                  className="hover:text-foreground hover:underline transition-colors cursor-pointer"
+                >
+                  {suiteName}
+                </button>
+                <span className="text-muted-foreground/50">/</span>
+              </>
+            )}
+            <span className="text-primary font-medium">Test Case</span>
+          </div>
           <h2 className="text-lg font-semibold">
             {testCase.title || "Untitled test case"}
           </h2>
@@ -178,120 +161,75 @@ export function TestCaseDetailView({
         </Button>
       </div>
 
-      {/* Charts Side by Side */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Performance Chart */}
-        {trendData.length > 0 && (
-          <div className="rounded-xl border bg-card text-card-foreground">
-            <div className="px-4 pt-3 pb-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                Performance across runs
-              </div>
-            </div>
-            <div className="px-4 pb-4">
-              <AccuracyChart
-                data={trendData}
-                height="h-32"
-                showLabel={true}
-                onClick={onViewRun}
+      {/* Hero Stats */}
+      {overallStats.total > 0 && (
+        <div className="rounded-xl border bg-card text-card-foreground p-4">
+          <div className="flex items-center gap-4">
+            <span className="text-2xl font-bold">{overallStats.passRate}%</span>
+            <span className="text-sm text-muted-foreground">Pass Rate</span>
+            <span className="text-muted-foreground/40">|</span>
+            <span className="text-xs text-muted-foreground">
+              {overallStats.total} iterations
+            </span>
+            <span className="text-muted-foreground/40">|</span>
+            <span className="text-xs text-muted-foreground">
+              Avg {formatDurationHelper(overallStats.avgDuration)}
+            </span>
+          </div>
+          {/* Progress bar */}
+          <div className="mt-2 flex items-center gap-3">
+            <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden flex">
+              <div
+                className="h-full rounded-l-full transition-all"
+                style={{
+                  width: `${(overallStats.passed / overallStats.total) * 100}%`,
+                  backgroundColor: "hsl(142.1 76.2% 36.3%)",
+                }}
+              />
+              <div
+                className="h-full rounded-r-full transition-all"
+                style={{
+                  width: `${(overallStats.failed / overallStats.total) * 100}%`,
+                  backgroundColor: "hsl(0 84.2% 60.2%)",
+                }}
               />
             </div>
+            <span className="text-xs text-muted-foreground shrink-0">
+              {overallStats.passed} passed · {overallStats.failed} failed
+            </span>
           </div>
-        )}
-
-        {/* Model Breakdown */}
-        {modelBreakdown.length > 0 && (
-          <div className="rounded-xl border bg-card text-card-foreground">
-            <div className="px-4 pt-3 pb-2">
-              <div className="text-xs font-medium text-muted-foreground">
-                Performance by model
-              </div>
-            </div>
-            <div className="px-4 pb-4">
-              <ChartContainer
-                config={modelChartConfig}
-                className="aspect-auto h-32 w-full"
-              >
-                <BarChart
-                  data={modelBreakdown}
-                  width={undefined}
-                  height={undefined}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    stroke="hsl(var(--muted-foreground) / 0.2)"
-                  />
-                  <XAxis
-                    dataKey="model"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 11 }}
-                    interval={0}
-                    height={40}
-                    tickFormatter={(value) => {
-                      const parts = value.split("/");
-                      if (parts.length === 2 && parts[1].length > 15) {
-                        return `${parts[0]}/${parts[1].substring(0, 12)}...`;
-                      }
-                      return value;
+          {/* Inline model breakdown */}
+          {modelBreakdown.length >= 1 && (
+            <div className="flex flex-wrap items-center gap-4 mt-2 pt-2 border-t border-border/50">
+              <span className="text-[10px] text-muted-foreground">
+                By Model:
+              </span>
+              {modelBreakdown.map((model) => (
+                <div key={model.model} className="flex items-center gap-1.5">
+                  <div
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{
+                      backgroundColor:
+                        model.passRate >= 80
+                          ? "hsl(142.1 76.2% 36.3%)"
+                          : model.passRate >= 50
+                            ? "hsl(45.4 93.4% 47.5%)"
+                            : "hsl(0 84.2% 60.2%)",
                     }}
                   />
-                  <YAxis
-                    domain={[0, 100]}
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(value) => `${value}%`}
-                  />
-                  <ChartTooltip
-                    cursor={false}
-                    content={({ active, payload }) => {
-                      if (!active || !payload || payload.length === 0)
-                        return null;
-                      const data = payload[0].payload;
-                      return (
-                        <div className="rounded-lg border bg-background p-2 shadow-sm">
-                          <div className="grid gap-2">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-semibold">
-                                {data.model}
-                              </span>
-                              <span className="text-xs text-muted-foreground mt-0.5">
-                                {data.passed} passed · {data.failed} failed
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="h-2 w-2 rounded-full"
-                                style={{
-                                  backgroundColor: "var(--color-passRate)",
-                                }}
-                              />
-                              <span className="text-sm font-semibold">
-                                {data.passRate}%
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Bar
-                    dataKey="passRate"
-                    fill="var(--color-passRate)"
-                    radius={[4, 4, 0, 0]}
-                    isAnimationActive={false}
-                    minPointSize={8}
-                  />
-                </BarChart>
-              </ChartContainer>
+                  <span className="text-[11px]">{model.model}</span>
+                  <span className="text-[11px] font-mono font-medium">
+                    {model.passRate}%
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    ({model.passed}/{model.passed + model.failed})
+                  </span>
+                </div>
+              ))}
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       {/* Iterations List */}
       <div className="space-y-2">
@@ -304,7 +242,34 @@ export function TestCaseDetailView({
           </div>
         ) : (
           <div className="rounded-md border bg-card text-card-foreground divide-y overflow-hidden">
-            {activeIterations.map((iteration) => {
+            {/* Column headers */}
+            <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-muted/30 text-[10px] font-medium text-muted-foreground uppercase tracking-wide">
+              <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
+                <div className="w-3.5" />
+                <span>Result</span>
+              </div>
+              <div className="flex items-center gap-4 shrink-0">
+                <div className="min-w-[120px] text-left">Model</div>
+                <div className="min-w-[50px] text-center">Calls</div>
+                <div className="min-w-[60px] text-center">Tokens</div>
+                <div className="min-w-[40px] text-right">Time</div>
+                {onViewRun && <div className="min-w-[100px]">Run</div>}
+              </div>
+            </div>
+            {/* Failing iterations first */}
+            {(() => {
+              const failing = activeIterations.filter(
+                (i) => computeIterationResult(i) === "failed",
+              );
+              const passing = activeIterations.filter(
+                (i) => computeIterationResult(i) === "passed",
+              );
+              const other = activeIterations.filter((i) => {
+                const r = computeIterationResult(i);
+                return r !== "failed" && r !== "passed";
+              });
+              return [...failing, ...passing, ...other];
+            })().map((iteration) => {
               const snapshot = iteration.testCaseSnapshot;
               const startedAt = iteration.startedAt ?? iteration.createdAt;
               const completedAt = iteration.updatedAt ?? iteration.createdAt;
@@ -393,7 +358,7 @@ export function TestCaseDetailView({
                               onViewRun(iteration.suiteRunId!);
                             }}
                           >
-                            Run {formatRunId(iteration.suiteRunId)}
+                            {formatTimeAgo(iteration.createdAt)}
                           </Button>
                         </div>
                       )}
@@ -421,4 +386,15 @@ export function TestCaseDetailView({
       </div>
     </div>
   );
+}
+
+function formatTimeAgo(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }

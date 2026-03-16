@@ -31,13 +31,13 @@ describe("env loader", () => {
   it("uses Vite-compatible file precedence in development", () => {
     expect(getInspectorEnvFileNames("development")).toEqual([
       ".env.development.local",
-      ".env.local",
       ".env.development",
+      ".env.local",
       ".env",
     ]);
   });
 
-  it("keeps .env.local values ahead of .env.development", () => {
+  it("prefers .env.development values ahead of .env.local", () => {
     delete process.env.CONVEX_HTTP_URL;
     delete process.env.MCPJAM_ENV_PRIORITY_TEST;
 
@@ -67,12 +67,12 @@ describe("env loader", () => {
       const loadedEnv = loadInspectorEnv(serverDir);
 
       expect(process.env.CONVEX_HTTP_URL).toBe(
-        "https://local-priority.convex.site",
+        "https://development-fallback.convex.site",
       );
-      expect(process.env.MCPJAM_ENV_PRIORITY_TEST).toBe("local");
+      expect(process.env.MCPJAM_ENV_PRIORITY_TEST).toBe("development");
       expect(loadedEnv.loadedFiles).toEqual([
-        join(resolvedTempRoot, ".env.local"),
         join(resolvedTempRoot, ".env.development"),
+        join(resolvedTempRoot, ".env.local"),
       ]);
     } finally {
       process.chdir(originalCwd);

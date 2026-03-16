@@ -34,6 +34,7 @@ export type EvalSuite = {
     minimumPassRate: number;
   };
   _creationTime?: number; // Convex auto field
+  tags?: string[];
 };
 
 export type EvalCase = {
@@ -143,6 +144,19 @@ export type EvalSuiteRun = {
   isActive?: boolean; // Mark runs as inactive when suite is edited
   expectedIterations?: number;
   _creationTime?: number;
+  triageStatus?: "pending" | "completed" | "failed";
+  triageSummary?: {
+    summary: string;
+    failureCategories: Array<{
+      category: string;
+      count: number;
+      testCaseTitles: string[];
+      recommendation: string;
+    }>;
+    topRecommendations: string[];
+    generatedAt: number;
+    modelUsed: string;
+  };
 };
 
 export type EvalSuiteOverviewEntry = {
@@ -183,4 +197,23 @@ export type SuiteAggregate = {
 export type SuiteDetailsQueryResponse = {
   testCases: EvalCase[];
   iterations: EvalIteration[];
+};
+
+export type TagGroupAggregate = {
+  tag: string;
+  suiteCount: number;
+  totals: { passed: number; failed: number; runs: number };
+  passRate: number; // 0-100
+  entries: EvalSuiteOverviewEntry[];
+};
+
+export type CommitGroup = {
+  commitSha: string;
+  shortSha: string; // first 7 chars
+  branch: string | null;
+  timestamp: number; // most recent run time
+  status: "passed" | "failed" | "running" | "mixed";
+  runs: EvalSuiteRun[];
+  suiteMap: Map<string, string>; // suiteId → suite name
+  summary: { total: number; passed: number; failed: number; running: number };
 };
