@@ -343,7 +343,7 @@ export function CommitDetailView({
         </div>
 
         {/* Right: Suite run detail */}
-        <div className="flex-1 min-w-0 overflow-hidden">
+        <div className="flex-1 min-w-0 overflow-y-auto">
           {selectedRun && selectedSuiteId ? (
             <CommitSuiteRunDetail
               run={selectedRun}
