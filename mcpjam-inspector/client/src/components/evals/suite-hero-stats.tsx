@@ -1,7 +1,5 @@
 import { useMemo } from "react";
-import {
-  ChartContainer,
-} from "@/components/ui/chart";
+import { ChartContainer } from "@/components/ui/chart";
 import { Area, AreaChart } from "recharts";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";

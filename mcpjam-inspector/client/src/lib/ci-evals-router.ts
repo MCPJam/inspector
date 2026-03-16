@@ -18,7 +18,12 @@ export type CiEvalsRoute =
       testId: string;
       iteration?: string;
     }
-  | { type: "commit-detail"; commitSha: string; suite?: string; iteration?: string };
+  | {
+      type: "commit-detail";
+      commitSha: string;
+      suite?: string;
+      iteration?: string;
+    };
 
 /**
  * Parse the current hash to extract CI evals route information.

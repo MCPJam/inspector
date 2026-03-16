@@ -3,7 +3,10 @@ import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
-import { computeIterationResult, computeIterationPassed } from "./pass-criteria";
+import {
+  computeIterationResult,
+  computeIterationPassed,
+} from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { AiTriagePanel } from "./ai-triage-panel";
@@ -136,17 +139,18 @@ export function RunDetailView({
                     ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()} tests`
                     : `${computedStats.total.toLocaleString()} tests`}
                 </span>
-                {(selectedRunDetails.completedAt && selectedRunDetails.createdAt) && (
-                  <>
-                    <span className="text-muted-foreground/40">|</span>
-                    <span>
-                      {formatDuration(
-                        selectedRunDetails.completedAt -
-                          selectedRunDetails.createdAt,
-                      )}
-                    </span>
-                  </>
-                )}
+                {selectedRunDetails.completedAt &&
+                  selectedRunDetails.createdAt && (
+                    <>
+                      <span className="text-muted-foreground/40">|</span>
+                      <span>
+                        {formatDuration(
+                          selectedRunDetails.completedAt -
+                            selectedRunDetails.createdAt,
+                        )}
+                      </span>
+                    </>
+                  )}
                 <span className="text-muted-foreground/40">|</span>
                 <span className="capitalize">
                   {isRunning && progressPercent !== null
@@ -174,7 +178,8 @@ export function RunDetailView({
                     />
                   </div>
                   <span className="text-xs text-muted-foreground shrink-0">
-                    {computedStats.passed} passed · {computedStats.failed} failed
+                    {computedStats.passed} passed · {computedStats.failed}{" "}
+                    failed
                   </span>
                 </div>
               )}
@@ -191,30 +196,32 @@ export function RunDetailView({
           {/* Inline model performance (only when ≥2 models) */}
           {selectedRunChartData.modelData.length >= 2 && (
             <div className="border-t px-5 py-3">
-              <div className="text-[10px] text-muted-foreground mb-2">Performance by Model</div>
+              <div className="text-[10px] text-muted-foreground mb-2">
+                Performance by Model
+              </div>
               <div className="flex flex-wrap items-center gap-4">
-              {selectedRunChartData.modelData.map((model) => (
-                <div key={model.model} className="flex items-center gap-1.5">
-                  <div
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{
-                      backgroundColor:
-                        model.passRate >= 80
-                          ? "hsl(142.1 76.2% 36.3%)"
-                          : model.passRate >= 50
-                            ? "hsl(45.4 93.4% 47.5%)"
-                            : "hsl(0 84.2% 60.2%)",
-                    }}
-                  />
-                  <span className="text-[11px]">{model.model}</span>
-                  <span className="text-[11px] font-mono font-medium">
-                    {model.passRate}%
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    ({model.passed}/{model.total})
-                  </span>
-                </div>
-              ))}
+                {selectedRunChartData.modelData.map((model) => (
+                  <div key={model.model} className="flex items-center gap-1.5">
+                    <div
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{
+                        backgroundColor:
+                          model.passRate >= 80
+                            ? "hsl(142.1 76.2% 36.3%)"
+                            : model.passRate >= 50
+                              ? "hsl(45.4 93.4% 47.5%)"
+                              : "hsl(0 84.2% 60.2%)",
+                      }}
+                    />
+                    <span className="text-[11px]">{model.model}</span>
+                    <span className="text-[11px] font-mono font-medium">
+                      {model.passRate}%
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ({model.passed}/{model.total})
+                    </span>
+                  </div>
+                ))}
               </div>
             </div>
           )}
@@ -222,7 +229,10 @@ export function RunDetailView({
       </div>
 
       {/* AI Triage — shown between summary and iteration panes */}
-      <AiTriagePanel run={selectedRunDetails} failedCount={computedStats.failed} />
+      <AiTriagePanel
+        run={selectedRunDetails}
+        failedCount={computedStats.failed}
+      />
 
       {/* Two-pane body */}
       <div className="flex h-0 flex-1 mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden">

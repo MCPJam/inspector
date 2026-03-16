@@ -136,9 +136,7 @@ export function CommitDetailView({
   // Find the selected run
   const selectedRun = useMemo(() => {
     if (!selectedSuiteId) return null;
-    return (
-      commitGroup.runs.find((r) => r.suiteId === selectedSuiteId) ?? null
-    );
+    return commitGroup.runs.find((r) => r.suiteId === selectedSuiteId) ?? null;
   }, [selectedSuiteId, commitGroup.runs]);
 
   // Runs with failures for AI triage
@@ -350,9 +348,7 @@ export function CommitDetailView({
             <CommitSuiteRunDetail
               run={selectedRun}
               suiteId={selectedSuiteId}
-              suiteName={
-                commitGroup.suiteMap.get(selectedSuiteId) || "Unknown"
-              }
+              suiteName={commitGroup.suiteMap.get(selectedSuiteId) || "Unknown"}
               selectedIterationId={selectedIterationId}
               onSelectIteration={handleSelectIteration}
               runDetailSortBy={runDetailSortBy}
