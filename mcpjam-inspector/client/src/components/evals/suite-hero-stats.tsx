@@ -48,7 +48,9 @@ export function SuiteHeroStats({
       (iter) => iter.suiteRunId && activeRunIds.has(iter.suiteRunId),
     );
 
-    const results = activeIterations.map((iter) => computeIterationResult(iter));
+    const results = activeIterations.map((iter) =>
+      computeIterationResult(iter),
+    );
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter((r) => r === "failed").length;
     const total = passed + failed;
@@ -253,9 +255,7 @@ export function SuiteHeroStats({
                   onRunClick
                     ? (chartData: any) => {
                         if (chartData?.activePayload?.[0]?.payload?.runId) {
-                          onRunClick(
-                            chartData.activePayload[0].payload.runId,
-                          );
+                          onRunClick(chartData.activePayload[0].payload.runId);
                         }
                       }
                     : undefined
@@ -300,9 +300,7 @@ export function SuiteHeroStats({
                           : "hsl(0 84.2% 60.2%)",
                   }}
                 />
-                <span className="text-xs">
-                  {model.model}
-                </span>
+                <span className="text-xs">{model.model}</span>
                 <span className="text-xs font-mono font-medium">
                   {model.passRate}%
                 </span>

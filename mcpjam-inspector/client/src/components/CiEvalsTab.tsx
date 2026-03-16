@@ -11,12 +11,19 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { aggregateSuite, groupSuitesByTag, groupRunsByCommit } from "./evals/helpers";
+import {
+  aggregateSuite,
+  groupSuitesByTag,
+  groupRunsByCommit,
+} from "./evals/helpers";
 import { OverviewPanel } from "./evals/overview-panel";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
-import { CiSuiteListSidebar, type SidebarMode } from "./evals/ci-suite-list-sidebar";
+import {
+  CiSuiteListSidebar,
+  type SidebarMode,
+} from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
@@ -92,10 +99,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const tagGroups = useMemo(() => groupSuitesByTag(sdkSuites), [sdkSuites]);
   const hasTags = tagGroups.some((g) => g.tag !== "Untagged");
 
-  const commitGroups = useMemo(
-    () => groupRunsByCommit(sdkSuites),
-    [sdkSuites],
-  );
+  const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
 
   // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
   useEffect(() => {
@@ -113,9 +117,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const selectedCommitGroup = useMemo(() => {
     if (!selectedCommitSha) return null;
-    return (
-      commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null
-    );
+    return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
   }, [commitGroups, selectedCommitSha]);
   const allTags = useMemo(
     () =>
@@ -294,7 +296,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
             onSelectOverview={handleSelectOverview}
-            isOverviewSelected={!selectedSuiteId && route.type !== "commit-detail"}
+            isOverviewSelected={
+              !selectedSuiteId && route.type !== "commit-detail"
+            }
             isLoading={queries.isOverviewLoading}
             filterTag={filterTag}
             hasTags={true}

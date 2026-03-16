@@ -123,16 +123,16 @@ describe("isFlaky", () => {
   });
 
   it("returns true for frequent alternation", () => {
-    expect(
-      isFlaky(["passed", "failed", "passed", "failed", "passed"]),
-    ).toBe(true);
+    expect(isFlaky(["passed", "failed", "passed", "failed", "passed"])).toBe(
+      true,
+    );
   });
 
   it("ignores 'other' results when counting switches", () => {
     // After filtering: passed, failed, passed = 2 switches
-    expect(
-      isFlaky(["passed", "other", "failed", "other", "passed"]),
-    ).toBe(true);
+    expect(isFlaky(["passed", "other", "failed", "other", "passed"])).toBe(
+      true,
+    );
   });
 
   it("only looks at first 10 entries", () => {
@@ -163,9 +163,7 @@ describe("classifyFailure", () => {
   it("tags as 'new' when there is no prior history", () => {
     const suiteId = "suite-new";
     const run = makeRun({ suiteId, result: "failed" });
-    const groups: CommitGroup[] = [
-      makeCommitGroup({ runs: [run] }),
-    ];
+    const groups: CommitGroup[] = [makeCommitGroup({ runs: [run] })];
 
     const result = classifyFailure(run, "New Suite", groups);
     expect(result.tags).toContain("new");
@@ -218,11 +216,7 @@ describe("classifyFailure", () => {
       }),
     ];
 
-    const result = classifyFailure(
-      failedRun,
-      "Flaky Regression",
-      groups,
-    );
+    const result = classifyFailure(failedRun, "Flaky Regression", groups);
     expect(result.tags).toContain("regression");
     expect(result.tags).toContain("flaky");
   });
