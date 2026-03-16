@@ -86,7 +86,7 @@ describe("groupRunsByCommit", () => {
 
     expect(result).toHaveLength(2);
     expect(result[0].commitSha).toBe("abc1234567890");
-    expect(result[1].commitSha).toBe("manual");
+    expect(result[1].commitSha).toBe("manual-r1");
     expect(result[1].shortSha).toBe("Manual");
   });
 
