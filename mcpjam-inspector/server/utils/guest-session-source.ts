@@ -43,6 +43,7 @@ export async function fetchRemoteGuestSession(): Promise<RemoteGuestSession | nu
     const response = await fetch(getRemoteGuestSessionUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
@@ -92,6 +93,7 @@ export async function fetchConvexGuestSession(): Promise<RemoteGuestSession | nu
         "Content-Type": "application/json",
         [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
       },
+      signal: AbortSignal.timeout(10_000),
     });
 
     if (!response.ok) {
@@ -148,6 +150,7 @@ export async function fetchRemoteGuestJwks(): Promise<Response | null> {
     return await fetch(getRemoteGuestJwksUrl(), {
       method: "GET",
       headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(10_000),
     });
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

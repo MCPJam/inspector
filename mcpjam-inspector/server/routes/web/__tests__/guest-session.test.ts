@@ -168,12 +168,13 @@ describe("POST /guest-session", () => {
       });
       expect(global.fetch).toHaveBeenCalledWith(
         "https://app.mcpjam.com/api/web/guest-session",
-        {
+        expect.objectContaining({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
           },
-        },
+          signal: expect.anything(),
+        }),
       );
     });
 
@@ -207,13 +208,14 @@ describe("POST /guest-session", () => {
       });
       expect(global.fetch).toHaveBeenCalledWith(
         "https://test-deployment.convex.site/guest/session",
-        {
+        expect.objectContaining({
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "x-mcpjam-guest-session-secret": "test-guest-session-secret",
           },
-        },
+          signal: expect.anything(),
+        }),
       );
     });
 

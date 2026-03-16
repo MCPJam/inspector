@@ -81,13 +81,14 @@ describe("guest-auth", () => {
     expect(header).toBe("Bearer remote-dev-token");
     expect(global.fetch).toHaveBeenCalledWith(
       "https://test-deployment.convex.site/guest/session",
-      {
+      expect.objectContaining({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "x-mcpjam-guest-session-secret": "test-guest-session-secret",
         },
-      },
+        signal: expect.anything(),
+      }),
     );
   });
 
@@ -113,12 +114,13 @@ describe("guest-auth", () => {
     expect(header).toBe("Bearer remote-prod-token");
     expect(global.fetch).toHaveBeenCalledWith(
       "https://app.mcpjam.com/api/web/guest-session",
-      {
+      expect.objectContaining({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-      },
+        signal: expect.anything(),
+      }),
     );
   });
 
