@@ -17,13 +17,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
-import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
-import { AccuracyChart } from "./accuracy-chart";
 import { formatRunId, getIterationBorderColor } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
@@ -326,132 +319,8 @@ export function RunOverview({
       });
   }, [selectedRunIds, onDirectDeleteRun]);
 
-  const modelChartConfig = {
-    passRate: {
-      label: "Pass Rate",
-      color: "var(--chart-1)",
-    },
-  };
-
   return (
     <>
-      {/* Charts Side by Side */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* Accuracy */}
-        <div className="rounded-xl border bg-card text-card-foreground">
-          <div className="px-4 pt-3 pb-2">
-            <div className="text-xs font-medium text-muted-foreground">
-              {suite.source === "sdk" ? "Pass Rate Trend" : "Accuracy Trend"}
-            </div>
-          </div>
-          <div className="px-4 pb-4">
-            <AccuracyChart
-              data={runTrendData}
-              isLoading={runsLoading}
-              height="h-32"
-              onClick={onRunClick}
-              metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
-            />
-          </div>
-        </div>
-
-        {/* Per-Model Performance */}
-        <div className="rounded-xl border bg-card text-card-foreground">
-          <div className="px-4 pt-3 pb-2">
-            <div className="text-xs font-medium text-muted-foreground">
-              Performance by model
-            </div>
-          </div>
-          <div className="px-4 pb-4">
-            {modelStats.length > 1 ? (
-              <ChartContainer
-                config={modelChartConfig}
-                className="aspect-auto h-32 w-full"
-              >
-                <BarChart
-                  data={modelStats}
-                  width={undefined}
-                  height={undefined}
-                >
-                  <CartesianGrid
-                    strokeDasharray="3 3"
-                    vertical={false}
-                    stroke="hsl(var(--muted-foreground) / 0.2)"
-                  />
-                  <XAxis
-                    dataKey="model"
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 11 }}
-                    interval={0}
-                    height={40}
-                    tickFormatter={(value) => {
-                      if (value.length > 15) {
-                        return value.substring(0, 12) + "...";
-                      }
-                      return value;
-                    }}
-                  />
-                  <YAxis
-                    domain={[0, 100]}
-                    tickLine={false}
-                    axisLine={false}
-                    tickMargin={8}
-                    tick={{ fontSize: 12 }}
-                    tickFormatter={(value) => `${value}%`}
-                  />
-                  <ChartTooltip
-                    cursor={false}
-                    content={({ active, payload }) => {
-                      if (!active || !payload || payload.length === 0)
-                        return null;
-                      const data = payload[0].payload;
-                      return (
-                        <div className="rounded-lg border bg-background p-2 shadow-sm">
-                          <div className="grid gap-2">
-                            <div className="flex flex-col">
-                              <span className="text-xs font-semibold">
-                                {data.model}
-                              </span>
-                              <span className="text-xs text-muted-foreground mt-0.5">
-                                {data.passed} passed · {data.failed} failed
-                              </span>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <div
-                                className="h-2 w-2 rounded-full"
-                                style={{
-                                  backgroundColor: "var(--color-passRate)",
-                                }}
-                              />
-                              <span className="text-sm font-semibold">
-                                {data.passRate}%
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    }}
-                  />
-                  <Bar
-                    dataKey="passRate"
-                    fill="var(--color-passRate)"
-                    radius={[4, 4, 0, 0]}
-                    isAnimationActive={false}
-                    minPointSize={8}
-                  />
-                </BarChart>
-              </ChartContainer>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                No model data available.
-              </p>
-            )}
-          </div>
-        </div>
-      </div>
-
       {/* Runs List */}
       <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
         {selectedRunIds.size > 0 ? (

@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { SuiteHeader } from "./suite-header";
-import { RunOverview } from "./run-overview";
+import { SuiteHeroStats } from "./suite-hero-stats";
+import { RunAccordionView } from "./run-accordion-view";
 import { RunDetailView } from "./run-detail-view";
-import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
@@ -66,15 +66,10 @@ export function CiSuiteDetail({
       : route.type === "test-detail"
         ? "test-detail"
         : "overview";
-  const runsViewMode =
-    route.type === "suite-overview" && route.view === "test-cases"
-      ? "test-cases"
-      : "runs";
-
   const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
-  >("test");
+  >("result");
 
   const { runTrendData, modelStats } = useSuiteData(
     suite,
@@ -158,7 +153,7 @@ export function CiSuiteDetail({
     navigateToCiEvalsRoute({
       type: "suite-overview",
       suiteId: suite._id,
-      view: runsViewMode,
+      view: "test-cases",
     });
   };
 
@@ -186,7 +181,7 @@ export function CiSuiteDetail({
           deletingRunId={deletingRunId}
           showRunSummarySidebar={showRunSummarySidebar}
           setShowRunSummarySidebar={setShowRunSummarySidebar}
-          runsViewMode={runsViewMode}
+          runsViewMode={"test-cases"}
           runs={runs}
           allIterations={allIterations}
           aggregate={aggregate}
@@ -214,6 +209,13 @@ export function CiSuiteDetail({
                 iterations={caseIterations}
                 runs={runs}
                 serverNames={connectedSuiteServers}
+                suiteName={suite.name}
+                onNavigateToSuite={() => {
+                  navigateToCiEvalsRoute({
+                    type: "suite-overview",
+                    suiteId: suite._id,
+                  });
+                }}
                 onBack={() => {
                   navigateToCiEvalsRoute({
                     type: "suite-overview",
@@ -232,54 +234,30 @@ export function CiSuiteDetail({
             );
           })()
         ) : viewMode === "overview" ? (
-          <div key={runsViewMode} className="space-y-4">
-            {runsViewMode === "runs" ? (
-              <RunOverview
-                suite={suite}
-                runs={runs}
-                runsLoading={runsLoading}
-                allIterations={allIterations}
-                runTrendData={runTrendData}
-                modelStats={modelStats}
-                onRunClick={handleRunClick}
-                onDirectDeleteRun={onDirectDeleteRun}
-                runsViewMode={runsViewMode}
-                onViewModeChange={(value) => {
-                  navigateToCiEvalsRoute({
-                    type: "suite-overview",
-                    suiteId: suite._id,
-                    view: value,
-                  });
-                }}
-                userMap={userMap}
-              />
-            ) : (
-              <TestCasesOverview
-                suite={suite}
-                cases={cases}
-                allIterations={allIterations}
-                runs={runs}
-                runsViewMode={runsViewMode}
-                onViewModeChange={(value) => {
-                  navigateToCiEvalsRoute({
-                    type: "suite-overview",
-                    suiteId: suite._id,
-                    view: value,
-                  });
-                }}
-                onTestCaseClick={(testCaseId) => {
-                  navigateToCiEvalsRoute({
-                    type: "test-detail",
-                    suiteId: suite._id,
-                    testId: testCaseId,
-                  });
-                }}
-                runTrendData={runTrendData}
-                modelStats={modelStats}
-                runsLoading={runsLoading}
-                onRunClick={handleRunClick}
-              />
-            )}
+          <div className="space-y-4 overflow-y-auto h-full p-0.5">
+            <SuiteHeroStats
+              runs={runs}
+              allIterations={allIterations}
+              runTrendData={runTrendData}
+              modelStats={modelStats}
+              testCaseCount={cases.length}
+              isSDK={suite.source === "sdk"}
+              onRunClick={handleRunClick}
+            />
+            <RunAccordionView
+              suite={suite}
+              runs={runs}
+              allIterations={allIterations}
+              onRunClick={handleRunClick}
+              onTestCaseClick={(testCaseId) => {
+                navigateToCiEvalsRoute({
+                  type: "test-detail",
+                  suiteId: suite._id,
+                  testId: testCaseId,
+                });
+              }}
+              userMap={userMap}
+            />
           </div>
         ) : viewMode === "run-detail" && selectedRunDetails ? (
           <RunDetailView
