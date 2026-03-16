@@ -1,11 +1,5 @@
 import { useMemo } from "react";
 import { Loader2, CheckCircle2, XCircle } from "lucide-react";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
-import { PieChart, Pie, Label } from "recharts";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
@@ -47,6 +41,7 @@ interface RunDetailViewProps {
   serverNames?: string[];
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  hideCiMetadata?: boolean;
 }
 
 export function RunDetailView({
@@ -61,6 +56,7 @@ export function RunDetailView({
   serverNames = [],
   selectedIterationId,
   onSelectIteration,
+  hideCiMetadata,
 }: RunDetailViewProps) {
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
@@ -92,33 +88,10 @@ export function RunDetailView({
 
   const isRunning = selectedRunDetails.status === "running";
   const expected = selectedRunDetails.expectedIterations;
-  const donutTotal = selectedRunChartData.donutData.reduce(
-    (sum, item) => sum + item.value,
-    0,
-  );
-  const remaining = useMemo(() => {
-    if (expected && isRunning && expected > donutTotal) {
-      return expected - donutTotal;
-    }
-    return 0;
-  }, [expected, isRunning, donutTotal]);
-
-  const progressDonutData = useMemo(() => {
-    if (remaining > 0) {
-      return [
-        ...selectedRunChartData.donutData,
-        {
-          name: "remaining",
-          value: remaining,
-          fill: "hsl(240 3.7% 15.9% / 0.3)",
-        },
-      ];
-    }
-    return selectedRunChartData.donutData;
-  }, [selectedRunChartData.donutData, remaining]);
-
   const progressPercent =
-    expected && expected > 0 ? Math.round((donutTotal / expected) * 100) : null;
+    expected && isRunning && expected > 0
+      ? Math.round((computedStats.total / expected) * 100)
+      : null;
 
   const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
 
@@ -136,141 +109,81 @@ export function RunDetailView({
     <div className="relative flex h-full flex-col">
       {/* Run Header (sticky) */}
       <div className="sticky top-0 z-10 bg-background shrink-0">
-        {(selectedRunDetails.ciMetadata?.branch ||
-          selectedRunDetails.ciMetadata?.commitSha ||
-          selectedRunDetails.ciMetadata?.runUrl) && (
-          <div className="mb-4">
-            <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
-          </div>
-        )}
+        {!hideCiMetadata &&
+          (selectedRunDetails.ciMetadata?.branch ||
+            selectedRunDetails.ciMetadata?.commitSha ||
+            selectedRunDetails.ciMetadata?.runUrl) && (
+            <div className="mb-4">
+              <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
+            </div>
+          )}
 
         {/* Run Metrics and Chart */}
-        <div className="rounded-lg border bg-background/80 px-3 py-2">
-          <div className="flex items-center gap-6">
-            {/* Metrics */}
-            <div className="flex gap-6 flex-1">
-              <div className="space-y-0.5">
-                <div className="text-xs text-muted-foreground">
-                  {metricLabel}
-                </div>
-                <div className="text-sm font-semibold">
+        <div className="rounded-xl border bg-card text-card-foreground">
+          <div className="flex items-center gap-6 p-5">
+            {/* Stats */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-2xl font-bold">
                   {computedStats.total > 0
                     ? `${Math.round(computedStats.passRate * 100)}%`
                     : "—"}
-                </div>
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {metricLabel}
+                </span>
               </div>
-              <div className="space-y-0.5">
-                <div className="text-xs text-muted-foreground">Passed</div>
-                <div className="text-sm font-semibold">
-                  {computedStats.passed.toLocaleString()}
-                </div>
-              </div>
-              <div className="space-y-0.5">
-                <div className="text-xs text-muted-foreground">Failed</div>
-                <div className="text-sm font-semibold">
-                  {computedStats.failed.toLocaleString()}
-                </div>
-              </div>
-              <div className="space-y-0.5">
-                <div className="text-xs text-muted-foreground">Total</div>
-                <div className="text-sm font-semibold">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>
                   {expected && isRunning
-                    ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
-                    : computedStats.total.toLocaleString()}
-                </div>
+                    ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()} tests`
+                    : `${computedStats.total.toLocaleString()} tests`}
+                </span>
+                {selectedRunDetails.completedAt &&
+                  selectedRunDetails.createdAt && (
+                    <>
+                      <span className="text-muted-foreground/40">|</span>
+                      <span>
+                        {formatDuration(
+                          selectedRunDetails.completedAt -
+                            selectedRunDetails.createdAt,
+                        )}
+                      </span>
+                    </>
+                  )}
+                <span className="text-muted-foreground/40">|</span>
+                <span className="capitalize">
+                  {isRunning && progressPercent !== null
+                    ? `Running (${progressPercent}%)`
+                    : selectedRunDetails.status}
+                </span>
               </div>
-              <div className="space-y-0.5">
-                <div className="text-xs text-muted-foreground">Duration</div>
-                <div className="text-sm font-semibold">
-                  {selectedRunDetails.completedAt &&
-                  selectedRunDetails.createdAt
-                    ? formatDuration(
-                        selectedRunDetails.completedAt -
-                          selectedRunDetails.createdAt,
-                      )
-                    : "—"}
+              {/* Pass/fail progress bar */}
+              {computedStats.total > 0 && (
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden flex">
+                    <div
+                      className="h-full rounded-l-full transition-all"
+                      style={{
+                        width: `${(computedStats.passed / computedStats.total) * 100}%`,
+                        backgroundColor: "hsl(142.1 76.2% 36.3%)",
+                      }}
+                    />
+                    <div
+                      className="h-full rounded-r-full transition-all"
+                      style={{
+                        width: `${(computedStats.failed / computedStats.total) * 100}%`,
+                        backgroundColor: "hsl(0 84.2% 60.2%)",
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {computedStats.passed} passed · {computedStats.failed}{" "}
+                    failed
+                  </span>
                 </div>
-              </div>
+              )}
             </div>
-
-            {/* Test Results Chart */}
-            {selectedRunChartData.donutData.length > 0 && (
-              <div className="flex items-center gap-2">
-                <ChartContainer
-                  config={{
-                    passed: {
-                      label: "Passed",
-                      color: "hsl(142.1 76.2% 36.3%)",
-                    },
-                    failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                    pending: {
-                      label: "Pending",
-                      color: "hsl(45.4 93.4% 47.5%)",
-                    },
-                    cancelled: {
-                      label: "Cancelled",
-                      color: "hsl(240 3.7% 15.9%)",
-                    },
-                    remaining: {
-                      label: "Remaining",
-                      color: "hsl(240 3.7% 15.9% / 0.3)",
-                    },
-                  }}
-                  className="h-12 w-12"
-                >
-                  <PieChart>
-                    <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                    <Pie
-                      data={progressDonutData}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={15}
-                      outerRadius={22}
-                      strokeWidth={1}
-                    >
-                      <Label
-                        content={({ viewBox }) => {
-                          if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                            return (
-                              <text
-                                x={viewBox.cx}
-                                y={viewBox.cy}
-                                textAnchor="middle"
-                                dominantBaseline="middle"
-                              >
-                                <tspan
-                                  x={viewBox.cx}
-                                  y={viewBox.cy}
-                                  className="fill-foreground text-xs font-bold"
-                                >
-                                  {expected && isRunning
-                                    ? `${donutTotal}/${expected}`
-                                    : donutTotal}
-                                </tspan>
-                                <tspan
-                                  x={viewBox.cx}
-                                  y={(viewBox.cy || 0) + 8}
-                                  className="fill-muted-foreground text-[8px]"
-                                >
-                                  Total
-                                </tspan>
-                              </text>
-                            );
-                          }
-                        }}
-                      />
-                    </Pie>
-                  </PieChart>
-                </ChartContainer>
-              </div>
-            )}
-
-            {/* Status */}
-            <span className="text-xs font-medium text-foreground capitalize">
-              {isRunning && progressPercent !== null
-                ? `Running (${progressPercent}%)`
-                : selectedRunDetails.status}
-            </span>
 
             {/* Pass/Fail Badge */}
             <PassCriteriaBadge
@@ -282,44 +195,44 @@ export function RunDetailView({
 
           {/* Inline model performance (only when ≥2 models) */}
           {selectedRunChartData.modelData.length >= 2 && (
-            <div className="flex items-center gap-4 mt-2 pt-2 border-t border-border/50">
-              <span className="text-[10px] text-muted-foreground">
-                By Model:
-              </span>
-              {selectedRunChartData.modelData.map((model) => (
-                <div key={model.model} className="flex items-center gap-1.5">
-                  <div
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{
-                      backgroundColor:
-                        model.passRate >= 80
-                          ? "hsl(142.1 76.2% 36.3%)"
-                          : model.passRate >= 50
-                            ? "hsl(45.4 93.4% 47.5%)"
-                            : "hsl(0 84.2% 60.2%)",
-                    }}
-                  />
-                  <span className="text-[11px]">{model.model}</span>
-                  <span className="text-[11px] font-mono font-medium">
-                    {model.passRate}%
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    ({model.passed}/{model.total})
-                  </span>
-                </div>
-              ))}
+            <div className="border-t px-5 py-3">
+              <div className="text-[10px] text-muted-foreground mb-2">
+                Performance by Model
+              </div>
+              <div className="flex flex-wrap items-center gap-4">
+                {selectedRunChartData.modelData.map((model) => (
+                  <div key={model.model} className="flex items-center gap-1.5">
+                    <div
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{
+                        backgroundColor:
+                          model.passRate >= 80
+                            ? "hsl(142.1 76.2% 36.3%)"
+                            : model.passRate >= 50
+                              ? "hsl(45.4 93.4% 47.5%)"
+                              : "hsl(0 84.2% 60.2%)",
+                      }}
+                    />
+                    <span className="text-[11px]">{model.model}</span>
+                    <span className="text-[11px] font-mono font-medium">
+                      {model.passRate}%
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ({model.passed}/{model.total})
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
       </div>
 
-      {/* AI Triage */}
-      <div className="mt-3">
-        <AiTriagePanel
-          run={selectedRunDetails}
-          failedCount={computedStats.failed}
-        />
-      </div>
+      {/* AI Triage — shown between summary and iteration panes */}
+      <AiTriagePanel
+        run={selectedRunDetails}
+        failedCount={computedStats.failed}
+      />
 
       {/* Two-pane body */}
       <div className="flex h-0 flex-1 mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden">

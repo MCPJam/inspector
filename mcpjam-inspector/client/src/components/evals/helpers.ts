@@ -250,19 +250,21 @@ export function groupRunsByCommit(
 
   for (const entry of overview) {
     for (const run of entry.recentRuns) {
-      const sha = run.ciMetadata?.commitSha?.trim() || "__manual__";
-      if (!buckets.has(sha)) {
-        buckets.set(sha, { runs: [], suiteMap: new Map() });
+      const sha = run.ciMetadata?.commitSha?.trim() || "";
+      // Each manual run (no commit SHA) gets its own group keyed by run ID
+      const key = sha || `__manual__${run._id}`;
+      if (!buckets.has(key)) {
+        buckets.set(key, { runs: [], suiteMap: new Map() });
       }
-      const bucket = buckets.get(sha)!;
+      const bucket = buckets.get(key)!;
       bucket.runs.push(run);
       bucket.suiteMap.set(entry.suite._id, entry.suite.name);
     }
   }
 
   const groups: CommitGroup[] = [];
-  for (const [sha, { runs, suiteMap }] of buckets) {
-    const isManual = sha === "__manual__";
+  for (const [key, { runs, suiteMap }] of buckets) {
+    const isManual = key.startsWith("__manual__");
     const summary = { total: runs.length, passed: 0, failed: 0, running: 0 };
     let latestTimestamp = 0;
     let branch: string | null = null;
@@ -283,9 +285,12 @@ export function groupRunsByCommit(
     else if (summary.failed > 0) status = "failed";
     else status = "passed";
 
+    // For manual runs, use a unique ID so each gets its own page
+    const manualId = isManual ? key.replace("__manual__", "manual-") : null;
+
     groups.push({
-      commitSha: isManual ? "manual" : sha,
-      shortSha: isManual ? "Manual" : sha.slice(0, 7),
+      commitSha: isManual ? manualId! : key,
+      shortSha: isManual ? "Manual" : key.slice(0, 7),
       branch: isManual ? null : branch,
       timestamp: latestTimestamp,
       status,
@@ -297,8 +302,8 @@ export function groupRunsByCommit(
 
   // Sort by most recent first, manual always last
   groups.sort((a, b) => {
-    if (a.commitSha === "manual") return 1;
-    if (b.commitSha === "manual") return -1;
+    if (a.commitSha.startsWith("manual-")) return 1;
+    if (b.commitSha.startsWith("manual-")) return -1;
     return b.timestamp - a.timestamp;
   });
 
