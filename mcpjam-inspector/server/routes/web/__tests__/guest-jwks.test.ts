@@ -89,10 +89,11 @@ describe("GET /api/web/guest-jwks", () => {
     expect(key.e).toEqual(expect.any(String));
     expect(global.fetch).toHaveBeenCalledWith(
       "https://test-deployment.convex.site/guest/jwks",
-      {
+      expect.objectContaining({
         method: "GET",
         headers: { Accept: "application/json" },
-      },
+        signal: expect.anything(),
+      }),
     );
   });
 
