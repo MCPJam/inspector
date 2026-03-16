@@ -135,7 +135,8 @@ export function CommitListSidebar({
                     </div>
                   </div>
                   <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
-                    {group.summary.total} run{group.summary.total !== 1 ? "s" : ""}
+                    {group.summary.total} run
+                    {group.summary.total !== 1 ? "s" : ""}
                   </span>
                 </div>
               </button>

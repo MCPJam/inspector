@@ -24,10 +24,7 @@ import {
 import type { CommitGroup, EvalSuiteRun } from "./types";
 import { formatDuration } from "./helpers";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import {
-  classifyAllFailures,
-  type FailureTag,
-} from "./ai-insights";
+import { classifyAllFailures, type FailureTag } from "./ai-insights";
 import { useCommitTriage } from "./use-ai-triage";
 
 interface CommitDetailViewProps {
@@ -151,7 +148,8 @@ export function CommitDetailView({
   const compareOptions = useMemo(
     () =>
       allCommitGroups.filter(
-        (g) => g.commitSha !== commitGroup.commitSha && g.commitSha !== "manual",
+        (g) =>
+          g.commitSha !== commitGroup.commitSha && g.commitSha !== "manual",
       ),
     [allCommitGroups, commitGroup.commitSha],
   );
@@ -192,7 +190,11 @@ export function CommitDetailView({
   // Classify failures with regression/flaky/new tags
   const classifiedFailures = useMemo(
     () =>
-      classifyAllFailures(runsWithFailedCases, commitGroup.suiteMap, allCommitGroups),
+      classifyAllFailures(
+        runsWithFailedCases,
+        commitGroup.suiteMap,
+        allCommitGroups,
+      ),
     [runsWithFailedCases, commitGroup.suiteMap, allCommitGroups],
   );
 
@@ -210,7 +212,12 @@ export function CommitDetailView({
     if (failedRunIds.length > 0 && !aiTriage.summary && !aiTriage.loading) {
       aiTriage.requestTriage();
     }
-  }, [failedRunIds.length, aiTriage.summary, aiTriage.loading, aiTriage.requestTriage]);
+  }, [
+    failedRunIds.length,
+    aiTriage.summary,
+    aiTriage.loading,
+    aiTriage.requestTriage,
+  ]);
 
   // Triage summary — shows when any cases failed
   const triageSummary = useMemo(() => {
@@ -256,13 +263,19 @@ export function CommitDetailView({
             {commitGroup.branch && (
               <span className="flex items-center gap-1">
                 <GitBranch className="h-3 w-3" />
-                branch: <span className="font-mono font-medium text-foreground">{commitGroup.branch}</span>
+                branch:{" "}
+                <span className="font-mono font-medium text-foreground">
+                  {commitGroup.branch}
+                </span>
               </span>
             )}
             {!isManual && (
               <span className="flex items-center gap-1">
                 <GitCommit className="h-3 w-3" />
-                commit: <span className="font-mono font-medium text-foreground">{commitGroup.shortSha}</span>
+                commit:{" "}
+                <span className="font-mono font-medium text-foreground">
+                  {commitGroup.shortSha}
+                </span>
               </span>
             )}
             {commitGroup.runs[0]?.ciMetadata?.provider && (
@@ -276,12 +289,19 @@ export function CommitDetailView({
             {totalDuration > 0 && (
               <span className="flex items-center gap-1">
                 <Clock className="h-3 w-3" />
-                duration: <span className="font-mono font-medium text-foreground">{formatDuration(totalDuration)}</span>
+                duration:{" "}
+                <span className="font-mono font-medium text-foreground">
+                  {formatDuration(totalDuration)}
+                </span>
               </span>
             )}
             {models.length > 0 && (
               <span>
-                model: <span className="font-mono font-medium text-foreground">{models[0]}{models.length > 1 ? ` +${models.length - 1}` : ""}</span>
+                model:{" "}
+                <span className="font-mono font-medium text-foreground">
+                  {models[0]}
+                  {models.length > 1 ? ` +${models.length - 1}` : ""}
+                </span>
               </span>
             )}
           </div>
@@ -336,12 +356,14 @@ export function CommitDetailView({
                 )}
                 <span className="flex items-center gap-1.5">
                   <span className="text-muted-foreground">
-                    {commitGroup.runs.length} suite{commitGroup.runs.length !== 1 ? "s" : ""}
+                    {commitGroup.runs.length} suite
+                    {commitGroup.runs.length !== 1 ? "s" : ""}
                   </span>
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="text-muted-foreground">
-                    {totalCases.total} total case{totalCases.total !== 1 ? "s" : ""}
+                    {totalCases.total} total case
+                    {totalCases.total !== 1 ? "s" : ""}
                   </span>
                 </span>
               </div>
@@ -372,53 +394,64 @@ export function CommitDetailView({
         </div>
 
         {/* === AI TRIAGE PANEL === */}
-        {triageSummary && (aiTriage.summary || aiTriage.loading || aiTriage.error) && (
-          <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 p-6 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
-            <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
-            <div className="flex items-center gap-2.5 mb-4">
-              <Badge
-                variant="outline"
-                className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
-              >
-                <Sparkles className="mr-1 h-3 w-3" />
-                AI
-              </Badge>
-              <span className="text-sm font-semibold">Triage Summary</span>
-              {aiTriage.loading && (
-                <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  analyzing...
-                </span>
-              )}
-            </div>
+        {triageSummary &&
+          (aiTriage.summary || aiTriage.loading || aiTriage.error) && (
+            <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 p-6 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
+              <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
+              <div className="flex items-center gap-2.5 mb-4">
+                <Badge
+                  variant="outline"
+                  className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
+                >
+                  <Sparkles className="mr-1 h-3 w-3" />
+                  AI
+                </Badge>
+                <span className="text-sm font-semibold">Triage Summary</span>
+                {aiTriage.loading && (
+                  <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    analyzing...
+                  </span>
+                )}
+              </div>
 
-            {/* AI-generated summary */}
-            <div className="rounded-md border border-border/40 bg-white/60 p-4 text-[13px] leading-relaxed dark:bg-black/20">
-              {aiTriage.summary ? (
-                <p>{aiTriage.summary}</p>
-              ) : aiTriage.error ? (
-                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
-                  <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium text-xs">AI triage unavailable</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">{aiTriage.error}</p>
-                    <p className="text-xs mt-2">
-                      <strong>{triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""} detected</strong>{" "}
-                      across {triageSummary.failedSuiteNames.join(", ")} with{" "}
-                      {triageSummary.totalFailedCases} failed case{triageSummary.totalFailedCases !== 1 ? "s" : ""}.
-                    </p>
+              {/* AI-generated summary */}
+              <div className="rounded-md border border-border/40 bg-white/60 p-4 text-[13px] leading-relaxed dark:bg-black/20">
+                {aiTriage.summary ? (
+                  <p>{aiTriage.summary}</p>
+                ) : aiTriage.error ? (
+                  <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium text-xs">
+                        AI triage unavailable
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        {aiTriage.error}
+                      </p>
+                      <p className="text-xs mt-2">
+                        <strong>
+                          {triageSummary.failCount} failure
+                          {triageSummary.failCount !== 1 ? "s" : ""} detected
+                        </strong>{" "}
+                        across {triageSummary.failedSuiteNames.join(", ")} with{" "}
+                        {triageSummary.totalFailedCases} failed case
+                        {triageSummary.totalFailedCases !== 1 ? "s" : ""}.
+                      </p>
+                    </div>
                   </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  <span>Analyzing {triageSummary.failCount} failure{triageSummary.failCount !== 1 ? "s" : ""}...</span>
-                </div>
-              )}
+                ) : (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>
+                      Analyzing {triageSummary.failCount} failure
+                      {triageSummary.failCount !== 1 ? "s" : ""}...
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
-
-          </div>
-        )}
+          )}
 
         {/* === COMPARE BAR === */}
         {compareOptions.length > 0 && (
@@ -486,7 +519,8 @@ export function CommitDetailView({
                 <XCircle className="h-4 w-4 text-destructive" />
                 <span className="text-sm font-semibold">Failure Details</span>
                 <span className="text-xs text-muted-foreground">
-                  · {classifiedFailures.length} suite{classifiedFailures.length !== 1 ? "s" : ""} with failures
+                  · {classifiedFailures.length} suite
+                  {classifiedFailures.length !== 1 ? "s" : ""} with failures
                 </span>
               </div>
             </div>
@@ -494,7 +528,8 @@ export function CommitDetailView({
               {classifiedFailures.slice(0, 4).map((cf) => {
                 const passRate = cf.run.summary
                   ? Math.round(
-                      (cf.run.summary.passed / Math.max(cf.run.summary.total, 1)) *
+                      (cf.run.summary.passed /
+                        Math.max(cf.run.summary.total, 1)) *
                         100,
                     )
                   : 0;
@@ -524,8 +559,11 @@ export function CommitDetailView({
                       {cf.suiteName}
                     </div>
                     <div className="text-[11px] text-muted-foreground">
-                      <span className="text-destructive font-medium">{cf.run.summary?.failed ?? 0} failed</span> of{" "}
-                      {cf.run.summary?.total ?? 0} cases · {passRate}% pass rate
+                      <span className="text-destructive font-medium">
+                        {cf.run.summary?.failed ?? 0} failed
+                      </span>{" "}
+                      of {cf.run.summary?.total ?? 0} cases · {passRate}% pass
+                      rate
                     </div>
                     <span className="mt-2 inline-flex items-center gap-1 text-[12px] font-semibold text-orange-600 dark:text-orange-400">
                       <ExternalLink className="h-3 w-3" />
@@ -580,16 +618,12 @@ export function CommitDetailView({
             defaultOpen
           >
             {failed.map((run) => {
-              const cf = classifiedFailures.find(
-                (c) => c.run._id === run._id,
-              );
+              const cf = classifiedFailures.find((c) => c.run._id === run._id);
               return (
                 <FailedRunRow
                   key={run._id}
                   run={run}
-                  suiteName={
-                    commitGroup.suiteMap.get(run.suiteId) || "Unknown"
-                  }
+                  suiteName={commitGroup.suiteMap.get(run.suiteId) || "Unknown"}
                   sparkline={getSuiteSparkline(
                     run.suiteId,
                     commitGroup.commitSha,
@@ -795,9 +829,7 @@ function FailedRunRow({
 }) {
   const duration = getRunDuration(run);
   const passRate = run.summary
-    ? Math.round(
-        (run.summary.passed / Math.max(run.summary.total, 1)) * 100,
-      )
+    ? Math.round((run.summary.passed / Math.max(run.summary.total, 1)) * 100)
     : 0;
 
   return (
@@ -843,17 +875,21 @@ function FailedRunRow({
                   </span>
                 </div>
                 {/* Show expected tool calls as a mini diff hint */}
-                {test.expectedToolCalls && test.expectedToolCalls.length > 0 && (
-                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-                    expected:{" "}
-                    <span className="text-emerald-500">
-                      {test.expectedToolCalls.map((tc) => tc.toolName).join(", ")}
-                    </span>
-                  </div>
-                )}
+                {test.expectedToolCalls &&
+                  test.expectedToolCalls.length > 0 && (
+                    <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                      expected:{" "}
+                      <span className="text-emerald-500">
+                        {test.expectedToolCalls
+                          .map((tc) => tc.toolName)
+                          .join(", ")}
+                      </span>
+                    </div>
+                  )}
                 {test.isNegativeTest && (
                   <div className="mt-1 font-mono text-[11px] text-muted-foreground">
-                    expected: <span className="text-emerald-500">no tool calls</span>
+                    expected:{" "}
+                    <span className="text-emerald-500">no tool calls</span>
                     {test.scenario && (
                       <span className="ml-1 text-muted-foreground/70">
                         ({test.scenario})
@@ -864,7 +900,9 @@ function FailedRunRow({
               </div>
               {duration !== null && (
                 <span className="font-mono text-muted-foreground shrink-0 pt-0.5">
-                  {formatDuration(duration / Math.max(run.configSnapshot.tests.length, 1))}
+                  {formatDuration(
+                    duration / Math.max(run.configSnapshot.tests.length, 1),
+                  )}
                 </span>
               )}
               <div className="flex gap-1 shrink-0 pt-0.5">
@@ -933,9 +971,7 @@ function RunRow({
 }) {
   const duration = getRunDuration(run);
   const passRate = run.summary
-    ? Math.round(
-        (run.summary.passed / Math.max(run.summary.total, 1)) * 100,
-      )
+    ? Math.round((run.summary.passed / Math.max(run.summary.total, 1)) * 100)
     : 0;
 
   const icon =
@@ -966,7 +1002,9 @@ function RunRow({
         </span>
       )}
       {variant === "running" && (
-        <span className="text-xs text-amber-500 font-medium">In progress...</span>
+        <span className="text-xs text-amber-500 font-medium">
+          In progress...
+        </span>
       )}
       {variant === "notrun" && (
         <Badge

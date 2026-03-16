@@ -22,11 +22,12 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { TagBadges } from "./tag-editor";
-import type { EvalSuiteOverviewEntry, EvalSuiteRun, CommitGroup } from "./types";
-import {
-  classifyFailure,
-  type FailureTag,
-} from "./ai-insights";
+import type {
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+  CommitGroup,
+} from "./types";
+import { classifyFailure, type FailureTag } from "./ai-insights";
 import { useCommitTriage } from "./use-ai-triage";
 
 // ---------------------------------------------------------------------------
@@ -270,7 +271,11 @@ export function OverviewPanel({
   // Collect run IDs from suites with failures for backend triage
   const failedOverviewRunIds = useMemo(() => {
     return filteredSuites
-      .filter((e) => (e.totals.failed > 0 || e.latestRun?.result === "failed") && e.latestRun)
+      .filter(
+        (e) =>
+          (e.totals.failed > 0 || e.latestRun?.result === "failed") &&
+          e.latestRun,
+      )
       .map((e) => e.latestRun!._id);
   }, [filteredSuites]);
 
@@ -278,10 +283,19 @@ export function OverviewPanel({
 
   // Auto-request triage when failures exist
   useEffect(() => {
-    if (failedOverviewRunIds.length > 0 && !aiOverviewTriage.summary && !aiOverviewTriage.loading) {
+    if (
+      failedOverviewRunIds.length > 0 &&
+      !aiOverviewTriage.summary &&
+      !aiOverviewTriage.loading
+    ) {
       aiOverviewTriage.requestTriage();
     }
-  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.requestTriage]);
+  }, [
+    failedOverviewRunIds.length,
+    aiOverviewTriage.summary,
+    aiOverviewTriage.loading,
+    aiOverviewTriage.requestTriage,
+  ]);
 
   // Pre-compute inline failure tags for the failure feed
   // Tags suites with failed cases OR failed result
@@ -362,9 +376,7 @@ export function OverviewPanel({
     if (activeBucket) {
       list = list.filter((e) => activeBucket.suiteIds.has(e.suite._id));
     }
-    return list.filter(
-      (e) => e.latestRun?.result === "failed" || !e.latestRun,
-    );
+    return list.filter((e) => e.latestRun?.result === "failed" || !e.latestRun);
   }, [filteredSuites, activeBucket]);
 
   // Auto-collapse failure feed when no failures
@@ -474,11 +486,15 @@ export function OverviewPanel({
               {stats.neverRunCount > 0 && (
                 <> &middot; {stats.neverRunCount} never run</>
               )}
-              {stats.latestBranch && (
-                <> &middot; {stats.latestBranch}</>
-              )}
+              {stats.latestBranch && <> &middot; {stats.latestBranch}</>}
               {stats.latestCommitSha && (
-                <> @ <span className="font-mono">{stats.latestCommitSha.slice(0, 7)}</span></>
+                <>
+                  {" "}
+                  @{" "}
+                  <span className="font-mono">
+                    {stats.latestCommitSha.slice(0, 7)}
+                  </span>
+                </>
               )}
             </span>
           </div>
@@ -491,59 +507,65 @@ export function OverviewPanel({
       </div>
 
       {/* AI Overview Summary — only when failures exist and triage is active */}
-      {failedOverviewRunIds.length > 0 && (aiOverviewTriage.summary || aiOverviewTriage.loading || aiOverviewTriage.error) && (
-        <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
-          <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
-          <div className="px-4 py-3">
-            <div className="flex items-center gap-2 mb-2">
-              <Badge
-                variant="outline"
-                className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
-              >
-                <Sparkles className="mr-1 h-3 w-3" />
-                AI
-              </Badge>
-              <span className="text-xs font-semibold">Overview Insights</span>
-              {stats.latestCommitSha && (
-                <span className="text-[10px] text-muted-foreground font-mono">
-                  {stats.latestBranch && <>{stats.latestBranch} @ </>}
-                  {stats.latestCommitSha.slice(0, 7)}
-                  {" · "}
-                  {stats.totalSuites} suite{stats.totalSuites !== 1 ? "s" : ""}
-                </span>
-              )}
-              {aiOverviewTriage.loading && (
-                <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  analyzing...
-                </span>
-              )}
-            </div>
-            <div className="text-[13px] leading-relaxed">
-              {aiOverviewTriage.summary ? (
-                <p>{aiOverviewTriage.summary}</p>
-              ) : aiOverviewTriage.error ? (
-                <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="font-medium">AI insights unavailable</p>
-                    <p className="text-[11px] text-muted-foreground mt-0.5">
-                      {aiOverviewTriage.error}
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex items-center gap-2 text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span>
-                    Analyzing {failedOverviewRunIds.length} suite{failedOverviewRunIds.length !== 1 ? "s" : ""} with failures...
+      {failedOverviewRunIds.length > 0 &&
+        (aiOverviewTriage.summary ||
+          aiOverviewTriage.loading ||
+          aiOverviewTriage.error) && (
+          <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
+            <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
+            <div className="px-4 py-3">
+              <div className="flex items-center gap-2 mb-2">
+                <Badge
+                  variant="outline"
+                  className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
+                >
+                  <Sparkles className="mr-1 h-3 w-3" />
+                  AI
+                </Badge>
+                <span className="text-xs font-semibold">Overview Insights</span>
+                {stats.latestCommitSha && (
+                  <span className="text-[10px] text-muted-foreground font-mono">
+                    {stats.latestBranch && <>{stats.latestBranch} @ </>}
+                    {stats.latestCommitSha.slice(0, 7)}
+                    {" · "}
+                    {stats.totalSuites} suite
+                    {stats.totalSuites !== 1 ? "s" : ""}
                   </span>
-                </div>
-              )}
+                )}
+                {aiOverviewTriage.loading && (
+                  <span className="ml-auto text-[10px] text-muted-foreground flex items-center gap-1">
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    analyzing...
+                  </span>
+                )}
+              </div>
+              <div className="text-[13px] leading-relaxed">
+                {aiOverviewTriage.summary ? (
+                  <p>{aiOverviewTriage.summary}</p>
+                ) : aiOverviewTriage.error ? (
+                  <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                    <div>
+                      <p className="font-medium">AI insights unavailable</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">
+                        {aiOverviewTriage.error}
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <span>
+                      Analyzing {failedOverviewRunIds.length} suite
+                      {failedOverviewRunIds.length !== 1 ? "s" : ""} with
+                      failures...
+                    </span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
       {/* Section B: Run Timeline Chips */}
       {timeline.length > 0 && (
@@ -584,11 +606,14 @@ export function OverviewPanel({
 
               const totalRuns = bucket.runs.length;
               const summaryParts: string[] = [];
-              if (bucket.passedCount > 0) summaryParts.push(`${bucket.passedCount}✓`);
-              if (bucket.failedCount > 0) summaryParts.push(`${bucket.failedCount}✗`);
-              const summaryText = summaryParts.length > 0
-                ? summaryParts.join(" ")
-                : `${totalRuns} run${totalRuns !== 1 ? "s" : ""}`;
+              if (bucket.passedCount > 0)
+                summaryParts.push(`${bucket.passedCount}✓`);
+              if (bucket.failedCount > 0)
+                summaryParts.push(`${bucket.failedCount}✗`);
+              const summaryText =
+                summaryParts.length > 0
+                  ? summaryParts.join(" ")
+                  : `${totalRuns} run${totalRuns !== 1 ? "s" : ""}`;
 
               const tooltipParts = [
                 bucket.branch ? `${bucket.branch} @ ${chipLabel}` : chipLabel,
@@ -599,7 +624,11 @@ export function OverviewPanel({
               return (
                 <button
                   key={bucket.id}
-                  onClick={() => setSelectedBucketId(bucket.id === activeBucketId ? null : bucket.id)}
+                  onClick={() =>
+                    setSelectedBucketId(
+                      bucket.id === activeBucketId ? null : bucket.id,
+                    )
+                  }
                   title={tooltipParts.join("\n")}
                   className={cn(
                     "flex flex-col items-center gap-1 px-3 py-2 rounded-lg transition-all shrink-0 min-w-[68px]",
@@ -612,7 +641,9 @@ export function OverviewPanel({
                     <div
                       className={cn("h-2.5 w-2.5 rounded-full", chipColor)}
                     />
-                    <span className="text-xs font-mono font-medium">{chipLabel}</span>
+                    <span className="text-xs font-mono font-medium">
+                      {chipLabel}
+                    </span>
                   </div>
                   <span className="text-[10px] text-muted-foreground">
                     {formatRelativeTime(bucket.timestamp)}
@@ -679,9 +710,11 @@ export function OverviewPanel({
                             {entry.suite.name}
                           </span>
                           {isFailed &&
-                            failureTagMap.get(entry.suite._id)?.map((tag) => (
-                              <InlineFailureTag key={tag} tag={tag} />
-                            ))}
+                            failureTagMap
+                              .get(entry.suite._id)
+                              ?.map((tag) => (
+                                <InlineFailureTag key={tag} tag={tag} />
+                              ))}
                         </div>
                         {isFailed && entry.latestRun?.summary && (
                           <div className="text-xs text-muted-foreground mt-0.5">
@@ -747,7 +780,9 @@ export function OverviewPanel({
               className="text-xs px-2.5 py-1 rounded-full border bg-primary/10 text-primary border-primary/30 hover:bg-primary/20 transition-colors flex items-center gap-1"
             >
               <span className="font-mono">
-                {activeBucket.commitSha ? activeBucket.commitSha.slice(0, 7) : "manual"}
+                {activeBucket.commitSha
+                  ? activeBucket.commitSha.slice(0, 7)
+                  : "manual"}
               </span>
               <span>&times;</span>
             </button>
@@ -908,13 +943,19 @@ export function OverviewPanel({
                   >
                     {entry.latestRun?.ciMetadata?.commitSha ? (
                       <div>
-                        <span className="font-mono">{entry.latestRun.ciMetadata.commitSha.slice(0, 7)}</span>
+                        <span className="font-mono">
+                          {entry.latestRun.ciMetadata.commitSha.slice(0, 7)}
+                        </span>
                         {lastRunTs && (
-                          <div className="text-[10px]">{formatRelativeTime(lastRunTs)}</div>
+                          <div className="text-[10px]">
+                            {formatRelativeTime(lastRunTs)}
+                          </div>
                         )}
                       </div>
+                    ) : lastRunTs ? (
+                      formatRelativeTime(lastRunTs)
                     ) : (
-                      lastRunTs ? formatRelativeTime(lastRunTs) : "—"
+                      "—"
                     )}
                   </div>
 
@@ -970,15 +1011,18 @@ function InlineFailureTag({ tag }: { tag: FailureTag }) {
   const config = {
     regression: {
       label: "regression",
-      className: "text-destructive bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800",
+      className:
+        "text-destructive bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800",
     },
     flaky: {
       label: "flaky",
-      className: "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-800",
+      className:
+        "text-amber-600 bg-amber-50 border-amber-200 dark:bg-amber-950/50 dark:border-amber-800",
     },
     new: {
       label: "new",
-      className: "text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-950/50 dark:border-blue-800",
+      className:
+        "text-blue-600 bg-blue-50 border-blue-200 dark:bg-blue-950/50 dark:border-blue-800",
     },
   }[tag];
 

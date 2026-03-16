@@ -27,9 +27,7 @@ export interface TriageResult {
  * Until the backend mutation is deployed, requests fail gracefully and the
  * panel shows "AI triage unavailable" instead of crashing.
  */
-export function useCommitTriage(
-  failedRunIds: string[],
-): {
+export function useCommitTriage(failedRunIds: string[]): {
   summary: string | null;
   loading: boolean;
   error: string | null;
@@ -79,13 +77,18 @@ export function useCommitTriage(
           // Backend will generate async — for now show as pending
           // In future, a reactive query subscription will update this
           setLoading(false);
-          setError("Triage requested — results will appear when backend processing completes.");
+          setError(
+            "Triage requested — results will appear when backend processing completes.",
+          );
         }
       })
       .catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
         // Detect "function not found" errors from Convex
-        if (message.includes("Could not find") || message.includes("not found")) {
+        if (
+          message.includes("Could not find") ||
+          message.includes("not found")
+        ) {
           setUnavailable(true);
         } else {
           setError(message);

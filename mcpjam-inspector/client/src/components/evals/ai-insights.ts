@@ -109,4 +109,3 @@ export function classifyAllFailures(
     return classifyFailure(run, suiteName, allCommitGroups);
   });
 }
-
