@@ -27,19 +27,23 @@ import {
 } from "fs";
 import os from "os";
 import path from "path";
-import { shouldUseLocalGuestSigning } from "../utils/guest-session-source.js";
+import { getRemoteGuestJwksUrl } from "../utils/guest-session-source.js";
 import { logger } from "../utils/logger.js";
 
 const GUEST_TOKEN_TTL_S = 24 * 60 * 60; // 24 hours in seconds
 const GUEST_ISSUER = "https://api.mcpjam.com/guest";
 const KID = "guest-1";
-const DEFAULT_HOSTED_GUEST_JWKS_URL =
-  "https://app.mcpjam.com/api/web/guest-jwks";
 const HOSTED_GUEST_JWKS_CACHE_MS = 5 * 60 * 1000;
 
 let privateKey: KeyObject;
 let publicKey: KeyObject;
-let jwks: { keys: JsonWebKey[] };
+type GuestJwk = JsonWebKey & {
+  kid: string;
+  alg: string;
+  use: string;
+};
+
+let jwks: { keys: GuestJwk[] };
 let hostedGuestPublicKeysCache:
   | {
       fetchedAt: number;
@@ -140,7 +144,7 @@ function base64urlDecode(str: string): Buffer {
 }
 
 function getHostedGuestJwksUrl(): string {
-  return process.env.MCPJAM_GUEST_JWKS_URL || DEFAULT_HOSTED_GUEST_JWKS_URL;
+  return getRemoteGuestJwksUrl();
 }
 
 function verifyGuestTokenSignature(
@@ -244,7 +248,7 @@ async function fetchAndCacheHostedGuestKeys(
     }
 
     const body = (await response.json()) as {
-      keys?: Array<JsonWebKey & { kid?: string }>;
+      keys?: GuestJwk[];
     };
     const keys = Array.isArray(body.keys) ? body.keys : [];
     const keysByKid = new Map<string, KeyObject>();
@@ -253,7 +257,7 @@ async function fetchAndCacheHostedGuestKeys(
     for (const jwk of keys) {
       try {
         const nextKey = createPublicKey({
-          key: jwk,
+          key: jwk as any,
           format: "jwk",
         });
         if (!fallbackKey) {
@@ -377,7 +381,7 @@ function generateEphemeralKeyPair(): void {
  * Returns the JWKS document for the guest issuer.
  * Serve this at /api/web/guest-jwks.
  */
-export function getGuestJwks(): { keys: JsonWebKey[] } {
+export function getGuestJwks(): { keys: GuestJwk[] } {
   if (!jwks) {
     throw new Error(
       "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
@@ -402,6 +406,15 @@ export function getGuestPublicKeyPem(): string {
     );
   }
   return publicKey.export({ type: "spki", format: "pem" }) as string;
+}
+
+export function getGuestPrivateKeyPem(): string {
+  if (!privateKey) {
+    throw new Error(
+      "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
+    );
+  }
+  return privateKey.export({ type: "pkcs8", format: "pem" }) as string;
 }
 
 /**
@@ -497,28 +510,20 @@ export async function validateGuestTokenDetailedAsync(token: string): Promise<{
   guestId?: string;
   reason?: string;
 }> {
-  if (!publicKey) {
-    throw new Error(
-      "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
-    );
-  }
-
   const parsed = parseGuestToken(token);
   if (!("parsed" in parsed)) {
     return { valid: false, reason: parsed.reason };
   }
 
-  const localSignatureResult = verifyGuestTokenSignature(
-    parsed.parsed.signingInput,
-    parsed.parsed.signature,
-    publicKey,
-  );
-  if (localSignatureResult.valid) {
-    return { valid: true, guestId: parsed.parsed.payload.sub };
-  }
-
-  if (shouldUseLocalGuestSigning()) {
-    return { valid: false, reason: localSignatureResult.reason };
+  if (publicKey) {
+    const localSignatureResult = verifyGuestTokenSignature(
+      parsed.parsed.signingInput,
+      parsed.parsed.signature,
+      publicKey,
+    );
+    if (localSignatureResult.valid) {
+      return { valid: true, guestId: parsed.parsed.payload.sub };
+    }
   }
 
   const hostedKey = await getHostedGuestVerificationKey(

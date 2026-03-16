@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockIssueGuestToken = vi.fn();
 const mockLogger = {
   info: vi.fn(),
   warn: vi.fn(),
@@ -10,44 +9,26 @@ vi.mock("../logger", () => ({
   logger: mockLogger,
 }));
 
-vi.mock("../../services/guest-token.js", () => ({
-  issueGuestToken: mockIssueGuestToken,
-}));
-
 describe("guest-auth", () => {
   const originalFetch = global.fetch;
   const originalNodeEnv = process.env.NODE_ENV;
-  const originalLocalSigning = process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
-  const originalPrivateKey = process.env.GUEST_JWT_PRIVATE_KEY;
-  const originalPublicKey = process.env.GUEST_JWT_PUBLIC_KEY;
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
   const originalRemoteUrl = process.env.MCPJAM_GUEST_SESSION_URL;
 
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
-    delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
-    delete process.env.GUEST_JWT_PRIVATE_KEY;
-    delete process.env.GUEST_JWT_PUBLIC_KEY;
+    process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     global.fetch = vi.fn();
   });
 
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
-    if (originalLocalSigning === undefined) {
-      delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
+    if (originalConvexHttpUrl === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
     } else {
-      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = originalLocalSigning;
-    }
-    if (originalPrivateKey === undefined) {
-      delete process.env.GUEST_JWT_PRIVATE_KEY;
-    } else {
-      process.env.GUEST_JWT_PRIVATE_KEY = originalPrivateKey;
-    }
-    if (originalPublicKey === undefined) {
-      delete process.env.GUEST_JWT_PUBLIC_KEY;
-    } else {
-      process.env.GUEST_JWT_PUBLIC_KEY = originalPublicKey;
+      process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
     }
     if (originalRemoteUrl === undefined) {
       delete process.env.MCPJAM_GUEST_SESSION_URL;
@@ -57,26 +38,8 @@ describe("guest-auth", () => {
     global.fetch = originalFetch;
   });
 
-  it("uses local guest signing in development by default", async () => {
+  it("fetches a Convex guest session in development by default", async () => {
     process.env.NODE_ENV = "development";
-    mockIssueGuestToken.mockReturnValue({
-      token: "local-guest-token",
-      expiresAt: Date.now() + 60_000,
-    });
-
-    const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
-    const header = await getProductionGuestAuthHeader();
-
-    expect(header).toBe("Bearer local-guest-token");
-    expect(mockIssueGuestToken).toHaveBeenCalledTimes(1);
-    expect(global.fetch).not.toHaveBeenCalled();
-  });
-
-  it("fetches a hosted guest session in development when local signing is explicitly disabled", async () => {
-    process.env.NODE_ENV = "development";
-    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";
-    process.env.MCPJAM_GUEST_SESSION_URL =
-      "https://app.mcpjam.com/api/web/guest-session";
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -96,19 +59,16 @@ describe("guest-auth", () => {
 
     expect(header).toBe("Bearer remote-dev-token");
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://app.mcpjam.com/api/web/guest-session",
+      "https://test-deployment.convex.site/guest/session",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       },
     );
-    expect(mockIssueGuestToken).not.toHaveBeenCalled();
   });
 
-  it("fetches a hosted guest session in production by default", async () => {
+  it("fetches a Convex guest session in production by default", async () => {
     process.env.NODE_ENV = "production";
-    process.env.MCPJAM_GUEST_SESSION_URL =
-      "https://app.mcpjam.com/api/web/guest-session";
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -128,28 +88,33 @@ describe("guest-auth", () => {
 
     expect(header).toBe("Bearer remote-prod-token");
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://app.mcpjam.com/api/web/guest-session",
+      "https://test-deployment.convex.site/guest/session",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
       },
     );
-    expect(mockIssueGuestToken).not.toHaveBeenCalled();
   });
 
-  it("uses local guest signing in production when explicitly enabled", async () => {
+  it("reuses the cached guest token until refresh is needed", async () => {
     process.env.NODE_ENV = "production";
-    process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "true";
-    mockIssueGuestToken.mockReturnValue({
-      token: "prod-local-guest-token",
-      expiresAt: Date.now() + 60_000,
-    });
+    vi.mocked(global.fetch).mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          guestId: "guest-prod",
+          token: "cached-token",
+          expiresAt: Date.now() + 60 * 60 * 1000,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
 
     const { getProductionGuestAuthHeader } = await import("../guest-auth.js");
-    const header = await getProductionGuestAuthHeader();
-
-    expect(header).toBe("Bearer prod-local-guest-token");
-    expect(mockIssueGuestToken).toHaveBeenCalledTimes(1);
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(await getProductionGuestAuthHeader()).toBe("Bearer cached-token");
+    expect(await getProductionGuestAuthHeader()).toBe("Bearer cached-token");
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 });

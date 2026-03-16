@@ -1,22 +1,10 @@
-/**
- * Guest Session Endpoint Tests
- *
- * Tests for POST /api/web/guest-session.
- * Covers token issuance, response format, and IP-based rate limiting.
- */
-
-import { mkdtempSync, rmSync } from "fs";
-import os from "os";
-import path from "path";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import guestSession from "../guest-session.js";
-import { initGuestTokenSecret } from "../../../services/guest-token.js";
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
-const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
+const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_REMOTE_URL = process.env.MCPJAM_GUEST_SESSION_URL;
-const ORIGINAL_LOCAL_SIGNING = process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
 const ORIGINAL_FETCH = global.fetch;
 
 function createTestApp(): Hono {
@@ -27,40 +15,44 @@ function createTestApp(): Hono {
 
 describe("POST /guest-session", () => {
   let app: Hono;
-  let testGuestKeyDir: string;
+  let sessionCounter: number;
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    testGuestKeyDir = mkdtempSync(
-      path.join(os.tmpdir(), "guest-session-test-"),
-    );
+    sessionCounter = 0;
     process.env.NODE_ENV = "test";
-    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
+    process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
-    delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
-    initGuestTokenSecret();
+    global.fetch = vi.fn().mockImplementation(async () => {
+      sessionCounter += 1;
+      return new Response(
+        JSON.stringify({
+          guestId: `00000000-0000-4000-8000-${String(sessionCounter).padStart(12, "0")}`,
+          token: `header-${sessionCounter}.payload-${sessionCounter}.signature-${sessionCounter}`,
+          expiresAt: Date.now() + 60_000 + sessionCounter,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }) as typeof fetch;
     app = createTestApp();
   });
 
   afterEach(() => {
     process.env.NODE_ENV = ORIGINAL_NODE_ENV;
-    if (ORIGINAL_GUEST_JWT_KEY_DIR === undefined) {
-      delete process.env.GUEST_JWT_KEY_DIR;
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
     } else {
-      process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
     if (ORIGINAL_REMOTE_URL === undefined) {
       delete process.env.MCPJAM_GUEST_SESSION_URL;
     } else {
       process.env.MCPJAM_GUEST_SESSION_URL = ORIGINAL_REMOTE_URL;
     }
-    if (ORIGINAL_LOCAL_SIGNING === undefined) {
-      delete process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING;
-    } else {
-      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = ORIGINAL_LOCAL_SIGNING;
-    }
     global.fetch = ORIGINAL_FETCH;
-    rmSync(testGuestKeyDir, { recursive: true, force: true });
   });
 
   describe("token issuance", () => {
@@ -133,10 +125,9 @@ describe("POST /guest-session", () => {
   });
 
   describe("remote guest session mode", () => {
-    it("proxies the hosted guest session in production by default", async () => {
+    it("proxies the Convex guest session", async () => {
       process.env.NODE_ENV = "production";
-      process.env.MCPJAM_GUEST_SESSION_URL =
-        "https://app.mcpjam.com/api/web/guest-session";
+      process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
       global.fetch = vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
@@ -161,7 +152,7 @@ describe("POST /guest-session", () => {
         expiresAt: 123456789,
       });
       expect(global.fetch).toHaveBeenCalledWith(
-        "https://app.mcpjam.com/api/web/guest-session",
+        "https://test-deployment.convex.site/guest/session",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -169,19 +160,16 @@ describe("POST /guest-session", () => {
       );
     });
 
-    it("issues a local guest session in production when local signing is explicitly enabled", async () => {
-      process.env.NODE_ENV = "production";
-      process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "true";
-      global.fetch = vi.fn() as typeof fetch;
+    it("returns 503 when the Convex guest session cannot be fetched", async () => {
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ error: "nope" }), { status: 503 }),
+      ) as typeof fetch;
 
       const res = await app.request("/guest-session", { method: "POST" });
-      const data = await res.json();
 
-      expect(res.status).toBe(200);
-      expect(typeof data.guestId).toBe("string");
-      expect(typeof data.token).toBe("string");
-      expect(typeof data.expiresAt).toBe("number");
-      expect(global.fetch).not.toHaveBeenCalled();
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data.code).toBe("INTERNAL_ERROR");
     });
   });
 

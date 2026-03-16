@@ -26,7 +26,6 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token.js";
-import { initGuestTokenSecret, getGuestJwks } from "./services/guest-token.js";
 import { isAllowedHost } from "./utils/localhost-check.js";
 import {
   sessionAuthMiddleware,
@@ -35,11 +34,13 @@ import {
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
 import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env.js";
+import { provisionGuestAuthConfigToConvex } from "./utils/convex-guest-auth-sync.js";
+import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-export function createHonoApp() {
+export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
@@ -53,8 +54,7 @@ export function createHonoApp() {
   // Generate session token for API authentication
   generateSessionToken();
 
-  // Initialize RS256 key pair for guest JWTs
-  initGuestTokenSecret();
+  await provisionGuestAuthConfigToConvex();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>
@@ -186,11 +186,31 @@ export function createHonoApp() {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Guest JWT JWKS endpoint — public, no auth required, avoid edge caching.
-  // Convex uses this to verify guest JWTs natively.
-  app.get("/guest/jwks", (c) => {
-    c.header("Cache-Control", "no-store");
-    return c.json(getGuestJwks());
+  // Guest JWT JWKS compatibility endpoint — public, no auth required.
+  // The canonical JWKS now lives on Convex; Inspector proxies it here.
+  app.get("/guest/jwks", async () => {
+    const response = await fetchRemoteGuestJwks();
+    if (!response) {
+      return Response.json(
+        { error: "Guest JWKS unavailable" },
+        {
+          status: 503,
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    }
+
+    return new Response(await response.text(), {
+      status: response.status,
+      headers: {
+        "Cache-Control": "no-store",
+        "Content-Type":
+          response.headers.get("content-type") || "application/json",
+      },
+    });
   });
 
   // Session token endpoint (for dev mode where HTML isn't served by this server)
