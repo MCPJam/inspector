@@ -50,9 +50,9 @@ function verifyGuestTokenSignature(
   }
 }
 
-function parseGuestToken(token: string):
-  | { parsed: ParsedGuestToken }
-  | { reason: string } {
+function parseGuestToken(
+  token: string,
+): { parsed: ParsedGuestToken } | { reason: string } {
   if (!token || typeof token !== "string") {
     return { reason: "missing_token" };
   }
@@ -122,7 +122,9 @@ async function fetchAndCacheHostedGuestKeys(
     const response = await fetchRemoteGuestJwks();
 
     if (!response) {
-      logger.warn("[guest-auth] Failed to fetch hosted guest JWKS: unavailable");
+      logger.warn(
+        "[guest-auth] Failed to fetch hosted guest JWKS: unavailable",
+      );
       return resolveKeyFromCache(kid);
     }
 

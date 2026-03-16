@@ -119,7 +119,9 @@ describe("GET /api/web/guest-jwks (upstream unavailable)", () => {
   it("returns 503 when Convex JWKS cannot be fetched", async () => {
     process.env.NODE_ENV = "test";
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
-    global.fetch = vi.fn().mockRejectedValue(new Error("network down")) as typeof fetch;
+    global.fetch = vi
+      .fn()
+      .mockRejectedValue(new Error("network down")) as typeof fetch;
     const app = new Hono();
     app.route("/api/web", webRoutes);
 

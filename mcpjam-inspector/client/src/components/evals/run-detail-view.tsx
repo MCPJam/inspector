@@ -235,7 +235,10 @@ export function RunDetailView({
       />
 
       {/* Two-pane body */}
-      <div className="flex mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden" style={{ height: "calc(100vh - 200px)", minHeight: "400px" }}>
+      <div
+        className="flex mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden"
+        style={{ height: "calc(100vh - 200px)", minHeight: "400px" }}
+      >
         {/* Left pane: iteration list */}
         <div className="w-[280px] shrink-0 border-r flex flex-col">
           <div className="border-b px-3 py-2 shrink-0 flex items-center justify-between">
