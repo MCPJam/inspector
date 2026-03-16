@@ -1,4 +1,8 @@
 import { logger } from "./logger.js";
+import {
+  GUEST_SESSION_SECRET_HEADER,
+  getGuestSessionSharedSecret,
+} from "./guest-session-secret.js";
 
 export type RemoteGuestSession = {
   guestId?: string;
@@ -30,7 +34,10 @@ export async function fetchRemoteGuestSession(): Promise<RemoteGuestSession | nu
   try {
     const response = await fetch(getRemoteGuestSessionUrl(), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        [GUEST_SESSION_SECRET_HEADER]: getGuestSessionSharedSecret(),
+      },
     });
 
     if (!response.ok) {

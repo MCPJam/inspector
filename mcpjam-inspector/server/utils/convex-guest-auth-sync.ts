@@ -3,6 +3,7 @@ import {
   getGuestPublicKeyPem,
   initGuestTokenSecret,
 } from "../services/guest-token.js";
+import { getGuestSessionSharedSecret } from "./guest-session-secret.js";
 import { logger } from "./logger.js";
 
 let provisioningPromise: Promise<void> | null = null;
@@ -97,6 +98,11 @@ export async function provisionGuestAuthConfigToConvex(): Promise<void> {
       );
       await setConvexEnv(convexEnv, "GUEST_JWT_PUBLIC_KEY", getGuestPublicKeyPem());
       await setConvexEnv(convexEnv, "GUEST_JWKS_URL", guestJwksUrl);
+      await setConvexEnv(
+        convexEnv,
+        "GUEST_SESSION_SHARED_SECRET",
+        getGuestSessionSharedSecret(),
+      );
 
       logger.info(
         `[guest-auth] Provisioned Convex guest auth env (${convexEnv.CONVEX_DEPLOYMENT})`,

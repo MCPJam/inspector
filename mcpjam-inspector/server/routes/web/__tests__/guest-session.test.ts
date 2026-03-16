@@ -5,6 +5,7 @@ import guestSession from "../guest-session.js";
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_REMOTE_URL = process.env.MCPJAM_GUEST_SESSION_URL;
+const ORIGINAL_SHARED_SECRET = process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
 const ORIGINAL_FETCH = global.fetch;
 
 function createTestApp(): Hono {
@@ -23,6 +24,7 @@ describe("POST /guest-session", () => {
     process.env.NODE_ENV = "test";
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
     global.fetch = vi.fn().mockImplementation(async () => {
       sessionCounter += 1;
       return new Response(
@@ -51,6 +53,11 @@ describe("POST /guest-session", () => {
       delete process.env.MCPJAM_GUEST_SESSION_URL;
     } else {
       process.env.MCPJAM_GUEST_SESSION_URL = ORIGINAL_REMOTE_URL;
+    }
+    if (ORIGINAL_SHARED_SECRET === undefined) {
+      delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+    } else {
+      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = ORIGINAL_SHARED_SECRET;
     }
     global.fetch = ORIGINAL_FETCH;
   });
@@ -155,7 +162,10 @@ describe("POST /guest-session", () => {
         "https://test-deployment.convex.site/guest/session",
         {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "x-mcpjam-guest-session-secret": "test-guest-session-secret",
+          },
         },
       );
     });

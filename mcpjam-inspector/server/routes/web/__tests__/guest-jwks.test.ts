@@ -37,7 +37,10 @@ describe("GET /api/web/guest-jwks", () => {
         }),
         {
           status: 200,
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "public, max-age=300",
+          },
         },
       ),
     ) as typeof fetch;
@@ -56,11 +59,11 @@ describe("GET /api/web/guest-jwks", () => {
     global.fetch = ORIGINAL_FETCH;
   });
 
-  it("returns a non-cacheable JWKS document", async () => {
+  it("returns a short-lived cacheable JWKS document", async () => {
     const response = await app.request("/api/web/guest-jwks");
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
     expect(response.headers.get("content-type")).toContain("application/json");
 
     const body = await response.json();

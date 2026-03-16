@@ -14,12 +14,14 @@ describe("guest-auth", () => {
   const originalNodeEnv = process.env.NODE_ENV;
   const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
   const originalRemoteUrl = process.env.MCPJAM_GUEST_SESSION_URL;
+  const originalSharedSecret = process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
 
   beforeEach(() => {
     vi.resetModules();
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
     global.fetch = vi.fn();
   });
 
@@ -34,6 +36,11 @@ describe("guest-auth", () => {
       delete process.env.MCPJAM_GUEST_SESSION_URL;
     } else {
       process.env.MCPJAM_GUEST_SESSION_URL = originalRemoteUrl;
+    }
+    if (originalSharedSecret === undefined) {
+      delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+    } else {
+      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = originalSharedSecret;
     }
     global.fetch = originalFetch;
   });
@@ -62,7 +69,10 @@ describe("guest-auth", () => {
       "https://test-deployment.convex.site/guest/session",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-mcpjam-guest-session-secret": "test-guest-session-secret",
+        },
       },
     );
   });
@@ -91,7 +101,10 @@ describe("guest-auth", () => {
       "https://test-deployment.convex.site/guest/session",
       {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "x-mcpjam-guest-session-secret": "test-guest-session-secret",
+        },
       },
     );
   });

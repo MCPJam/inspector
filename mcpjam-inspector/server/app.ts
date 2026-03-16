@@ -206,7 +206,8 @@ export async function createHonoApp() {
     return new Response(await response.text(), {
       status: response.status,
       headers: {
-        "Cache-Control": "no-store",
+        "Cache-Control":
+          response.headers.get("cache-control") || "public, max-age=300",
         "Content-Type":
           response.headers.get("content-type") || "application/json",
       },
