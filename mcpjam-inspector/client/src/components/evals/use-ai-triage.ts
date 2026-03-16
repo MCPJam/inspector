@@ -13,25 +13,29 @@ import type { EvalSuiteRun } from "./types";
  * (`triageStatus` / `triageSummary`), so no polling or separate query is needed.
  * This hook only manages the mutation call and local error state.
  */
-export function useAiTriage(run: EvalSuiteRun | null) {
+export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+  const [requested, setRequested] = useState(false);
 
   const requestTriageMutation = useMutation(
     "triage:requestTriage" as any,
   );
 
+  const failed = failedCount ?? run?.summary?.failed ?? 0;
+
   const canTriage =
     run != null &&
     run.status === "completed" &&
-    (run.summary?.failed ?? 0) > 0 &&
+    failed > 0 &&
     run.triageStatus !== "pending" &&
     !unavailable;
 
   const requestTriage = useCallback(() => {
-    if (!run) return;
+    if (!run || requested) return;
 
     setError(null);
+    setRequested(true);
 
     const force = run.triageStatus === "completed" || run.triageStatus === "failed";
 
@@ -50,9 +54,9 @@ export function useAiTriage(run: EvalSuiteRun | null) {
         }
       },
     );
-  }, [run, requestTriageMutation]);
+  }, [run, requested, requestTriageMutation]);
 
-  return { canTriage, error, unavailable, requestTriage };
+  return { canTriage, error, unavailable, requested, requestTriage };
 }
 
 // ---------------------------------------------------------------------------

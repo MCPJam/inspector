@@ -315,7 +315,7 @@ export function RunDetailView({
 
       {/* AI Triage */}
       <div className="mt-3">
-        <AiTriagePanel run={selectedRunDetails} />
+        <AiTriagePanel run={selectedRunDetails} failedCount={computedStats.failed} />
       </div>
 
       {/* Two-pane body */}

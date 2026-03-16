@@ -5,23 +5,26 @@ import { useAiTriage } from "./use-ai-triage";
 
 interface AiTriagePanelProps {
   run: EvalSuiteRun;
+  failedCount?: number;
 }
 
-export function AiTriagePanel({ run }: AiTriagePanelProps) {
-  const { canTriage, error, unavailable, requestTriage } = useAiTriage(run);
+export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
+  const { canTriage, error, unavailable, requested, requestTriage } = useAiTriage(run, failedCount);
 
   // Don't render anything if the backend isn't available
   if (unavailable) return null;
 
   const { triageStatus, triageSummary } = run;
 
+  const failed = failedCount ?? run.summary?.failed ?? 0;
+
   // No failures — nothing to triage
-  if ((run.summary?.failed ?? 0) === 0) return null;
+  if (failed === 0) return null;
 
   // Pending — show spinner
   if (triageStatus === "pending") {
     return (
-      <div className="rounded-lg border border-border/50 bg-muted/30 px-4 py-3 flex items-center gap-3">
+      <div className="rounded-lg border border-border/50 border-l-2 border-l-orange-500 bg-muted/30 px-4 py-3 flex items-center gap-3">
         <Loader2 className="h-4 w-4 animate-spin text-primary shrink-0" />
         <span className="text-sm text-muted-foreground">
           AI is analyzing failures...
@@ -33,7 +36,7 @@ export function AiTriagePanel({ run }: AiTriagePanelProps) {
   // Completed — render results
   if (triageStatus === "completed" && triageSummary) {
     return (
-      <div className="rounded-lg border bg-card text-card-foreground">
+      <div className="rounded-lg border bg-card text-card-foreground border-l-2 border-l-orange-500">
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-2.5 border-b">
           <div className="flex items-center gap-2">
@@ -48,6 +51,7 @@ export function AiTriagePanel({ run }: AiTriagePanelProps) {
             size="sm"
             className="h-6 gap-1.5 text-[10px] text-muted-foreground"
             onClick={requestTriage}
+            disabled={requested}
           >
             <RotateCw className="h-3 w-3" />
             Re-triage
@@ -61,7 +65,7 @@ export function AiTriagePanel({ run }: AiTriagePanelProps) {
           {/* Failure categories */}
           {triageSummary.failureCategories.length > 0 && (
             <div className="space-y-2">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+              <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
                 Failure Categories
               </h4>
               <div className="space-y-2">
@@ -101,14 +105,16 @@ export function AiTriagePanel({ run }: AiTriagePanelProps) {
 
           {/* Top recommendations */}
           {triageSummary.topRecommendations.length > 0 && (
-            <div className="space-y-1.5">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+            <div className="rounded-md border border-orange-500/30 bg-orange-500/5 px-3 py-3 space-y-2">
+              <h4 className="text-xs font-semibold text-orange-500 uppercase tracking-wide flex items-center gap-1.5">
+                <Sparkles className="h-3 w-3" />
                 Top Recommendations
               </h4>
-              <ol className="list-decimal list-inside space-y-1">
+              <ol className="space-y-1.5">
                 {triageSummary.topRecommendations.map((rec, i) => (
-                  <li key={i} className="text-xs leading-relaxed">
-                    {rec}
+                  <li key={i} className="text-xs leading-relaxed flex gap-2">
+                    <span className="font-mono text-orange-500/70 shrink-0">{i + 1}.</span>
+                    <span>{rec}</span>
                   </li>
                 ))}
               </ol>
@@ -122,7 +128,7 @@ export function AiTriagePanel({ run }: AiTriagePanelProps) {
   // Failed — show error with retry
   if (triageStatus === "failed") {
     return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 flex items-center gap-3">
+      <div className="rounded-lg border border-destructive/30 border-l-2 border-l-orange-500 bg-destructive/5 px-4 py-3 flex items-center gap-3">
         <AlertCircle className="h-4 w-4 text-destructive shrink-0" />
         <span className="text-sm text-destructive flex-1">
           AI triage failed.{error ? ` ${error}` : ""}
@@ -144,6 +150,7 @@ export function AiTriagePanel({ run }: AiTriagePanelProps) {
         size="sm"
         className="gap-2"
         onClick={requestTriage}
+        disabled={requested}
       >
         <Sparkles className="h-3.5 w-3.5" />
         Triage Failures
