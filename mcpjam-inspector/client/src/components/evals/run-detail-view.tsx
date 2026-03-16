@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { X, Loader2 } from "lucide-react";
+import { X, Loader2, CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   ChartContainer,
@@ -316,10 +316,11 @@ export function RunDetailView({
                   No iterations found.
                 </div>
               ) : (
-                caseGroupsForSelectedRun.map((iteration) => (
+                caseGroupsForSelectedRun.map((iteration, idx) => (
                   <IterationListItem
                     key={iteration._id}
                     iteration={iteration}
+                    index={idx + 1}
                     isSelected={selectedIterationId === iteration._id}
                     onSelect={() => onSelectIteration(iteration._id)}
                   />
@@ -649,10 +650,12 @@ export function RunDetailView({
 // Compact iteration list item for the left pane
 function IterationListItem({
   iteration,
+  index,
   isSelected,
   onSelect,
 }: {
   iteration: EvalIteration;
+  index: number;
   isSelected: boolean;
   onSelect: () => void;
 }) {
@@ -667,6 +670,23 @@ function IterationListItem({
   const modelName = testInfo?.model || "—";
 
   const computedResult = computeIterationResult(iteration);
+  const passed = computeIterationPassed(iteration);
+
+  // Extract a distinguishing detail from the query or expected tool call args
+  const distinguisher = useMemo(() => {
+    if (!testInfo) return null;
+    // Try to get key params from expected tool calls
+    const expectedArgs = testInfo.expectedToolCalls?.[0]?.arguments;
+    if (expectedArgs && Object.keys(expectedArgs).length > 0) {
+      const entries = Object.entries(expectedArgs).slice(0, 2);
+      return entries.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ');
+    }
+    // Fall back to first ~60 chars of query if different from title
+    if (testInfo.query && testInfo.query !== testInfo.title) {
+      return testInfo.query.length > 60 ? testInfo.query.slice(0, 57) + '...' : testInfo.query;
+    }
+    return null;
+  }, [testInfo]);
 
   return (
     <div className={`relative ${isPending ? "opacity-60" : ""}`}>
@@ -683,23 +703,38 @@ function IterationListItem({
             : "hover:bg-muted/50"
         }`}
       >
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-1.5 min-w-0">
+          {/* Sequence number */}
+          <span className="text-[10px] text-muted-foreground font-mono shrink-0 w-4 text-right">
+            {index}
+          </span>
+          {/* Pass/fail icon */}
+          {isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-warning shrink-0" />
+          ) : passed ? (
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+          ) : (
+            <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
+          )}
           <span className="text-xs font-medium truncate flex-1">
             {testInfo?.title || "Iteration"}
           </span>
-          {isPending && (
-            <Loader2 className="h-3 w-3 animate-spin text-warning shrink-0" />
-          )}
           {testInfo?.isNegativeTest && (
             <span
-              className="text-[10px] text-orange-500 shrink-0"
-              title="Negative test"
+              className="text-[9px] font-medium px-1 py-0.5 rounded bg-orange-500/15 text-orange-500 shrink-0"
+              title="Negative test — expects the tool NOT to be called"
             >
-              NEG
+              Negative
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+        {/* Distinguishing detail */}
+        {distinguisher && (
+          <div className="ml-[calc(1rem+0.375rem+0.875rem)] text-[10px] text-muted-foreground/70 truncate italic">
+            {distinguisher}
+          </div>
+        )}
+        <div className="ml-[calc(1rem+0.375rem+0.875rem)] flex items-center gap-2 text-[10px] text-muted-foreground">
           <span className="font-mono truncate">{modelName}</span>
           <span className="shrink-0">
             {isPending
