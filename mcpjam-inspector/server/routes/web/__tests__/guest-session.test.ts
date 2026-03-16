@@ -6,6 +6,7 @@ const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
 const ORIGINAL_REMOTE_URL = process.env.MCPJAM_GUEST_SESSION_URL;
 const ORIGINAL_SHARED_SECRET = process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+const ORIGINAL_HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE;
 const ORIGINAL_FETCH = global.fetch;
 
 function createTestApp(): Hono {
@@ -24,6 +25,7 @@ describe("POST /guest-session", () => {
     process.env.NODE_ENV = "test";
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
+    delete process.env.VITE_MCPJAM_HOSTED_MODE;
     process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
     global.fetch = vi.fn().mockImplementation(async () => {
       sessionCounter += 1;
@@ -53,6 +55,11 @@ describe("POST /guest-session", () => {
       delete process.env.MCPJAM_GUEST_SESSION_URL;
     } else {
       process.env.MCPJAM_GUEST_SESSION_URL = ORIGINAL_REMOTE_URL;
+    }
+    if (ORIGINAL_HOSTED_MODE === undefined) {
+      delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    } else {
+      process.env.VITE_MCPJAM_HOSTED_MODE = ORIGINAL_HOSTED_MODE;
     }
     if (ORIGINAL_SHARED_SECRET === undefined) {
       delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
@@ -132,9 +139,49 @@ describe("POST /guest-session", () => {
   });
 
   describe("remote guest session mode", () => {
-    it("proxies the Convex guest session", async () => {
+    it("relays through hosted Inspector in local production", async () => {
       process.env.NODE_ENV = "production";
+      delete process.env.VITE_MCPJAM_HOSTED_MODE;
+      delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            guestId: "guest-remote",
+            token: "remote-token",
+            expiresAt: 123456789,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ) as typeof fetch;
+
+      const res = await app.request("/guest-session", { method: "POST" });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({
+        guestId: "guest-remote",
+        token: "remote-token",
+        expiresAt: 123456789,
+      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://app.mcpjam.com/api/web/guest-session",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    });
+
+    it("proxies the Convex guest session in hosted production", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.VITE_MCPJAM_HOSTED_MODE = "true";
       process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
       global.fetch = vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({

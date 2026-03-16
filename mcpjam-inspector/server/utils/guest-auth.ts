@@ -3,11 +3,12 @@
  *
  * Provides a valid guest JWT for MCPJam model requests from unauthenticated
  * users in non-hosted mode (npx/electron/docker) by fetching a guest session
- * from Convex.
+ * from dev Convex in local development and from hosted Inspector in local
+ * production runtimes.
  */
 
 import { logger } from "./logger.js";
-import { fetchRemoteGuestSession } from "./guest-session-source.js";
+import { fetchGuestSessionForServerSideAuth } from "./guest-session-source.js";
 
 /** Buffer before expiry to trigger a refresh (5 minutes in ms). */
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;
@@ -22,7 +23,7 @@ export async function getProductionGuestAuthHeader(): Promise<string | null> {
     return `Bearer ${cachedToken.token}`;
   }
 
-  const session = await fetchRemoteGuestSession();
+  const session = await fetchGuestSessionForServerSideAuth();
   if (!session) {
     if (cachedToken && cachedToken.expiresAt > Date.now()) {
       logger.warn(

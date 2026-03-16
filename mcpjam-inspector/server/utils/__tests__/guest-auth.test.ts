@@ -4,9 +4,20 @@ const mockLogger = {
   info: vi.fn(),
   warn: vi.fn(),
 };
+const mockProvisionGuestAuthConfigToConvex = vi.fn();
+const mockGetGuestSessionSharedSecret = vi.fn();
 
 vi.mock("../logger", () => ({
   logger: mockLogger,
+}));
+
+vi.mock("../convex-guest-auth-sync.js", () => ({
+  provisionGuestAuthConfigToConvex: mockProvisionGuestAuthConfigToConvex,
+}));
+
+vi.mock("../guest-session-secret.js", () => ({
+  GUEST_SESSION_SECRET_HEADER: "x-mcpjam-guest-session-secret",
+  getGuestSessionSharedSecret: mockGetGuestSessionSharedSecret,
 }));
 
 describe("guest-auth", () => {
@@ -21,7 +32,9 @@ describe("guest-auth", () => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
-    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
+    delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+    mockProvisionGuestAuthConfigToConvex.mockResolvedValue(undefined);
+    mockGetGuestSessionSharedSecret.mockReturnValue("test-guest-session-secret");
     global.fetch = vi.fn();
   });
 
@@ -47,6 +60,7 @@ describe("guest-auth", () => {
 
   it("fetches a Convex guest session in development by default", async () => {
     process.env.NODE_ENV = "development";
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
@@ -77,7 +91,7 @@ describe("guest-auth", () => {
     );
   });
 
-  it("fetches a Convex guest session in production by default", async () => {
+  it("fetches a hosted guest session in production by default", async () => {
     process.env.NODE_ENV = "production";
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
@@ -98,12 +112,11 @@ describe("guest-auth", () => {
 
     expect(header).toBe("Bearer remote-prod-token");
     expect(global.fetch).toHaveBeenCalledWith(
-      "https://test-deployment.convex.site/guest/session",
+      "https://app.mcpjam.com/api/web/guest-session",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-mcpjam-guest-session-secret": "test-guest-session-secret",
         },
       },
     );

@@ -4,7 +4,7 @@ import {
   createVerify,
   type KeyObject,
 } from "crypto";
-import { getRemoteGuestJwksUrl } from "../utils/guest-session-source.js";
+import { fetchRemoteGuestJwks } from "../utils/guest-session-source.js";
 import { logger } from "../utils/logger.js";
 import {
   GUEST_ISSUER,
@@ -106,10 +106,6 @@ function parseGuestToken(token: string):
   }
 }
 
-function getHostedGuestJwksUrl(): string {
-  return getRemoteGuestJwksUrl();
-}
-
 function resolveKeyFromCache(kid: string | undefined): KeyObject | null {
   if (!hostedGuestPublicKeysCache) return null;
   if (kid && hostedGuestPublicKeysCache.keysByKid.has(kid)) {
@@ -123,10 +119,12 @@ async function fetchAndCacheHostedGuestKeys(
 ): Promise<KeyObject | null> {
   const now = Date.now();
   try {
-    const response = await fetch(getHostedGuestJwksUrl(), {
-      method: "GET",
-      headers: { Accept: "application/json" },
-    });
+    const response = await fetchRemoteGuestJwks();
+
+    if (!response) {
+      logger.warn("[guest-auth] Failed to fetch hosted guest JWKS: unavailable");
+      return resolveKeyFromCache(kid);
+    }
 
     if (!response.ok) {
       logger.warn(
