@@ -28,7 +28,7 @@ export default defineConfig(({ mode }) => {
       sentryVitePlugin({
         org: "mcpjam-gh",
         project: "inspector-client",
-        authToken: process.env.SENTRY_AUTH_TOKEN,
+        authToken: env.SENTRY_AUTH_TOKEN,
         telemetry: false,
         sourcemaps: {
           assets: ["../dist/client/assets/**"],
@@ -59,7 +59,7 @@ export default defineConfig(({ mode }) => {
         "react/jsx-dev-runtime",
       ],
       // Force re-optimization to clear any cached conflicts
-      force: process.env.FORCE_OPTIMIZE === "true",
+      force: env.FORCE_OPTIMIZE === "true",
     },
     server: {
       // Listen on all interfaces so both localhost and 127.0.0.1 work
