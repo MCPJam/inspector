@@ -37,6 +37,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { TagEditor, TagBadges } from "./tag-editor";
 
 interface ModelInfo {
   model: string;
@@ -529,6 +530,25 @@ export function SuiteHeader({
               </PieChart>
             </ChartContainer>
           </div>
+        )}
+        {!readOnlyConfig && (
+          <TagEditor
+            tags={suite.tags ?? []}
+            onTagsChange={async (newTags) => {
+              try {
+                await updateSuite({
+                  suiteId: suite._id,
+                  tags: newTags,
+                });
+              } catch (error) {
+                toast.error("Failed to update tags");
+                console.error("Failed to update tags:", error);
+              }
+            }}
+          />
+        )}
+        {readOnlyConfig && suite.tags && suite.tags.length > 0 && (
+          <TagBadges tags={suite.tags} />
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">

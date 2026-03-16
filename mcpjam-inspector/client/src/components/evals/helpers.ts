@@ -1,4 +1,11 @@
-import { EvalCase, EvalIteration, EvalSuite, SuiteAggregate } from "./types";
+import {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  SuiteAggregate,
+  TagGroupAggregate,
+} from "./types";
 import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
@@ -226,3 +233,54 @@ export const formatters = {
   percentage: formatPercentage,
   tokens: formatTokens,
 } as const;
+
+/**
+ * Group overview entries by tag and compute aggregated stats per tag.
+ */
+export function groupSuitesByTag(
+  overview: EvalSuiteOverviewEntry[],
+): TagGroupAggregate[] {
+  const buckets = new Map<string, EvalSuiteOverviewEntry[]>();
+
+  for (const entry of overview) {
+    const tags = entry.suite.tags;
+    if (!tags || tags.length === 0) {
+      const bucket = buckets.get("Untagged") ?? [];
+      bucket.push(entry);
+      buckets.set("Untagged", bucket);
+    } else {
+      for (const tag of tags) {
+        const bucket = buckets.get(tag) ?? [];
+        bucket.push(entry);
+        buckets.set(tag, bucket);
+      }
+    }
+  }
+
+  const groups: TagGroupAggregate[] = [];
+  for (const [tag, entries] of buckets) {
+    const totals = { passed: 0, failed: 0, runs: 0 };
+    for (const e of entries) {
+      totals.passed += e.totals.passed;
+      totals.failed += e.totals.failed;
+      totals.runs += e.totals.runs;
+    }
+    const total = totals.passed + totals.failed;
+    groups.push({
+      tag,
+      suiteCount: entries.length,
+      totals,
+      passRate: total > 0 ? Math.round((totals.passed / total) * 100) : 0,
+      entries,
+    });
+  }
+
+  // Sort alphabetically, "Untagged" last
+  groups.sort((a, b) => {
+    if (a.tag === "Untagged") return 1;
+    if (b.tag === "Untagged") return -1;
+    return a.tag.localeCompare(b.tag);
+  });
+
+  return groups;
+}

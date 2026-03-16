@@ -34,6 +34,7 @@ export type EvalSuite = {
     minimumPassRate: number;
   };
   _creationTime?: number; // Convex auto field
+  tags?: string[];
 };
 
 export type EvalCase = {
@@ -183,4 +184,12 @@ export type SuiteAggregate = {
 export type SuiteDetailsQueryResponse = {
   testCases: EvalCase[];
   iterations: EvalIteration[];
+};
+
+export type TagGroupAggregate = {
+  tag: string;
+  suiteCount: number;
+  totals: { passed: number; failed: number; runs: number };
+  passRate: number; // 0-100
+  entries: EvalSuiteOverviewEntry[];
 };

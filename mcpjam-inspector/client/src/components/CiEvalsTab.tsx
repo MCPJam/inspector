@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { aggregateSuite } from "./evals/helpers";
+import { aggregateSuite, groupSuitesByTag } from "./evals/helpers";
+import { TagAggregationPanel } from "./evals/tag-aggregation-panel";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
@@ -33,6 +34,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
+  const [filterTag, setFilterTag] = useState<string | null>(null);
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -84,6 +86,14 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [queries.sortedSuites],
   );
 
+  const tagGroups = useMemo(() => groupSuitesByTag(sdkSuites), [sdkSuites]);
+  const hasTags = tagGroups.some((g) => g.tag !== "Untagged");
+  const allTags = useMemo(
+    () =>
+      Array.from(new Set(sdkSuites.flatMap((e) => e.suite.tags ?? []))).sort(),
+    [sdkSuites],
+  );
+
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
     return (
@@ -125,6 +135,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigateToCiEvalsRoute({ type: "suite-overview", suiteId });
+  }, []);
+
+  const handleSelectOverview = useCallback(() => {
+    navigateToCiEvalsRoute({ type: "list" });
   }, []);
 
   const handleDeleteSuite = useCallback(
@@ -246,7 +260,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             suites={sdkSuites}
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
+            onSelectOverview={handleSelectOverview}
+            isOverviewSelected={!selectedSuiteId && hasTags}
             isLoading={queries.isOverviewLoading}
+            filterTag={filterTag}
+            hasTags={hasTags}
           />
         </ResizablePanel>
 
@@ -272,20 +290,30 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               </div>
             </div>
           ) : route.type === "list" || !selectedSuite ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-md mx-auto p-8">
-                <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-                  <GitBranch className="h-10 w-10 text-muted-foreground" />
+            hasTags ? (
+              <TagAggregationPanel
+                tagGroups={tagGroups.filter((g) => g.tag !== "Untagged")}
+                allTags={allTags}
+                filterTag={filterTag}
+                onFilterTagChange={setFilterTag}
+                onSelectSuite={handleSelectSuite}
+              />
+            ) : (
+              <div className="flex-1 flex items-center justify-center">
+                <div className="text-center max-w-md mx-auto p-8">
+                  <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
+                    <GitBranch className="h-10 w-10 text-muted-foreground" />
+                  </div>
+                  <h2 className="text-2xl font-semibold text-foreground mb-2">
+                    Select a suite
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Choose a CI suite from the sidebar to inspect runs and test
+                    iterations.
+                  </p>
                 </div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  Select a suite
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  Choose a CI suite from the sidebar to inspect runs and test
-                  iterations.
-                </p>
               </div>
-            </div>
+            )
           ) : queries.isSuiteDetailsLoading ? (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">
