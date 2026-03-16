@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-import { BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CommitGroup, EvalSuiteOverviewEntry } from "./types";
 import { TagBadges } from "./tag-editor";
@@ -20,12 +19,7 @@ interface CiSuiteListSidebarProps {
   suites: EvalSuiteOverviewEntry[];
   selectedSuiteId: string | null;
   onSelectSuite: (suiteId: string) => void;
-  onSelectOverview: () => void;
-  isOverviewSelected: boolean;
   isLoading?: boolean;
-  filterTag?: string | null;
-  onFilterTagChange?: (tag: string | null) => void;
-  hasTags: boolean;
   sidebarMode: SidebarMode;
   onSidebarModeChange: (mode: SidebarMode) => void;
   commitGroups: CommitGroup[];
@@ -97,11 +91,7 @@ export function CiSuiteListSidebar({
   suites,
   selectedSuiteId,
   onSelectSuite,
-  onSelectOverview,
-  isOverviewSelected,
   isLoading = false,
-  filterTag,
-  hasTags,
   sidebarMode,
   onSidebarModeChange,
   commitGroups,
@@ -110,15 +100,11 @@ export function CiSuiteListSidebar({
 }: CiSuiteListSidebarProps) {
   useTick(); // keep "Xm ago" labels ticking
 
-  const filteredSuites = filterTag
-    ? suites.filter((e) => e.suite.tags?.includes(filterTag))
-    : suites;
-
   // Group suites by base name (strip trailing timestamps/parenthetical suffixes
   // that some SDK users append, e.g. "Suite Name (2026-03-12 15:20:43)")
   const groupedSuites = useMemo(() => {
     const groups = new Map<string, EvalSuiteOverviewEntry[]>();
-    for (const entry of filteredSuites) {
+    for (const entry of suites) {
       const rawName = entry.suite.name || "Untitled suite";
       // Strip trailing " (YYYY-MM-DD ...)" or " (timestamp)" patterns
       const baseName = rawName.replace(/\s*\(\d{4}-\d{2}-\d{2}[^)]*\)\s*$/, "").trim() || rawName;
@@ -136,13 +122,7 @@ export function CiSuiteListSidebar({
       });
     }
     return groups;
-  }, [filteredSuites]);
-
-  const uniqueSuiteCount = groupedSuites.size;
-
-  const failCount = suites.filter(
-    (e) => e.latestRun?.result === "failed",
-  ).length;
+  }, [suites]);
 
   return (
     <div className="flex h-full flex-col">
@@ -173,27 +153,6 @@ export function CiSuiteListSidebar({
         </div>
       </div>
 
-      {/* Dashboard button — always visible regardless of sidebar mode */}
-      <div className="px-3 py-2 border-b">
-        <button
-          onClick={onSelectOverview}
-          className={cn(
-            "w-full flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs font-medium transition-colors cursor-pointer border border-transparent",
-            isOverviewSelected
-              ? "bg-primary/15 text-primary border-primary/30"
-              : "text-muted-foreground hover:bg-accent hover:text-foreground hover:border-border",
-          )}
-        >
-          <BarChart3 className="h-3.5 w-3.5 shrink-0" />
-          <span className="flex-1">Dashboard</span>
-          {failCount > 0 && (
-            <span className="shrink-0 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-destructive px-1 text-[9px] font-bold text-destructive-foreground">
-              {failCount}
-            </span>
-          )}
-        </button>
-      </div>
-
       {sidebarMode === "runs" ? (
         <CommitListSidebar
           commitGroups={commitGroups}
@@ -207,7 +166,7 @@ export function CiSuiteListSidebar({
           <div className="p-4 text-center text-xs text-muted-foreground">
             Loading suites...
           </div>
-        ) : filteredSuites.length === 0 ? (
+        ) : suites.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
             No SDK suites found.
           </div>
