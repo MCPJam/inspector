@@ -80,8 +80,7 @@ export function RunAccordionView({
       );
       const testCases: RunTestCase[] = runIterations.map((iter) => ({
         testCaseId: iter.testCaseId ?? "",
-        title:
-          iter.testCaseSnapshot?.title || "Untitled test",
+        title: iter.testCaseSnapshot?.title || "Untitled test",
         result: computeIterationResult(iter),
         duration:
           iter.startedAt && iter.updatedAt

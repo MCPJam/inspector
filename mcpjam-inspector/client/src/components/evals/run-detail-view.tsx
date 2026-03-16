@@ -286,10 +286,7 @@ export function RunDetailView({
                 By Model:
               </span>
               {selectedRunChartData.modelData.map((model) => (
-                <div
-                  key={model.model}
-                  className="flex items-center gap-1.5"
-                >
+                <div key={model.model} className="flex items-center gap-1.5">
                   <div
                     className="h-1.5 w-1.5 rounded-full"
                     style={{
@@ -376,7 +373,6 @@ export function RunDetailView({
           )}
         </div>
       </div>
-
     </div>
   );
 }
@@ -519,11 +515,17 @@ function IterationListItem({
     const expectedArgs = testInfo.expectedToolCalls?.[0]?.arguments;
     if (expectedArgs && Object.keys(expectedArgs).length > 0) {
       const entries = Object.entries(expectedArgs).slice(0, 2);
-      return entries.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(', ');
+      return entries
+        .map(
+          ([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`,
+        )
+        .join(", ");
     }
     // Fall back to first ~60 chars of query if different from title
     if (testInfo.query && testInfo.query !== testInfo.title) {
-      return testInfo.query.length > 60 ? testInfo.query.slice(0, 57) + '...' : testInfo.query;
+      return testInfo.query.length > 60
+        ? testInfo.query.slice(0, 57) + "..."
+        : testInfo.query;
     }
     return null;
   }, [testInfo]);

@@ -24,7 +24,8 @@ export function PassCriteriaBadge({
   const status = run.status ?? "pending";
   // passRate may be stored as decimal (0-1) or percentage (0-100); normalize to 0-100
   const rawPassRate = run.summary?.passRate ?? 0;
-  const passRate = rawPassRate <= 1 && rawPassRate > 0 ? rawPassRate * 100 : rawPassRate;
+  const passRate =
+    rawPassRate <= 1 && rawPassRate > 0 ? rawPassRate * 100 : rawPassRate;
 
   const passed = result === "passed";
   const isRunning = status === "running" || status === "pending";
@@ -57,7 +58,11 @@ export function PassCriteriaBadge({
             ) : (
               <XCircle className="h-3 w-3" />
             )}
-            {passedWithFailures ? `Passed (${failedCount} failed)` : passed ? "Passed" : "Failed"}
+            {passedWithFailures
+              ? `Passed (${failedCount} failed)`
+              : passed
+                ? "Passed"
+                : "Failed"}
           </Badge>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs">
@@ -65,10 +70,13 @@ export function PassCriteriaBadge({
             <div className="font-medium text-white">
               {passedWithFailures
                 ? `⚠ Suite Passed with ${failedCount} failure${failedCount !== 1 ? "s" : ""}`
-                : passed ? "✓ Suite Passed" : "✗ Suite Failed"}
+                : passed
+                  ? "✓ Suite Passed"
+                  : "✗ Suite Failed"}
             </div>
             <div className="text-white">
-              Required: {minimumPassRate}% {metricLabel} · Actual: {passRate.toFixed(0)}%
+              Required: {minimumPassRate}% {metricLabel} · Actual:{" "}
+              {passRate.toFixed(0)}%
             </div>
           </div>
         </TooltipContent>
