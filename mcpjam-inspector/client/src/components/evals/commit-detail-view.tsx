@@ -207,10 +207,10 @@ export function CommitDetailView({
 
   // Auto-request triage when failures exist and no result yet
   useEffect(() => {
-    if (failedRunIds.length > 0 && !aiTriage.summary && !aiTriage.loading) {
+    if (failedRunIds.length > 0 && !aiTriage.summary && !aiTriage.loading && !aiTriage.unavailable) {
       aiTriage.requestTriage();
     }
-  }, [failedRunIds.length, aiTriage.summary, aiTriage.loading, aiTriage.requestTriage]);
+  }, [failedRunIds.length, aiTriage.summary, aiTriage.loading, aiTriage.unavailable, aiTriage.requestTriage]);
 
   // Triage summary — shows when any cases failed
   const triageSummary = useMemo(() => {
@@ -372,7 +372,7 @@ export function CommitDetailView({
         </div>
 
         {/* === AI TRIAGE PANEL === */}
-        {triageSummary && (aiTriage.summary || aiTriage.loading || aiTriage.error) && (
+        {triageSummary && !aiTriage.unavailable && (aiTriage.summary || aiTriage.loading || aiTriage.error) && (
           <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 p-6 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
             <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
             <div className="flex items-center gap-2.5 mb-4">

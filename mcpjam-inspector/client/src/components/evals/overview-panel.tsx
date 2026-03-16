@@ -276,12 +276,12 @@ export function OverviewPanel({
 
   const aiOverviewTriage = useCommitTriage(failedOverviewRunIds);
 
-  // Auto-request triage when failures exist
+  // Auto-request triage when failures exist (skip if already unavailable)
   useEffect(() => {
-    if (failedOverviewRunIds.length > 0 && !aiOverviewTriage.summary && !aiOverviewTriage.loading) {
+    if (failedOverviewRunIds.length > 0 && !aiOverviewTriage.summary && !aiOverviewTriage.loading && !aiOverviewTriage.unavailable) {
       aiOverviewTriage.requestTriage();
     }
-  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.requestTriage]);
+  }, [failedOverviewRunIds.length, aiOverviewTriage.summary, aiOverviewTriage.loading, aiOverviewTriage.unavailable, aiOverviewTriage.requestTriage]);
 
   // Pre-compute inline failure tags for the failure feed
   // Tags suites with failed cases OR failed result
@@ -491,7 +491,7 @@ export function OverviewPanel({
       </div>
 
       {/* AI Overview Summary — only when failures exist and triage is active */}
-      {failedOverviewRunIds.length > 0 && (aiOverviewTriage.summary || aiOverviewTriage.loading || aiOverviewTriage.error) && (
+      {failedOverviewRunIds.length > 0 && !aiOverviewTriage.unavailable && (aiOverviewTriage.summary || aiOverviewTriage.loading || aiOverviewTriage.error) && (
         <div className="relative rounded-lg border border-orange-200/60 bg-orange-50/30 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10">
           <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
           <div className="px-4 py-3">
@@ -627,115 +627,102 @@ export function OverviewPanel({
         </div>
       )}
 
-      {/* Section C: Failure Feed (Needs Attention) */}
-      <Collapsible
-        open={hasFailures && failureFeedOpen}
-        onOpenChange={setFailureFeedOpen}
-      >
-        <div className="rounded-xl border bg-card">
-          <CollapsibleTrigger className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors rounded-xl">
-            <div className="flex items-center gap-2">
-              {failureFeedOpen && hasFailures ? (
-                <ChevronDown className="h-4 w-4 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-4 w-4 text-muted-foreground" />
-              )}
-              <span className="text-sm font-semibold">Needs Attention</span>
-              {hasFailures && (
+      {/* Section C: Failure Feed (Needs Attention) — hidden when nothing needs attention */}
+      {hasFailures && (
+        <Collapsible open={failureFeedOpen} onOpenChange={setFailureFeedOpen}>
+          <div className="rounded-xl border bg-card">
+            <CollapsibleTrigger className="w-full flex items-center justify-between px-4 py-3 hover:bg-muted/50 transition-colors rounded-xl">
+              <div className="flex items-center gap-2">
+                {failureFeedOpen ? (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                )}
+                <span className="text-sm font-semibold">Needs Attention</span>
                 <span className="text-xs text-muted-foreground">
                   ({failureEntries.length})
                 </span>
-              )}
-            </div>
-            {!hasFailures && (
-              <div className="flex items-center gap-1.5 text-xs text-emerald-500">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                All clear
               </div>
-            )}
-          </CollapsibleTrigger>
+            </CollapsibleTrigger>
 
-          <CollapsibleContent>
-            <div className="border-t divide-y">
-              {failureEntries.map((entry) => {
-                const isFailed = entry.latestRun?.result === "failed";
-                const isNeverRun = !entry.latestRun;
+            <CollapsibleContent>
+              <div className="border-t divide-y">
+                {failureEntries.map((entry) => {
+                  const isFailed = entry.latestRun?.result === "failed";
+                  const isNeverRun = !entry.latestRun;
 
-                return (
-                  <button
-                    key={entry.suite._id}
-                    onClick={() => onSelectSuite?.(entry.suite._id)}
-                    className="w-full px-4 py-3 text-left hover:bg-muted/50 transition-colors"
-                  >
-                    <div className="flex items-start gap-2.5">
-                      {isFailed ? (
-                        <XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                      ) : (
-                        <MinusCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-sm font-medium truncate">
-                            {entry.suite.name}
-                          </span>
-                          {isFailed &&
-                            failureTagMap.get(entry.suite._id)?.map((tag) => (
-                              <InlineFailureTag key={tag} tag={tag} />
-                            ))}
+                  return (
+                    <button
+                      key={entry.suite._id}
+                      onClick={() => onSelectSuite?.(entry.suite._id)}
+                      className="w-full px-4 py-3 text-left hover:bg-muted/50 transition-colors"
+                    >
+                      <div className="flex items-start gap-2.5">
+                        {isFailed ? (
+                          <XCircle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                        ) : (
+                          <MinusCircle className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-sm font-medium truncate">
+                              {entry.suite.name}
+                            </span>
+                            {isFailed &&
+                              failureTagMap.get(entry.suite._id)?.map((tag) => (
+                                <InlineFailureTag key={tag} tag={tag} />
+                              ))}
+                          </div>
+                          {isFailed && entry.latestRun?.summary && (
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              {entry.latestRun.summary.passed}/
+                              {entry.latestRun.summary.total} tests passed
+                              {entry.latestRun.summary.passRate !== undefined &&
+                                ` (${Math.round(entry.latestRun.summary.passRate)}%)`}
+                            </div>
+                          )}
+                          {isFailed && entry.latestRun?.ciMetadata && (
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                              {entry.latestRun.ciMetadata.branch && (
+                                <span>{entry.latestRun.ciMetadata.branch}</span>
+                              )}
+                              {entry.latestRun.ciMetadata.commitSha && (
+                                <span>
+                                  {" "}
+                                  @ {entry.latestRun.ciMetadata.commitSha.slice(0, 7)}
+                                </span>
+                              )}
+                              {" · "}
+                              {formatRelativeTime(
+                                entry.latestRun.completedAt ??
+                                  entry.latestRun.createdAt,
+                              )}
+                            </div>
+                          )}
+                          {isFailed && !entry.latestRun?.ciMetadata && (
+                            <div className="text-[11px] text-muted-foreground mt-0.5">
+                              {formatRelativeTime(
+                                entry.latestRun?.completedAt ??
+                                  entry.latestRun?.createdAt,
+                              )}
+                            </div>
+                          )}
+                          {isNeverRun && (
+                            <div className="text-xs text-muted-foreground mt-0.5">
+                              Never run
+                            </div>
+                          )}
                         </div>
-                        {isFailed && entry.latestRun?.summary && (
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            {entry.latestRun.summary.passed}/
-                            {entry.latestRun.summary.total} tests passed
-                            {entry.latestRun.summary.passRate !== undefined &&
-                              ` (${Math.round(entry.latestRun.summary.passRate)}%)`}
-                          </div>
-                        )}
-                        {isFailed && entry.latestRun?.ciMetadata && (
-                          <div className="text-[11px] text-muted-foreground mt-0.5">
-                            {entry.latestRun.ciMetadata.branch && (
-                              <span>{entry.latestRun.ciMetadata.branch}</span>
-                            )}
-                            {entry.latestRun.ciMetadata.commitSha && (
-                              <span>
-                                {" "}
-                                @{" "}
-                                {entry.latestRun.ciMetadata.commitSha.slice(
-                                  0,
-                                  7,
-                                )}
-                              </span>
-                            )}
-                            {" · "}
-                            {formatRelativeTime(
-                              entry.latestRun.completedAt ??
-                                entry.latestRun.createdAt,
-                            )}
-                          </div>
-                        )}
-                        {isFailed && !entry.latestRun?.ciMetadata && (
-                          <div className="text-[11px] text-muted-foreground mt-0.5">
-                            {formatRelativeTime(
-                              entry.latestRun?.completedAt ??
-                                entry.latestRun?.createdAt,
-                            )}
-                          </div>
-                        )}
-                        {isNeverRun && (
-                          <div className="text-xs text-muted-foreground mt-0.5">
-                            Never run
-                          </div>
-                        )}
+                        <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                       </div>
-                      <ArrowRight className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </CollapsibleContent>
-        </div>
-      </Collapsible>
+                    </button>
+                  );
+                })}
+              </div>
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
+      )}
 
       {/* Section D: Suite Table */}
       <div className="rounded-xl border bg-card">
