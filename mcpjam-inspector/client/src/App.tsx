@@ -18,6 +18,7 @@ import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
+import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -640,7 +641,7 @@ export default function App() {
           isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
-          showOnlyOAuthServers: activeTab === "oauth-flow",
+          showOnlyOAuthServers: false,
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
@@ -744,14 +745,23 @@ export default function App() {
           )}
 
           {activeTab === "oauth-flow" && (
-            <OAuthFlowTab
-              serverConfigs={appState.servers}
-              selectedServerName={appState.selectedServer}
-              onSelectServer={setSelectedServer}
-              onSaveServerConfig={saveServerConfigWithoutConnecting}
-              onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
-              onRefreshTokens={handleRefreshTokensFromOAuthFlow}
-            />
+            <ErrorBoundary
+              fallback={
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Something went wrong in the OAuth Debugger. Try refreshing
+                  the page.
+                </div>
+              }
+            >
+              <OAuthFlowTab
+                serverConfigs={appState.servers}
+                selectedServerName={appState.selectedServer}
+                onSelectServer={setSelectedServer}
+                onSaveServerConfig={saveServerConfigWithoutConnecting}
+                onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
+                onRefreshTokens={handleRefreshTokensFromOAuthFlow}
+              />
+            </ErrorBoundary>
           )}
           {activeTab === "chat-v2" && (
             <ChatTabV2
