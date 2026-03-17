@@ -427,7 +427,7 @@ export const createDebugOAuthStateMachine = (
 
       try {
         switch (state.currentStep) {
-          case "idle":
+          case "idle": {
             // Step 1: Make initial MCP request without token
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
@@ -472,6 +472,7 @@ export const createDebugOAuthStateMachine = (
             // Automatically proceed to make the actual request
             setTimeout(() => machine.proceedToNextStep(), 50);
             return;
+          }
 
           case "request_without_token":
             // Step 2: Request MCP server and expect 401 Unauthorized via backend proxy
