@@ -40,8 +40,7 @@ export function AuthUpperArea({
         </div>
       )}
       <div className="ml-auto flex items-center gap-2 shrink-0">
-        <div className="flex items-center gap-1">
-          <DropdownMenu>
+        <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="icon" variant="ghost" aria-label="Help & support">
                 <CircleHelp className="h-5 w-5" />
@@ -94,11 +93,10 @@ export function AuthUpperArea({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
-        </div>
         <NotificationBell />
-        <div className="h-6 w-px bg-border/60" />
         {!user && !isLoading && (
           <>
+            <div className="h-6 w-px bg-border/60" />
             <Button
               variant="outline"
               size="sm"
