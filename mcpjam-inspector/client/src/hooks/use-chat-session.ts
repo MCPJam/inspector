@@ -647,7 +647,12 @@ export function useChatSession({
             : null,
         );
       } catch (error) {
-        if (!((hostedShareToken || hostedSandboxToken) && isAuthDeniedError(error))) {
+        if (
+          !(
+            (hostedShareToken || hostedSandboxToken) &&
+            isAuthDeniedError(error)
+          )
+        ) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error,
@@ -681,7 +686,12 @@ export function useChatSession({
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (!((hostedShareToken || hostedSandboxToken) && isAuthDeniedError(error))) {
+        if (
+          !(
+            (hostedShareToken || hostedSandboxToken) &&
+            isAuthDeniedError(error)
+          )
+        ) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error,

@@ -35,19 +35,13 @@ function isAbortError(error: unknown): boolean {
 function sanitizeDiagnosticText(text: string): string {
   const normalized = text.replace(/\s+/g, " ").trim();
   const masked = normalized
-    .replace(
-      /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
-      "[redacted-email]",
-    )
+    .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[redacted-email]")
     .replace(
       /(\bauthorization\b\s*[:=]\s*)(bearer\s+)?([^"',\s}]+)/gi,
       (_match, prefix: string, scheme?: string) =>
         `${prefix}${scheme ?? ""}[redacted-token]`,
     )
-    .replace(
-      /\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi,
-      "$1[redacted-token]",
-    )
+    .replace(/\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi, "$1[redacted-token]")
     .replace(
       /(["']?(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)([^"',\s}]+)/gi,
       "$1[redacted-secret]",

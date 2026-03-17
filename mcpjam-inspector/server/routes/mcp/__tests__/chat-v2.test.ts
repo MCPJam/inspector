@@ -606,28 +606,30 @@ describe("POST /api/mcp/chat-v2", () => {
 
     it("persists completed MCPJam conversations when chatSessionId is present", async () => {
       const originalFetch = global.fetch;
-      global.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
-        const url = String(input);
-        if (url === "https://test-convex.example.com/stream") {
-          return createSseResponse([
-            {
-              type: "finish",
-              finishReason: "stop",
-              messageMetadata: {
-                inputTokens: 1,
-                outputTokens: 1,
-                totalTokens: 2,
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
               },
-            },
-          ]);
-        }
+            ]);
+          }
 
-        if (url === "https://test-convex.example.com/ingest-chat") {
-          return new Response(null, { status: 200 });
-        }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
 
-        throw new Error(`Unexpected fetch URL: ${url}`);
-      });
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
 
       try {
         const res = await postJson(app, "/api/mcp/chat-v2", {
