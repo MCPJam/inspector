@@ -271,7 +271,9 @@ describe("useSharedChatWidgetCapture", () => {
 
   it("retries when the snapshot mutation returns null while the session is still pending", async () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
-    mockCreateWidgetSnapshot.mockResolvedValueOnce(null).mockResolvedValueOnce("snapshot-1");
+    mockCreateWidgetSnapshot
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("snapshot-1");
 
     try {
       const { unmount } = renderHook(() =>

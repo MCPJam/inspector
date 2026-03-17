@@ -63,7 +63,10 @@ export function getGuestSessionSharedSecret(): string {
     return envSecret;
   }
 
-  if (process.env.NODE_ENV === "production" || process.env.NODE_ENV === "test") {
+  if (
+    process.env.NODE_ENV === "production" ||
+    process.env.NODE_ENV === "test"
+  ) {
     throw new Error(
       "MCPJAM_GUEST_SESSION_SHARED_SECRET is required for guest session proxying",
     );

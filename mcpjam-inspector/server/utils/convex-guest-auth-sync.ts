@@ -78,7 +78,9 @@ export async function provisionGuestAuthConfigToConvex(): Promise<void> {
   if (!provisioningPromise) {
     provisioningPromise = (async () => {
       if (!process.env.CONVEX_HTTP_URL) {
-        throw new Error("CONVEX_HTTP_URL is required for guest auth provisioning");
+        throw new Error(
+          "CONVEX_HTTP_URL is required for guest auth provisioning",
+        );
       }
 
       initGuestTokenSecret();
@@ -97,7 +99,11 @@ export async function provisionGuestAuthConfigToConvex(): Promise<void> {
         "GUEST_JWT_PRIVATE_KEY",
         getGuestPrivateKeyPem(),
       );
-      await setConvexEnv(convexEnv, "GUEST_JWT_PUBLIC_KEY", getGuestPublicKeyPem());
+      await setConvexEnv(
+        convexEnv,
+        "GUEST_JWT_PUBLIC_KEY",
+        getGuestPublicKeyPem(),
+      );
       await setConvexEnv(convexEnv, "GUEST_JWKS_URL", guestJwksUrl);
       await setConvexEnv(
         convexEnv,

@@ -34,7 +34,9 @@ describe("guest-auth", () => {
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
     mockProvisionGuestAuthConfigToConvex.mockResolvedValue(undefined);
-    mockGetGuestSessionSharedSecret.mockReturnValue("test-guest-session-secret");
+    mockGetGuestSessionSharedSecret.mockReturnValue(
+      "test-guest-session-secret",
+    );
     global.fetch = vi.fn();
   });
 
@@ -60,7 +62,8 @@ describe("guest-auth", () => {
 
   it("fetches a Convex guest session in development by default", async () => {
     process.env.NODE_ENV = "development";
-    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
+      "test-guest-session-secret";
     vi.mocked(global.fetch).mockResolvedValue(
       new Response(
         JSON.stringify({
