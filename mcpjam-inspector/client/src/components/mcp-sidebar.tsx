@@ -3,7 +3,6 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Hammer,
   MessageCircle,
-  Settings,
   MessageSquareCode,
   BookOpen,
   FlaskConical,
@@ -12,7 +11,6 @@ import {
   Layers,
   ListTodo,
   SquareSlash,
-  MessageCircleQuestionIcon,
   GitBranch,
   GraduationCap,
   Box,
@@ -185,21 +183,6 @@ const navigationSections: NavSection[] = [
       },
     ],
   },
-  {
-    id: "settings",
-    items: [
-      {
-        title: "Support",
-        url: "#support",
-        icon: MessageCircleQuestionIcon,
-      },
-      {
-        title: "Settings",
-        url: "#settings",
-        icon: Settings,
-      },
-    ],
-  },
 ];
 
 const hostedNavigationSections = navigationSections
@@ -340,8 +323,10 @@ export function MCPSidebar({
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <button
-          onClick={() => handleNavClick("#servers")}
+        <a
+          href="https://www.mcpjam.com/"
+          target="_blank"
+          rel="noreferrer"
           className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
         >
           <img
@@ -351,7 +336,7 @@ export function MCPSidebar({
             alt="MCP Jam"
             className="h-4 w-auto"
           />
-        </button>
+        </a>
         {updateReady && (
           <div className="px-2 pb-2">
             <Button
@@ -385,7 +370,7 @@ export function MCPSidebar({
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <SidebarUser />
+        <SidebarUser onSettingsClick={() => handleNavClick("#settings")} />
       </SidebarFooter>
     </Sidebar>
   );

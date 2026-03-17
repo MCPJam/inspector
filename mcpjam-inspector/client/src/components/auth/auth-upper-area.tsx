@@ -10,6 +10,7 @@ import {
 } from "@/components/ActiveServerSelector";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { BookOpen, Bug } from "lucide-react";
 
 interface AuthUpperAreaProps {
   activeServerSelectorProps?: ActiveServerSelectorProps;
@@ -24,6 +25,30 @@ export function AuthUpperArea({
 
   const communityLinks = (
     <div className="flex items-center gap-1">
+      <Button asChild size="icon" variant="ghost">
+        <a
+          href="https://github.com/MCPJam/inspector/issues/new"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Report a bug"
+          title="Report a bug"
+        >
+          <Bug className="h-5 w-5" />
+          <span className="sr-only">Report a bug</span>
+        </a>
+      </Button>
+      <Button asChild size="icon" variant="ghost">
+        <a
+          href="https://docs.mcpjam.com/"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Documentation"
+          title="Documentation"
+        >
+          <BookOpen className="h-5 w-5" />
+          <span className="sr-only">Docs</span>
+        </a>
+      </Button>
       <Button asChild size="icon" variant="ghost">
         <a
           href="https://discord.gg/JEnDtz8X6z"

@@ -33,7 +33,11 @@ import { CreateOrganizationDialog } from "@/components/organization/CreateOrgani
 import { HOSTED_MODE } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 
-export function SidebarUser() {
+interface SidebarUserProps {
+  onSettingsClick?: () => void;
+}
+
+export function SidebarUser({ onSettingsClick }: SidebarUserProps) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -120,11 +124,25 @@ export function SidebarUser() {
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                   <span className="truncate font-semibold">{displayName}</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {email}
-                  </span>
                 </div>
-                <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+                {onSettingsClick && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      e.preventDefault();
+                      onSettingsClick();
+                    }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                    }}
+                    className="ml-auto p-1 rounded-md hover:text-foreground hover:bg-sidebar-accent transition-colors group-data-[collapsible=icon]:hidden"
+                    aria-label="Settings"
+                    title="Settings"
+                  >
+                    <Settings className="size-4" />
+                  </button>
+                )}
+                <ChevronsUpDown className={`size-4 group-data-[collapsible=icon]:hidden ${onSettingsClick ? '' : 'ml-auto'}`} />
               </SidebarMenuButton>
             </DropdownMenuTrigger>
             <DropdownMenuContent

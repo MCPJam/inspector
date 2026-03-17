@@ -175,9 +175,6 @@ vi.mock("../components/ProfileTab", () => ({
 vi.mock("../components/OrganizationsTab", () => ({
   OrganizationsTab: () => <div />,
 }));
-vi.mock("../components/SupportTab", () => ({
-  SupportTab: () => <div />,
-}));
 vi.mock("../components/oauth/OAuthDebugCallback", () => ({
   default: () => <div />,
 }));

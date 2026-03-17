@@ -21,7 +21,6 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
-import { SupportTab } from "./components/SupportTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -775,7 +774,6 @@ export default function App() {
               workspaceName={activeWorkspace?.name ?? null}
             />
           )}
-          {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
             <OrganizationsTab organizationId={activeOrganizationId} />
