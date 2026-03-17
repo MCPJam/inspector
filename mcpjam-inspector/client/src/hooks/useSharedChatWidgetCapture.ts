@@ -160,10 +160,10 @@ export function useSharedChatWidgetCapture({
 }: UseSharedChatWidgetCaptureOptions): void {
   const widgets = useWidgetDebugStore((state) => state.widgets);
   const generateSnapshotUploadUrl = useMutation(
-    "sharedChatThreads:generateSnapshotUploadUrl" as any,
+    "chatSessions:generateSnapshotUploadUrl" as any,
   );
   const createWidgetSnapshot = useMutation(
-    "sharedChatThreads:createWidgetSnapshot" as any,
+    "chatSessions:createWidgetSnapshot" as any,
   );
 
   const uploadedHashesRef = useRef(new Map<string, string>());
@@ -327,7 +327,7 @@ export function useSharedChatWidgetCapture({
       retryCountRef.current.delete(toolCallId);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("Thread not found")) {
+      if (message.includes("Session not found")) {
         const retries = retryCountRef.current.get(toolCallId) ?? 0;
         if (retries >= 15) {
           console.warn(

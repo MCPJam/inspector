@@ -12,7 +12,7 @@ import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
-import { ingestBYOKChat } from "../../utils/chat-ingestion.js";
+import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 
@@ -203,9 +203,19 @@ chatV2.post("/", async (c) => {
           const allToolResults = event.steps.flatMap(
             (s) => s.toolResults ?? [],
           );
-          ingestBYOKChat({
+          const responseMessages = event.steps.flatMap((step: any) =>
+            Array.isArray(step?.response?.messages) ? step.response.messages : [],
+          );
+          persistChatSessionToConvex({
             chatSessionId: body.chatSessionId,
             modelId: String(modelDefinition.id),
+            modelSource: "byok",
+            sourceType: "direct",
+            messages: modelMessages as ModelMessage[],
+            systemPrompt: enhancedSystemPrompt,
+            ...(responseMessages.length > 0
+              ? { responseMessages }
+              : {}),
             assistantText: event.text,
             toolCalls: allToolCalls,
             toolResults: allToolResults,
@@ -216,6 +226,7 @@ chatV2.post("/", async (c) => {
             finishReason: event.finishReason,
             authHeader,
             startedAt: streamStartedAt,
+            lastActivityAt: Date.now(),
           });
         } catch (error) {
           logger.warn("[mcp/chat-v2] onFinish ingestion error", error);

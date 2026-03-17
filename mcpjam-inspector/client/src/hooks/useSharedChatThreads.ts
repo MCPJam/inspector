@@ -9,11 +9,11 @@ export interface SharedChatThread {
   sandboxId?: string;
   chatSessionId: string;
   serverId?: string;
-  visitorUserId: string;
-  visitorDisplayName: string;
-  modelId: string;
+  userId?: string;
+  visitorDisplayName?: string;
+  modelId?: string;
   messageCount: number;
-  firstMessagePreview: string;
+  firstMessagePreview?: string;
   startedAt: number;
   lastActivityAt: number;
   messagesBlobUrl?: string;
@@ -21,7 +21,7 @@ export interface SharedChatThread {
 
 export interface SharedChatWidgetSnapshot {
   _id: string;
-  threadId: string;
+  sessionId: string;
   toolCallId: string;
   toolName: string;
   serverId: string;
@@ -43,8 +43,8 @@ export function useSharedChatThreadList({
 }) {
   const queryName =
     sourceType === "sandbox"
-      ? "sharedChatThreads:listBySandbox"
-      : "sharedChatThreads:listByShare";
+      ? "chatSessions:listBySandbox"
+      : "chatSessions:listByShare";
   const queryArgs =
     sourceType === "sandbox"
       ? sourceId
@@ -63,8 +63,8 @@ export function useSharedChatThreadList({
 
 export function useSharedChatThread({ threadId }: { threadId: string | null }) {
   const thread = useQuery(
-    "sharedChatThreads:getThread" as any,
-    threadId ? ({ threadId } as any) : "skip",
+    "chatSessions:getSession" as any,
+    threadId ? ({ sessionId: threadId } as any) : "skip",
   ) as SharedChatThread | null | undefined;
 
   return { thread };
@@ -76,8 +76,8 @@ export function useSharedChatWidgetSnapshots({
   threadId: string | null;
 }) {
   const snapshots = useQuery(
-    "sharedChatThreads:getWidgetSnapshots" as any,
-    threadId ? ({ threadId } as any) : "skip",
+    "chatSessions:getWidgetSnapshots" as any,
+    threadId ? ({ sessionId: threadId } as any) : "skip",
   ) as SharedChatWidgetSnapshot[] | undefined;
 
   return { snapshots };

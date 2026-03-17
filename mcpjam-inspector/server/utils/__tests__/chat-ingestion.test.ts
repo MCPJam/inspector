@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { saveThreadToConvex } from "../shared-chat-persistence";
+import { persistChatSessionToConvex } from "../chat-ingestion";
 
 vi.mock("../logger", () => ({
   logger: {
-    error: vi.fn(),
+    warn: vi.fn(),
   },
 }));
 
-describe("shared-chat-persistence", () => {
+describe("chat-ingestion", () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
@@ -25,14 +25,15 @@ describe("shared-chat-persistence", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  it("serializes reasoning parts when saving shared chat threads", async () => {
-    await saveThreadToConvex({
+  it("serializes sessionMessages when persisting a chat session", async () => {
+    await persistChatSessionToConvex({
       chatSessionId: "session-1",
-      shareToken: "share-token",
-      bearerToken: "bearer-token",
-      messageCount: 1,
       modelId: "openai/gpt-oss-120b",
-      messages: [
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      shareToken: "share-token",
+      sourceType: "serverShare",
+      sessionMessages: [
         {
           role: "assistant",
           content: [
@@ -48,12 +49,14 @@ describe("shared-chat-persistence", () => {
           ],
         },
       ] as any,
+      startedAt: 1,
+      lastActivityAt: 2,
     });
 
     const request = (global.fetch as any).mock.calls[0]?.[1];
     const body = JSON.parse((request?.body as string) ?? "{}");
 
-    expect(body.messages[0].content).toEqual([
+    expect(body.sessionMessages[0].content).toEqual([
       {
         type: "reasoning",
         text: "Need to inspect the saved trace payload.",

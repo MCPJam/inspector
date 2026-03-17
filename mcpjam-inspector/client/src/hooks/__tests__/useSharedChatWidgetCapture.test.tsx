@@ -8,10 +8,10 @@ const mockCreateWidgetSnapshot = vi.fn();
 
 vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
-    if (name === "sharedChatThreads:generateSnapshotUploadUrl") {
+    if (name === "chatSessions:generateSnapshotUploadUrl") {
       return mockGenerateSnapshotUploadUrl;
     }
-    if (name === "sharedChatThreads:createWidgetSnapshot") {
+    if (name === "chatSessions:createWidgetSnapshot") {
       return mockCreateWidgetSnapshot;
     }
     throw new Error(`Unexpected mutation: ${name}`);
@@ -165,7 +165,7 @@ describe("useSharedChatWidgetCapture", () => {
   it("dedupes identical widget html and retries when the thread is not ready yet", async () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
     mockCreateWidgetSnapshot
-      .mockRejectedValueOnce(new Error("Thread not found for chat session"))
+      .mockRejectedValueOnce(new Error("Session not found for chat session"))
       .mockResolvedValueOnce("snapshot-1");
 
     try {

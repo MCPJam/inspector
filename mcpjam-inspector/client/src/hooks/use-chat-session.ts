@@ -67,6 +67,8 @@ export interface UseChatSessionOptions {
   hostedOAuthTokens?: Record<string, string>;
   /** Optional server-share token for hosted shared chat sessions */
   hostedShareToken?: string;
+  /** Optional sandbox token for hosted sandbox chat sessions */
+  hostedSandboxToken?: string;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
@@ -195,6 +197,7 @@ export function useChatSession({
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
   hostedShareToken,
+  hostedSandboxToken,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
   onReset,
@@ -359,7 +362,9 @@ export function useChatSession({
     // (via hostedContextNotReady), so this branch only runs for guests.
     const buildHostedBody = () => {
       if (!hostedWorkspaceId) {
-        return {};
+        return {
+          chatSessionId,
+        };
       }
       return {
         workspaceId: hostedWorkspaceId,
@@ -424,9 +429,13 @@ export function useChatSession({
   });
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && !!hostedShareToken && isAuthenticated,
+    enabled:
+      HOSTED_MODE &&
+      !!(hostedShareToken || hostedSandboxToken) &&
+      isAuthenticated,
     chatSessionId,
     hostedShareToken,
+    hostedSandboxToken,
     messages,
   });
 

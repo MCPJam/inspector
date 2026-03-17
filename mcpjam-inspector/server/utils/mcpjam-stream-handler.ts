@@ -687,6 +687,7 @@ async function processOneStep(
     },
     body: JSON.stringify({
       mode: "stream",
+      skipChatIngestion: true,
       messages: JSON.stringify(scrubbedMessages),
       model: modelId,
       systemPrompt,

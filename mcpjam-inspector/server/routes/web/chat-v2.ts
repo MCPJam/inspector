@@ -9,7 +9,7 @@ import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
-import { saveThreadToConvex } from "../../utils/shared-chat-persistence.js";
+import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
 import {
   hostedChatSchema,
   guestServerInputSchema,
@@ -152,6 +152,7 @@ chatV2.post("/", async (c) => {
       }
 
       try {
+        const sessionStartedAt = Date.now();
         const selectedServers = hasServer ? ["__guest__"] : [];
 
         let prepared;
@@ -190,6 +191,20 @@ chatV2.post("/", async (c) => {
           mcpClientManager: manager,
           selectedServers,
           requireToolApproval,
+          onConversationComplete: body.chatSessionId
+            ? async (fullHistory) => {
+                await persistChatSessionToConvex({
+                  chatSessionId: body.chatSessionId,
+                  modelId: String(modelDefinition.id),
+                  modelSource: "mcpjam",
+                  sourceType: "direct",
+                  authHeader: c.req.header("authorization"),
+                  sessionMessages: fullHistory,
+                  startedAt: sessionStartedAt,
+                  lastActivityAt: Date.now(),
+                });
+              }
+            : undefined,
           onStreamComplete: () => manager.disconnectAllServers(),
         });
       } catch (error) {
@@ -204,6 +219,7 @@ chatV2.post("/", async (c) => {
       workspaceId: string;
       selectedServerIds: string[];
       shareToken?: string;
+      sandboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
     };
 
@@ -215,6 +231,7 @@ chatV2.post("/", async (c) => {
       requireToolApproval,
       selectedServerIds,
       shareToken,
+      sandboxToken,
     } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -248,6 +265,7 @@ chatV2.post("/", async (c) => {
     oauthServerUrls = urls;
 
     try {
+      const sessionStartedAt = Date.now();
       let prepared;
       try {
         prepared = await prepareChatV2({
@@ -296,19 +314,30 @@ chatV2.post("/", async (c) => {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
-        onConversationComplete:
-          shareToken && body.chatSessionId
-            ? async (fullHistory) => {
-                await saveThreadToConvex({
-                  chatSessionId: body.chatSessionId!,
-                  shareToken,
-                  bearerToken,
-                  messages: fullHistory,
-                  messageCount: fullHistory.length,
-                  modelId: String(modelDefinition.id),
-                });
-              }
-            : undefined,
+        onConversationComplete: body.chatSessionId
+          ? async (fullHistory) => {
+              await persistChatSessionToConvex({
+                chatSessionId: body.chatSessionId,
+                modelId: String(modelDefinition.id),
+                modelSource: "mcpjam",
+                workspaceId: hostedBody.workspaceId,
+                sourceType: shareToken
+                  ? "serverShare"
+                  : sandboxToken
+                    ? "sandbox"
+                    : "direct",
+                shareToken,
+                sandboxToken,
+                ...(shareToken && selectedServerIds[0]
+                  ? { serverId: selectedServerIds[0] }
+                  : {}),
+                authHeader: c.req.header("authorization"),
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+              });
+            }
+          : undefined,
         onStreamComplete: () => manager.disconnectAllServers(),
       });
     } catch (error) {
