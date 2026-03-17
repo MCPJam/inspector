@@ -1,10 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "fs";
-import os from "os";
-import path from "path";
 import { Hono } from "hono";
 import webRoutes from "../index.js";
-import { initGuestTokenSecret } from "../../../services/guest-token.js";
 
 vi.mock("@mcpjam/sdk", () => ({
   MCPClientManager: vi.fn(),
@@ -16,17 +12,38 @@ vi.mock("../apps.js", () => ({
 }));
 
 const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
-const ORIGINAL_GUEST_JWT_KEY_DIR = process.env.GUEST_JWT_KEY_DIR;
+const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+const ORIGINAL_FETCH = global.fetch;
 
 describe("GET /api/web/guest-jwks", () => {
   let app: Hono;
-  let testGuestKeyDir: string;
 
   beforeEach(() => {
-    testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "guest-jwks-test-"));
     process.env.NODE_ENV = "test";
-    process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
-    initGuestTokenSecret();
+    process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          keys: [
+            {
+              kid: "guest-1",
+              alg: "RS256",
+              use: "sig",
+              kty: "RSA",
+              n: "test-modulus",
+              e: "AQAB",
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": "public, max-age=300",
+          },
+        },
+      ),
+    ) as typeof fetch;
 
     app = new Hono();
     app.route("/api/web", webRoutes);
@@ -34,19 +51,19 @@ describe("GET /api/web/guest-jwks", () => {
 
   afterEach(() => {
     process.env.NODE_ENV = ORIGINAL_NODE_ENV;
-    if (ORIGINAL_GUEST_JWT_KEY_DIR === undefined) {
-      delete process.env.GUEST_JWT_KEY_DIR;
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
     } else {
-      process.env.GUEST_JWT_KEY_DIR = ORIGINAL_GUEST_JWT_KEY_DIR;
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
     }
-    rmSync(testGuestKeyDir, { recursive: true, force: true });
+    global.fetch = ORIGINAL_FETCH;
   });
 
-  it("returns a non-cacheable JWKS document", async () => {
+  it("returns a short-lived cacheable JWKS document", async () => {
     const response = await app.request("/api/web/guest-jwks");
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe("public, max-age=300");
     expect(response.headers.get("content-type")).toContain("application/json");
 
     const body = await response.json();
@@ -70,8 +87,14 @@ describe("GET /api/web/guest-jwks", () => {
     expect(key.kty).toBe("RSA");
     expect(key.n).toEqual(expect.any(String));
     expect(key.e).toEqual(expect.any(String));
-    // n should be a base64url-encoded RSA modulus (at least 100 chars for 2048-bit)
-    expect(key.n.length).toBeGreaterThan(100);
+    expect(global.fetch).toHaveBeenCalledWith(
+      "https://test-deployment.convex.site/guest/jwks",
+      expect.objectContaining({
+        method: "GET",
+        headers: { Accept: "application/json" },
+        signal: expect.anything(),
+      }),
+    );
   });
 
   it("returns exactly one key", async () => {
@@ -82,35 +105,29 @@ describe("GET /api/web/guest-jwks", () => {
   });
 });
 
-describe("GET /api/web/guest-jwks (uninitialized)", () => {
-  it("returns 500 when initGuestTokenSecret() was not called", async () => {
-    // Simulate the crash that happens when getGuestJwks() is called before
-    // initGuestTokenSecret(). We can't un-initialize the module-level keys,
-    // so we build a minimal Hono app that throws the same error and uses
-    // the same onError handler as the real web routes.
-    const { mapRuntimeError, webError } = await import("../errors.js");
+describe("GET /api/web/guest-jwks (upstream unavailable)", () => {
+  afterEach(() => {
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    global.fetch = ORIGINAL_FETCH;
+  });
 
-    const errorApp = new Hono();
-    errorApp.get("/api/web/guest-jwks", () => {
-      throw new Error(
-        "Guest JWT keys not initialized. Call initGuestTokenSecret() first.",
-      );
-    });
-    errorApp.onError((error, c) => {
-      const routeError = mapRuntimeError(error);
-      return webError(
-        c,
-        routeError.status,
-        routeError.code,
-        routeError.message,
-      );
-    });
+  it("returns 503 when Convex JWKS cannot be fetched", async () => {
+    process.env.NODE_ENV = "test";
+    process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+    global.fetch = vi.fn().mockRejectedValue(new Error("network down")) as typeof fetch;
+    const app = new Hono();
+    app.route("/api/web", webRoutes);
 
-    const response = await errorApp.request("/api/web/guest-jwks");
+    const response = await app.request("/api/web/guest-jwks");
 
-    expect(response.status).toBe(500);
+    expect(response.status).toBe(503);
     const body = await response.json();
     expect(body.code).toBe("INTERNAL_ERROR");
-    expect(body.message).toContain("not initialized");
+    expect(body.message).toContain("Guest JWKS unavailable");
   });
 });

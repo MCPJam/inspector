@@ -13,7 +13,7 @@ import oauthWeb from "./oauth.js";
 import xrayPayload from "./xray-payload.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
-import { getGuestJwks } from "../../services/guest-token.js";
+import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
 
@@ -37,10 +37,22 @@ web.route("/oauth", oauthWeb);
 web.route("/xray-payload", xrayPayload);
 web.route("/guest-session", guestSession);
 
-// Public JWKS endpoint for guest JWT verification.
-web.get("/guest-jwks", (c) => {
-  c.header("Cache-Control", "no-store");
-  return c.json(getGuestJwks());
+// Public guest JWKS compatibility endpoint.
+web.get("/guest-jwks", async (c) => {
+  const response = await fetchRemoteGuestJwks();
+  if (!response) {
+    return webError(c, 503, "INTERNAL_ERROR", "Guest JWKS unavailable");
+  }
+
+  return new Response(await response.text(), {
+    status: response.status,
+    headers: {
+      "Cache-Control":
+        response.headers.get("cache-control") || "public, max-age=300",
+      "Content-Type":
+        response.headers.get("content-type") || "application/json",
+    },
+  });
 });
 
 web.onError((error, c) => {
