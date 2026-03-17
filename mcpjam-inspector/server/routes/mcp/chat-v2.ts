@@ -204,7 +204,9 @@ chatV2.post("/", async (c) => {
             (s) => s.toolResults ?? [],
           );
           const responseMessages = event.steps.flatMap((step: any) =>
-            Array.isArray(step?.response?.messages) ? step.response.messages : [],
+            Array.isArray(step?.response?.messages)
+              ? step.response.messages
+              : [],
           );
           persistChatSessionToConvex({
             chatSessionId: body.chatSessionId,
@@ -213,9 +215,7 @@ chatV2.post("/", async (c) => {
             sourceType: "direct",
             messages: modelMessages as ModelMessage[],
             systemPrompt: enhancedSystemPrompt,
-            ...(responseMessages.length > 0
-              ? { responseMessages }
-              : {}),
+            ...(responseMessages.length > 0 ? { responseMessages } : {}),
             assistantText: event.text,
             toolCalls: allToolCalls,
             toolResults: allToolResults,
