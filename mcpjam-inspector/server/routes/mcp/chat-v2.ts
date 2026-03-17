@@ -158,6 +158,7 @@ chatV2.post("/", async (c) => {
       }
 
       const modelMessages = await convertToModelMessages(messages);
+      const sessionStartedAt = Date.now();
 
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
@@ -169,6 +170,20 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        onConversationComplete: body.chatSessionId
+          ? async (fullHistory) => {
+              await persistChatSessionToConvex({
+                chatSessionId: body.chatSessionId,
+                modelId: String(modelDefinition.id),
+                modelSource: "mcpjam",
+                sourceType: "direct",
+                authHeader,
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+              });
+            }
+          : undefined,
       });
     }
 

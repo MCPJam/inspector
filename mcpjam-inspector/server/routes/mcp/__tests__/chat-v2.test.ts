@@ -48,7 +48,7 @@ vi.mock("ai", async () => {
       ),
     }),
     stepCountIs: vi.fn().mockReturnValue(() => false),
-    createUIMessageStream: vi.fn(({ execute }) => {
+    createUIMessageStream: vi.fn(({ execute, onFinish }) => {
       // Create a mock writer that captures events
       mockWriter = {
         write: vi.fn((event) => {
@@ -56,9 +56,8 @@ vi.mock("ai", async () => {
         }),
       };
       // Execute the stream function to capture events
-      const execResult = execute({ writer: mockWriter });
-      lastStreamExecution =
-        execResult instanceof Promise ? execResult : Promise.resolve();
+      const execResult = Promise.resolve(execute({ writer: mockWriter }));
+      lastStreamExecution = execResult.finally(() => onFinish?.());
       return { getReader: vi.fn() };
     }),
     createUIMessageStreamResponse: vi.fn().mockReturnValue(
@@ -591,6 +590,80 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(result.message).toBe(
         "Invalid API key for openai. Please check your key under LLM Providers in Settings.",
       );
+    });
+  });
+
+  describe("MCPJam model persistence", () => {
+    beforeEach(async () => {
+      const { isMCPJamProvidedModel } = await import("@/shared/types");
+      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
+      process.env.CONVEX_HTTP_URL = "https://test-convex.example.com";
+    });
+
+    afterEach(() => {
+      delete process.env.CONVEX_HTTP_URL;
+    });
+
+    it("persists completed MCPJam conversations when chatSessionId is present", async () => {
+      const originalFetch = global.fetch;
+      global.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url === "https://test-convex.example.com/stream") {
+          return createSseResponse([
+            {
+              type: "finish",
+              finishReason: "stop",
+              messageMetadata: {
+                inputTokens: 1,
+                outputTokens: 1,
+                totalTokens: 2,
+              },
+            },
+          ]);
+        }
+
+        if (url === "https://test-convex.example.com/ingest-chat") {
+          return new Response(null, { status: 200 });
+        }
+
+        throw new Error(`Unexpected fetch URL: ${url}`);
+      });
+
+      try {
+        const res = await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "google/gemini-2.5-flash", provider: "google" },
+          chatSessionId: "chat-session-1",
+        });
+
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const ingestCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/ingest-chat"));
+
+        expect(ingestCall).toBeDefined();
+        const [, init] = ingestCall!;
+        const body = JSON.parse(String((init as RequestInit).body ?? "{}"));
+
+        expect(init).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer guest-test-token",
+          }),
+        });
+        expect(body).toMatchObject({
+          chatSessionId: "chat-session-1",
+          modelId: "google/gemini-2.5-flash",
+          modelSource: "mcpjam",
+          sourceType: "direct",
+        });
+        expect(body.sessionMessages).toEqual([
+          { role: "user", content: "Hello" },
+        ]);
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
   });
 

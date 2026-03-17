@@ -1,5 +1,8 @@
 import { logger } from "./logger";
 
+const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
+const MAX_RESPONSE_PREVIEW_CHARS = 200;
+
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
@@ -22,6 +25,45 @@ interface PersistChatSessionOptions {
   finishReason?: string;
   startedAt: number;
   lastActivityAt?: number;
+  timeoutMs?: number;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
+function sanitizeDiagnosticText(text: string): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const masked = normalized
+    .replace(
+      /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
+      "[redacted-email]",
+    )
+    .replace(
+      /(\bauthorization\b\s*[:=]\s*)(bearer\s+)?([^"',\s}]+)/gi,
+      (_match, prefix: string, scheme?: string) =>
+        `${prefix}${scheme ?? ""}[redacted-token]`,
+    )
+    .replace(
+      /\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi,
+      "$1[redacted-token]",
+    )
+    .replace(
+      /(["']?(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)([^"',\s}]+)/gi,
+      "$1[redacted-secret]",
+    )
+    .replace(/\bsk-[A-Za-z0-9]+\b/g, "[redacted-secret]");
+
+  if (masked.length <= MAX_RESPONSE_PREVIEW_CHARS) {
+    return masked;
+  }
+
+  return `${masked.slice(0, MAX_RESPONSE_PREVIEW_CHARS)}...`;
+}
+
+async function readResponsePreview(response: Response): Promise<string> {
+  const responseText = await response.text().catch(() => "");
+  return sanitizeDiagnosticText(responseText);
 }
 
 export async function persistChatSessionToConvex(
@@ -32,6 +74,12 @@ export async function persistChatSessionToConvex(
     return;
   }
 
+  const timeoutMs = options.timeoutMs ?? DEFAULT_INGEST_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+
   try {
     const response = await fetch(`${convexUrl}/ingest-chat`, {
       method: "POST",
@@ -39,6 +87,7 @@ export async function persistChatSessionToConvex(
         "content-type": "application/json",
         authorization: options.authHeader,
       },
+      signal: controller.signal,
       body: JSON.stringify({
         chatSessionId: options.chatSessionId,
         modelId: options.modelId,
@@ -79,14 +128,27 @@ export async function persistChatSessionToConvex(
         undefined,
         {
           status: response.status,
-          responseText: await response.text().catch(() => ""),
+          responsePreview: await readResponsePreview(response),
         },
       );
     }
   } catch (error) {
+    if (isAbortError(error)) {
+      logger.warn(
+        "[chat-session-persistence] Timed out persisting chat session",
+        undefined,
+        {
+          timeoutMs,
+        },
+      );
+      return;
+    }
+
     logger.warn(
       "[chat-session-persistence] Error persisting chat session",
       error,
     );
+  } finally {
+    clearTimeout(timeoutId);
   }
 }

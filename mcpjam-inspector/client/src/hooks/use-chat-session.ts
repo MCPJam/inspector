@@ -257,7 +257,7 @@ export function useChatSession({
     !isAuthenticated &&
     !isAuthLoading &&
     !!hostedWorkspaceId &&
-    !!hostedShareToken;
+    !!(hostedShareToken || hostedSandboxToken);
   const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
@@ -372,6 +372,7 @@ export function useChatSession({
         selectedServerIds: hostedSelectedServerIds,
         accessScope: "chat_v2" as const,
         ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
+        ...(hostedSandboxToken ? { sandboxToken: hostedSandboxToken } : {}),
         ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
           : {}),
@@ -408,6 +409,7 @@ export function useChatSession({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
+    hostedSandboxToken,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -540,7 +542,7 @@ export function useChatSession({
         active &&
         !isAuthenticated &&
         HOSTED_MODE &&
-        (!hostedWorkspaceId || !!hostedShareToken)
+        (!hostedWorkspaceId || !!hostedShareToken || !!hostedSandboxToken)
       ) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
@@ -569,6 +571,7 @@ export function useChatSession({
   }, [
     getAccessToken,
     hostedShareToken,
+    hostedSandboxToken,
     hostedWorkspaceId,
     isAuthenticated,
     setMessages,
@@ -642,7 +645,7 @@ export function useChatSession({
             : null,
         );
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (!((hostedShareToken || hostedSandboxToken) && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error,
@@ -657,7 +660,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken]);
+  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // System prompt token count
   useEffect(() => {
@@ -676,7 +679,7 @@ export function useChatSession({
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (!((hostedShareToken || hostedSandboxToken) && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error,
@@ -689,7 +692,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken]);
+  }, [systemPrompt, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // Reset chat when selected servers change
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
