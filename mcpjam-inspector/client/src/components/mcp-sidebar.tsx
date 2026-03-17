@@ -323,10 +323,8 @@ export function MCPSidebar({
   return (
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
-        <a
-          href="https://www.mcpjam.com/"
-          target="_blank"
-          rel="noreferrer"
+        <button
+          onClick={() => handleNavClick("#servers")}
           className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
         >
           <img
@@ -336,7 +334,7 @@ export function MCPSidebar({
             alt="MCP Jam"
             className="h-4 w-auto"
           />
-        </a>
+        </button>
         {updateReady && (
           <div className="px-2 pb-2">
             <Button
@@ -370,7 +368,7 @@ export function MCPSidebar({
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <SidebarUser onSettingsClick={() => handleNavClick("#settings")} />
+        <SidebarUser />
       </SidebarFooter>
     </Sidebar>
   );
