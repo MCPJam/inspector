@@ -260,6 +260,7 @@ chatV2.post("/", async (c) => {
       {
         accessScope: "chat_v2",
         shareToken,
+        sandboxToken,
       },
     );
     oauthServerUrls = urls;

@@ -151,6 +151,15 @@ function toWidgetCsp(widget: WidgetDebugInfo): WidgetCsp | undefined {
   };
 }
 
+function shouldRetryPendingSnapshot(result: unknown, error: unknown): boolean {
+  if (result == null) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Session not found");
+}
+
 export function useSharedChatWidgetCapture({
   enabled,
   chatSessionId,
@@ -303,7 +312,7 @@ export function useSharedChatWidgetCapture({
         cachedBlobsRef.current.set(toolCallId, cached);
       }
 
-      await createWidgetSnapshot({
+      const snapshotResult = await createWidgetSnapshot({
         ...(shareToken ? { shareToken } : {}),
         ...(sandboxToken ? { sandboxToken } : {}),
         chatSessionId: sessionIdRef.current,
@@ -322,12 +331,15 @@ export function useSharedChatWidgetCapture({
         displayContext: toDisplayContext(widget.globals),
       });
 
+      if (shouldRetryPendingSnapshot(snapshotResult, null)) {
+        throw new Error("Session not found for chat session");
+      }
+
       uploadedHashesRef.current.set(toolCallId, htmlHash);
       cachedBlobsRef.current.delete(toolCallId);
       retryCountRef.current.delete(toolCallId);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("Session not found")) {
+      if (shouldRetryPendingSnapshot(undefined, error)) {
         const retries = retryCountRef.current.get(toolCallId) ?? 0;
         if (retries >= 15) {
           console.warn(

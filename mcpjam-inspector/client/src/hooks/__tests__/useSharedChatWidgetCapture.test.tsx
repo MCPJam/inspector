@@ -269,6 +269,74 @@ describe("useSharedChatWidgetCapture", () => {
     }
   });
 
+  it("retries when the snapshot mutation returns null while the session is still pending", async () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    mockCreateWidgetSnapshot.mockResolvedValueOnce(null).mockResolvedValueOnce("snapshot-1");
+
+    try {
+      const { unmount } = renderHook(() =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId: "chat-session-pending",
+          hostedShareToken: "share-token",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-pending",
+                  input: { q: "hello" },
+                  output: { result: "world" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      );
+
+      act(() => {
+        useWidgetDebugStore.setState({
+          widgets: new Map([
+            [
+              "call-pending",
+              {
+                toolCallId: "call-pending",
+                toolName: "search",
+                protocol: "mcp-apps",
+                widgetState: null,
+                globals: {
+                  theme: "dark",
+                  displayMode: "inline",
+                },
+                widgetHtml: "<div>Widget</div>",
+                updatedAt: Date.now(),
+              },
+            ],
+          ]),
+        });
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+
+      await flushMicrotasks();
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      await flushMicrotasks();
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
   it("uploads sandbox widget snapshots with the originating server id", async () => {
     const { unmount } = renderHook(() =>
       useSharedChatWidgetCapture({

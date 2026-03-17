@@ -169,6 +169,28 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("includes sandboxToken in the hosted transport body", async () => {
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedSandboxToken: "sandbox-token",
+      }),
+    );
+
+    const body = lastTransportOptions.body();
+    expect(result.current.chatSessionId).toBe("chat-session-id");
+    expect(body).toMatchObject({
+      workspaceId: "workspace-1",
+      chatSessionId: "chat-session-id",
+      selectedServerIds: ["server-id-1"],
+      sandboxToken: "sandbox-token",
+      accessScope: "chat_v2",
+    });
+    unmount();
+  });
+
   it("treats anonymous shared-chat viewers as guest users", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
