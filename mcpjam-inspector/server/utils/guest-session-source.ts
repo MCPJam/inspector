@@ -31,11 +31,15 @@ function getConvexGuestSessionUrl(): string {
 }
 
 export function getRemoteGuestSessionUrl(): string {
-  return process.env.MCPJAM_GUEST_SESSION_URL || DEFAULT_REMOTE_GUEST_SESSION_URL;
+  return (
+    process.env.MCPJAM_GUEST_SESSION_URL || DEFAULT_REMOTE_GUEST_SESSION_URL
+  );
 }
 
 export function getRemoteGuestJwksUrl(): string {
-  return process.env.MCPJAM_GUEST_JWKS_URL || buildConvexGuestUrl("/guest/jwks");
+  return (
+    process.env.MCPJAM_GUEST_JWKS_URL || buildConvexGuestUrl("/guest/jwks")
+  );
 }
 
 export async function fetchRemoteGuestSession(): Promise<RemoteGuestSession | null> {
@@ -134,7 +138,10 @@ export async function fetchConvexGuestSession(): Promise<RemoteGuestSession | nu
 }
 
 export async function fetchGuestSessionForServerSideAuth(): Promise<RemoteGuestSession | null> {
-  if (process.env.MCPJAM_GUEST_SESSION_URL || process.env.NODE_ENV === "production") {
+  if (
+    process.env.MCPJAM_GUEST_SESSION_URL ||
+    process.env.NODE_ENV === "production"
+  ) {
     return fetchRemoteGuestSession();
   }
 

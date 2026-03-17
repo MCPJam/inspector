@@ -687,6 +687,9 @@ async function processOneStep(
     },
     body: JSON.stringify({
       mode: "stream",
+      // Persist only once at the end of the full agentic loop via
+      // onConversationComplete to avoid storing partial per-step traces.
+      skipChatIngestion: true,
       messages: JSON.stringify(scrubbedMessages),
       model: modelId,
       systemPrompt,

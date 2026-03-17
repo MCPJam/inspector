@@ -12,6 +12,7 @@ import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
+import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 
@@ -157,6 +158,7 @@ chatV2.post("/", async (c) => {
       }
 
       const modelMessages = await convertToModelMessages(messages);
+      const sessionStartedAt = Date.now();
 
       return handleMCPJamFreeChatModel({
         messages: modelMessages as ModelMessage[],
@@ -168,6 +170,20 @@ chatV2.post("/", async (c) => {
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        onConversationComplete: body.chatSessionId
+          ? async (fullHistory) => {
+              await persistChatSessionToConvex({
+                chatSessionId: body.chatSessionId,
+                modelId: String(modelDefinition.id),
+                modelSource: "mcpjam",
+                sourceType: "direct",
+                authHeader,
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+              });
+            }
+          : undefined,
       });
     }
 
@@ -184,6 +200,9 @@ chatV2.post("/", async (c) => {
 
     const modelMessages = await convertToModelMessages(messages);
 
+    const streamStartedAt = Date.now();
+    const authHeader = c.req.header("authorization");
+
     const result = streamText({
       model: llmModel,
       messages: scrubMessages(modelMessages as ModelMessage[]),
@@ -193,6 +212,41 @@ chatV2.post("/", async (c) => {
       system: enhancedSystemPrompt,
       tools: allTools as ToolSet,
       stopWhen: stepCountIs(20),
+      onFinish: (event) => {
+        try {
+          const allToolCalls = event.steps.flatMap((s) => s.toolCalls ?? []);
+          const allToolResults = event.steps.flatMap(
+            (s) => s.toolResults ?? [],
+          );
+          const responseMessages = event.steps.flatMap((step: any) =>
+            Array.isArray(step?.response?.messages)
+              ? step.response.messages
+              : [],
+          );
+          persistChatSessionToConvex({
+            chatSessionId: body.chatSessionId,
+            modelId: String(modelDefinition.id),
+            modelSource: "byok",
+            sourceType: "direct",
+            messages: modelMessages as ModelMessage[],
+            systemPrompt: enhancedSystemPrompt,
+            ...(responseMessages.length > 0 ? { responseMessages } : {}),
+            assistantText: event.text,
+            toolCalls: allToolCalls,
+            toolResults: allToolResults,
+            usage: {
+              inputTokens: event.totalUsage.inputTokens,
+              outputTokens: event.totalUsage.outputTokens,
+            },
+            finishReason: event.finishReason,
+            authHeader,
+            startedAt: streamStartedAt,
+            lastActivityAt: Date.now(),
+          });
+        } catch (error) {
+          logger.warn("[mcp/chat-v2] onFinish ingestion error", error);
+        }
+      },
     });
 
     return result.toUIMessageStreamResponse({

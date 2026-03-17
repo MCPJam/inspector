@@ -33,7 +33,9 @@ describe("guest-session-source", () => {
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.MCPJAM_GUEST_JWKS_URL;
     mockProvisionGuestAuthConfigToConvex.mockResolvedValue(undefined);
-    mockGetGuestSessionSharedSecret.mockReturnValue("test-guest-session-secret");
+    mockGetGuestSessionSharedSecret.mockReturnValue(
+      "test-guest-session-secret",
+    );
     global.fetch = vi.fn();
   });
 
@@ -71,7 +73,8 @@ describe("guest-session-source", () => {
       ),
     );
 
-    const { fetchRemoteGuestSession } = await import("../guest-session-source.js");
+    const { fetchRemoteGuestSession } =
+      await import("../guest-session-source.js");
     const session = await fetchRemoteGuestSession();
 
     expect(session?.token).toBe("remote-token");
@@ -103,7 +106,8 @@ describe("guest-session-source", () => {
       ),
     );
 
-    const { fetchConvexGuestSession } = await import("../guest-session-source.js");
+    const { fetchConvexGuestSession } =
+      await import("../guest-session-source.js");
     const session = await fetchConvexGuestSession();
 
     expect(session?.token).toBe("convex-token");

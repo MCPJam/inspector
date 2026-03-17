@@ -67,6 +67,8 @@ export interface UseChatSessionOptions {
   hostedOAuthTokens?: Record<string, string>;
   /** Optional server-share token for hosted shared chat sessions */
   hostedShareToken?: string;
+  /** Optional sandbox token for hosted sandbox chat sessions */
+  hostedSandboxToken?: string;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
@@ -195,6 +197,7 @@ export function useChatSession({
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
   hostedShareToken,
+  hostedSandboxToken,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
   onReset,
@@ -254,7 +257,7 @@ export function useChatSession({
     !isAuthenticated &&
     !isAuthLoading &&
     !!hostedWorkspaceId &&
-    !!hostedShareToken;
+    !!(hostedShareToken || hostedSandboxToken);
   const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
@@ -359,7 +362,9 @@ export function useChatSession({
     // (via hostedContextNotReady), so this branch only runs for guests.
     const buildHostedBody = () => {
       if (!hostedWorkspaceId) {
-        return {};
+        return {
+          chatSessionId,
+        };
       }
       return {
         workspaceId: hostedWorkspaceId,
@@ -367,6 +372,7 @@ export function useChatSession({
         selectedServerIds: hostedSelectedServerIds,
         accessScope: "chat_v2" as const,
         ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
+        ...(hostedSandboxToken ? { sandboxToken: hostedSandboxToken } : {}),
         ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
           : {}),
@@ -381,7 +387,9 @@ export function useChatSession({
         ...(HOSTED_MODE ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
-        ...(HOSTED_MODE ? buildHostedBody() : { selectedServers }),
+        ...(HOSTED_MODE
+          ? buildHostedBody()
+          : { selectedServers, chatSessionId }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
@@ -403,6 +411,7 @@ export function useChatSession({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
+    hostedSandboxToken,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -424,9 +433,13 @@ export function useChatSession({
   });
 
   useSharedChatWidgetCapture({
-    enabled: HOSTED_MODE && !!hostedShareToken && isAuthenticated,
+    enabled:
+      HOSTED_MODE &&
+      !!(hostedShareToken || hostedSandboxToken) &&
+      isAuthenticated,
     chatSessionId,
     hostedShareToken,
+    hostedSandboxToken,
     messages,
   });
 
@@ -531,7 +544,7 @@ export function useChatSession({
         active &&
         !isAuthenticated &&
         HOSTED_MODE &&
-        (!hostedWorkspaceId || !!hostedShareToken)
+        (!hostedWorkspaceId || !!hostedShareToken || !!hostedSandboxToken)
       ) {
         const guestToken = await getGuestBearerToken();
         if (!active) return;
@@ -560,6 +573,7 @@ export function useChatSession({
   }, [
     getAccessToken,
     hostedShareToken,
+    hostedSandboxToken,
     hostedWorkspaceId,
     isAuthenticated,
     setMessages,
@@ -633,7 +647,12 @@ export function useChatSession({
             : null,
         );
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (
+          !(
+            (hostedShareToken || hostedSandboxToken) &&
+            isAuthDeniedError(error)
+          )
+        ) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error,
@@ -648,7 +667,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken]);
+  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // System prompt token count
   useEffect(() => {
@@ -667,7 +686,12 @@ export function useChatSession({
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (
+          !(
+            (hostedShareToken || hostedSandboxToken) &&
+            isAuthDeniedError(error)
+          )
+        ) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error,
@@ -680,7 +704,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken]);
+  }, [systemPrompt, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // Reset chat when selected servers change
   const previousSelectedServersRef = useRef<string[]>(selectedServers);

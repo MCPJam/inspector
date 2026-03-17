@@ -8,10 +8,10 @@ const mockCreateWidgetSnapshot = vi.fn();
 
 vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
-    if (name === "sharedChatThreads:generateSnapshotUploadUrl") {
+    if (name === "chatSessions:generateSnapshotUploadUrl") {
       return mockGenerateSnapshotUploadUrl;
     }
-    if (name === "sharedChatThreads:createWidgetSnapshot") {
+    if (name === "chatSessions:createWidgetSnapshot") {
       return mockCreateWidgetSnapshot;
     }
     throw new Error(`Unexpected mutation: ${name}`);
@@ -165,7 +165,7 @@ describe("useSharedChatWidgetCapture", () => {
   it("dedupes identical widget html and retries when the thread is not ready yet", async () => {
     const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
     mockCreateWidgetSnapshot
-      .mockRejectedValueOnce(new Error("Thread not found for chat session"))
+      .mockRejectedValueOnce(new Error("Session not found for chat session"))
       .mockResolvedValueOnce("snapshot-1");
 
     try {
@@ -262,6 +262,76 @@ describe("useSharedChatWidgetCapture", () => {
         vi.advanceTimersByTime(500);
       });
 
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
+      unmount();
+    } finally {
+      randomSpy.mockRestore();
+    }
+  });
+
+  it("retries when the snapshot mutation returns null while the session is still pending", async () => {
+    const randomSpy = vi.spyOn(Math, "random").mockReturnValue(0);
+    mockCreateWidgetSnapshot
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("snapshot-1");
+
+    try {
+      const { unmount } = renderHook(() =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId: "chat-session-pending",
+          hostedShareToken: "share-token",
+          messages: [
+            {
+              id: "assistant-1",
+              role: "assistant",
+              parts: [
+                {
+                  type: "tool-search",
+                  toolCallId: "call-pending",
+                  input: { q: "hello" },
+                  output: { result: "world" },
+                },
+              ],
+            } as any,
+          ],
+        }),
+      );
+
+      act(() => {
+        useWidgetDebugStore.setState({
+          widgets: new Map([
+            [
+              "call-pending",
+              {
+                toolCallId: "call-pending",
+                toolName: "search",
+                protocol: "mcp-apps",
+                widgetState: null,
+                globals: {
+                  theme: "dark",
+                  displayMode: "inline",
+                },
+                widgetHtml: "<div>Widget</div>",
+                updatedAt: Date.now(),
+              },
+            ],
+          ]),
+        });
+      });
+
+      act(() => {
+        vi.advanceTimersByTime(500);
+      });
+
+      await flushMicrotasks();
+      expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        vi.advanceTimersByTime(1000);
+      });
+
+      await flushMicrotasks();
       expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(2);
       unmount();
     } finally {

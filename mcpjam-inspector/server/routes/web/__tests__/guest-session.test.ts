@@ -26,7 +26,8 @@ describe("POST /guest-session", () => {
     process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
     delete process.env.MCPJAM_GUEST_SESSION_URL;
     delete process.env.VITE_MCPJAM_HOSTED_MODE;
-    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
+      "test-guest-session-secret";
     global.fetch = vi.fn().mockImplementation(async () => {
       sessionCounter += 1;
       return new Response(
@@ -182,7 +183,8 @@ describe("POST /guest-session", () => {
       process.env.NODE_ENV = "production";
       process.env.VITE_MCPJAM_HOSTED_MODE = "true";
       process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
-      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = "test-guest-session-secret";
+      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
+        "test-guest-session-secret";
       global.fetch = vi.fn().mockResolvedValue(
         new Response(
           JSON.stringify({
@@ -220,9 +222,11 @@ describe("POST /guest-session", () => {
     });
 
     it("returns 503 when the Convex guest session cannot be fetched", async () => {
-      global.fetch = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ error: "nope" }), { status: 503 }),
-      ) as typeof fetch;
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "nope" }), { status: 503 }),
+        ) as typeof fetch;
 
       const res = await app.request("/guest-session", { method: "POST" });
 
