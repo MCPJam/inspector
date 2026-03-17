@@ -387,7 +387,9 @@ export function useChatSession({
         ...(HOSTED_MODE ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
-        ...(HOSTED_MODE ? buildHostedBody() : { selectedServers, chatSessionId }),
+        ...(HOSTED_MODE
+          ? buildHostedBody()
+          : { selectedServers, chatSessionId }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
