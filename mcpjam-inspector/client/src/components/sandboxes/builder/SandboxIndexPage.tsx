@@ -9,7 +9,7 @@ import {
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
+import { Card, CardInteractive } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { SandboxListItem } from "@/hooks/useSandboxes";
 import {
@@ -37,33 +37,40 @@ function SandboxSummaryCard({
       : "No servers configured";
 
   return (
-    <Card
-      className="group cursor-pointer rounded-xl border border-border/70 bg-card/80 p-4 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-lg"
+    <CardInteractive
+      className="flex flex-col gap-4"
       onClick={onOpen}
     >
-      <h3 className="truncate text-lg font-semibold">{sandbox.name}</h3>
+      <h3 className="truncate text-lg font-bold tracking-tight">
+        {sandbox.name}
+      </h3>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Badge variant="outline" className="gap-1.5">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge
+          variant="secondary"
+          className="gap-1.5 border-0 bg-muted/50 px-2 py-0 text-xs font-normal text-muted-foreground"
+        >
           <img
             src={getSandboxHostLogo(sandbox.hostStyle)}
             alt=""
-            className="size-3.5"
+            className="size-3"
           />
           {getSandboxHostLabel(sandbox.hostStyle)}
         </Badge>
-        <Badge variant="outline">{modeLabel}</Badge>
+        <Badge
+          variant="secondary"
+          className="border-0 bg-muted/50 px-2 py-0 text-xs font-normal text-muted-foreground"
+        >
+          {modeLabel}
+        </Badge>
       </div>
 
-      <p className="mt-3 truncate text-sm text-muted-foreground">
-        {serverList}
-      </p>
+      <p className="truncate text-sm text-muted-foreground">{serverList}</p>
 
-      <p className="mt-2 text-xs text-muted-foreground/70">
-        Updated{" "}
-        {formatDistanceToNow(sandbox.updatedAt, { addSuffix: true })}
+      <p className="text-xs text-muted-foreground">
+        Updated {formatDistanceToNow(sandbox.updatedAt, { addSuffix: true })}
       </p>
-    </Card>
+    </CardInteractive>
   );
 }
 
