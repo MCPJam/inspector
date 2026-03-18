@@ -1,14 +1,17 @@
-import { startTransition, useCallback, useEffect, useRef, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { useConvexAuth } from "convex/react";
 import { useSandboxList, type SandboxSettings } from "@/hooks/useSandboxes";
 import {
   useWorkspaceQueries,
   useWorkspaceServers,
 } from "@/hooks/useWorkspaces";
-import {
-  readBuilderSession,
-  clearBuilderSession,
-} from "@/lib/sandbox-session";
+import { readBuilderSession, clearBuilderSession } from "@/lib/sandbox-session";
 import { SandboxIndexPage } from "./SandboxIndexPage";
 import { SandboxBuilderView } from "./SandboxBuilderView";
 import { getDefaultHostedModelId, SANDBOX_STARTERS } from "./drafts";

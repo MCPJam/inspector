@@ -216,7 +216,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   discoveryState(): OAuthDiscoveryState | undefined {
-    const stored = localStorage.getItem(getDiscoveryStorageKey(this.serverName));
+    const stored = localStorage.getItem(
+      getDiscoveryStorageKey(this.serverName),
+    );
     if (!stored) {
       return undefined;
     }
