@@ -81,6 +81,26 @@ describe("getHostedAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
+  it("prefers guest token for sandbox guests without calling WorkOS", async () => {
+    const getAccessToken = vi
+      .fn()
+      .mockResolvedValue("workos-token-should-skip");
+    setHostedApiContext({
+      workspaceId: "ws-sandbox",
+      isAuthenticated: false,
+      serverIdsByName: { bench: "srv-1" },
+      getAccessToken,
+      sandboxToken: "sandbox_tok_123",
+    });
+
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-sandbox");
+
+    const result = await getHostedAuthorizationHeader();
+
+    expect(result).toBe("Bearer guest-sandbox");
+    expect(getAccessToken).not.toHaveBeenCalled();
+  });
+
   it("still prefers guest token when no workspace is loaded but AuthKit session exists", async () => {
     const getAccessToken = vi
       .fn()
@@ -234,6 +254,23 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
       workspaceId: "ws-shared",
       serverId: "srv-1",
       shareToken: "share_tok_123",
+    });
+  });
+
+  it("buildHostedServerRequest uses workspace path for sandbox guests", () => {
+    setHostedApiContext({
+      workspaceId: "ws-sandbox",
+      isAuthenticated: false,
+      sandboxToken: "sandbox_tok_123",
+      serverIdsByName: { "my-server": "srv-1" },
+    });
+
+    const result = buildHostedServerRequest("my-server");
+
+    expect(result).toMatchObject({
+      workspaceId: "ws-sandbox",
+      serverId: "srv-1",
+      sandboxToken: "sandbox_tok_123",
     });
   });
 

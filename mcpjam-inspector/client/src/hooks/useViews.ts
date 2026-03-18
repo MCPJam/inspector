@@ -202,6 +202,9 @@ export function useWorkspaceServers({
         workspaceId: string;
         transportType: "stdio" | "http";
         url?: string;
+        useOAuth?: boolean;
+        oauthScopes?: string[];
+        clientId?: string;
       }>
     | undefined;
 

@@ -181,6 +181,7 @@ chatV2.post("/", async (c) => {
         } = prepared;
 
         const modelMessages = await convertToModelMessages(messages);
+        const directChatSessionId = body.chatSessionId;
         return handleMCPJamFreeChatModel({
           messages: scrubMessages(modelMessages as ModelMessage[]),
           modelId: String(modelDefinition.id),
@@ -191,10 +192,10 @@ chatV2.post("/", async (c) => {
           mcpClientManager: manager,
           selectedServers,
           requireToolApproval,
-          onConversationComplete: body.chatSessionId
+          onConversationComplete: directChatSessionId
             ? async (fullHistory) => {
                 await persistChatSessionToConvex({
-                  chatSessionId: body.chatSessionId,
+                  chatSessionId: directChatSessionId,
                   modelId: String(modelDefinition.id),
                   modelSource: "mcpjam",
                   sourceType: "direct",
@@ -221,6 +222,7 @@ chatV2.post("/", async (c) => {
       shareToken?: string;
       sandboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
+      surface?: "preview" | "share_link";
     };
 
     const {
@@ -232,6 +234,7 @@ chatV2.post("/", async (c) => {
       selectedServerIds,
       shareToken,
       sandboxToken,
+      surface,
     } = body;
 
     if (!Array.isArray(messages) || messages.length === 0) {
@@ -287,6 +290,7 @@ chatV2.post("/", async (c) => {
       }
 
       const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
+      const hostedChatSessionId = body.chatSessionId;
 
       if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
         if (!process.env.CONVEX_HTTP_URL) {
@@ -315,10 +319,10 @@ chatV2.post("/", async (c) => {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
-        onConversationComplete: body.chatSessionId
+        onConversationComplete: hostedChatSessionId
           ? async (fullHistory) => {
               await persistChatSessionToConvex({
-                chatSessionId: body.chatSessionId,
+                chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 workspaceId: hostedBody.workspaceId,
@@ -327,6 +331,7 @@ chatV2.post("/", async (c) => {
                   : sandboxToken
                     ? "sandbox"
                     : "direct",
+                ...(sandboxToken && surface ? { surface } : {}),
                 shareToken,
                 sandboxToken,
                 ...(shareToken && selectedServerIds[0]
