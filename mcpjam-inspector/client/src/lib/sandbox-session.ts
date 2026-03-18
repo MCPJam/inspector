@@ -115,7 +115,9 @@ function normalizeSandboxSession(
       sandboxId: payload.sandboxId,
       name: payload.name,
       description:
-        typeof payload.description === "string" ? payload.description : undefined,
+        typeof payload.description === "string"
+          ? payload.description
+          : undefined,
       hostStyle,
       mode: normalizeSandboxShareMode(payload.mode),
       allowGuestAccess: payload.allowGuestAccess,
@@ -138,7 +140,8 @@ function normalizeSandboxSession(
           useOAuth: Boolean(server.useOAuth),
           serverUrl:
             typeof server.serverUrl === "string" ? server.serverUrl : null,
-          clientId: typeof server.clientId === "string" ? server.clientId : null,
+          clientId:
+            typeof server.clientId === "string" ? server.clientId : null,
           oauthScopes: Array.isArray(server.oauthScopes)
             ? server.oauthScopes
             : null,

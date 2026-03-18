@@ -110,7 +110,10 @@ const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 const HOST_STYLE_OPTIONS: SandboxHostStyle[] = ["claude", "chatgpt"];
 
 function createPlaygroundId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
 
@@ -285,7 +288,9 @@ export function SandboxEditor({
 
     return selectedServerIds
       .map((serverId) => {
-        const workspaceServer = availableServers.find((server) => server._id === serverId);
+        const workspaceServer = availableServers.find(
+          (server) => server._id === serverId,
+        );
         if (workspaceServer) {
           return {
             serverId: workspaceServer._id,
@@ -631,7 +636,11 @@ export function SandboxEditor({
     }
 
     window.open(
-      buildPlaygroundSandboxLink(previewToken, previewName, previewPlaygroundId),
+      buildPlaygroundSandboxLink(
+        previewToken,
+        previewName,
+        previewPlaygroundId,
+      ),
       "_blank",
       "noopener,noreferrer",
     );

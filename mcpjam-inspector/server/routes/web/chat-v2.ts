@@ -180,9 +180,9 @@ chatV2.post("/", async (c) => {
           scrubMessages,
         } = prepared;
 
-	        const modelMessages = await convertToModelMessages(messages);
+        const modelMessages = await convertToModelMessages(messages);
         const directChatSessionId = body.chatSessionId;
-	        return handleMCPJamFreeChatModel({
+        return handleMCPJamFreeChatModel({
           messages: scrubMessages(modelMessages as ModelMessage[]),
           modelId: String(modelDefinition.id),
           systemPrompt: enhancedSystemPrompt,
@@ -192,10 +192,10 @@ chatV2.post("/", async (c) => {
           mcpClientManager: manager,
           selectedServers,
           requireToolApproval,
-	          onConversationComplete: directChatSessionId
-	            ? async (fullHistory) => {
-	                await persistChatSessionToConvex({
-	                  chatSessionId: directChatSessionId,
+          onConversationComplete: directChatSessionId
+            ? async (fullHistory) => {
+                await persistChatSessionToConvex({
+                  chatSessionId: directChatSessionId,
                   modelId: String(modelDefinition.id),
                   modelSource: "mcpjam",
                   sourceType: "direct",
@@ -289,7 +289,7 @@ chatV2.post("/", async (c) => {
         throw error;
       }
 
-	      const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
+      const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
       if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
@@ -319,10 +319,10 @@ chatV2.post("/", async (c) => {
         mcpClientManager: manager,
         selectedServers: selectedServerIds,
         requireToolApproval,
-	        onConversationComplete: hostedChatSessionId
-	          ? async (fullHistory) => {
-	              await persistChatSessionToConvex({
-	                chatSessionId: hostedChatSessionId,
+        onConversationComplete: hostedChatSessionId
+          ? async (fullHistory) => {
+              await persistChatSessionToConvex({
+                chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 workspaceId: hostedBody.workspaceId,

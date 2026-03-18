@@ -748,8 +748,8 @@ export default function App() {
             <ErrorBoundary
               fallback={
                 <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Something went wrong in the OAuth Debugger. Try refreshing
-                  the page.
+                  Something went wrong in the OAuth Debugger. Try refreshing the
+                  page.
                 </div>
               }
             >

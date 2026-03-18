@@ -43,8 +43,8 @@ export function SandboxLauncher({
           What would you like to create?
         </h2>
         <p className="mt-2 max-w-xl text-sm text-muted-foreground">
-          Start from an opinionated Railway-style sandbox layout, then refine the
-          details in the builder.
+          Start from an opinionated Railway-style sandbox layout, then refine
+          the details in the builder.
         </p>
       </div>
 

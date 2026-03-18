@@ -126,9 +126,12 @@ export async function persistChatSessionToConvex(
     }
   } catch (error) {
     if (isAbortError(error)) {
-      logger.warn("[chat-session-persistence] Timed out persisting chat session", {
-        timeoutMs,
-      });
+      logger.warn(
+        "[chat-session-persistence] Timed out persisting chat session",
+        {
+          timeoutMs,
+        },
+      );
       return;
     }
 

@@ -1,7 +1,10 @@
 import { startTransition, useCallback, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useSandboxList, type SandboxSettings } from "@/hooks/useSandboxes";
-import { useWorkspaceQueries, useWorkspaceServers } from "@/hooks/useWorkspaces";
+import {
+  useWorkspaceQueries,
+  useWorkspaceServers,
+} from "@/hooks/useWorkspaces";
 import { SandboxIndexPage } from "./SandboxIndexPage";
 import { SandboxBuilderView } from "./SandboxBuilderView";
 import { getDefaultHostedModelId, SANDBOX_STARTERS } from "./drafts";
@@ -27,7 +30,9 @@ export default function SandboxBuilderExperience({
   const workspaceName =
     workspaces.find((workspace) => workspace._id === workspaceId)?.name ?? null;
 
-  const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(null);
+  const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(
+    null,
+  );
   const [draft, setDraft] = useState<SandboxDraftConfig | null>(null);
 
   const handleCreateSandbox = useCallback(() => {
@@ -86,7 +91,6 @@ export default function SandboxBuilderExperience({
           onCreateSandbox={handleCreateSandbox}
         />
       )}
-
     </>
   );
 }

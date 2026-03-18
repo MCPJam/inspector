@@ -207,9 +207,7 @@ describe("sandbox-session", () => {
 
   it("reads sandbox surface from the url query", () => {
     expect(readSandboxSurfaceFromUrl("?surface=internal")).toBe("internal");
-    expect(readSandboxSurfaceFromUrl("?surface=share_link")).toBe(
-      "share_link",
-    );
+    expect(readSandboxSurfaceFromUrl("?surface=share_link")).toBe("share_link");
     expect(readSandboxSurfaceFromUrl("?surface=other")).toBe("share_link");
     expect(readSandboxSurfaceFromUrl("")).toBe("share_link");
   });

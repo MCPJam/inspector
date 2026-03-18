@@ -10,7 +10,10 @@ interface SandboxCanvasBounds {
   maxY: number;
 }
 
-function getNodeDimensions(node: SandboxFlowNode): { width: number; height: number } {
+function getNodeDimensions(node: SandboxFlowNode): {
+  width: number;
+  height: number;
+} {
   switch (node.type) {
     case "sandboxNode":
       return { width: SANDBOX_NODE_WIDTH, height: SANDBOX_NODE_HEIGHT };
@@ -23,7 +26,9 @@ function getRenderableNodes(nodes: SandboxFlowNode[]) {
   return nodes.filter((node) => node.type === "sandboxNode");
 }
 
-export function getSandboxCanvasLayoutSignature(nodes: SandboxFlowNode[]): string {
+export function getSandboxCanvasLayoutSignature(
+  nodes: SandboxFlowNode[],
+): string {
   return getRenderableNodes(nodes)
     .map((node) => `${node.id}:${node.position.x}:${node.position.y}`)
     .join("|");
@@ -37,20 +42,23 @@ export function getSandboxCanvasBounds(
     return null;
   }
 
-  return renderableNodes.reduce<SandboxCanvasBounds>((bounds, node) => {
-    const { width, height } = getNodeDimensions(node);
-    const minX = Math.min(bounds.minX, node.position.x);
-    const minY = Math.min(bounds.minY, node.position.y);
-    const maxX = Math.max(bounds.maxX, node.position.x + width);
-    const maxY = Math.max(bounds.maxY, node.position.y + height);
+  return renderableNodes.reduce<SandboxCanvasBounds>(
+    (bounds, node) => {
+      const { width, height } = getNodeDimensions(node);
+      const minX = Math.min(bounds.minX, node.position.x);
+      const minY = Math.min(bounds.minY, node.position.y);
+      const maxX = Math.max(bounds.maxX, node.position.x + width);
+      const maxY = Math.max(bounds.maxY, node.position.y + height);
 
-    return { minX, minY, maxX, maxY };
-  }, {
-    minX: Number.POSITIVE_INFINITY,
-    minY: Number.POSITIVE_INFINITY,
-    maxX: Number.NEGATIVE_INFINITY,
-    maxY: Number.NEGATIVE_INFINITY,
-  });
+      return { minX, minY, maxX, maxY };
+    },
+    {
+      minX: Number.POSITIVE_INFINITY,
+      minY: Number.POSITIVE_INFINITY,
+      maxX: Number.NEGATIVE_INFINITY,
+      maxY: Number.NEGATIVE_INFINITY,
+    },
+  );
 }
 
 export function getSandboxCanvasCenter(nodes: SandboxFlowNode[]) {

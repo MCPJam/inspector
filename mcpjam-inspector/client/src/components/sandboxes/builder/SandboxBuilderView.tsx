@@ -15,7 +15,6 @@ import {
   ExternalLink,
   Link2,
   Loader2,
-
   MessageSquareText,
   Plus,
   Save,
@@ -263,7 +262,10 @@ function BuilderHeader({
               <Copy className="size-4" />
               Copy link
             </DropdownMenuItem>
-            <DropdownMenuItem onClick={onOpenFullPreview} disabled={!canPreview}>
+            <DropdownMenuItem
+              onClick={onOpenFullPreview}
+              disabled={!canPreview}
+            >
               <ExternalLink className="size-4" />
               Open in new tab
             </DropdownMenuItem>
@@ -862,7 +864,8 @@ export function SandboxBuilderView({
     isAuthenticated,
     sandboxId: sandboxId ?? null,
   });
-  const { createSandbox, updateSandbox, setSandboxMode } = useSandboxMutations();
+  const { createSandbox, updateSandbox, setSandboxMode } =
+    useSandboxMutations();
   const { createServer } = useServerMutations();
 
   const [draftSandboxConfig, setDraftSandboxConfig] =
@@ -908,17 +911,27 @@ export function SandboxBuilderView({
   const pendingRestartRef = useRef(false);
   const prevViewModeRef = useRef(viewMode);
 
-  const behaviorFingerprint = useMemo(() => JSON.stringify({
-    name: draftSandboxConfig.name,
-    hostStyle: draftSandboxConfig.hostStyle,
-    systemPrompt: draftSandboxConfig.systemPrompt,
-    modelId: draftSandboxConfig.modelId,
-    temperature: draftSandboxConfig.temperature,
-    requireToolApproval: draftSandboxConfig.requireToolApproval,
-    selectedServerIds: [...draftSandboxConfig.selectedServerIds].sort(),
-  }), [draftSandboxConfig.name, draftSandboxConfig.hostStyle, draftSandboxConfig.systemPrompt,
-       draftSandboxConfig.modelId, draftSandboxConfig.temperature, draftSandboxConfig.requireToolApproval,
-       draftSandboxConfig.selectedServerIds]);
+  const behaviorFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        name: draftSandboxConfig.name,
+        hostStyle: draftSandboxConfig.hostStyle,
+        systemPrompt: draftSandboxConfig.systemPrompt,
+        modelId: draftSandboxConfig.modelId,
+        temperature: draftSandboxConfig.temperature,
+        requireToolApproval: draftSandboxConfig.requireToolApproval,
+        selectedServerIds: [...draftSandboxConfig.selectedServerIds].sort(),
+      }),
+    [
+      draftSandboxConfig.name,
+      draftSandboxConfig.hostStyle,
+      draftSandboxConfig.systemPrompt,
+      draftSandboxConfig.modelId,
+      draftSandboxConfig.temperature,
+      draftSandboxConfig.requireToolApproval,
+      draftSandboxConfig.selectedServerIds,
+    ],
+  );
 
   // Debounced auto-restart on behavior-affecting changes
   useEffect(() => {
@@ -946,7 +959,11 @@ export function SandboxBuilderView({
     const prev = prevViewModeRef.current;
     prevViewModeRef.current = viewMode;
 
-    if (prev !== viewMode && viewMode === "preview" && pendingRestartRef.current) {
+    if (
+      prev !== viewMode &&
+      viewMode === "preview" &&
+      pendingRestartRef.current
+    ) {
       pendingRestartRef.current = false;
       const nextId = crypto.randomUUID();
       setPlaygroundId(nextId);
@@ -958,20 +975,21 @@ export function SandboxBuilderView({
   useEffect(() => {
     if (!sandbox?.link?.token) return;
 
-    const servers: SandboxBootstrapServer[] = draftSandboxConfig.selectedServerIds
-      .map((id) => {
-        const server = workspaceServers.find((s) => s._id === id);
-        if (!server) return null;
-        return {
-          serverId: server._id,
-          serverName: server.name,
-          useOAuth: Boolean(server.useOAuth),
-          serverUrl: server.url ?? null,
-          clientId: server.clientId ?? null,
-          oauthScopes: server.oauthScopes ?? null,
-        } satisfies SandboxBootstrapServer;
-      })
-      .filter((s): s is SandboxBootstrapServer => s !== null);
+    const servers: SandboxBootstrapServer[] =
+      draftSandboxConfig.selectedServerIds
+        .map((id) => {
+          const server = workspaceServers.find((s) => s._id === id);
+          if (!server) return null;
+          return {
+            serverId: server._id,
+            serverName: server.name,
+            useOAuth: Boolean(server.useOAuth),
+            serverUrl: server.url ?? null,
+            clientId: server.clientId ?? null,
+            oauthScopes: server.oauthScopes ?? null,
+          } satisfies SandboxBootstrapServer;
+        })
+        .filter((s): s is SandboxBootstrapServer => s !== null);
 
     const payload: SandboxBootstrapPayload = {
       workspaceId: sandbox.workspaceId,
@@ -1128,14 +1146,19 @@ export function SandboxBuilderView({
     const entries = draftSandboxConfig.selectedServerIds.flatMap((id) => {
       const server = workspaceServers.find((s) => s._id === id);
       if (!server) return [];
-      return [[server.name, {
-        name: server.name,
-        connectionStatus: "connected" as const,
-        config: { url: "https://sandbox-chat.invalid" } as any,
-        lastConnectionTime: new Date(),
-        retryCount: 0,
-        enabled: true,
-      } satisfies ServerWithName]];
+      return [
+        [
+          server.name,
+          {
+            name: server.name,
+            connectionStatus: "connected" as const,
+            config: { url: "https://sandbox-chat.invalid" } as any,
+            lastConnectionTime: new Date(),
+            retryCount: 0,
+            enabled: true,
+          } satisfies ServerWithName,
+        ],
+      ];
     });
     return Object.fromEntries(entries);
   }, [draftSandboxConfig.selectedServerIds, workspaceServers]);
@@ -1172,7 +1195,9 @@ export function SandboxBuilderView({
         serverIds: draftSandboxConfig.selectedServerIds,
         allowGuestAccess:
           (draftSandboxConfig as { allowGuestAccess?: boolean })
-            .allowGuestAccess ?? sandbox?.allowGuestAccess ?? false,
+            .allowGuestAccess ??
+          sandbox?.allowGuestAccess ??
+          false,
       };
 
       if (!sandbox) {
@@ -1386,7 +1411,7 @@ export function SandboxBuilderView({
           <SandboxUsagePanel sandbox={sandbox} />
         </div>
       ) : (
-      <div className="min-h-0 flex-1 p-4">
+        <div className="min-h-0 flex-1 p-4">
           <div ref={panelGroupContainerRef} className="h-full">
             <ResizablePanelGroup direction="horizontal" className="h-full">
               <ResizablePanel
@@ -1427,22 +1452,36 @@ export function SandboxBuilderView({
                       </div>
                       <div className="flex min-h-0 flex-1">
                         {sandbox?.link?.token ? (
-                          <SandboxHostStyleProvider value={draftSandboxConfig.hostStyle}>
+                          <SandboxHostStyleProvider
+                            value={draftSandboxConfig.hostStyle}
+                          >
                             <ChatTabV2
                               key={chatKey}
-                              connectedOrConnectingServerConfigs={sandboxServerConfigs}
-                              selectedServerNames={Object.keys(sandboxServerConfigs)}
+                              connectedOrConnectingServerConfigs={
+                                sandboxServerConfigs
+                              }
+                              selectedServerNames={Object.keys(
+                                sandboxServerConfigs,
+                              )}
                               minimalMode
                               reasoningDisplayMode="hidden"
                               hostedWorkspaceIdOverride={sandbox.workspaceId}
-                              hostedSelectedServerIdsOverride={draftSandboxConfig.selectedServerIds}
+                              hostedSelectedServerIdsOverride={
+                                draftSandboxConfig.selectedServerIds
+                              }
                               hostedOAuthTokensOverride={{}}
                               hostedSandboxToken={sandbox.link.token}
                               hostedSandboxSurface="internal"
                               initialModelId={draftSandboxConfig.modelId}
-                              initialSystemPrompt={draftSandboxConfig.systemPrompt}
-                              initialTemperature={draftSandboxConfig.temperature}
-                              initialRequireToolApproval={draftSandboxConfig.requireToolApproval}
+                              initialSystemPrompt={
+                                draftSandboxConfig.systemPrompt
+                              }
+                              initialTemperature={
+                                draftSandboxConfig.temperature
+                              }
+                              initialRequireToolApproval={
+                                draftSandboxConfig.requireToolApproval
+                              }
                             />
                           </SandboxHostStyleProvider>
                         ) : (

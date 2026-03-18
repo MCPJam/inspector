@@ -79,22 +79,13 @@ vi.mock("@/lib/oauth/mcp-oauth", () => ({
 }));
 
 vi.mock("@/components/ui/sheet", () => ({
-  Sheet: ({
-    open,
-    children,
-  }: {
-    open: boolean;
-    children: ReactNode;
-  }) => (open ? <div>{children}</div> : null),
+  Sheet: ({ open, children }: { open: boolean; children: ReactNode }) =>
+    open ? <div>{children}</div> : null,
   SheetContent: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
-  SheetHeader: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
-  SheetTitle: ({ children }: { children: ReactNode }) => (
-    <div>{children}</div>
-  ),
+  SheetHeader: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  SheetTitle: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SheetDescription: ({ children }: { children: ReactNode }) => (
     <div>{children}</div>
   ),
@@ -232,7 +223,9 @@ describe("SandboxEditor preview", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Preview" }));
 
-    expect(await screen.findByTestId("sandbox-preview-chat")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("sandbox-preview-chat"),
+    ).toBeInTheDocument();
     expect(mockPreviewMount).toHaveBeenCalledWith(
       expect.objectContaining({
         hostedSandboxSurface: "internal",
@@ -255,7 +248,9 @@ describe("SandboxEditor preview", () => {
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Preview" }));
-    expect(await screen.findByTestId("sandbox-preview-chat")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("sandbox-preview-chat"),
+    ).toBeInTheDocument();
     expect(mockPreviewMount).toHaveBeenCalledTimes(1);
 
     fireEvent.change(screen.getByPlaceholderText("Add a description…"), {

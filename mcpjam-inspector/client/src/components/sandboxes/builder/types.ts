@@ -1,14 +1,9 @@
 import type { Edge, Node } from "@xyflow/react";
 import type { RemoteServer } from "@/hooks/useWorkspaces";
-import type {
-  SandboxMode,
-  SandboxSettings,
-} from "@/hooks/useSandboxes";
+import type { SandboxMode, SandboxSettings } from "@/hooks/useSandboxes";
 import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
 
-export type SandboxBuilderNodeKind =
-  | "host"
-  | "server";
+export type SandboxBuilderNodeKind = "host" | "server";
 
 export type SandboxBuilderNodeState = "ready" | "attention" | "draft" | "live";
 

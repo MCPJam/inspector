@@ -34,10 +34,12 @@ function chip(
 ) {
   return { label, tone };
 }
-function resolveHostState(context: SandboxBuilderContext): SandboxBuilderNodeData {
+function resolveHostState(
+  context: SandboxBuilderContext,
+): SandboxBuilderNodeData {
   const source = context.sandbox ?? context.draft;
   const modelName = source
-    ? getModelById(source.modelId)?.name ?? source.modelId
+    ? (getModelById(source.modelId)?.name ?? source.modelId)
     : "Model";
   return {
     kind: "host",
@@ -72,7 +74,10 @@ function resolveServerState(
     subtitle: server?.url ?? "Workspace server",
     chips: [
       chip(server?.useOAuth ? "OAuth" : "Direct"),
-      chip(insecure ? "Requires HTTPS" : "HTTPS", insecure ? "warning" : "success"),
+      chip(
+        insecure ? "Requires HTTPS" : "HTTPS",
+        insecure ? "warning" : "success",
+      ),
     ],
     state: !selected.includes(serverId)
       ? "draft"

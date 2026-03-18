@@ -6,8 +6,9 @@ export const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 
 export function getDefaultHostedModelId(): string {
   return (
-    SUPPORTED_MODELS.find((model) => isMCPJamProvidedModel(String(model.id)))?.id?.toString() ??
-    "openai/gpt-5-mini"
+    SUPPORTED_MODELS.find((model) =>
+      isMCPJamProvidedModel(String(model.id)),
+    )?.id?.toString() ?? "openai/gpt-5-mini"
   );
 }
 
@@ -15,11 +16,14 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
   {
     id: "internal-qa",
     title: "Internal QA sandbox",
-    description: "A workspace-only sandbox for replaying realistic internal flows.",
-    promptHint: "QA teammates can use this to verify tool behavior against real company data.",
+    description:
+      "A workspace-only sandbox for replaying realistic internal flows.",
+    promptHint:
+      "QA teammates can use this to verify tool behavior against real company data.",
     createDraft: (defaultModelId) => ({
       name: "Internal QA Sandbox",
-      description: "Use this sandbox to validate production-ready assistant behavior with the internal team.",
+      description:
+        "Use this sandbox to validate production-ready assistant behavior with the internal team.",
       hostStyle: "claude",
       systemPrompt:
         "You are a careful QA assistant. Prefer explicit reasoning about tool results and call out any uncertainty before taking action.",
@@ -33,11 +37,14 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
   {
     id: "icp-demo",
     title: "ICP demo / share-link sandbox",
-    description: "A sandbox optimized for external prospects testing through a share link.",
-    promptHint: "Use this when you want prospects to try your assistant with guided access.",
+    description:
+      "A sandbox optimized for external prospects testing through a share link.",
+    promptHint:
+      "Use this when you want prospects to try your assistant with guided access.",
     createDraft: (defaultModelId) => ({
       name: "ICP Demo Sandbox",
-      description: "External testing environment for prospects and design partners.",
+      description:
+        "External testing environment for prospects and design partners.",
       hostStyle: "chatgpt",
       systemPrompt:
         "You are a polished product specialist. Use available tools when helpful and keep answers concise, actionable, and easy for first-time users.",
@@ -52,7 +59,8 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
     id: "blank",
     title: "Blank sandbox",
     description: "Start from a clean slate.",
-    promptHint: "Use this when you want full control over the configuration from the beginning.",
+    promptHint:
+      "Use this when you want full control over the configuration from the beginning.",
     createDraft: (defaultModelId) => ({
       name: "New Sandbox",
       description: "",

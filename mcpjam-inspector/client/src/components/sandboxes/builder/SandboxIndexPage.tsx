@@ -1,11 +1,5 @@
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
-import {
-  Layers3,
-  List,
-  Loader2,
-  Plus,
-  Search,
-} from "lucide-react";
+import { Layers3, List, Loader2, Plus, Search } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -37,10 +31,7 @@ function SandboxSummaryCard({
       : "No servers configured";
 
   return (
-    <CardInteractive
-      className="flex flex-col gap-4"
-      onClick={onOpen}
-    >
+    <CardInteractive className="flex flex-col gap-4" onClick={onOpen}>
       <h3 className="truncate text-lg font-bold tracking-tight">
         {sandbox.name}
       </h3>
@@ -120,11 +111,13 @@ export function SandboxIndexPage({
       <div className="border-b px-6 py-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 className="mt-2 text-3xl font-semibold">
-                Sandboxes
-            </h2>
+            <h2 className="mt-2 text-3xl font-semibold">Sandboxes</h2>
           </div>
-          <Button size="lg" className="gap-2 rounded-xl" onClick={onCreateSandbox}>
+          <Button
+            size="lg"
+            className="gap-2 rounded-xl"
+            onClick={onCreateSandbox}
+          >
             <Plus className="size-4" />
             New sandbox
           </Button>
@@ -164,7 +157,6 @@ export function SandboxIndexPage({
               List
             </Button>
           </div>
-
         </div>
       </div>
 
@@ -207,7 +199,9 @@ export function SandboxIndexPage({
                 onClick={() => onOpenSandbox(sandbox.sandboxId)}
               >
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">{sandbox.name}</p>
+                  <p className="truncate text-sm font-semibold">
+                    {sandbox.name}
+                  </p>
                   <p className="mt-1 truncate text-sm text-muted-foreground">
                     {sandbox.description || "No description yet."}
                   </p>

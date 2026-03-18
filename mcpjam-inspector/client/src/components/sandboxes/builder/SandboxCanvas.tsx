@@ -21,13 +21,7 @@ import {
   type NodeProps,
   type EdgeProps,
 } from "@xyflow/react";
-import {
-  Bot,
-  ChevronRight,
-  Network,
-  Plus,
-  Server,
-} from "lucide-react";
+import { Bot, ChevronRight, Network, Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@/components/ui/badge";
 import { MCPIcon } from "@/components/ui/mcp-icon";
@@ -118,13 +112,16 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
       )}
     >
       {hasTopHandle(data.kind) && (
-        <Handle type="target" position={Position.Top} id="top" className={handleClass} />
+        <Handle
+          type="target"
+          position={Position.Top}
+          id="top"
+          className={handleClass}
+        />
       )}
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-3">
-          <div
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40"
-          >
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
             <Icon className="size-3.5" />
           </div>
           <div className="min-w-0">
@@ -136,7 +133,9 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
             ) : null}
           </div>
         </div>
-        {selected ? <ChevronRight className="mt-0.5 size-4 text-muted-foreground" /> : null}
+        {selected ? (
+          <ChevronRight className="mt-0.5 size-4 text-muted-foreground" />
+        ) : null}
       </div>
 
       {data.chips.length > 0 ? (
@@ -145,7 +144,10 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
             <Badge
               key={`${data.kind}:${item.label}`}
               variant="outline"
-              className={cn("rounded-full text-[10px]", CHIP_STYLES[item.tone ?? "neutral"])}
+              className={cn(
+                "rounded-full text-[10px]",
+                CHIP_STYLES[item.tone ?? "neutral"],
+              )}
             >
               {item.label}
             </Badge>
@@ -161,7 +163,12 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
           onClick={onAddServer}
         />
       ) : hasBottomHandle(data.kind) ? (
-        <Handle type="source" position={Position.Bottom} id="bottom" className={handleClass} />
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          id="bottom"
+          className={handleClass}
+        />
       ) : null}
     </div>
   );
@@ -177,7 +184,9 @@ const SectionLabelNode = memo(
         <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border/40 bg-card/20">
           <Icon className="size-3" />
         </span>
-        <span className="shrink-0 text-muted-foreground/60">{props.data.label}</span>
+        <span className="shrink-0 text-muted-foreground/60">
+          {props.data.label}
+        </span>
         <span className="h-px flex-1 bg-border/40" />
       </div>
     );
@@ -187,7 +196,12 @@ const SectionLabelNode = memo(
 SectionLabelNode.displayName = "SectionLabelNode";
 
 function SmoothRoundEdge(props: EdgeProps) {
-  return <SmoothStepEdge {...props} pathOptions={useMemo(() => ({ borderRadius: 14 }), [])} />;
+  return (
+    <SmoothStepEdge
+      {...props}
+      pathOptions={useMemo(() => ({ borderRadius: 14 }), [])}
+    />
+  );
 }
 
 const nodeTypes = {
@@ -237,7 +251,9 @@ function CanvasViewportController({
     updateWidth(container.getBoundingClientRect().width);
 
     const observer = new ResizeObserver((entries) => {
-      const observedWidth = entries[0]?.contentRect.width ?? container.getBoundingClientRect().width;
+      const observedWidth =
+        entries[0]?.contentRect.width ??
+        container.getBoundingClientRect().width;
       updateWidth(observedWidth);
     });
 
@@ -265,7 +281,8 @@ function CanvasViewportController({
       });
       hasFitViewportRef.current = true;
       if (containerRef.current) {
-        lastContainerWidthRef.current = containerRef.current.getBoundingClientRect().width;
+        lastContainerWidthRef.current =
+          containerRef.current.getBoundingClientRect().width;
       }
     }, VIEWPORT_SETTLE_DELAY_MS);
 
