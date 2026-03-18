@@ -208,11 +208,7 @@ export default function App() {
       localStorage.removeItem("mcp-oauth-pending");
       localStorage.removeItem("mcp-oauth-return-hash");
       const returnHash = resolveHostedOAuthReturnHash(callbackContext);
-      window.history.replaceState(
-        {},
-        "",
-        `/${returnHash}`,
-      );
+      window.history.replaceState({}, "", `/${returnHash}`);
       window.dispatchEvent(new Event("hashchange"));
     };
 

@@ -864,7 +864,10 @@ function getSandboxOAuthRowCopy(status: string): {
     case "launching":
       return { description: "Opening consent screen\u2026", buttonLabel: null };
     case "resuming":
-      return { description: "Finishing authorization\u2026", buttonLabel: null };
+      return {
+        description: "Finishing authorization\u2026",
+        buttonLabel: null,
+      };
     case "verifying":
       return { description: "Verifying access\u2026", buttonLabel: null };
     case "error":
@@ -923,7 +926,9 @@ export function SandboxBuilderView({
             } as SandboxSettings),
         ),
     );
-  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode ?? "builder");
+  const [viewMode, setViewMode] = useState<ViewMode>(
+    initialViewMode ?? "builder",
+  );
   const [chatKey, setChatKey] = useState(0);
   const [playgroundId, setPlaygroundId] = useState(() => crypto.randomUUID());
   const [isSettingsOpen, setIsSettingsOpen] = useState(true);
@@ -1240,17 +1245,15 @@ export function SandboxBuilderView({
         const token = getStoredTokens(server.serverName)?.access_token;
         return token ? ([server.serverId, token] as const) : null;
       })
-      .filter(
-        (entry): entry is readonly [string, string] => Array.isArray(entry),
+      .filter((entry): entry is readonly [string, string] =>
+        Array.isArray(entry),
       );
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
   }, [oauthStateByServerId, selectedPreviewServers]);
 
   const isFinishingPreviewOAuth =
     pendingOAuthServers.length > 0 &&
-    pendingOAuthServers.every(({ state }) =>
-      isHostedOAuthBusy(state.status),
-    );
+    pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const handlePreviewOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {
@@ -1562,36 +1565,43 @@ export function SandboxBuilderView({
                                     : "Authorize the required sandbox servers to continue."}
                                 </p>
                                 <div className="mt-5 space-y-3">
-                                  {pendingOAuthServers.map(({ server, state }) => {
-                                    const rowCopy = getSandboxOAuthRowCopy(state.status);
-                                    return (
-                                      <div
-                                        key={server.serverId}
-                                        className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
-                                      >
-                                        <div className="min-w-0">
-                                          <p className="truncate text-sm font-medium">
-                                            {server.serverName}
-                                          </p>
-                                          <p className="text-xs text-muted-foreground">
-                                            {state.status === "error" && state.errorMessage
-                                              ? state.errorMessage
-                                              : rowCopy.description}
-                                          </p>
+                                  {pendingOAuthServers.map(
+                                    ({ server, state }) => {
+                                      const rowCopy = getSandboxOAuthRowCopy(
+                                        state.status,
+                                      );
+                                      return (
+                                        <div
+                                          key={server.serverId}
+                                          className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                                        >
+                                          <div className="min-w-0">
+                                            <p className="truncate text-sm font-medium">
+                                              {server.serverName}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                              {state.status === "error" &&
+                                              state.errorMessage
+                                                ? state.errorMessage
+                                                : rowCopy.description}
+                                            </p>
+                                          </div>
+                                          {rowCopy.buttonLabel ? (
+                                            <Button
+                                              size="sm"
+                                              onClick={() =>
+                                                void authorizeServer(server)
+                                              }
+                                            >
+                                              {rowCopy.buttonLabel}
+                                            </Button>
+                                          ) : (
+                                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                          )}
                                         </div>
-                                        {rowCopy.buttonLabel ? (
-                                          <Button
-                                            size="sm"
-                                            onClick={() => void authorizeServer(server)}
-                                          >
-                                            {rowCopy.buttonLabel}
-                                          </Button>
-                                        ) : (
-                                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                                        )}
-                                      </div>
-                                    );
-                                  })}
+                                      );
+                                    },
+                                  )}
                                 </div>
                               </div>
                             </div>
