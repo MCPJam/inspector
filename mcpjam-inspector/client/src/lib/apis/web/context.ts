@@ -81,12 +81,17 @@ export function shouldRetryHostedAuth401(): boolean {
 /**
  * Hosted guest access comes in 2 shapes:
  * - direct guest: no workspace, direct serverUrl requests
- * - shared guest: workspace-scoped share token, Convex-backed requests
+ * - hosted shared/sandbox guest: workspace-scoped share or sandbox token,
+ *   Convex-backed requests
  */
 function hasHostedGuestAccess(): boolean {
   if (!HOSTED_MODE) return false;
   if (hostedApiContext.isAuthenticated) return false;
-  return !hostedApiContext.workspaceId || !!hostedApiContext.shareToken;
+  return (
+    !hostedApiContext.workspaceId ||
+    !!hostedApiContext.shareToken ||
+    !!hostedApiContext.sandboxToken
+  );
 }
 
 /**
