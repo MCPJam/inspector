@@ -5,6 +5,7 @@ export type SharedChatSourceType = "serverShare" | "sandbox";
 export interface SharedChatThread {
   _id: string;
   sourceType: SharedChatSourceType;
+  surface?: "preview" | "share_link";
   shareId?: string;
   sandboxId?: string;
   chatSessionId: string;
@@ -48,7 +49,7 @@ export function useSharedChatThreadList({
   const queryArgs =
     sourceType === "sandbox"
       ? sourceId
-        ? ({ sandboxId: sourceId, limit: 50 } as any)
+        ? ({ sandboxId: sourceId, limit: 50, includeInternal: true } as any)
         : "skip"
       : sourceId
         ? ({ shareId: sourceId, limit: 50 } as any)
