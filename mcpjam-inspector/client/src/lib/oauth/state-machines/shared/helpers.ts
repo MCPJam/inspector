@@ -233,10 +233,29 @@ export function mergeHeaders(
   customHeaders: Record<string, string> | undefined,
   requestHeaders: Record<string, string> = {},
 ): Record<string, string> {
-  return {
-    ...customHeaders,
-    ...requestHeaders,
+  const merged: Record<string, string> = {};
+  const keysByLowercase = new Map<string, string>();
+
+  const applyHeaders = (headers: Record<string, string> | undefined) => {
+    if (!headers) return;
+
+    for (const [key, value] of Object.entries(headers)) {
+      const lowerKey = key.toLowerCase();
+      const previousKey = keysByLowercase.get(lowerKey);
+
+      if (previousKey && previousKey !== key) {
+        delete merged[previousKey];
+      }
+
+      keysByLowercase.set(lowerKey, key);
+      merged[key] = value;
+    }
   };
+
+  applyHeaders(customHeaders);
+  applyHeaders(requestHeaders);
+
+  return merged;
 }
 
 /**

@@ -24,6 +24,18 @@ describe("mergeHeaders", () => {
     });
   });
 
+  it("treats header names case-insensitively when request headers override custom headers", () => {
+    const result = mergeHeaders(
+      { authorization: "Bearer old-token" },
+      { Authorization: "Bearer new-token" },
+    );
+
+    expect(
+      Object.keys(result).filter((key) => key.toLowerCase() === "authorization"),
+    ).toHaveLength(1);
+    expect(result.Authorization).toBe("Bearer new-token");
+  });
+
   it("returns custom headers when no request headers provided", () => {
     const result = mergeHeaders({ "X-Custom": "value" });
     expect(result).toEqual({ "X-Custom": "value" });

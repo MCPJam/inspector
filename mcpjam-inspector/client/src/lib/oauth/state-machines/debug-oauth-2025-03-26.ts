@@ -525,7 +525,9 @@ export const createDebugOAuthStateMachine = (
               try {
                 const requestHeaders = mergeHeadersForAuthServer(
                   customHeaders,
-                  {},
+                  {
+                    "MCP-Protocol-Version": "2025-03-26",
+                  },
                 );
 
                 const updatedHistoryForRetry = [...(state.httpHistory || [])];
@@ -550,9 +552,7 @@ export const createDebugOAuthStateMachine = (
 
                 const response = await proxyFetch(url, {
                   method: "GET",
-                  headers: mergeHeadersForAuthServer(customHeaders, {
-                    "MCP-Protocol-Version": "2025-03-26",
-                  }),
+                  headers: requestHeaders,
                 });
 
                 if (response.ok) {
@@ -909,7 +909,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders(customHeaders, {}),
+                headers: {},
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1343,7 +1343,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders(customHeaders, {}),
+                headers: {},
                 body: {
                   error: error instanceof Error ? error.message : String(error),
                 },
@@ -1682,7 +1682,7 @@ export const createDebugOAuthStateMachine = (
               const errorResponse = {
                 status: 0,
                 statusText: "Network Error",
-                headers: mergeHeaders(customHeaders, {}),
+                headers: {},
                 body: {
                   error: errorDetails.message,
                   details: errorDetails.details,
