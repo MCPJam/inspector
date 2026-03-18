@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 import {
   mergeHeaders,
   mergeHeadersForAuthServer,
+  mergeHeadersForResourceMetadataRequest,
 } from "../state-machines/shared/helpers";
 
 describe("mergeHeaders", () => {
@@ -93,5 +94,38 @@ describe("mergeHeadersForAuthServer", () => {
       "Content-Type": "application/json",
     });
     expect(result).toEqual({ "Content-Type": "application/json" });
+  });
+});
+
+describe("mergeHeadersForResourceMetadataRequest", () => {
+  it("keeps Authorization on same-origin resource metadata requests", () => {
+    const result = mergeHeadersForResourceMetadataRequest(
+      "https://mcp-server.example.com/mcp",
+      "/.well-known/oauth-protected-resource/mcp",
+      { Authorization: "Bearer keep-me" },
+      { "MCP-Protocol-Version": "2025-11-25" },
+    );
+
+    expect(result).toEqual({
+      Authorization: "Bearer keep-me",
+      "MCP-Protocol-Version": "2025-11-25",
+    });
+  });
+
+  it("strips Authorization on cross-origin resource metadata requests", () => {
+    const result = mergeHeadersForResourceMetadataRequest(
+      "https://mcp-server.example.com/mcp",
+      "https://metadata.example.com/.well-known/oauth-protected-resource/mcp",
+      {
+        Authorization: "Bearer strip-me",
+        "X-Custom": "keep-me",
+      },
+      { "MCP-Protocol-Version": "2025-11-25" },
+    );
+
+    expect(result).toEqual({
+      "X-Custom": "keep-me",
+      "MCP-Protocol-Version": "2025-11-25",
+    });
   });
 });

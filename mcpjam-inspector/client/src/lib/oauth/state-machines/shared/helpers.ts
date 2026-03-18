@@ -280,6 +280,31 @@ export function mergeHeadersForAuthServer(
 }
 
 /**
+ * Merge headers for protected resource metadata requests.
+ *
+ * Same-origin metadata lookups keep MCP server headers, but cross-origin
+ * metadata hops are treated like Authorization Server requests so MCP server
+ * Authorization headers do not leak off-origin.
+ */
+export function mergeHeadersForResourceMetadataRequest(
+  serverUrl: string,
+  requestUrl: string,
+  customHeaders: Record<string, string> | undefined,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+  try {
+    const serverOrigin = new URL(serverUrl).origin;
+    const requestOrigin = new URL(requestUrl, serverUrl).origin;
+
+    return requestOrigin === serverOrigin
+      ? mergeHeaders(customHeaders, requestHeaders)
+      : mergeHeadersForAuthServer(customHeaders, requestHeaders);
+  } catch {
+    return mergeHeadersForAuthServer(customHeaders, requestHeaders);
+  }
+}
+
+/**
  * Build well-known resource metadata URL from server URL (RFC 9728)
  */
 export function buildResourceMetadataUrl(serverUrl: string): string {

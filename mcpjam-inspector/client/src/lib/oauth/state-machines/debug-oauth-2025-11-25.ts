@@ -30,6 +30,7 @@ import {
   toLogErrorDetails,
   mergeHeaders,
   mergeHeadersForAuthServer,
+  mergeHeadersForResourceMetadataRequest,
 } from "./shared/helpers";
 import { discoverOAuthProtectedResourceMetadata } from "@modelcontextprotocol/sdk/client/auth.js";
 
@@ -822,11 +823,12 @@ export const createDebugOAuthStateMachine = (
 
             const loggingFetch: typeof fetch = async (url, init = {}) => {
               const requestUrl = typeof url === "string" ? url : url.toString();
-              // loggingFetch is only passed to discoverOAuthProtectedResourceMetadata,
-              // which fetches /.well-known/oauth-protected-resource from the MCP server's
-              // own domain — it does not redirect to the Authorization Server.
-              // Therefore we use mergeHeaders (not mergeHeadersForAuthServer) here.
-              const mergedHeaders = mergeHeaders(
+              // Protected resource metadata discovery can use an explicit
+              // resourceMetadataUrl from WWW-Authenticate, which may hop
+              // cross-origin. Strip MCP-server Authorization headers when it does.
+              const mergedHeaders = mergeHeadersForResourceMetadataRequest(
+                serverUrl,
+                requestUrl,
                 customHeaders,
                 normalizeHeaders(init.headers as HeadersInit | undefined),
               );
