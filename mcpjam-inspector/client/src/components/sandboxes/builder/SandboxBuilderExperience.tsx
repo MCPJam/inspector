@@ -5,6 +5,10 @@ import {
   useWorkspaceQueries,
   useWorkspaceServers,
 } from "@/hooks/useWorkspaces";
+import {
+  readBuilderSession,
+  clearBuilderSession,
+} from "@/lib/sandbox-session";
 import { SandboxIndexPage } from "./SandboxIndexPage";
 import { SandboxBuilderView } from "./SandboxBuilderView";
 import { getDefaultHostedModelId, SANDBOX_STARTERS } from "./drafts";
@@ -30,10 +34,22 @@ export default function SandboxBuilderExperience({
   const workspaceName =
     workspaces.find((workspace) => workspace._id === workspaceId)?.name ?? null;
 
+  const restoredSession = workspaceId
+    ? readBuilderSession(workspaceId)
+    : null;
+
   const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(
-    null,
+    () => restoredSession?.sandboxId ?? null,
   );
-  const [draft, setDraft] = useState<SandboxDraftConfig | null>(null);
+  const [draft, setDraft] = useState<SandboxDraftConfig | null>(
+    () => (restoredSession?.draft as SandboxDraftConfig | null) ?? null,
+  );
+
+  const restoredViewMode = restoredSession?.viewMode as
+    | "builder"
+    | "insights"
+    | "preview"
+    | undefined;
 
   const handleCreateSandbox = useCallback(() => {
     const blankStarter = SANDBOX_STARTERS.find((s) => s.id === "blank")!;
@@ -71,8 +87,10 @@ export default function SandboxBuilderExperience({
           workspaceServers={servers}
           sandboxId={selectedSandboxId}
           draft={draft}
+          initialViewMode={restoredViewMode}
           onSavedDraft={handleSavedDraft}
           onBack={() => {
+            clearBuilderSession();
             startTransition(() => {
               setSelectedSandboxId(null);
               setDraft(null);

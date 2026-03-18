@@ -565,7 +565,7 @@ export function SandboxEditor({
     writePlaygroundSession({
       token: previewToken,
       payload,
-      surface: "internal",
+      surface: "preview",
       playgroundId: previewPlaygroundId,
       updatedAt: Date.now(),
     });
@@ -1173,7 +1173,7 @@ export function SandboxEditor({
                     )}
                     hostedOAuthTokensOverride={previewOAuthTokens}
                     hostedSandboxToken={previewToken}
-                    hostedSandboxSurface="internal"
+                    hostedSandboxSurface="preview"
                     initialModelId={modelId}
                     initialSystemPrompt={normalizedSystemPrompt}
                     initialTemperature={temperature}

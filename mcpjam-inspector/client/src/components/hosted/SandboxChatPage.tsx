@@ -374,7 +374,7 @@ export function SandboxChatPage({
       if (playgroundParams) {
         const snapshot = readPlaygroundSession(playgroundParams.playgroundId);
         if (snapshot) {
-          setSession({ ...snapshot, surface: "internal" });
+          setSession({ ...snapshot, surface: "preview" });
           setRouteError(null);
         } else {
           setSession(null);

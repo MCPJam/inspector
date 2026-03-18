@@ -198,14 +198,14 @@ describe("useChatSession hosted mode", () => {
         hostedWorkspaceId: "workspace-1",
         hostedSelectedServerIds: ["server-id-1"],
         hostedSandboxToken: "sandbox-token",
-        hostedSandboxSurface: "internal",
+        hostedSandboxSurface: "preview",
       }),
     );
 
     const body = lastTransportOptions.body();
     expect(body).toMatchObject({
       sandboxToken: "sandbox-token",
-      surface: "internal",
+      surface: "preview",
     });
     unmount();
   });

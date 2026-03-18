@@ -87,9 +87,15 @@ import {
 } from "@/lib/sandbox-host-style";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
+import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
+import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
+import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import {
+  SANDBOX_OAUTH_PENDING_KEY,
   buildPlaygroundSandboxLink,
   buildSandboxLink,
+  writeBuilderSession,
   writePlaygroundSession,
   type SandboxBootstrapPayload,
   type SandboxBootstrapServer,
@@ -112,6 +118,7 @@ interface SandboxBuilderViewProps {
   workspaceServers: RemoteServer[];
   sandboxId?: string | null;
   draft: SandboxDraftConfig | null;
+  initialViewMode?: "builder" | "insights" | "preview";
   onBack: () => void;
   onSavedDraft: (sandbox: SandboxSettings) => void;
 }
@@ -849,12 +856,38 @@ function BuilderSettingsPanel({
   );
 }
 
+function getSandboxOAuthRowCopy(status: string): {
+  description: string;
+  buttonLabel: string | null;
+} {
+  switch (status) {
+    case "launching":
+      return { description: "Opening consent screen\u2026", buttonLabel: null };
+    case "resuming":
+      return { description: "Finishing authorization\u2026", buttonLabel: null };
+    case "verifying":
+      return { description: "Verifying access\u2026", buttonLabel: null };
+    case "error":
+      return {
+        description: "Authorization could not be completed. Try again.",
+        buttonLabel: "Authorize again",
+      };
+    case "needs_auth":
+    default:
+      return {
+        description: "You\u2019ll return here automatically after consent.",
+        buttonLabel: "Authorize",
+      };
+  }
+}
+
 export function SandboxBuilderView({
   workspaceId,
   workspaceName,
   workspaceServers,
   sandboxId,
   draft,
+  initialViewMode,
   onBack,
   onSavedDraft,
 }: SandboxBuilderViewProps) {
@@ -890,7 +923,7 @@ export function SandboxBuilderView({
             } as SandboxSettings),
         ),
     );
-  const [viewMode, setViewMode] = useState<ViewMode>("builder");
+  const [viewMode, setViewMode] = useState<ViewMode>(initialViewMode ?? "builder");
   const [chatKey, setChatKey] = useState(0);
   const [playgroundId, setPlaygroundId] = useState(() => crypto.randomUUID());
   const [isSettingsOpen, setIsSettingsOpen] = useState(true);
@@ -910,6 +943,16 @@ export function SandboxBuilderView({
   const isInitialMountRef = useRef(true);
   const pendingRestartRef = useRef(false);
   const prevViewModeRef = useRef(viewMode);
+
+  // Sync builder session to sessionStorage so it survives OAuth redirects
+  useEffect(() => {
+    writeBuilderSession({
+      workspaceId,
+      sandboxId: sandboxId ?? null,
+      draft: draftSandboxConfig as unknown as Record<string, unknown>,
+      viewMode,
+    });
+  }, [workspaceId, sandboxId, draftSandboxConfig, viewMode]);
 
   const behaviorFingerprint = useMemo(
     () =>
@@ -1010,7 +1053,7 @@ export function SandboxBuilderView({
     writePlaygroundSession({
       token: sandbox.link.token,
       payload,
-      surface: "internal",
+      surface: "preview",
       playgroundId,
       updatedAt: Date.now(),
     });
@@ -1162,6 +1205,59 @@ export function SandboxBuilderView({
     });
     return Object.fromEntries(entries);
   }, [draftSandboxConfig.selectedServerIds, workspaceServers]);
+
+  const selectedPreviewServers = useMemo(() => {
+    return draftSandboxConfig.selectedServerIds
+      .map((id) => {
+        const server = workspaceServers.find((s) => s._id === id);
+        if (!server) return null;
+        return {
+          serverId: server._id,
+          serverName: server.name,
+          useOAuth: Boolean(server.useOAuth),
+          serverUrl: server.url ?? null,
+          clientId: server.clientId ?? null,
+          oauthScopes: server.oauthScopes ?? null,
+        } satisfies SandboxBootstrapServer;
+      })
+      .filter((s): s is SandboxBootstrapServer => s !== null);
+  }, [draftSandboxConfig.selectedServerIds, workspaceServers]);
+
+  const {
+    oauthStateByServerId,
+    pendingOAuthServers,
+    authorizeServer,
+    markOAuthRequired,
+  } = useHostedOAuthGate({
+    surface: "sandbox",
+    pendingKey: SANDBOX_OAUTH_PENDING_KEY,
+    servers: selectedPreviewServers,
+  });
+
+  const previewOAuthTokens = useMemo(() => {
+    const entries = selectedPreviewServers
+      .map((server) => {
+        const token = getStoredTokens(server.serverName)?.access_token;
+        return token ? ([server.serverId, token] as const) : null;
+      })
+      .filter(
+        (entry): entry is readonly [string, string] => Array.isArray(entry),
+      );
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }, [oauthStateByServerId, selectedPreviewServers]);
+
+  const isFinishingPreviewOAuth =
+    pendingOAuthServers.length > 0 &&
+    pendingOAuthServers.every(({ state }) =>
+      isHostedOAuthBusy(state.status),
+    );
+
+  const handlePreviewOAuthRequired = useCallback(
+    (details?: HostedOAuthRequiredDetails) => {
+      markOAuthRequired(details);
+    },
+    [markOAuthRequired],
+  );
 
   const saveSandbox = useCallback(async () => {
     const trimmedName = draftSandboxConfig.name.trim();
@@ -1452,38 +1548,88 @@ export function SandboxBuilderView({
                       </div>
                       <div className="flex min-h-0 flex-1">
                         {sandbox?.link?.token ? (
-                          <SandboxHostStyleProvider
-                            value={draftSandboxConfig.hostStyle}
-                          >
-                            <ChatTabV2
-                              key={chatKey}
-                              connectedOrConnectingServerConfigs={
-                                sandboxServerConfigs
-                              }
-                              selectedServerNames={Object.keys(
-                                sandboxServerConfigs,
-                              )}
-                              minimalMode
-                              reasoningDisplayMode="hidden"
-                              hostedWorkspaceIdOverride={sandbox.workspaceId}
-                              hostedSelectedServerIdsOverride={
-                                draftSandboxConfig.selectedServerIds
-                              }
-                              hostedOAuthTokensOverride={{}}
-                              hostedSandboxToken={sandbox.link.token}
-                              hostedSandboxSurface="internal"
-                              initialModelId={draftSandboxConfig.modelId}
-                              initialSystemPrompt={
-                                draftSandboxConfig.systemPrompt
-                              }
-                              initialTemperature={
-                                draftSandboxConfig.temperature
-                              }
-                              initialRequireToolApproval={
-                                draftSandboxConfig.requireToolApproval
-                              }
-                            />
-                          </SandboxHostStyleProvider>
+                          pendingOAuthServers.length > 0 ? (
+                            <div className="flex flex-1 items-center justify-center p-6">
+                              <div className="w-full max-w-xl rounded-2xl border bg-background p-6">
+                                <h3 className="text-center text-base font-semibold">
+                                  {isFinishingPreviewOAuth
+                                    ? "Finishing authorization"
+                                    : "Authorization Required"}
+                                </h3>
+                                <p className="mt-2 text-center text-sm text-muted-foreground">
+                                  {isFinishingPreviewOAuth
+                                    ? "Finishing authorization for the required sandbox servers."
+                                    : "Authorize the required sandbox servers to continue."}
+                                </p>
+                                <div className="mt-5 space-y-3">
+                                  {pendingOAuthServers.map(({ server, state }) => {
+                                    const rowCopy = getSandboxOAuthRowCopy(state.status);
+                                    return (
+                                      <div
+                                        key={server.serverId}
+                                        className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                                      >
+                                        <div className="min-w-0">
+                                          <p className="truncate text-sm font-medium">
+                                            {server.serverName}
+                                          </p>
+                                          <p className="text-xs text-muted-foreground">
+                                            {state.status === "error" && state.errorMessage
+                                              ? state.errorMessage
+                                              : rowCopy.description}
+                                          </p>
+                                        </div>
+                                        {rowCopy.buttonLabel ? (
+                                          <Button
+                                            size="sm"
+                                            onClick={() => void authorizeServer(server)}
+                                          >
+                                            {rowCopy.buttonLabel}
+                                          </Button>
+                                        ) : (
+                                          <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <SandboxHostStyleProvider
+                              value={draftSandboxConfig.hostStyle}
+                            >
+                              <ChatTabV2
+                                key={chatKey}
+                                connectedOrConnectingServerConfigs={
+                                  sandboxServerConfigs
+                                }
+                                selectedServerNames={Object.keys(
+                                  sandboxServerConfigs,
+                                )}
+                                minimalMode
+                                reasoningDisplayMode="hidden"
+                                hostedWorkspaceIdOverride={sandbox.workspaceId}
+                                hostedSelectedServerIdsOverride={
+                                  draftSandboxConfig.selectedServerIds
+                                }
+                                hostedOAuthTokensOverride={previewOAuthTokens}
+                                hostedSandboxToken={sandbox.link.token}
+                                hostedSandboxSurface="preview"
+                                initialModelId={draftSandboxConfig.modelId}
+                                initialSystemPrompt={
+                                  draftSandboxConfig.systemPrompt
+                                }
+                                initialTemperature={
+                                  draftSandboxConfig.temperature
+                                }
+                                initialRequireToolApproval={
+                                  draftSandboxConfig.requireToolApproval
+                                }
+                                onOAuthRequired={handlePreviewOAuthRequired}
+                              />
+                            </SandboxHostStyleProvider>
+                          )
                         ) : (
                           <div className="flex flex-1 items-center justify-center p-6">
                             <Card className="max-w-sm rounded-3xl border-dashed p-6 text-center">

@@ -10,7 +10,7 @@ interface PersistChatSessionOptions {
   authHeader?: string;
   workspaceId?: string;
   sourceType?: "serverShare" | "sandbox" | "direct";
-  surface?: "internal" | "share_link";
+  surface?: "preview" | "share_link";
   shareToken?: string;
   sandboxToken?: string;
   serverId?: string;

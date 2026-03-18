@@ -2,16 +2,19 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildPlaygroundSandboxLink,
   buildSandboxLink,
+  clearBuilderSession,
   clearPlaygroundSession,
   clearSandboxSession,
   clearSandboxSignInReturnPath,
   extractSandboxTokenFromPath,
   hasActiveSandboxSession,
+  readBuilderSession,
   readPlaygroundSession,
   readSandboxSurfaceFromUrl,
   readSandboxSession,
   readSandboxSignInReturnPath,
   SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+  writeBuilderSession,
   writePlaygroundSession,
   writeSandboxSession,
   writeSandboxSignInReturnPath,
@@ -135,10 +138,10 @@ describe("sandbox-session", () => {
     });
   });
 
-  it("preserves internal surface when explicitly stored", () => {
+  it("preserves preview surface when explicitly stored", () => {
     writeSandboxSession({
       token: "sandbox-token",
-      surface: "internal",
+      surface: "preview",
       payload: {
         workspaceId: "ws_1",
         sandboxId: "sbx_1",
@@ -155,14 +158,14 @@ describe("sandbox-session", () => {
       },
     });
 
-    expect(readSandboxSession()?.surface).toBe("internal");
+    expect(readSandboxSession()?.surface).toBe("preview");
   });
 
   it("round-trips playground sessions until their ttl expires", () => {
     writePlaygroundSession({
       playgroundId: "pg_123",
       token: "sandbox-token",
-      surface: "internal",
+      surface: "preview",
       updatedAt: Date.now(),
       payload: {
         workspaceId: "ws_1",
@@ -185,7 +188,7 @@ describe("sandbox-session", () => {
       expect.objectContaining({
         playgroundId: "pg_123",
         token: "sandbox-token",
-        surface: "internal",
+        surface: "preview",
       }),
     );
     expect(typeof stored?.updatedAt).toBe("number");
@@ -206,17 +209,17 @@ describe("sandbox-session", () => {
   });
 
   it("reads sandbox surface from the url query", () => {
-    expect(readSandboxSurfaceFromUrl("?surface=internal")).toBe("internal");
+    expect(readSandboxSurfaceFromUrl("?surface=preview")).toBe("preview");
     expect(readSandboxSurfaceFromUrl("?surface=share_link")).toBe("share_link");
     expect(readSandboxSurfaceFromUrl("?surface=other")).toBe("share_link");
     expect(readSandboxSurfaceFromUrl("")).toBe("share_link");
   });
 
-  it("builds sandbox playground links with internal preview params", () => {
+  it("builds sandbox playground links with preview surface params", () => {
     expect(
       buildPlaygroundSandboxLink("token 123", "Demo Sandbox", "pg_123"),
     ).toBe(
-      `${window.location.origin}/sandbox/demo-sandbox/token%20123?playground=1&surface=internal&playgroundId=pg_123`,
+      `${window.location.origin}/sandbox/demo-sandbox/token%20123?playground=1&surface=preview&playgroundId=pg_123`,
     );
   });
 
@@ -246,7 +249,7 @@ describe("sandbox-session", () => {
     writePlaygroundSession({
       playgroundId: "pg_123",
       token: "sandbox-token",
-      surface: "internal",
+      surface: "preview",
       updatedAt: Date.now(),
       payload: {
         workspaceId: "ws_1",
@@ -266,5 +269,54 @@ describe("sandbox-session", () => {
 
     clearPlaygroundSession("pg_123");
     expect(readPlaygroundSession("pg_123")).toBeNull();
+  });
+
+  describe("builder session", () => {
+    it("returns null when no session exists", () => {
+      expect(readBuilderSession("ws_1")).toBeNull();
+    });
+
+    it("round-trips a builder session", () => {
+      const session = {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        draft: { name: "Test", hostStyle: "claude" },
+        viewMode: "preview",
+      };
+
+      writeBuilderSession(session);
+      expect(readBuilderSession("ws_1")).toEqual(session);
+    });
+
+    it("returns null when workspaceId does not match", () => {
+      writeBuilderSession({
+        workspaceId: "ws_1",
+        sandboxId: null,
+        draft: null,
+        viewMode: "builder",
+      });
+
+      expect(readBuilderSession("ws_other")).toBeNull();
+    });
+
+    it("clears the builder session", () => {
+      writeBuilderSession({
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        draft: null,
+        viewMode: "builder",
+      });
+
+      clearBuilderSession();
+      expect(readBuilderSession("ws_1")).toBeNull();
+    });
+
+    it("returns null for corrupted JSON", () => {
+      sessionStorage.setItem(
+        "mcpjam_sandbox_builder_session_v1",
+        "not-valid-json",
+      );
+      expect(readBuilderSession("ws_1")).toBeNull();
+    });
   });
 });

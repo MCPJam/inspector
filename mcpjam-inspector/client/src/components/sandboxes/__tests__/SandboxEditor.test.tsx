@@ -211,7 +211,7 @@ describe("SandboxEditor preview", () => {
     expect(mockWritePlaygroundSession).toHaveBeenCalledWith(
       expect.objectContaining({
         token: "sandbox-token",
-        surface: "internal",
+        surface: "preview",
         payload: expect.objectContaining({
           sandboxId: "sbx_1",
           modelId: "openai/gpt-5-mini",
@@ -228,7 +228,7 @@ describe("SandboxEditor preview", () => {
     ).toBeInTheDocument();
     expect(mockPreviewMount).toHaveBeenCalledWith(
       expect.objectContaining({
-        hostedSandboxSurface: "internal",
+        hostedSandboxSurface: "preview",
         initialModelId: "openai/gpt-5-mini",
         initialSystemPrompt: "You are helpful.",
         initialTemperature: 0.4,

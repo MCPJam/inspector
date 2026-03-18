@@ -122,7 +122,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         workspaceId: "workspace-1",
         selectedServerIds: ["server-1"],
         sandboxToken: "sandbox-token",
-        surface: "internal",
+        surface: "preview",
         chatSessionId: "chat-session-1",
         messages: [{ role: "user", content: "preview request" }],
         model: {
@@ -142,7 +142,7 @@ describe("web routes — chat-v2 hosted mode", () => {
         workspaceId: "workspace-1",
         sourceType: "sandbox",
         sandboxToken: "sandbox-token",
-        surface: "internal",
+        surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
       }),

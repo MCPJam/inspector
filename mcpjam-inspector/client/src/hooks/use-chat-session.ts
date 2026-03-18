@@ -70,7 +70,7 @@ export interface UseChatSessionOptions {
   /** Optional sandbox token for hosted sandbox chat sessions */
   hostedSandboxToken?: string;
   /** Surface classification for hosted sandbox chat sessions */
-  hostedSandboxSurface?: "internal" | "share_link";
+  hostedSandboxSurface?: "preview" | "share_link";
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
   /** Fixed initial model for hosted sandbox sessions */

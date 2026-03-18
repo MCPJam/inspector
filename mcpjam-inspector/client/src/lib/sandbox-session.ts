@@ -31,7 +31,7 @@ export interface SandboxBootstrapPayload {
 export interface SandboxSession {
   token: string;
   payload: SandboxBootstrapPayload;
-  surface?: "internal" | "share_link";
+  surface?: "preview" | "share_link";
 }
 
 export const SANDBOX_SESSION_STORAGE_KEY = "mcpjam_sandbox_session_v1";
@@ -147,7 +147,7 @@ function normalizeSandboxSession(
             : null,
         })),
     },
-    surface: parsed.surface === "internal" ? "internal" : "share_link",
+    surface: parsed.surface === "preview" ? "preview" : "share_link",
   };
 }
 
@@ -181,10 +181,10 @@ export function writeSandboxSession(session: SandboxSession): void {
 
 export function readSandboxSurfaceFromUrl(
   search: string,
-): "internal" | "share_link" {
+): "preview" | "share_link" {
   try {
     const surface = new URLSearchParams(search).get("surface");
-    return surface === "internal" ? "internal" : "share_link";
+    return surface === "preview" ? "preview" : "share_link";
   } catch {
     return "share_link";
   }
@@ -337,7 +337,40 @@ export function buildPlaygroundSandboxLink(
 ): string {
   const url = new URL(buildSandboxLink(token, sandboxName));
   url.searchParams.set("playground", "1");
-  url.searchParams.set("surface", "internal");
+  url.searchParams.set("surface", "preview");
   url.searchParams.set("playgroundId", playgroundId);
   return url.toString();
+}
+
+// --- Builder session (survives OAuth redirect) ---
+
+const BUILDER_SESSION_KEY = "mcpjam_sandbox_builder_session_v1";
+
+export interface SandboxBuilderSession {
+  workspaceId: string;
+  sandboxId: string | null;
+  draft: Record<string, unknown> | null;
+  viewMode: string;
+}
+
+export function readBuilderSession(
+  workspaceId: string,
+): SandboxBuilderSession | null {
+  try {
+    const raw = sessionStorage.getItem(BUILDER_SESSION_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as SandboxBuilderSession;
+    if (parsed.workspaceId !== workspaceId) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function writeBuilderSession(session: SandboxBuilderSession): void {
+  sessionStorage.setItem(BUILDER_SESSION_KEY, JSON.stringify(session));
+}
+
+export function clearBuilderSession(): void {
+  sessionStorage.removeItem(BUILDER_SESSION_KEY);
 }

@@ -222,7 +222,7 @@ chatV2.post("/", async (c) => {
       shareToken?: string;
       sandboxToken?: string;
       accessScope?: "workspace_member" | "chat_v2";
-      surface?: "internal" | "share_link";
+      surface?: "preview" | "share_link";
     };
 
     const {

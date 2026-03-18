@@ -206,7 +206,7 @@ describe("SandboxChatPage", () => {
     writePlaygroundSession({
       playgroundId: "pg_123",
       token: "sandbox-token",
-      surface: "internal",
+      surface: "preview",
       updatedAt: Date.now(),
       payload: {
         workspaceId: "ws_1",
@@ -231,7 +231,7 @@ describe("SandboxChatPage", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
-        hostedSandboxSurface: "internal",
+        hostedSandboxSurface: "preview",
       }),
     );
   });

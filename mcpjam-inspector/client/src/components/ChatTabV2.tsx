@@ -55,7 +55,7 @@ interface ChatTabProps {
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedShareToken?: string;
   hostedSandboxToken?: string;
-  hostedSandboxSurface?: "internal" | "share_link";
+  hostedSandboxSurface?: "preview" | "share_link";
   initialModelId?: string;
   initialSystemPrompt?: string;
   initialTemperature?: number;
