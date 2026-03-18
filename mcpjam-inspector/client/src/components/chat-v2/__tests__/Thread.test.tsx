@@ -4,24 +4,24 @@ import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 
+const mockMessageView = vi.fn();
+
 // Mock child components
 vi.mock("../thread/message-view", () => ({
-  MessageView: ({
-    message,
-    model,
-  }: {
-    message: UIMessage;
-    model: ModelDefinition;
-  }) => (
-    <div data-testid={`message-${message.id}`} data-role={message.role}>
-      <span data-testid="message-model">{model.name}</span>
-      {message.parts?.map((part, i) => (
-        <span key={i} data-testid={`part-${i}`}>
-          {(part as any).text || (part as any).type}
-        </span>
-      ))}
-    </div>
-  ),
+  MessageView: (props: { message: UIMessage; model: ModelDefinition }) => {
+    mockMessageView(props);
+    const { message, model } = props;
+    return (
+      <div data-testid={`message-${message.id}`} data-role={message.role}>
+        <span data-testid="message-model">{model.name}</span>
+        {message.parts?.map((part, i) => (
+          <span key={i} data-testid={`part-${i}`}>
+            {(part as any).text || (part as any).type}
+          </span>
+        ))}
+      </div>
+    );
+  },
 }));
 
 vi.mock("../shared/thinking-indicator", () => ({
@@ -133,6 +133,69 @@ describe("Thread", () => {
       render(<Thread {...defaultProps} messages={messages} />);
 
       expect(screen.getByTestId("message-model")).toHaveTextContent("GPT-4");
+    });
+
+    it("forwards interactive to MessageView", () => {
+      const messages = [createMessage({ id: "msg-1" })];
+
+      render(
+        <Thread {...defaultProps} messages={messages} interactive={false} />,
+      );
+
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          interactive: false,
+        }),
+      );
+    });
+
+    it("forwards reasoningDisplayMode to MessageView", () => {
+      const messages = [createMessage({ id: "msg-1" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          reasoningDisplayMode="collapsed"
+        />,
+      );
+
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reasoningDisplayMode: "collapsed",
+        }),
+      );
+    });
+
+    it("forwards hidden reasoningDisplayMode to MessageView", () => {
+      const messages = [createMessage({ id: "msg-1" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          reasoningDisplayMode="hidden"
+        />,
+      );
+
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reasoningDisplayMode: "hidden",
+        }),
+      );
+    });
+
+    it("keeps interactive and reasoningDisplayMode defaults", () => {
+      const messages = [createMessage({ id: "msg-1" })];
+
+      render(<Thread {...defaultProps} messages={messages} />);
+
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          interactive: true,
+          reasoningDisplayMode: "inline",
+        }),
+      );
     });
   });
 

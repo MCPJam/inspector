@@ -2,11 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./index.css";
-import {
-  getPostHogKey,
-  getPostHogOptions,
-  isPostHogDisabled,
-} from "./lib/PosthogUtils.js";
+import { getPostHogKey, getPostHogOptions } from "./lib/PosthogUtils.js";
 import { PostHogProvider } from "posthog-js/react";
 import { AuthKitProvider, useAuth } from "@workos-inc/authkit-react";
 import { ConvexReactClient } from "convex/react";
@@ -188,16 +184,9 @@ if (isInIframe) {
 
     root.render(
       <StrictMode>
-        {isPostHogDisabled ? (
-          Providers
-        ) : (
-          <PostHogProvider
-            apiKey={getPostHogKey()}
-            options={getPostHogOptions()}
-          >
-            {Providers}
-          </PostHogProvider>
-        )}
+        <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
+          {Providers}
+        </PostHogProvider>
       </StrictMode>,
     );
   }

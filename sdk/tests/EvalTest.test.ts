@@ -36,13 +36,13 @@ function createMockPromptResult(options: {
 
 // Create a mock TestAgent with prompt history tracking
 function createMockAgent(
-  promptFn: (message: string) => Promise<PromptResult>
+  promptFn: (message: string, options?: any) => Promise<PromptResult>
 ): TestAgent {
   const createAgent = (): TestAgent => {
     let promptHistory: PromptResult[] = [];
     return {
-      prompt: async (message: string) => {
-        const result = await promptFn(message);
+      prompt: async (message: string, options?: any) => {
+        const result = await promptFn(message, options);
         promptHistory.push(result);
         return result;
       },
@@ -80,6 +80,33 @@ describe("EvalTest", () => {
       };
       const test = new EvalTest(config);
       expect(test.getConfig()).toEqual(config);
+    });
+
+    it("should store expectedToolCalls in config", () => {
+      const expected = [
+        { toolName: "add", arguments: { a: 1, b: 2 } },
+        { toolName: "format" },
+      ];
+      const test = new EvalTest({
+        name: "with-expected",
+        test: async (agent) => {
+          await agent.prompt("Test");
+          return true;
+        },
+        expectedToolCalls: expected,
+      });
+      expect(test.getConfig().expectedToolCalls).toEqual(expected);
+    });
+
+    it("should have undefined expectedToolCalls when not provided", () => {
+      const test = new EvalTest({
+        name: "without-expected",
+        test: async (agent) => {
+          await agent.prompt("Test");
+          return true;
+        },
+      });
+      expect(test.getConfig().expectedToolCalls).toBeUndefined();
     });
 
     it("should throw if no test function provided", () => {
@@ -440,7 +467,7 @@ describe("EvalTest", () => {
   describe("timeout handling", () => {
     it("should timeout after timeoutMs", async () => {
       const agent = createMockAgent(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         return createMockPromptResult({});
       });
 
@@ -479,6 +506,153 @@ describe("EvalTest", () => {
       const result = await test.run(agent, { iterations: 1 });
       expect(result.successes).toBe(1);
     });
+
+    it("should pass if a timed-out prompt captured the expected tool call", async () => {
+      const agent = createMockAgent(async (message, options) => {
+        await new Promise<void>((resolve) => {
+          options?.abortSignal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+
+        return createMockPromptResult({
+          prompt: message,
+          toolsCalled: ["add"],
+          tokens: 0,
+          error: "Operation timed out after 50ms",
+        });
+      });
+
+      const test = new EvalTest({
+        name: "timeout-partial-pass",
+        test: async (agent) => {
+          const result = await agent.prompt("Add 2 and 3");
+          return result.hasToolCall("add");
+        },
+      });
+
+      const result = await test.run(agent, {
+        iterations: 1,
+        timeoutMs: 50,
+        concurrency: 1,
+      });
+
+      expect(result.successes).toBe(1);
+      expect(result.failures).toBe(0);
+      expect(result.iterationDetails[0].passed).toBe(true);
+      expect(result.iterationDetails[0].error).toBeUndefined();
+      expect(result.iterationDetails[0].prompts).toHaveLength(1);
+      expect(result.iterationDetails[0].prompts?.[0].hasToolCall("add")).toBe(
+        true
+      );
+      expect(result.iterationDetails[0].prompts?.[0].hasError()).toBe(true);
+    });
+
+    it("should preserve earlier prompts and metrics when a later prompt times out", async () => {
+      let promptCount = 0;
+      const agent = createMockAgent(async (message, options) => {
+        promptCount++;
+
+        if (promptCount === 1) {
+          return createMockPromptResult({
+            prompt: message,
+            toolsCalled: ["lookup"],
+            tokens: 50,
+            latency: { e2eMs: 20, llmMs: 15, mcpMs: 5 },
+          });
+        }
+
+        await new Promise<void>((resolve) => {
+          options?.abortSignal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          });
+        });
+
+        return createMockPromptResult({
+          prompt: message,
+          toolsCalled: ["add"],
+          tokens: 0,
+          latency: { e2eMs: 50, llmMs: 10, mcpMs: 40 },
+          error: "Operation timed out after 50ms",
+        });
+      });
+
+      const test = new EvalTest({
+        name: "multi-turn-timeout",
+        test: async (agent) => {
+          const first = await agent.prompt("First");
+          const second = await agent.prompt("Second");
+          return first.hasToolCall("lookup") && second.hasToolCall("add");
+        },
+      });
+
+      const result = await test.run(agent, {
+        iterations: 1,
+        timeoutMs: 50,
+        concurrency: 1,
+      });
+
+      expect(result.successes).toBe(1);
+      expect(result.iterationDetails[0].prompts).toHaveLength(2);
+      expect(
+        result.iterationDetails[0].prompts?.map((prompt) => prompt.getPrompt())
+      ).toEqual(["First", "Second"]);
+      expect(result.iterationDetails[0].tokens).toEqual({
+        total: 50,
+        input: 25,
+        output: 25,
+      });
+      expect(result.iterationDetails[0].latencies).toEqual([
+        { e2eMs: 20, llmMs: 15, mcpMs: 5 },
+        { e2eMs: 50, llmMs: 10, mcpMs: 40 },
+      ]);
+    });
+
+    it("should fail after the hard-timeout grace if a prompt ignores abort but preserve captured history", async () => {
+      const createHungAgent = (): TestAgent => {
+        let promptHistory: PromptResult[] = [];
+
+        return {
+          prompt: async (message: string) => {
+            promptHistory.push(
+              createMockPromptResult({
+                prompt: message,
+                toolsCalled: ["add"],
+                tokens: 0,
+              })
+            );
+
+            return await new Promise<PromptResult>(() => {});
+          },
+          resetPromptHistory: () => {
+            promptHistory = [];
+          },
+          getPromptHistory: () => [...promptHistory],
+          withOptions: () => createHungAgent(),
+        } as unknown as TestAgent;
+      };
+
+      const test = new EvalTest({
+        name: "hung-timeout",
+        test: async (agent) => {
+          const result = await agent.prompt("Add 2 and 3");
+          return result.hasToolCall("add");
+        },
+      });
+
+      const result = await test.run(createHungAgent(), {
+        iterations: 1,
+        timeoutMs: 25,
+        concurrency: 1,
+      });
+
+      expect(result.failures).toBe(1);
+      expect(result.iterationDetails[0].error).toContain("timed out");
+      expect(result.iterationDetails[0].prompts).toHaveLength(1);
+      expect(result.iterationDetails[0].prompts?.[0].hasToolCall("add")).toBe(
+        true
+      );
+    }, 5000);
   });
 
   describe("progress callback", () => {

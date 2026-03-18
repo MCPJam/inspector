@@ -7,10 +7,12 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
+import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
+import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
 
@@ -124,18 +126,64 @@ chatV2.post("/", async (c) => {
         );
       }
 
+      // Resolve auth header: use client-provided token (WorkOS) if present,
+      // otherwise fetch a production guest token for guest-allowed models.
+      let authHeader = c.req.header("authorization");
+
+      if (!authHeader) {
+        if (!isGuestAllowedModel(String(modelDefinition.id))) {
+          return c.json(
+            {
+              error:
+                "Sign in to use this model. Guest users can use: claude-haiku-4.5, gpt-5-mini, gemini-2.5-flash.",
+            },
+            403,
+          );
+        }
+
+        try {
+          authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
+        } catch {
+          authHeader = undefined;
+        }
+        if (!authHeader) {
+          return c.json(
+            {
+              error:
+                "Unable to authenticate with MCPJam servers. Please try again or sign in.",
+            },
+            503,
+          );
+        }
+      }
+
       const modelMessages = await convertToModelMessages(messages);
+      const sessionStartedAt = Date.now();
 
       return handleMCPJamFreeChatModel({
-        messages: scrubMessages(modelMessages as ModelMessage[]),
+        messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
-        authHeader: c.req.header("authorization"),
+        authHeader,
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        onConversationComplete: body.chatSessionId
+          ? async (fullHistory) => {
+              await persistChatSessionToConvex({
+                chatSessionId: body.chatSessionId,
+                modelId: String(modelDefinition.id),
+                modelSource: "mcpjam",
+                sourceType: "direct",
+                authHeader,
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+              });
+            }
+          : undefined,
       });
     }
 
@@ -152,6 +200,9 @@ chatV2.post("/", async (c) => {
 
     const modelMessages = await convertToModelMessages(messages);
 
+    const streamStartedAt = Date.now();
+    const authHeader = c.req.header("authorization");
+
     const result = streamText({
       model: llmModel,
       messages: scrubMessages(modelMessages as ModelMessage[]),
@@ -161,6 +212,41 @@ chatV2.post("/", async (c) => {
       system: enhancedSystemPrompt,
       tools: allTools as ToolSet,
       stopWhen: stepCountIs(20),
+      onFinish: (event) => {
+        try {
+          const allToolCalls = event.steps.flatMap((s) => s.toolCalls ?? []);
+          const allToolResults = event.steps.flatMap(
+            (s) => s.toolResults ?? [],
+          );
+          const responseMessages = event.steps.flatMap((step: any) =>
+            Array.isArray(step?.response?.messages)
+              ? step.response.messages
+              : [],
+          );
+          persistChatSessionToConvex({
+            chatSessionId: body.chatSessionId,
+            modelId: String(modelDefinition.id),
+            modelSource: "byok",
+            sourceType: "direct",
+            messages: modelMessages as ModelMessage[],
+            systemPrompt: enhancedSystemPrompt,
+            ...(responseMessages.length > 0 ? { responseMessages } : {}),
+            assistantText: event.text,
+            toolCalls: allToolCalls,
+            toolResults: allToolResults,
+            usage: {
+              inputTokens: event.totalUsage.inputTokens,
+              outputTokens: event.totalUsage.outputTokens,
+            },
+            finishReason: event.finishReason,
+            authHeader,
+            startedAt: streamStartedAt,
+            lastActivityAt: Date.now(),
+          });
+        } catch (error) {
+          logger.warn("[mcp/chat-v2] onFinish ingestion error", error);
+        }
+      },
     });
 
     return result.toUIMessageStreamResponse({

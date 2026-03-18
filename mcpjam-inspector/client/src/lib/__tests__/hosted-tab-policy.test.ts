@@ -21,6 +21,19 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("prompts")).toBe(true);
   });
 
+  it("keeps ci-evals visible in hosted sidebar allow-list", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("ci-evals");
+    expect(isHostedSidebarTabAllowed("ci-evals")).toBe(true);
+  });
+
+  it("keeps sandboxes visible in hosted navigation", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("sandboxes");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("sandboxes");
+    expect(isHostedSidebarTabAllowed("sandboxes")).toBe(true);
+    expect(isHostedHashTabAllowed("sandboxes")).toBe(true);
+    expect(isHostedHashTabBlocked("sandboxes")).toBe(false);
+  });
+
   it("allows profile and organizations hashes in hosted mode", () => {
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("profile");
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("organizations");
@@ -50,5 +63,12 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("oauth-flow")).toBe(true);
     expect(isHostedHashTabAllowed("oauth-flow")).toBe(true);
     expect(isHostedHashTabBlocked("oauth-flow")).toBe(false);
+  });
+
+  it("keeps learning hidden in hosted navigation", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).not.toContain("learning");
+    expect(HOSTED_HASH_ALLOWED_TABS).not.toContain("learning");
+    expect(isHostedSidebarTabAllowed("learning")).toBe(false);
+    expect(isHostedHashTabAllowed("learning")).toBe(false);
   });
 });

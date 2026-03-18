@@ -1,8 +1,8 @@
+import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
-  OAuthClientProvider,
-  OAuthTokens,
   OAuthClientMetadata,
-} from "@modelcontextprotocol/sdk/client/auth.js";
+  OAuthTokens,
+} from "@modelcontextprotocol/sdk/shared/auth.js";
 
 export class RefreshTokenOAuthProvider implements OAuthClientProvider {
   private currentRefreshToken: string;

@@ -5,6 +5,7 @@
 @import "./styles/presets/brutalist.css";
 @import "./styles/presets/soft-pop.css";
 @import "./styles/presets/tangerine.css";
+@import "./styles/host-mimicry.css";
 
 @source "../../node_modules/streamdown/dist/*.js";
 
@@ -358,6 +359,25 @@
 
 .animate-spin-pulse {
   animation: spin-pulse 1s ease-in-out infinite;
+}
+
+/* AI insights accent bar — static warm glow */
+.ai-shimmer-bar {
+  background: linear-gradient(
+    90deg,
+    oklch(0.68 0.14 39 / 0.2) 0%,
+    oklch(0.68 0.14 39 / 0.45) 50%,
+    oklch(0.68 0.14 39 / 0.2) 100%
+  );
+}
+
+.dark .ai-shimmer-bar {
+  background: linear-gradient(
+    90deg,
+    oklch(0.67 0.13 39 / 0.15) 0%,
+    oklch(0.67 0.13 39 / 0.4) 50%,
+    oklch(0.67 0.13 39 / 0.15) 100%
+  );
 }
 
 /* JSON syntax highlighting classes */

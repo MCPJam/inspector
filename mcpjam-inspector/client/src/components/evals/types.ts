@@ -18,6 +18,7 @@ export type EvalSuiteConfigTest = {
 export type EvalSuite = {
   _id: string;
   createdBy: string;
+  workspaceId?: string;
   name: string;
   description: string;
   configRevision: string;
@@ -27,16 +28,20 @@ export type EvalSuite = {
   createdAt: number;
   updatedAt: number;
   latestRunId?: string;
+  source?: "ui" | "sdk";
+  runCounter?: number;
   defaultPassCriteria?: {
     minimumPassRate: number;
   };
   _creationTime?: number; // Convex auto field
+  tags?: string[];
 };
 
 export type EvalCase = {
   _id: string;
   testSuiteId: string;
   createdBy: string;
+  workspaceId?: string;
   title: string;
   query: string;
   models: Array<{
@@ -59,6 +64,7 @@ export type EvalCase = {
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
+  workspaceId?: string;
   testCaseSnapshot?: {
     title: string;
     query: string;
@@ -91,6 +97,9 @@ export type EvalIteration = {
   tokensUsed: number;
   error?: string;
   errorDetails?: string;
+  resultSource?: "reported" | "derived";
+  externalIterationId?: string;
+  metadata?: Record<string, string | number | boolean>;
   _creationTime?: number; // Convex auto field
 };
 
@@ -105,6 +114,7 @@ export type EvalSuiteRun = {
   _id: string;
   suiteId: string;
   createdBy: string;
+  workspaceId?: string;
   runNumber: number;
   configRevision: string;
   configSnapshot: {
@@ -117,11 +127,36 @@ export type EvalSuiteRun = {
     minimumPassRate: number;
   };
   result?: "pending" | "passed" | "failed" | "cancelled";
+  source?: "ui" | "sdk";
+  externalRunId?: string;
+  framework?: string;
+  ciMetadata?: {
+    provider?: string;
+    pipelineId?: string;
+    jobId?: string;
+    runUrl?: string;
+    branch?: string;
+    commitSha?: string;
+  };
   notes?: string;
   createdAt: number;
   completedAt?: number;
   isActive?: boolean; // Mark runs as inactive when suite is edited
+  expectedIterations?: number;
   _creationTime?: number;
+  triageStatus?: "pending" | "completed" | "failed";
+  triageSummary?: {
+    summary: string;
+    failureCategories: Array<{
+      category: string;
+      count: number;
+      testCaseTitles: string[];
+      recommendation: string;
+    }>;
+    topRecommendations: string[];
+    generatedAt: number;
+    modelUsed: string;
+  };
 };
 
 export type EvalSuiteOverviewEntry = {
@@ -162,4 +197,23 @@ export type SuiteAggregate = {
 export type SuiteDetailsQueryResponse = {
   testCases: EvalCase[];
   iterations: EvalIteration[];
+};
+
+export type TagGroupAggregate = {
+  tag: string;
+  suiteCount: number;
+  totals: { passed: number; failed: number; runs: number };
+  passRate: number; // 0-100
+  entries: EvalSuiteOverviewEntry[];
+};
+
+export type CommitGroup = {
+  commitSha: string;
+  shortSha: string; // first 7 chars
+  branch: string | null;
+  timestamp: number; // most recent run time
+  status: "passed" | "failed" | "running" | "mixed";
+  runs: EvalSuiteRun[];
+  suiteMap: Map<string, string>; // suiteId → suite name
+  summary: { total: number; passed: number; failed: number; running: number };
 };

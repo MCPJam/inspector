@@ -3,6 +3,8 @@ import type { ModelDefinition } from "./types";
 
 export interface ChatV2Request {
   messages: UIMessage[];
+  chatSessionId?: string;
+  surface?: "preview" | "share_link";
   model?: ModelDefinition;
   modelId?: string;
   systemPrompt?: string;

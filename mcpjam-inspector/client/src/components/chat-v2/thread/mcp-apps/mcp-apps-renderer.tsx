@@ -69,6 +69,7 @@ import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
+import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -125,6 +126,14 @@ interface MCPAppsRendererProps {
   isOffline?: boolean;
   /** URL to cached widget HTML for offline rendering */
   cachedWidgetHtmlUrl?: string;
+  /** Persisted CSP metadata for cached/offline replay */
+  widgetCsp?: McpUiResourceCsp | null;
+  /** Persisted permissions metadata for cached/offline replay */
+  widgetPermissions?: McpUiResourcePermissions | null;
+  /** Persisted permissive flag for cached/offline replay */
+  widgetPermissive?: boolean;
+  /** Persisted prefersBorder value for cached/offline replay */
+  prefersBorder?: boolean;
   /** Minimal mode hides diagnostics and metadata surfaces */
   minimalMode?: boolean;
 }
@@ -154,14 +163,19 @@ export function MCPAppsRenderer({
   onAppSupportedDisplayModesChange,
   isOffline,
   cachedWidgetHtmlUrl,
+  widgetCsp: initialWidgetCsp,
+  widgetPermissions: initialWidgetPermissions,
+  widgetPermissive: initialWidgetPermissive,
+  prefersBorder: initialPrefersBorder,
   minimalMode = false,
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const sandboxHostStyle = useSandboxHostStyle();
 
   // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
+  const playgroundHostStyle = useUIPlaygroundStore((s) => s.hostStyle);
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
@@ -249,14 +263,19 @@ export function MCPAppsRenderer({
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
+  const isCachedReplay = !!cachedWidgetHtmlUrl;
   const [widgetCsp, setWidgetCsp] = useState<McpUiResourceCsp | undefined>(
-    undefined,
+    isCachedReplay ? undefined : (initialWidgetCsp ?? undefined),
   );
   const [widgetPermissions, setWidgetPermissions] = useState<
     McpUiResourcePermissions | undefined
-  >(undefined);
-  const [widgetPermissive, setWidgetPermissive] = useState<boolean>(false);
-  const [prefersBorder, setPrefersBorder] = useState<boolean>(true);
+  >(isCachedReplay ? undefined : (initialWidgetPermissions ?? undefined));
+  const [widgetPermissive, setWidgetPermissive] = useState<boolean>(
+    isCachedReplay ? true : (initialWidgetPermissive ?? false),
+  );
+  const [prefersBorder, setPrefersBorder] = useState<boolean>(
+    initialPrefersBorder ?? true,
+  );
   const [loadedCspMode, setLoadedCspMode] = useState<CspMode | null>(null);
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
@@ -274,7 +293,23 @@ export function MCPAppsRenderer({
   useEffect(() => {
     setWidgetHtml(null);
     setLoadedCspMode(null);
-  }, [cachedWidgetHtmlUrl]);
+    setLoadError(null);
+    setWidgetCsp(isCachedReplay ? undefined : (initialWidgetCsp ?? undefined));
+    setWidgetPermissions(
+      isCachedReplay ? undefined : (initialWidgetPermissions ?? undefined),
+    );
+    setWidgetPermissive(
+      isCachedReplay ? true : (initialWidgetPermissive ?? false),
+    );
+    setPrefersBorder(initialPrefersBorder ?? true);
+  }, [
+    cachedWidgetHtmlUrl,
+    isCachedReplay,
+    initialWidgetCsp,
+    initialWidgetPermissions,
+    initialWidgetPermissive,
+    initialPrefersBorder,
+  ]);
 
   const bridgeRef = useRef<AppBridge | null>(null);
   const hostContextRef = useRef<McpUiHostContext | null>(null);
@@ -347,10 +382,12 @@ export function MCPAppsRenderer({
           }
           const html = await cachedResponse.text();
           setWidgetHtml(html);
-          // In offline mode, we use permissive CSP since we can't verify the original settings
+          setWidgetCsp(undefined);
+          setWidgetPermissions(undefined);
           setWidgetPermissive(true);
-          setPrefersBorder(true);
+          setPrefersBorder(initialPrefersBorder ?? true);
           setLoadedCspMode(cspMode);
+          setWidgetHtmlStore(toolCallId, html);
           return;
         }
 
@@ -438,6 +475,7 @@ export function MCPAppsRenderer({
     cspMode,
     isOffline,
     cachedWidgetHtmlUrl,
+    initialPrefersBorder,
   ]);
 
   // UI logging
@@ -492,6 +530,7 @@ export function MCPAppsRenderer({
       toolName,
       protocol: "mcp-apps",
       widgetState: null, // MCP Apps don't have widget state in the same way
+      prefersBorder,
       globals: {
         theme: themeMode,
         displayMode: effectiveDisplayMode,
@@ -511,6 +550,7 @@ export function MCPAppsRenderer({
     timeZone,
     deviceCapabilities,
     safeAreaInsets,
+    prefersBorder,
   ]);
 
   // Update globals in debug store when they change
@@ -536,7 +576,10 @@ export function MCPAppsRenderer({
 
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
-  const useChatGPTStyle = isPlaygroundActive && hostStyle === "chatgpt";
+  const effectiveHostStyle = isPlaygroundActive
+    ? playgroundHostStyle
+    : (sandboxHostStyle ?? "claude");
+  const useChatGPTStyle = effectiveHostStyle === "chatgpt";
   const styleVariables = useMemo(
     () =>
       useChatGPTStyle

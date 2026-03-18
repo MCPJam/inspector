@@ -29,6 +29,9 @@ jobs:
       - name: Install SDK dependencies
         run: npm --prefix ../sdk ci
 
+      - name: Generate bundled files
+        run: npm run bundle:chatgpt && npm run bundle:mcp-apps && npm run bundle:sandbox-proxies
+
       - name: Build SDK
         run: npm --prefix ../sdk run build
 

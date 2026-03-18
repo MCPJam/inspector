@@ -2,9 +2,10 @@
  * Clean OAuth implementation using only the official MCP SDK with CORS proxy support
  */
 
-import {
-  auth,
+import { auth } from "@modelcontextprotocol/sdk/client/auth.js";
+import type {
   OAuthClientProvider,
+  OAuthDiscoveryState,
 } from "@modelcontextprotocol/sdk/client/auth.js";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { generateRandomString } from "./state-machines/shared/helpers";
@@ -13,6 +14,19 @@ import { HOSTED_MODE } from "@/lib/config";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
+
+interface StoredOAuthDiscoveryState {
+  serverUrl: string;
+  discoveryState: OAuthDiscoveryState;
+}
+
+function getDiscoveryStorageKey(serverName: string): string {
+  return `mcp-discovery-${serverName}`;
+}
+
+function clearStoredDiscoveryState(serverName: string): void {
+  localStorage.removeItem(getDiscoveryStorageKey(serverName));
+}
 
 /**
  * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS
@@ -114,16 +128,19 @@ export interface OAuthResult {
  */
 export class MCPOAuthProvider implements OAuthClientProvider {
   private serverName: string;
+  private serverUrl: string;
   private redirectUri: string;
   private customClientId?: string;
   private customClientSecret?: string;
 
   constructor(
     serverName: string,
+    serverUrl: string,
     customClientId?: string,
     customClientSecret?: string,
   ) {
     this.serverName = serverName;
+    this.serverUrl = serverUrl;
     this.redirectUri = `${window.location.origin}/oauth/callback`;
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
@@ -199,6 +216,41 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     );
   }
 
+  discoveryState(): OAuthDiscoveryState | undefined {
+    const stored = localStorage.getItem(
+      getDiscoveryStorageKey(this.serverName),
+    );
+    if (!stored) {
+      return undefined;
+    }
+
+    try {
+      const parsed = JSON.parse(stored) as Partial<StoredOAuthDiscoveryState>;
+      if (
+        parsed?.serverUrl !== this.serverUrl ||
+        typeof parsed.discoveryState !== "object" ||
+        parsed.discoveryState === null
+      ) {
+        return undefined;
+      }
+
+      return parsed.discoveryState;
+    } catch {
+      return undefined;
+    }
+  }
+
+  async saveDiscoveryState(discoveryState: OAuthDiscoveryState) {
+    const payload: StoredOAuthDiscoveryState = {
+      serverUrl: this.serverUrl,
+      discoveryState,
+    };
+    localStorage.setItem(
+      getDiscoveryStorageKey(this.serverName),
+      JSON.stringify(payload),
+    );
+  }
+
   async redirectToAuthorization(authorizationUrl: URL) {
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
@@ -221,12 +273,15 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     return verifier;
   }
 
-  async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier") {
+  async invalidateCredentials(
+    scope: "all" | "client" | "tokens" | "verifier" | "discovery",
+  ) {
     switch (scope) {
       case "all":
         localStorage.removeItem(`mcp-tokens-${this.serverName}`);
         localStorage.removeItem(`mcp-client-${this.serverName}`);
         localStorage.removeItem(`mcp-verifier-${this.serverName}`);
+        clearStoredDiscoveryState(this.serverName);
         break;
       case "client":
         localStorage.removeItem(`mcp-client-${this.serverName}`);
@@ -236,6 +291,9 @@ export class MCPOAuthProvider implements OAuthClientProvider {
         break;
       case "verifier":
         localStorage.removeItem(`mcp-verifier-${this.serverName}`);
+        break;
+      case "discovery":
+        clearStoredDiscoveryState(this.serverName);
         break;
     }
   }
@@ -254,6 +312,7 @@ export async function initiateOAuth(
   try {
     const provider = new MCPOAuthProvider(
       options.serverName,
+      options.serverUrl,
       options.clientId,
       options.clientSecret,
     );
@@ -391,6 +450,7 @@ export async function handleOAuthCallback(
 
     const provider = new MCPOAuthProvider(
       serverName,
+      serverUrl,
       customClientId,
       customClientSecret,
     );
@@ -529,8 +589,18 @@ export async function refreshOAuthTokens(
       ? JSON.parse(storedClientInfo).client_secret
       : undefined;
 
+    // Get server URL
+    const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
+    if (!serverUrl) {
+      return {
+        success: false,
+        error: "Server URL not found for token refresh",
+      };
+    }
+
     const provider = new MCPOAuthProvider(
       serverName,
+      serverUrl,
       customClientId,
       customClientSecret,
     );
@@ -540,15 +610,6 @@ export async function refreshOAuthTokens(
       return {
         success: false,
         error: "No refresh token available",
-      };
-    }
-
-    // Get server URL
-    const serverUrl = localStorage.getItem(`mcp-serverUrl-${serverName}`);
-    if (!serverUrl) {
-      return {
-        success: false,
-        error: "Server URL not found for token refresh",
       };
     }
 
@@ -610,6 +671,7 @@ export function clearOAuthData(serverName: string): void {
   localStorage.removeItem(`mcp-verifier-${serverName}`);
   localStorage.removeItem(`mcp-serverUrl-${serverName}`);
   localStorage.removeItem(`mcp-oauth-config-${serverName}`);
+  clearStoredDiscoveryState(serverName);
 }
 
 /**

@@ -26,10 +26,10 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
+import { getHostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
-import { SHARED_OAUTH_PENDING_KEY } from "@/lib/shared-server-session";
 import { authFetch } from "@/lib/session-token";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
@@ -522,9 +522,12 @@ export function useServerState({
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const errorDescription = urlParams.get("error_description");
+    const hostedOAuthCallbackContext = HOSTED_MODE
+      ? getHostedOAuthCallbackContext()
+      : null;
     if (code) {
-      if (localStorage.getItem(SHARED_OAUTH_PENDING_KEY)) {
-        return; // Handled by App.tsx shared OAuth interception
+      if (hostedOAuthCallbackContext) {
+        return; // Handled by App.tsx hosted OAuth interception
       }
       if (oauthCallbackHandledRef.current) {
         return;
@@ -540,6 +543,9 @@ export function useServerState({
 
       handleOAuthCallbackComplete(code);
     } else if (error) {
+      if (hostedOAuthCallbackContext) {
+        return; // Handled by App.tsx hosted OAuth interception
+      }
       const errorMessage = errorDescription
         ? `${error}: ${errorDescription}`
         : error;
@@ -1065,6 +1071,10 @@ export function useServerState({
   const cliConfigProcessedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     if (!isLoading && !cliConfigProcessedRef.current) {
       cliConfigProcessedRef.current = true;
       authFetch("/api/mcp-cli-config")

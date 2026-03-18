@@ -33,12 +33,29 @@ await manager.connectToServer("everything");
 
 // List available tools
 const tools = await manager.listTools("everything");
-console.log("Tools:", tools.map(t => t.name));
+console.log("Tools:", tools.tools.map((t) => t.name));
 ```
 
 <Note>
 `@modelcontextprotocol/server-everything` is a reference MCP server with sample tools like `add`, `echo`, and `longRunningOperation`.
 </Note>
+
+If you're connecting to an OAuth-protected HTTP server and already have a refresh token, pass `refreshToken` and `clientId` instead of a static access token:
+
+```typescript
+const manager = new MCPClientManager({
+  remoteServer: {
+    url: "https://mcp.example.com/mcp",
+    refreshToken: process.env.MCP_REFRESH_TOKEN!,
+    clientId: process.env.MCP_CLIENT_ID!,
+    clientSecret: process.env.MCP_CLIENT_SECRET,
+  },
+});
+
+await manager.connectToServer("remoteServer");
+```
+
+The SDK will exchange the refresh token for an access token and automatically refresh it when needed.
 
 ## Step 2: Execute Tools Directly
 
@@ -158,6 +175,29 @@ async function main() {
 
 main();
 ```
+
+## Generate evals from the Inspector
+
+You can also generate eval code directly from the MCPJam Inspector:
+
+1. Connect your MCP server in the Inspector
+2. Click the **⋮** menu on the server card
+3. Select **Copy markdown for server evals**
+4. Paste the copied markdown into an LLM (Claude, ChatGPT, etc.)
+5. The LLM will generate eval test code using `@mcpjam/sdk`
+
+<Frame>
+  <img
+    className="block"
+    src="/images/copy-markdown-menu.png"
+    alt="Copy markdown for server evals menu option"
+    width="300"
+  />
+</Frame>
+
+The copied markdown is a ready-to-use prompt that includes your server's capabilities and the full `@mcpjam/sdk` API reference, so the LLM has everything it needs to write your eval tests.
+
+If you have a `MCPJAM_API_KEY` set up, the generated eval code will automatically save results to MCPJam — you can view them in the **Evals** tab of the Inspector. Go to **Settings > Workspace API Key** in the Inspector to get your key.
 
 ## Next Steps
 

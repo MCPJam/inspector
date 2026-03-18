@@ -1,6 +1,6 @@
 # @mcpjam/sdk
 
-Use the MCPJam SDK to write unit tests and evals for your MCP server. 
+Use the MCPJam SDK to write unit tests and evals for your MCP server.
 
 ## Installation
 
@@ -8,13 +8,13 @@ Use the MCPJam SDK to write unit tests and evals for your MCP server.
 npm install @mcpjam/sdk
 ```
 
-Compatible with your favorite testing framework like [Jest](https://jestjs.io/) and [Vitest](https://vitest.dev/) 
+Compatible with your favorite testing framework like [Jest](https://jestjs.io/) and [Vitest](https://vitest.dev/)
 
 ## Quick Start
 
 ### Unit Test
 
-Test the individual parts, request response flow of your MCP server. MCP unit tests are deterministic. 
+Test the individual parts, request response flow of your MCP server. MCP unit tests are deterministic.
 
 ```ts
 import { MCPClientManager } from "@mcpjam/sdk";
@@ -40,15 +40,18 @@ describe("Everything MCP example", () => {
   });
 
   test("get-sum tool returns correct result", async () => {
-    const result = await manager.executeTool("everything", "get-sum", { a: 2, b: 3 });
+    const result = await manager.executeTool("everything", "get-sum", {
+      a: 2,
+      b: 3,
+    });
     expect(result.content[0].text).toBe("5");
   });
 });
 ```
 
-### MCP evals 
+### MCP evals
 
-Test that an LLM correctly understands how to use your MCP server. Evals are non-deterministic and multiple runs are needed. 
+Test that an LLM correctly understands how to use your MCP server. Evals are non-deterministic and multiple runs are needed.
 
 ```ts
 import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
@@ -89,10 +92,10 @@ describe("Asana MCP Evals", () => {
 
     await evalTest.run(agent, {
       iterations: 10,
-      onFailure: (report) => console.error(report), // Print the report when a test iteration fails. 
+      onFailure: (report) => console.error(report), // Print the report when a test iteration fails.
     });
 
-    expect(evalTest.accuracy()).toBeGreaterThan(0.8); // Pass threshold 
+    expect(evalTest.accuracy()).toBeGreaterThan(0.8); // Pass threshold
   });
 
   // Multi-turn eval
@@ -103,7 +106,9 @@ describe("Asana MCP Evals", () => {
         const r1 = await agent.prompt("Who am I in Asana?");
         if (!r1.hasToolCall("asana_get_user")) return false;
 
-        const r2 = await agent.prompt("Now list my projects", { context: [r1] }); // Continue the conversation from the previous prompt
+        const r2 = await agent.prompt("Now list my projects", {
+          context: [r1],
+        }); // Continue the conversation from the previous prompt
         return r2.hasToolCall("asana_get_projects");
       },
     });
@@ -121,9 +126,14 @@ describe("Asana MCP Evals", () => {
     const evalTest = new EvalTest({
       name: "search-args",
       test: async (agent) => {
-        const result = await agent.prompt("Search for tasks containing 'bug' in my workspace");
+        const result = await agent.prompt(
+          "Search for tasks containing 'bug' in my workspace"
+        );
         const args = result.getToolArguments("asana_search_tasks");
-        return result.hasToolCall("asana_search_tasks") && typeof args?.workspace_gid === "string";
+        return (
+          result.hasToolCall("asana_search_tasks") &&
+          typeof args?.workspace_gid === "string"
+        );
       },
     });
 
@@ -163,7 +173,7 @@ await manager.connectToServer("asana", {
   },
 });
 
-// Get tools for AI SDK integration
+// Get tools for TestAgent
 const tools = await manager.getToolsForAiSdk(["everything", "asana"]);
 
 // Direct MCP operations
@@ -187,13 +197,15 @@ await manager.disconnectServer("everything");
 Runs LLM prompts with MCP tool access.
 
 ```ts
+import { hasToolCall } from "@mcpjam/sdk";
+
 const agent = new TestAgent({
   tools: await manager.getToolsForAiSdk(),
-  model: "openai/gpt-4o",        // provider/model format
+  model: "openai/gpt-4o", // provider/model format
   apiKey: process.env.OPENAI_API_KEY!,
-  systemPrompt: "You are a helpful assistant.",  // optional
-  temperature: 0.7,              // optional, omit for reasoning models
-  maxSteps: 10,                  // optional, max tool call loops
+  systemPrompt: "You are a helpful assistant.", // optional
+  temperature: 0.7, // optional, omit for reasoning models
+  maxSteps: 10, // optional, max tool call loops
 });
 
 // Run a prompt
@@ -202,7 +214,32 @@ const result = await agent.prompt("Add 2 and 3");
 // Multi-turn with context
 const r1 = await agent.prompt("Who am I?");
 const r2 = await agent.prompt("List my projects", { context: [r1] });
+
+// Stop the loop after the step where a tool is called
+const r3 = await agent.prompt("Search tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+r3.hasToolCall("search_tasks"); // true
+
+// Bound prompt runtime
+const r4 = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500 },
+});
+r4.hasError(); // true if the prompt timed out
+
+// Exit early after selecting a tool without waiting for the MCP round-trip
+const r5 = await agent.prompt("Search tasks", {
+  stopAfterToolCall: "search_tasks",
+  timeoutMs: 5_000,
+});
+r5.getToolArguments("search_tasks"); // captured even if the prompt stops early
 ```
+
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+
+`timeout` bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` is accepted for parity but mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
+
+`stopAfterToolCall` is intended for evals that only care about tool selection and arguments. The targeted tool is short-circuited with a stub result, and the `PromptResult` still includes the tool name and args. If multiple tools are emitted in the same step, non-target siblings may still execute before the loop stops.
 
 **Supported providers:** `openai`, `anthropic`, `azure`, `google`, `mistral`, `deepseek`, `ollama`, `openrouter`, `xai`
 
@@ -217,24 +254,24 @@ Returned by `agent.prompt()`. Contains the LLM response and tool calls.
 const result = await agent.prompt("Add 2 and 3");
 
 // Tool calls
-result.hasToolCall("add");           // boolean
-result.toolsCalled();                // ["add"]
-result.getToolCalls();               // [{ toolName: "add", arguments: { a: 2, b: 3 } }]
-result.getToolArguments("add");      // { a: 2, b: 3 }
+result.hasToolCall("add"); // boolean
+result.toolsCalled(); // ["add"]
+result.getToolCalls(); // [{ toolName: "add", arguments: { a: 2, b: 3 } }]
+result.getToolArguments("add"); // { a: 2, b: 3 }
 
 // Response
-result.text;                         // "The result is 5"
+result.text; // "The result is 5"
 
 // Messages (full conversation)
-result.getMessages();                // CoreMessage[]
-result.getUserMessages();            // user messages only
-result.getAssistantMessages();       // assistant messages only
-result.getToolMessages();            // tool result messages only
+result.getMessages(); // CoreMessage[]
+result.getUserMessages(); // user messages only
+result.getAssistantMessages(); // assistant messages only
+result.getToolMessages(); // tool result messages only
 
 // Latency
-result.e2eLatencyMs();               // total wall-clock time
-result.llmLatencyMs();               // LLM API time
-result.mcpLatencyMs();               // MCP tool execution time
+result.e2eLatencyMs(); // total wall-clock time
+result.llmLatencyMs(); // LLM API time
+result.mcpLatencyMs(); // MCP tool execution time
 
 // Tokens
 result.totalTokens();
@@ -267,22 +304,22 @@ const test = new EvalTest({
 
 await test.run(agent, {
   iterations: 30,
-  concurrency: 5,                    // parallel iterations (default: 5)
-  retries: 2,                        // retry failed iterations (default: 0)
-  timeoutMs: 30000,                  // timeout per iteration (default: 30000)
+  concurrency: 5, // parallel iterations (default: 5)
+  retries: 2, // retry failed iterations (default: 0)
+  timeoutMs: 30000, // aborts the active prompt at 30s, then waits up to 1s for it to settle
   onProgress: (completed, total) => console.log(`${completed}/${total}`),
-  onFailure: (report) => console.error(report),  // called if any iteration fails
+  onFailure: (report) => console.error(report), // called if any iteration fails
 });
 
 // Metrics
-test.accuracy();                     // success rate (0-1)
-test.averageTokenUse();              // avg tokens per iteration
+test.accuracy(); // success rate (0-1)
+test.averageTokenUse(); // avg tokens per iteration
 
 // Iteration details
-test.getAllIterations();             // all iteration results
-test.getFailedIterations();          // failed iterations only
-test.getSuccessfulIterations();      // successful iterations only
-test.getFailureReport();             // formatted string of failed traces
+test.getAllIterations(); // all iteration results
+test.getFailedIterations(); // failed iterations only
+test.getSuccessfulIterations(); // successful iterations only
+test.getFailureReport(); // formatted string of failed traces
 ```
 
 </details>
@@ -295,32 +332,36 @@ Groups multiple `EvalTest` instances for aggregate metrics.
 ```ts
 const suite = new EvalSuite({ name: "Math Operations" });
 
-suite.add(new EvalTest({
-  name: "addition",
-  test: async (agent) => {
-    const r = await agent.prompt("Add 2+3");
-    return r.hasToolCall("add");
-  },
-}));
+suite.add(
+  new EvalTest({
+    name: "addition",
+    test: async (agent) => {
+      const r = await agent.prompt("Add 2+3");
+      return r.hasToolCall("add");
+    },
+  })
+);
 
-suite.add(new EvalTest({
-  name: "multiply",
-  test: async (agent) => {
-    const r = await agent.prompt("Multiply 4*5");
-    return r.hasToolCall("multiply");
-  },
-}));
+suite.add(
+  new EvalTest({
+    name: "multiply",
+    test: async (agent) => {
+      const r = await agent.prompt("Multiply 4*5");
+      return r.hasToolCall("multiply");
+    },
+  })
+);
 
 await suite.run(agent, { iterations: 30 });
 
 // Aggregate metrics
-suite.accuracy();                    // overall accuracy
+suite.accuracy(); // overall accuracy
 suite.averageTokenUse();
 
 // Individual test access
 suite.get("addition")?.accuracy();
 suite.get("multiply")?.accuracy();
-suite.getAll();                      // all EvalTest instances
+suite.getAll(); // all EvalTest instances
 ```
 
 </details>
@@ -343,30 +384,44 @@ import {
   matchToolArgumentWith,
 } from "@mcpjam/sdk";
 
-const tools = result.toolsCalled();      // ["add", "multiply"]
-const calls = result.getToolCalls();     // ToolCall[]
+const tools = result.toolsCalled(); // ["add", "multiply"]
+const calls = result.getToolCalls(); // ToolCall[]
 
 // Exact match (order matters)
-matchToolCalls(["add", "multiply"], tools);           // true
-matchToolCalls(["multiply", "add"], tools);           // false
+matchToolCalls(["add", "multiply"], tools); // true
+matchToolCalls(["multiply", "add"], tools); // false
 
 // Subset match (order doesn't matter)
-matchToolCallsSubset(["add"], tools);                 // true
+matchToolCallsSubset(["add"], tools); // true
 
 // Any match (at least one)
-matchAnyToolCall(["add", "subtract"], tools);         // true
+matchAnyToolCall(["add", "subtract"], tools); // true
 
 // Count match
-matchToolCallCount("add", tools, 1);                  // true
+matchToolCallCount("add", tools, 1); // true
 
 // No tools called
-matchNoToolCalls([]);                                 // true
+matchNoToolCalls([]); // true
 
 // Argument matching
-matchToolCallWithArgs("add", { a: 2, b: 3 }, calls);         // exact match
-matchToolCallWithPartialArgs("add", { a: 2 }, calls);        // partial match
-matchToolArgument("add", "a", 2, calls);                     // single arg
-matchToolArgumentWith("add", "a", (v) => v > 0, calls);      // predicate
+matchToolCallWithArgs("add", { a: 2, b: 3 }, calls); // exact match
+matchToolCallWithPartialArgs("add", { a: 2 }, calls); // partial match
+matchToolArgument("add", "a", 2, calls); // single arg
+matchToolArgumentWith("add", "a", (v) => v > 0, calls); // predicate
 ```
 
 </details>
+
+---
+
+## Telemetry
+
+The SDK collects anonymous usage metrics (e.g., eval test run counts) to help improve the product. No personal data is collected.
+
+To disable telemetry, set either of these environment variables:
+
+```bash
+export DO_NOT_TRACK=1
+# or
+export MCPJAM_TELEMETRY_DISABLED=1
+```

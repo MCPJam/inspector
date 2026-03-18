@@ -47,8 +47,14 @@ import {
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
-import { getAuthHeaders as getSessionAuthHeaders } from "@/lib/session-token";
+import {
+  authFetch,
+  getAuthHeaders as getSessionAuthHeaders,
+} from "@/lib/session-token";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
+import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -61,12 +67,20 @@ export interface UseChatSessionOptions {
   hostedOAuthTokens?: Record<string, string>;
   /** Optional server-share token for hosted shared chat sessions */
   hostedShareToken?: string;
+  /** Optional sandbox token for hosted sandbox chat sessions */
+  hostedSandboxToken?: string;
+  /** Surface classification for hosted sandbox chat sessions */
+  hostedSandboxSurface?: "preview" | "share_link";
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /** Fixed initial model for hosted sandbox sessions */
+  initialModelId?: string;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
   initialTemperature?: number;
+  /** Initial tool approval mode for hosted sandbox sessions */
+  initialRequireToolApproval?: boolean;
   /** Callback when chat is reset */
   onReset?: () => void;
 }
@@ -143,6 +157,38 @@ export interface UseChatSessionReturn {
   inputDisabled: boolean;
 }
 
+function isTransientMessage(message: UIMessage): boolean {
+  if (
+    message.role === "system" &&
+    (message as { metadata?: { source?: string } }).metadata?.source ===
+      "server-instruction"
+  ) {
+    return true;
+  }
+
+  return message.id?.startsWith("widget-state-") ?? false;
+}
+
+function shouldForkChatSession(
+  previousMessages: UIMessage[],
+  nextMessages: UIMessage[],
+): boolean {
+  const previousPersistentIds = previousMessages
+    .filter((message) => !isTransientMessage(message))
+    .map((message) => message.id);
+  const nextPersistentIds = nextMessages
+    .filter((message) => !isTransientMessage(message))
+    .map((message) => message.id);
+
+  if (nextPersistentIds.length >= previousPersistentIds.length) {
+    return false;
+  }
+
+  return nextPersistentIds.every(
+    (messageId, index) => messageId === previousPersistentIds[index],
+  );
+}
+
 function isAuthDeniedError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const withStatus = error as { status?: unknown; message?: unknown };
@@ -157,8 +203,13 @@ export function useChatSession({
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
   hostedShareToken,
+  hostedSandboxToken,
+  hostedSandboxSurface,
+  minimalMode = false,
+  initialModelId,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
+  initialRequireToolApproval = false,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const { getAccessToken } = useAuth();
@@ -202,9 +253,27 @@ export function useChatSession({
   >(null);
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
-  const [requireToolApproval, setRequireToolApproval] = useState(false);
+  const [requireToolApproval, setRequireToolApproval] = useState(
+    initialRequireToolApproval,
+  );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
+  const directGuestMode =
+    HOSTED_MODE &&
+    !isAuthenticated &&
+    !isAuthLoading &&
+    !hostedWorkspaceId &&
+    !hostedShareToken;
+  const sharedGuestMode =
+    HOSTED_MODE &&
+    !isAuthenticated &&
+    !isAuthLoading &&
+    !!hostedWorkspaceId &&
+    !!(hostedShareToken || hostedSandboxToken);
+  const guestMode = directGuestMode || sharedGuestMode;
+  const skipNextForkDetectionRef = useRef(false);
+  const pendingForkSessionIdRef = useRef<string | null>(null);
+  const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -217,7 +286,25 @@ export function useChatSession({
       customProviders,
     });
     if (HOSTED_MODE) {
-      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
+      const mcpjamModels = models.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+      // Guest users only see the free guest models
+      if (guestMode) {
+        return mcpjamModels.filter((m) =>
+          GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
+        );
+      }
+      return mcpjamModels;
+    }
+    // Non-hosted: filter out non-guest MCPJam models when unauthenticated
+    // (keep user-provided models + 3 free MCPJam models)
+    if (!isAuthenticated) {
+      return models.filter(
+        (m) =>
+          !isMCPJamProvidedModel(String(m.id)) ||
+          isGuestAllowedModel(String(m.id)),
+      );
     }
     return models;
   }, [
@@ -226,6 +313,8 @@ export function useChatSession({
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
+    guestMode,
+    isAuthenticated,
     customProviders,
   ]);
 
@@ -233,16 +322,25 @@ export function useChatSession({
   const { selectedModelId, setSelectedModelId } = usePersistedModel();
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
+    if (initialModelId) {
+      return (
+        availableModels.find((model) => String(model.id) === initialModelId) ??
+        fallback
+      );
+    }
     if (!selectedModelId) return fallback;
     const found = availableModels.find((m) => String(m.id) === selectedModelId);
     return found ?? fallback;
-  }, [availableModels, selectedModelId]);
+  }, [availableModels, initialModelId, selectedModelId]);
 
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {
+      if (initialModelId) {
+        return;
+      }
       setSelectedModelId(String(model.id));
     },
-    [setSelectedModelId],
+    [initialModelId, setSelectedModelId],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -272,34 +370,56 @@ export function useChatSession({
       string,
       string
     >;
+    const transportHeaders = HOSTED_MODE
+      ? undefined
+      : Object.keys(mergedHeaders).length > 0
+        ? mergedHeaders
+        : undefined;
 
     const chatApi = HOSTED_MODE ? "/api/web/chat-v2" : "/api/mcp/chat-v2";
 
+    // Build hosted body based on whether we have a workspace.
+    // Signed-in users are blocked from submitting until hostedWorkspaceId loads
+    // (via hostedContextNotReady), so this branch only runs for guests.
+    const buildHostedBody = () => {
+      if (!hostedWorkspaceId) {
+        return {
+          chatSessionId,
+        };
+      }
+      return {
+        workspaceId: hostedWorkspaceId,
+        chatSessionId,
+        selectedServerIds: hostedSelectedServerIds,
+        accessScope: "chat_v2" as const,
+        ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
+        ...(hostedSandboxToken ? { sandboxToken: hostedSandboxToken } : {}),
+        ...(hostedSandboxToken && hostedSandboxSurface
+          ? { surface: hostedSandboxSurface }
+          : {}),
+        ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
+          ? { oauthTokens: hostedOAuthTokens }
+          : {}),
+      };
+    };
+
     return new DefaultChatTransport({
       api: chatApi,
+      fetch: HOSTED_MODE ? authFetch : undefined,
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
         ...(HOSTED_MODE
-          ? {
-              workspaceId: hostedWorkspaceId,
-              selectedServerIds: hostedSelectedServerIds,
-              accessScope: "chat_v2" as const,
-              ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
-              ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
-                ? { oauthTokens: hostedOAuthTokens }
-                : {}),
-            }
-          : { selectedServers }),
+          ? buildHostedBody()
+          : { selectedServers, chatSessionId }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
           : {}),
       }),
-      headers:
-        Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined,
+      headers: transportHeaders,
     });
   }, [
     selectedModel,
@@ -311,9 +431,12 @@ export function useChatSession({
     systemPrompt,
     selectedServers,
     hostedWorkspaceId,
+    chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
     hostedShareToken,
+    hostedSandboxToken,
+    hostedSandboxSurface,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -324,7 +447,7 @@ export function useChatSession({
     stop,
     status,
     error,
-    setMessages,
+    setMessages: baseSetMessages,
     addToolApprovalResponse,
   } = useChat({
     id: chatSessionId,
@@ -333,6 +456,61 @@ export function useChatSession({
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
   });
+
+  useSharedChatWidgetCapture({
+    enabled:
+      HOSTED_MODE &&
+      !!(hostedShareToken || hostedSandboxToken) &&
+      isAuthenticated,
+    chatSessionId,
+    hostedShareToken,
+    hostedSandboxToken,
+    messages,
+  });
+
+  const setMessages = useCallback<
+    React.Dispatch<React.SetStateAction<UIMessage[]>>
+  >(
+    (updater) => {
+      baseSetMessages((previousMessages) => {
+        const nextMessages =
+          typeof updater === "function" ? updater(previousMessages) : updater;
+        const shouldSkipForkDetection = skipNextForkDetectionRef.current;
+        skipNextForkDetectionRef.current = false;
+
+        if (
+          !shouldSkipForkDetection &&
+          shouldForkChatSession(previousMessages, nextMessages)
+        ) {
+          const nextSessionId = generateId();
+          pendingForkSessionIdRef.current = nextSessionId;
+          pendingForkMessagesRef.current = nextMessages;
+          queueMicrotask(() => {
+            if (pendingForkSessionIdRef.current === nextSessionId) {
+              setChatSessionId(nextSessionId);
+            }
+          });
+        }
+
+        return nextMessages;
+      });
+    },
+    [baseSetMessages],
+  );
+
+  useLayoutEffect(() => {
+    if (pendingForkSessionIdRef.current !== chatSessionId) {
+      return;
+    }
+
+    const pendingForkMessages = pendingForkMessagesRef.current;
+    pendingForkSessionIdRef.current = null;
+    pendingForkMessagesRef.current = null;
+
+    if (pendingForkMessages) {
+      baseSetMessages(pendingForkMessages);
+    }
+  }, [baseSetMessages, chatSessionId]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -358,31 +536,69 @@ export function useChatSession({
 
   // Reset chat
   const resetChat = useCallback(() => {
+    skipNextForkDetectionRef.current = true;
+    pendingForkSessionIdRef.current = null;
+    pendingForkMessagesRef.current = null;
     setChatSessionId(generateId());
     setMessages([]);
     onResetRef.current?.();
   }, [setMessages]);
 
+  useEffect(() => {
+    setSystemPrompt(initialSystemPrompt);
+  }, [initialSystemPrompt]);
+
+  useEffect(() => {
+    setTemperature(initialTemperature);
+  }, [initialTemperature]);
+
+  useEffect(() => {
+    setRequireToolApproval(initialRequireToolApproval);
+  }, [initialRequireToolApproval]);
+
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
     let active = true;
     (async () => {
+      let resolved = false;
+
       try {
         const token = await getAccessToken?.();
         if (!active) return;
         if (token) {
           setAuthHeaders({ Authorization: `Bearer ${token}` });
+          resolved = true;
+        }
+      } catch {
+        // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
+      }
+
+      // Only fall back to a guest token for explicit guest surfaces:
+      // direct guest chat and shared-chat guests. A regular hosted workspace
+      // should never silently downgrade to guest auth.
+      if (
+        !resolved &&
+        active &&
+        !isAuthenticated &&
+        HOSTED_MODE &&
+        (!hostedWorkspaceId || !!hostedShareToken || !!hostedSandboxToken)
+      ) {
+        const guestToken = await getGuestBearerToken();
+        if (!active) return;
+        if (guestToken) {
+          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
         } else {
           setAuthHeaders(undefined);
         }
-      } catch (err) {
-        console.error("[useChatSession] Failed to get access token:", err);
-        if (!active) return;
+      } else if (!resolved && active) {
         setAuthHeaders(undefined);
       }
+
       // Reset chat to force new session with updated auth headers
-      // This ensures the transport is recreated with the correct headers
       if (active) {
+        skipNextForkDetectionRef.current = true;
+        pendingForkSessionIdRef.current = null;
+        pendingForkMessagesRef.current = null;
         setChatSessionId(generateId());
         setMessages([]);
         onResetRef.current?.();
@@ -391,7 +607,14 @@ export function useChatSession({
     return () => {
       active = false;
     };
-  }, [getAccessToken, setMessages]);
+  }, [
+    getAccessToken,
+    hostedShareToken,
+    hostedSandboxToken,
+    hostedWorkspaceId,
+    isAuthenticated,
+    setMessages,
+  ]);
 
   // Ollama model detection
   useEffect(() => {
@@ -461,7 +684,12 @@ export function useChatSession({
             : null,
         );
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (
+          !(
+            (hostedShareToken || hostedSandboxToken) &&
+            isAuthDeniedError(error)
+          )
+        ) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error,
@@ -476,7 +704,7 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken]);
+  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // System prompt token count
   useEffect(() => {
@@ -495,7 +723,12 @@ export function useChatSession({
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (!(hostedShareToken && isAuthDeniedError(error))) {
+        if (
+          !(
+            (hostedShareToken || hostedSandboxToken) &&
+            isAuthDeniedError(error)
+          )
+        ) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error,
@@ -508,7 +741,7 @@ export function useChatSession({
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedShareToken]);
+  }, [systemPrompt, selectedModel, hostedShareToken, hostedSandboxToken]);
 
   // Reset chat when selected servers change
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
@@ -555,14 +788,26 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  const requiresAuthForChat = HOSTED_MODE || isMcpJamModel;
+  // Compute guest access from React state instead of the global hostedApiContext.
+  // Shared chats are guest-capable even though they are scoped to a workspace,
+  // while direct guests have no workspace at all.
+  // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
+  // In non-hosted mode: only require auth for non-guest MCPJam models
+  // (server injects production guest token for guest-allowed models).
+  const requiresAuthForChat = HOSTED_MODE
+    ? true
+    : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));
   const isAuthReady =
-    !requiresAuthForChat || (isAuthenticated && !!authHeaders);
-  const disableForAuthentication = !isAuthenticated && requiresAuthForChat;
+    !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
+  // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
+  const disableForAuthentication =
+    !isAuthenticated && requiresAuthForChat && !guestMode;
   const authHeadersNotReady =
     requiresAuthForChat && isAuthenticated && !authHeaders;
+  // Direct guests don't need a workspace; shared guests still do.
   const hostedContextNotReady =
     HOSTED_MODE &&
+    !directGuestMode &&
     (!hostedWorkspaceId ||
       (selectedServers.length > 0 &&
         hostedSelectedServerIds.length !== selectedServers.length));

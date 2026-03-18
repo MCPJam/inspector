@@ -85,8 +85,10 @@ vi.mock("@/components/ui/sandboxed-iframe", () => ({
         value: { postMessage: mockSandboxPostMessage },
       });
       Object.defineProperty(el, "offsetHeight", { value: 400 });
-      (el as HTMLElement & { animate: ReturnType<typeof vi.fn> }).animate =
-        vi.fn();
+      const animatedEl = el as unknown as HTMLElement & {
+        animate: ReturnType<typeof vi.fn>;
+      };
+      animatedEl.animate = vi.fn();
       iframeElementRef.current = el;
     }
 
@@ -166,6 +168,8 @@ vi.mock("../mcp-apps-modal", () => ({
 
 // ── Import component under test (after mocks) ─────────────────────────────
 import { MCPAppsRenderer } from "../mcp-apps-renderer";
+import { authFetch } from "@/lib/session-token";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 const baseProps = {
@@ -201,6 +205,157 @@ describe("MCPAppsRenderer tool input streaming", () => {
       status: 200,
       headers: new Headers(),
     } as Response);
+
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: {
+            connectDomains: ["https://api.example.com"],
+            resourceDomains: ["https://cdn.example.com"],
+            frameDomains: [],
+            baseUriDomains: [],
+          },
+          permissions: { camera: true },
+          permissive: false,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+  });
+
+  it("forces permissive replay for cached HTML when widgetPermissive is missing", async () => {
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        widgetCsp={{
+          connectDomains: ["https://ignored.example.com"],
+          resourceDomains: ["https://ignored.example.com"],
+          frameDomains: [],
+          baseUriDomains: [],
+        }}
+        widgetPermissions={{ microphone: true } as any}
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+
+    expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+    expect(sandboxedIframePropsRef.current?.csp).toBeUndefined();
+    expect(sandboxedIframePropsRef.current?.permissions).toBeUndefined();
+  });
+
+  it("uses sandbox host style for SEP-1865 host context outside the playground", async () => {
+    render(
+      <SandboxHostStyleProvider value="chatgpt">
+        <MCPAppsRenderer {...baseProps} />
+      </SandboxHostStyleProvider>,
+    );
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          platform: "web",
+          styles: expect.objectContaining({
+            css: expect.objectContaining({
+              fonts: "",
+            }),
+          }),
+        }),
+      );
+    });
+  });
+
+  it("forces permissive replay for cached HTML even when strict replay metadata is stored", async () => {
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        widgetCsp={{
+          connectDomains: ["https://ignored.example.com"],
+          resourceDomains: ["https://ignored.example.com"],
+          frameDomains: [],
+          baseUriDomains: [],
+        }}
+        widgetPermissions={{ clipboardWrite: true } as any}
+        widgetPermissive={false}
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+
+    expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+    expect(sandboxedIframePropsRef.current?.csp).toBeUndefined();
+    expect(sandboxedIframePropsRef.current?.permissions).toBeUndefined();
+  });
+
+  it("forces permissive replay for cached HTML even when permissive replay metadata is stored", async () => {
+    render(
+      <MCPAppsRenderer
+        {...baseProps}
+        cachedWidgetHtmlUrl="blob:cached"
+        widgetCsp={{
+          connectDomains: ["https://ignored.example.com"],
+          resourceDomains: ["https://ignored.example.com"],
+          frameDomains: [],
+          baseUriDomains: [],
+        }}
+        widgetPermissions={{ geolocation: true } as any}
+        widgetPermissive={true}
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>",
+      );
+    });
+
+    expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+    expect(sandboxedIframePropsRef.current?.csp).toBeUndefined();
+    expect(sandboxedIframePropsRef.current?.permissions).toBeUndefined();
+  });
+
+  it("keeps the live fetch path on server-declared strict widget settings", async () => {
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>live-widget</body></html>",
+      );
+    });
+
+    expect(sandboxedIframePropsRef.current?.permissive).toBe(false);
+    expect(sandboxedIframePropsRef.current?.csp).toEqual({
+      connectDomains: ["https://api.example.com"],
+      resourceDomains: ["https://cdn.example.com"],
+      frameDomains: [],
+      baseUriDomains: [],
+    });
+    expect(sandboxedIframePropsRef.current?.permissions).toEqual({
+      camera: true,
+    });
   });
 
   it("sends partial tool input during input-streaming", async () => {

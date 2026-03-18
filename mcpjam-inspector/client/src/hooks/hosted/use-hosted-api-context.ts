@@ -7,7 +7,12 @@ interface UseHostedApiContextOptions {
   serverIdsByName: Record<string, string>;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
+  guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
+  sandboxToken?: string;
+  isAuthenticated?: boolean;
+  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
+  serverConfigs?: Record<string, unknown>;
   enabled?: boolean;
 }
 
@@ -16,7 +21,11 @@ export function useHostedApiContext({
   serverIdsByName,
   getAccessToken,
   oauthTokensByServerId,
+  guestOauthTokensByServerName,
   shareToken,
+  sandboxToken,
+  isAuthenticated,
+  serverConfigs,
   enabled = true,
 }: UseHostedApiContextOptions): void {
   // useLayoutEffect so the global hosted context is set synchronously before
@@ -39,7 +48,11 @@ export function useHostedApiContext({
       serverIdsByName,
       getAccessToken,
       oauthTokensByServerId,
+      guestOauthTokensByServerName,
       shareToken,
+      sandboxToken,
+      isAuthenticated,
+      serverConfigs,
     });
 
     return () => {
@@ -51,6 +64,10 @@ export function useHostedApiContext({
     serverIdsByName,
     getAccessToken,
     oauthTokensByServerId,
+    guestOauthTokensByServerName,
     shareToken,
+    sandboxToken,
+    isAuthenticated,
+    serverConfigs,
   ]);
 }

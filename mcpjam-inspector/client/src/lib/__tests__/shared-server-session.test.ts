@@ -3,6 +3,7 @@ import {
   clearSharedSignInReturnPath,
   clearSharedServerSession,
   extractSharedTokenFromPath,
+  getShareableAppOrigin,
   hasActiveSharedSession,
   readSharedSignInReturnPath,
   readSharedServerSession,
@@ -143,5 +144,9 @@ describe("shared-server-session", () => {
 
     localStorage.setItem(SHARED_SIGN_IN_RETURN_PATH_STORAGE_KEY, "/servers");
     expect(readSharedSignInReturnPath()).toBeNull();
+  });
+
+  it("uses the current browser origin for share links in web contexts", () => {
+    expect(getShareableAppOrigin()).toBe(window.location.origin);
   });
 });

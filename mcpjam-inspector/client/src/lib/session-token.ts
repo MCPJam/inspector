@@ -13,7 +13,12 @@
  */
 
 import { HOSTED_MODE } from "@/lib/config";
-import { getHostedAuthorizationHeader } from "@/lib/apis/web/context";
+import {
+  getHostedAuthorizationHeader,
+  resetTokenCache,
+  shouldRetryHostedAuth401,
+} from "@/lib/apis/web/context";
+import { forceRefreshGuestSession } from "@/lib/guest-session";
 
 // Extend window type for the injected token
 declare global {
@@ -24,6 +29,65 @@ declare global {
 
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
+
+function mergeHeaders(
+  ...headersList: Array<HeadersInit | undefined>
+): HeadersInit {
+  const merged: Record<string, string> = {};
+
+  for (const headers of headersList) {
+    if (!headers) continue;
+
+    if (headers instanceof Headers) {
+      headers.forEach((value, key) => {
+        merged[key] = value;
+      });
+      continue;
+    }
+
+    if (Array.isArray(headers)) {
+      for (const [key, value] of headers) {
+        merged[key] = value;
+      }
+      continue;
+    }
+
+    Object.assign(merged, headers);
+  }
+
+  return merged;
+}
+
+function hasAuthorizationHeader(headers?: HeadersInit): boolean {
+  if (!headers) return false;
+
+  if (headers instanceof Headers) {
+    return headers.has("Authorization");
+  }
+
+  if (Array.isArray(headers)) {
+    return headers.some(([key]) => key.toLowerCase() === "authorization");
+  }
+
+  return Object.keys(headers).some(
+    (key) => key.toLowerCase() === "authorization",
+  );
+}
+
+function buildAuthFetchInit(
+  init: RequestInit | undefined,
+  hostedAuthorizationHeader: string | null,
+): RequestInit {
+  const sessionHeaders = getAuthHeaders();
+  const hostedHeaders = hostedAuthorizationHeader
+    ? ({ Authorization: hostedAuthorizationHeader } as HeadersInit)
+    : undefined;
+
+  return {
+    ...init,
+    headers: mergeHeaders(sessionHeaders, hostedHeaders, init?.headers),
+  };
+}
 
 /**
  * Initialize the session token.
@@ -162,20 +226,28 @@ export async function authFetch(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> {
-  const sessionHeaders = getAuthHeaders();
   const hostedAuthHeader = await getHostedAuthorizationHeader();
-  const hostedHeaders = hostedAuthHeader
-    ? ({ Authorization: hostedAuthHeader } as HeadersInit)
-    : {};
+  const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
+  const mergedInit = buildAuthFetchInit(init, hostedAuthHeader);
+  const response = await fetch(input, mergedInit);
 
-  const mergedInit: RequestInit = {
-    ...init,
-    headers: {
-      ...sessionHeaders,
-      ...hostedHeaders,
-      ...init?.headers,
-    },
-  };
+  if (
+    response.status !== 401 ||
+    !HOSTED_MODE ||
+    !shouldRetryHostedAuth401() ||
+    callerProvidedAuthorization
+  ) {
+    return response;
+  }
 
-  return fetch(input, mergedInit);
+  // Clear both the 30s bearer cache and the stale guest token,
+  // then fetch a fresh guest token and retry once.
+  resetTokenCache();
+  const refreshedGuestToken = await forceRefreshGuestSession();
+  if (!refreshedGuestToken) {
+    return response;
+  }
+
+  const retryInit = buildAuthFetchInit(init, `Bearer ${refreshedGuestToken}`);
+  return fetch(input, retryInit);
 }

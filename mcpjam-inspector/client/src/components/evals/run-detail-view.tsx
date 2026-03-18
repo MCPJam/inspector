@@ -1,21 +1,5 @@
-import { useState, useMemo } from "react";
-import { X, Loader2, ChevronDown, ChevronRight } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
-import {
-  BarChart,
-  Bar,
-  CartesianGrid,
-  PieChart,
-  Pie,
-  XAxis,
-  YAxis,
-  Label,
-} from "recharts";
+import { useMemo } from "react";
+import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import { getIterationBorderColor } from "./helpers";
@@ -24,10 +8,13 @@ import {
   computeIterationPassed,
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
+import { CiMetadataDisplay } from "./ci-metadata-display";
+import { AiTriagePanel } from "./ai-triage-panel";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
   caseGroupsForSelectedRun: EvalIteration[];
+  source?: "ui" | "sdk";
   selectedRunChartData: {
     donutData: Array<{ name: string; value: number; fill: string }>;
     durationData: Array<{
@@ -52,20 +39,25 @@ interface RunDetailViewProps {
   showRunSummarySidebar: boolean;
   setShowRunSummarySidebar: (show: boolean) => void;
   serverNames?: string[];
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
+  hideCiMetadata?: boolean;
 }
 
 export function RunDetailView({
   selectedRunDetails,
   caseGroupsForSelectedRun,
+  source,
   selectedRunChartData,
   runDetailSortBy,
   onSortChange,
   showRunSummarySidebar,
   setShowRunSummarySidebar,
   serverNames = [],
+  selectedIterationId,
+  onSelectIteration,
+  hideCiMetadata,
 }: RunDetailViewProps) {
-  const [openIterationId, setOpenIterationId] = useState<string | null>(null);
-
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
@@ -89,489 +81,344 @@ export function RunDetailView({
     return { passed, failed, total, passRate };
   }, [caseGroupsForSelectedRun, selectedRunDetails.summary]);
 
-  return (
-    <div className="relative">
-      {/* Run Metrics and Chart */}
-      <div className="rounded-lg border bg-background/80 px-3 py-2">
-        <div className="flex items-center gap-6">
-          {/* Metrics */}
-          <div className="flex gap-6 flex-1">
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Accuracy</div>
-              <div className="text-sm font-semibold">
-                {computedStats.total > 0
-                  ? `${Math.round(computedStats.passRate * 100)}%`
-                  : "—"}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Passed</div>
-              <div className="text-sm font-semibold">
-                {computedStats.passed.toLocaleString()}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Failed</div>
-              <div className="text-sm font-semibold">
-                {computedStats.failed.toLocaleString()}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Total</div>
-              <div className="text-sm font-semibold">
-                {computedStats.total.toLocaleString()}
-              </div>
-            </div>
-            <div className="space-y-0.5">
-              <div className="text-xs text-muted-foreground">Duration</div>
-              <div className="text-sm font-semibold">
-                {selectedRunDetails.completedAt && selectedRunDetails.createdAt
-                  ? formatDuration(
-                      selectedRunDetails.completedAt -
-                        selectedRunDetails.createdAt,
-                    )
-                  : "—"}
-              </div>
-            </div>
-          </div>
+  const hasTokenData = useMemo(
+    () => caseGroupsForSelectedRun.some((i) => (i.tokensUsed || 0) > 0),
+    [caseGroupsForSelectedRun],
+  );
 
-          {/* Test Results Chart */}
-          {selectedRunChartData.donutData.length > 0 && (
-            <div className="flex items-center gap-2">
-              <ChartContainer
-                config={{
-                  passed: { label: "Passed", color: "hsl(142.1 76.2% 36.3%)" },
-                  failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                  pending: { label: "Pending", color: "hsl(45.4 93.4% 47.5%)" },
-                  cancelled: {
-                    label: "Cancelled",
-                    color: "hsl(240 3.7% 15.9%)",
-                  },
-                }}
-                className="h-12 w-12"
-              >
-                <PieChart>
-                  <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                  <Pie
-                    data={selectedRunChartData.donutData}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={15}
-                    outerRadius={22}
-                    strokeWidth={1}
-                  >
-                    <Label
-                      content={({ viewBox }) => {
-                        if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                          const total = selectedRunChartData.donutData.reduce(
-                            (sum, item) => sum + item.value,
-                            0,
-                          );
-                          return (
-                            <text
-                              x={viewBox.cx}
-                              y={viewBox.cy}
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                            >
-                              <tspan
-                                x={viewBox.cx}
-                                y={viewBox.cy}
-                                className="fill-foreground text-xs font-bold"
-                              >
-                                {total}
-                              </tspan>
-                              <tspan
-                                x={viewBox.cx}
-                                y={(viewBox.cy || 0) + 8}
-                                className="fill-muted-foreground text-[8px]"
-                              >
-                                Total
-                              </tspan>
-                            </text>
-                          );
-                        }
+  const isRunning = selectedRunDetails.status === "running";
+  const expected = selectedRunDetails.expectedIterations;
+  const progressPercent =
+    expected && isRunning && expected > 0
+      ? Math.round((computedStats.total / expected) * 100)
+      : null;
+
+  const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
+
+  const selectedIteration = useMemo(
+    () =>
+      selectedIterationId
+        ? (caseGroupsForSelectedRun.find(
+            (i) => i._id === selectedIterationId,
+          ) ?? null)
+        : null,
+    [selectedIterationId, caseGroupsForSelectedRun],
+  );
+
+  return (
+    <div className="relative flex flex-col p-4">
+      {/* Run Header */}
+      <div className="shrink-0">
+        {!hideCiMetadata &&
+          (selectedRunDetails.ciMetadata?.branch ||
+            selectedRunDetails.ciMetadata?.commitSha ||
+            selectedRunDetails.ciMetadata?.runUrl) && (
+            <div className="mb-4">
+              <CiMetadataDisplay ciMetadata={selectedRunDetails.ciMetadata} />
+            </div>
+          )}
+
+        {/* Run Metrics and Chart */}
+        <div className="rounded-xl border bg-card text-card-foreground">
+          <div className="flex items-center gap-6 p-5">
+            {/* Stats */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-baseline gap-2 mb-1">
+                <span className="text-2xl font-bold">
+                  {computedStats.total > 0
+                    ? `${Math.round(computedStats.passRate * 100)}%`
+                    : "—"}
+                </span>
+                <span className="text-sm text-muted-foreground">
+                  {metricLabel}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>
+                  {expected && isRunning
+                    ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()} tests`
+                    : `${computedStats.total.toLocaleString()} tests`}
+                </span>
+                {selectedRunDetails.completedAt &&
+                  selectedRunDetails.createdAt && (
+                    <>
+                      <span className="text-muted-foreground/40">|</span>
+                      <span>
+                        {formatDuration(
+                          selectedRunDetails.completedAt -
+                            selectedRunDetails.createdAt,
+                        )}
+                      </span>
+                    </>
+                  )}
+                <span className="text-muted-foreground/40">|</span>
+                <span className="capitalize">
+                  {isRunning && progressPercent !== null
+                    ? `Running (${progressPercent}%)`
+                    : selectedRunDetails.status}
+                </span>
+              </div>
+              {/* Pass/fail progress bar */}
+              {computedStats.total > 0 && (
+                <div className="mt-3 flex items-center gap-3">
+                  <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden flex">
+                    <div
+                      className="h-full rounded-l-full transition-all"
+                      style={{
+                        width: `${(computedStats.passed / computedStats.total) * 100}%`,
+                        backgroundColor: "hsl(142.1 76.2% 36.3%)",
                       }}
                     />
-                  </Pie>
-                </PieChart>
-              </ChartContainer>
-            </div>
-          )}
-
-          {/* Status */}
-          <span className="text-xs font-medium text-foreground capitalize">
-            {selectedRunDetails.status}
-          </span>
-
-          {/* Pass/Fail Badge */}
-          <PassCriteriaBadge run={selectedRunDetails} variant="compact" />
-        </div>
-      </div>
-
-      {/* Test Cases for this Run */}
-      <div className="rounded-xl border bg-card text-card-foreground mt-4">
-        <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold">All Iterations</div>
-            <p className="text-xs text-muted-foreground">
-              All test iterations from this run
-            </p>
-          </div>
-          <select
-            value={runDetailSortBy}
-            onChange={(e) =>
-              onSortChange(e.target.value as "model" | "test" | "result")
-            }
-            className="text-xs border rounded px-2 py-1 bg-background"
-          >
-            <option value="model">Sort by Model</option>
-            <option value="test">Sort by Test</option>
-            <option value="result">Sort by Result</option>
-          </select>
-        </div>
-
-        {/* Column Headers */}
-        {caseGroupsForSelectedRun.length > 0 && (
-          <div className="flex items-center gap-4 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground pl-7">
-            <div className="flex-1">Test</div>
-            <div className="flex items-center gap-4 shrink-0">
-              <div className="min-w-[120px]">Model</div>
-              <div className="min-w-[50px]">Tools</div>
-              <div className="min-w-[60px]">Tokens</div>
-              <div className="min-w-[40px] text-right">Duration</div>
-            </div>
-          </div>
-        )}
-
-        <div className="divide-y">
-          {caseGroupsForSelectedRun.length === 0 ? (
-            <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No test cases found for this run.
-            </div>
-          ) : (
-            caseGroupsForSelectedRun.map((iteration) => (
-              <IterationRow
-                key={iteration._id}
-                iteration={iteration}
-                isOpen={openIterationId === iteration._id}
-                onToggle={() =>
-                  setOpenIterationId(
-                    openIterationId === iteration._id ? null : iteration._id,
-                  )
-                }
-                showModelInfo={true}
-                serverNames={serverNames}
-              />
-            ))
-          )}
-        </div>
-      </div>
-
-      {/* Run Summary Sidebar */}
-      {showRunSummarySidebar && (
-        <>
-          <div
-            className="fixed inset-0 bg-black/50 z-40 animate-in fade-in duration-200"
-            onClick={() => setShowRunSummarySidebar(false)}
-          />
-
-          <div className="fixed right-0 top-0 bottom-0 w-[500px] bg-background border-l z-50 overflow-y-auto animate-in slide-in-from-right duration-300">
-            <div className="sticky top-0 bg-background border-b px-4 py-3 flex items-center justify-between z-10">
-              <div className="text-sm font-semibold">Run Summary</div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setShowRunSummarySidebar(false)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-
-            <div className="p-4 space-y-4">
-              {/* Charts */}
-              {(selectedRunChartData.durationData.length > 0 ||
-                selectedRunChartData.tokensData.length > 0 ||
-                selectedRunChartData.modelData.length > 0) && (
-                <div className="space-y-4">
-                  {/* Duration per Test Bar Chart */}
-                  {selectedRunChartData.durationData.length > 0 && (
-                    <div className="rounded-lg border bg-background/50 p-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-3">
-                        Duration per Test
-                      </div>
-                      <ChartContainer
-                        config={{
-                          duration: {
-                            label: "Duration",
-                            color: "var(--chart-1)",
-                          },
-                        }}
-                        className="aspect-auto h-64 w-full"
-                      >
-                        <BarChart
-                          data={selectedRunChartData.durationData}
-                          width={undefined}
-                          height={undefined}
-                        >
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            vertical={false}
-                            stroke="hsl(var(--muted-foreground) / 0.2)"
-                          />
-                          <XAxis
-                            dataKey="name"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{
-                              fontSize: 10,
-                              angle: -45,
-                              textAnchor: "end",
-                            }}
-                            interval={0}
-                            height={80}
-                            tickFormatter={(value) => {
-                              if (value.length > 20) {
-                                return value.substring(0, 17) + "...";
-                              }
-                              return value;
-                            }}
-                          />
-                          <YAxis
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 12 }}
-                            tickFormatter={(value) => `${value.toFixed(1)}s`}
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={({ active, payload }) => {
-                              if (!active || !payload || payload.length === 0)
-                                return null;
-                              const data = payload[0].payload;
-                              return (
-                                <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                  <div className="text-xs font-semibold">
-                                    {data.name}
-                                  </div>
-                                  <div className="text-sm font-medium mt-1">
-                                    {data.durationSeconds.toFixed(2)}s
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                          <Bar
-                            dataKey="durationSeconds"
-                            fill="var(--color-duration)"
-                            radius={[4, 4, 0, 0]}
-                            isAnimationActive={false}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  )}
-
-                  {/* Tokens per Test Bar Chart */}
-                  {selectedRunChartData.tokensData.length > 0 && (
-                    <div className="rounded-lg border bg-background/50 p-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-3">
-                        Tokens per Test
-                      </div>
-                      <ChartContainer
-                        config={{
-                          tokens: {
-                            label: "Tokens",
-                            color: "var(--chart-2)",
-                          },
-                        }}
-                        className="aspect-auto h-64 w-full"
-                      >
-                        <BarChart
-                          data={selectedRunChartData.tokensData}
-                          width={undefined}
-                          height={undefined}
-                        >
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            vertical={false}
-                            stroke="hsl(var(--muted-foreground) / 0.2)"
-                          />
-                          <XAxis
-                            dataKey="name"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{
-                              fontSize: 10,
-                              angle: -45,
-                              textAnchor: "end",
-                            }}
-                            interval={0}
-                            height={80}
-                            tickFormatter={(value) => {
-                              if (value.length > 20) {
-                                return value.substring(0, 17) + "...";
-                              }
-                              return value;
-                            }}
-                          />
-                          <YAxis
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 12 }}
-                            tickFormatter={(value) => value.toLocaleString()}
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={({ active, payload }) => {
-                              if (!active || !payload || payload.length === 0)
-                                return null;
-                              const data = payload[0].payload;
-                              return (
-                                <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                  <div className="text-xs font-semibold">
-                                    {data.name}
-                                  </div>
-                                  <div className="text-sm font-medium mt-1">
-                                    {Math.round(data.tokens).toLocaleString()}{" "}
-                                    tokens
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                          <Bar
-                            dataKey="tokens"
-                            fill="var(--color-tokens)"
-                            radius={[4, 4, 0, 0]}
-                            isAnimationActive={false}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  )}
-
-                  {/* Per-Model Performance for this run */}
-                  {selectedRunChartData.modelData.length > 0 && (
-                    <div className="rounded-lg border bg-background/50 p-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-3">
-                        Performance by model
-                      </div>
-                      <ChartContainer
-                        config={{
-                          passRate: {
-                            label: "Accuracy",
-                            color: "var(--chart-1)",
-                          },
-                        }}
-                        className="aspect-auto h-48 w-full"
-                      >
-                        <BarChart
-                          data={selectedRunChartData.modelData}
-                          width={undefined}
-                          height={undefined}
-                        >
-                          <CartesianGrid
-                            strokeDasharray="3 3"
-                            vertical={false}
-                            stroke="hsl(var(--muted-foreground) / 0.2)"
-                          />
-                          <XAxis
-                            dataKey="model"
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 11 }}
-                            interval={0}
-                            height={40}
-                            tickFormatter={(value) => {
-                              if (value.length > 15) {
-                                return value.substring(0, 12) + "...";
-                              }
-                              return value;
-                            }}
-                          />
-                          <YAxis
-                            domain={[0, 100]}
-                            tickLine={false}
-                            axisLine={false}
-                            tickMargin={8}
-                            tick={{ fontSize: 12 }}
-                            tickFormatter={(value) => `${value}%`}
-                          />
-                          <ChartTooltip
-                            cursor={false}
-                            content={({ active, payload }) => {
-                              if (!active || !payload || payload.length === 0)
-                                return null;
-                              const data = payload[0].payload;
-                              return (
-                                <div className="rounded-lg border bg-background p-2 shadow-sm">
-                                  <div className="grid gap-2">
-                                    <div className="flex flex-col">
-                                      <span className="text-xs font-semibold">
-                                        {data.model}
-                                      </span>
-                                      <span className="text-xs text-muted-foreground mt-0.5">
-                                        {data.passed} passed · {data.failed}{" "}
-                                        failed
-                                      </span>
-                                    </div>
-                                    <div className="flex items-center gap-2">
-                                      <div
-                                        className="h-2 w-2 rounded-full"
-                                        style={{
-                                          backgroundColor:
-                                            "var(--color-passRate)",
-                                        }}
-                                      />
-                                      <span className="text-sm font-semibold">
-                                        {data.passRate}%
-                                      </span>
-                                    </div>
-                                  </div>
-                                </div>
-                              );
-                            }}
-                          />
-                          <Bar
-                            dataKey="passRate"
-                            fill="var(--color-passRate)"
-                            radius={[4, 4, 0, 0]}
-                            isAnimationActive={false}
-                            minPointSize={8}
-                          />
-                        </BarChart>
-                      </ChartContainer>
-                    </div>
-                  )}
+                    <div
+                      className="h-full rounded-r-full transition-all"
+                      style={{
+                        width: `${(computedStats.failed / computedStats.total) * 100}%`,
+                        backgroundColor: "hsl(0 84.2% 60.2%)",
+                      }}
+                    />
+                  </div>
+                  <span className="text-xs text-muted-foreground shrink-0">
+                    {computedStats.passed} passed · {computedStats.failed}{" "}
+                    failed
+                  </span>
                 </div>
               )}
             </div>
+
+            {/* Pass/Fail Badge */}
+            <PassCriteriaBadge
+              run={selectedRunDetails}
+              variant="compact"
+              metricLabel={metricLabel}
+            />
           </div>
-        </>
-      )}
+
+          {/* Inline model performance (only when ≥2 models) */}
+          {selectedRunChartData.modelData.length >= 2 && (
+            <div className="border-t px-5 py-3">
+              <div className="text-[10px] text-muted-foreground mb-2">
+                Performance by Model
+              </div>
+              <div className="flex flex-wrap items-center gap-4">
+                {selectedRunChartData.modelData.map((model) => (
+                  <div key={model.model} className="flex items-center gap-1.5">
+                    <div
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{
+                        backgroundColor:
+                          model.passRate >= 80
+                            ? "hsl(142.1 76.2% 36.3%)"
+                            : model.passRate >= 50
+                              ? "hsl(45.4 93.4% 47.5%)"
+                              : "hsl(0 84.2% 60.2%)",
+                      }}
+                    />
+                    <span className="text-[11px]">{model.model}</span>
+                    <span className="text-[11px] font-mono font-medium">
+                      {model.passRate}%
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      ({model.passed}/{model.total})
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* AI Triage — shown between summary and iteration panes */}
+      <AiTriagePanel
+        run={selectedRunDetails}
+        failedCount={computedStats.failed}
+      />
+
+      {/* Two-pane body */}
+      <div
+        className="flex mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden"
+        style={{ height: "calc(100vh - 200px)", minHeight: "400px" }}
+      >
+        {/* Left pane: iteration list */}
+        <div className="w-[280px] shrink-0 border-r flex flex-col">
+          <div className="border-b px-3 py-2 shrink-0 flex items-center justify-between">
+            <div className="text-xs font-semibold">Iterations</div>
+            <select
+              value={runDetailSortBy}
+              onChange={(e) =>
+                onSortChange(e.target.value as "model" | "test" | "result")
+              }
+              className="text-[10px] border rounded px-1.5 py-0.5 bg-background"
+            >
+              <option value="model">Model</option>
+              <option value="test">Test</option>
+              <option value="result">Result</option>
+            </select>
+          </div>
+          <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="divide-y">
+              {caseGroupsForSelectedRun.length === 0 ? (
+                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+                  No iterations found.
+                </div>
+              ) : (
+                <IterationListWithSections
+                  iterations={caseGroupsForSelectedRun}
+                  sortBy={runDetailSortBy}
+                  selectedIterationId={selectedIterationId}
+                  onSelectIteration={onSelectIteration}
+                />
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Right pane: iteration detail */}
+        <div className="flex-1 min-w-0 flex flex-col">
+          {selectedIteration ? (
+            <div
+              key={selectedIterationId}
+              className="flex-1 min-h-0 overflow-y-auto p-4"
+            >
+              <IterationDetails
+                iteration={selectedIteration}
+                testCase={null}
+                serverNames={serverNames}
+                layoutMode="full"
+              />
+            </div>
+          ) : (
+            <div className="flex-1 flex items-center justify-center">
+              <div className="text-sm text-muted-foreground">
+                {caseGroupsForSelectedRun.length === 0
+                  ? "No iterations in this run yet."
+                  : "Select an iteration to view details"}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-// Simple iteration row component for flat list display
-function IterationRow({
+// Iteration list with section headers when sorted by result
+function IterationListWithSections({
+  iterations,
+  sortBy,
+  selectedIterationId,
+  onSelectIteration,
+}: {
+  iterations: EvalIteration[];
+  sortBy: "model" | "test" | "result";
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
+}) {
+  if (sortBy !== "result") {
+    // No sections — just render flat list
+    return (
+      <>
+        {iterations.map((iteration, idx) => (
+          <IterationListItem
+            key={iteration._id}
+            iteration={iteration}
+            index={idx + 1}
+            isSelected={selectedIterationId === iteration._id}
+            onSelect={() => onSelectIteration(iteration._id)}
+          />
+        ))}
+      </>
+    );
+  }
+
+  // Group by result: failing first, then passing, then pending/cancelled
+  const failing = iterations.filter(
+    (i) => computeIterationResult(i) === "failed",
+  );
+  const passing = iterations.filter(
+    (i) => computeIterationResult(i) === "passed",
+  );
+  const other = iterations.filter((i) => {
+    const r = computeIterationResult(i);
+    return r !== "failed" && r !== "passed";
+  });
+
+  let globalIdx = 0;
+
+  return (
+    <>
+      {failing.length > 0 && (
+        <>
+          <div className="px-3 py-1.5 bg-red-500/10 text-[10px] font-semibold text-red-500 uppercase tracking-wide sticky top-0 z-[1]">
+            Failing ({failing.length})
+          </div>
+          {failing.map((iteration) => {
+            globalIdx++;
+            return (
+              <IterationListItem
+                key={iteration._id}
+                iteration={iteration}
+                index={globalIdx}
+                isSelected={selectedIterationId === iteration._id}
+                onSelect={() => onSelectIteration(iteration._id)}
+              />
+            );
+          })}
+        </>
+      )}
+      {passing.length > 0 && (
+        <>
+          <div className="px-3 py-1.5 bg-green-500/10 text-[10px] font-semibold text-green-500 uppercase tracking-wide sticky top-0 z-[1]">
+            Passing ({passing.length})
+          </div>
+          {passing.map((iteration) => {
+            globalIdx++;
+            return (
+              <IterationListItem
+                key={iteration._id}
+                iteration={iteration}
+                index={globalIdx}
+                isSelected={selectedIterationId === iteration._id}
+                onSelect={() => onSelectIteration(iteration._id)}
+              />
+            );
+          })}
+        </>
+      )}
+      {other.length > 0 && (
+        <>
+          <div className="px-3 py-1.5 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide sticky top-0 z-[1]">
+            Pending / Cancelled ({other.length})
+          </div>
+          {other.map((iteration) => {
+            globalIdx++;
+            return (
+              <IterationListItem
+                key={iteration._id}
+                iteration={iteration}
+                index={globalIdx}
+                isSelected={selectedIterationId === iteration._id}
+                onSelect={() => onSelectIteration(iteration._id)}
+              />
+            );
+          })}
+        </>
+      )}
+    </>
+  );
+}
+
+// Compact iteration list item for the left pane
+function IterationListItem({
   iteration,
-  isOpen,
-  onToggle,
-  showModelInfo = false,
-  serverNames = [],
+  index,
+  isSelected,
+  onSelect,
 }: {
   iteration: EvalIteration;
-  isOpen: boolean;
-  onToggle: () => void;
-  showModelInfo?: boolean;
-  serverNames?: string[];
+  index: number;
+  isSelected: boolean;
+  onSelect: () => void;
 }) {
   const startedAt = iteration.startedAt ?? iteration.createdAt;
   const completedAt = iteration.updatedAt ?? iteration.createdAt;
@@ -581,11 +428,32 @@ function IterationRow({
     iteration.status === "pending" || iteration.status === "running";
 
   const testInfo = iteration.testCaseSnapshot;
-  const actualToolCalls = iteration.actualToolCalls || [];
   const modelName = testInfo?.model || "—";
 
-  // Recompute pass/fail to ensure consistency with charts/aggregations
   const computedResult = computeIterationResult(iteration);
+  const passed = computeIterationPassed(iteration);
+
+  // Extract a distinguishing detail from the query or expected tool call args
+  const distinguisher = useMemo(() => {
+    if (!testInfo) return null;
+    // Try to get key params from expected tool calls
+    const expectedArgs = testInfo.expectedToolCalls?.[0]?.arguments;
+    if (expectedArgs && Object.keys(expectedArgs).length > 0) {
+      const entries = Object.entries(expectedArgs).slice(0, 2);
+      return entries
+        .map(
+          ([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`,
+        )
+        .join(", ");
+    }
+    // Fall back to first ~60 chars of query if different from title
+    if (testInfo.query && testInfo.query !== testInfo.title) {
+      return testInfo.query.length > 60
+        ? testInfo.query.slice(0, 57) + "..."
+        : testInfo.query;
+    }
+    return null;
+  }, [testInfo]);
 
   return (
     <div className={`relative ${isPending ? "opacity-60" : ""}`}>
@@ -595,72 +463,55 @@ function IterationRow({
         )}`}
       />
       <button
-        onClick={onToggle}
-        className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer hover:bg-muted/50"
+        onClick={onSelect}
+        className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer ${
+          isSelected
+            ? "bg-primary/10 border-r-2 border-r-primary"
+            : "hover:bg-muted/50"
+        }`}
       >
-        <div className="flex min-w-0 flex-1 items-center gap-3 pl-2">
-          <div className="text-muted-foreground shrink-0">
-            {isOpen ? (
-              <ChevronDown className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronRight className="h-3.5 w-3.5" />
-            )}
-          </div>
-          <div className="flex min-w-0 flex-1 items-center gap-2">
-            <span className="text-xs font-medium truncate">
-              {testInfo?.title || "Iteration"}
-            </span>
-            {testInfo?.isNegativeTest && (
-              <span
-                className="text-[10px] text-orange-500 shrink-0"
-                title="Negative test"
-              >
-                NEG
-              </span>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-4 text-xs text-muted-foreground shrink-0">
-          {showModelInfo && (
-            <div className="min-w-[120px] text-left truncate">
-              <span className="font-mono text-xs">{modelName}</span>
-            </div>
+        <div className="flex items-center gap-1.5 min-w-0">
+          {/* Sequence number */}
+          <span className="text-[10px] text-muted-foreground font-mono shrink-0 w-4 text-right">
+            {index}
+          </span>
+          {/* Pass/fail icon */}
+          {isPending ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-warning shrink-0" />
+          ) : passed ? (
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
+          ) : (
+            <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
           )}
-          <div className="min-w-[50px] text-center">
-            <span className="font-mono">
-              {isPending ? "—" : actualToolCalls.length}
+          <span className="text-xs font-medium truncate flex-1">
+            {testInfo?.title || "Iteration"}
+          </span>
+          {testInfo?.isNegativeTest && (
+            <span
+              className="text-[9px] font-medium px-1 py-0.5 rounded bg-orange-500/15 text-orange-500 shrink-0"
+              title="Negative test — expects the tool NOT to be called"
+            >
+              Negative
             </span>
+          )}
+        </div>
+        {/* Distinguishing detail */}
+        {distinguisher && (
+          <div className="ml-[calc(1rem+0.375rem+0.875rem)] text-[10px] text-muted-foreground/70 truncate italic">
+            {distinguisher}
           </div>
-          <div className="min-w-[60px] text-center">
-            <span className="font-mono">
-              {isPending
-                ? "—"
-                : Number(iteration.tokensUsed || 0).toLocaleString()}
-            </span>
-          </div>
-          <div className="font-mono min-w-[40px] text-right">
+        )}
+        <div className="ml-[calc(1rem+0.375rem+0.875rem)] flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span className="font-mono truncate">{modelName}</span>
+          <span className="shrink-0">
             {isPending
               ? "—"
               : durationMs !== null
                 ? formatDuration(durationMs)
                 : "—"}
-          </div>
-          {isPending && (
-            <div className="w-3.5 flex items-center justify-center">
-              <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />
-            </div>
-          )}
+          </span>
         </div>
       </button>
-      {isOpen ? (
-        <div className="border-t bg-muted/20 px-4 pb-4 pt-3 pl-8">
-          <IterationDetails
-            iteration={iteration}
-            testCase={null}
-            serverNames={serverNames}
-          />
-        </div>
-      ) : null}
     </div>
   );
 }

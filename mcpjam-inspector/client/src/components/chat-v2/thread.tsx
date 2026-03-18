@@ -10,6 +10,7 @@ import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicato
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -37,6 +38,8 @@ interface ThreadProps {
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
+  interactive?: boolean;
+  reasoningDisplayMode?: ReasoningDisplayMode;
 }
 
 export function Thread({
@@ -59,6 +62,8 @@ export function Thread({
   toolRenderOverrides,
   showSaveViewButton = true,
   minimalMode = false,
+  interactive = true,
+  reasoningDisplayMode = "inline",
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -134,6 +139,8 @@ export function Thread({
             toolRenderOverrides={toolRenderOverrides}
             showSaveViewButton={showSaveViewButton}
             minimalMode={minimalMode}
+            interactive={interactive}
+            reasoningDisplayMode={reasoningDisplayMode}
           />
         ))}
         {isLoading && <ThinkingIndicator model={model} />}

@@ -30,6 +30,7 @@ import { PlaygroundMain } from "./ui-playground/PlaygroundMain";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
 
 interface ViewsTabProps {
   selectedServer?: string;
@@ -381,38 +382,51 @@ export function ViewsTab({
     if (lastInjectedViewSignature.current === signature) return;
     lastInjectedViewSignature.current = signature;
 
-    setPendingExecution({
+    const replay = buildPersistedExecutionReplay({
+      protocol: selectedView.protocol,
+      toolCallId: `view-preview-${selectedView._id}`,
       toolName: selectedView.toolName,
-      params: (liveToolInput ?? selectedView.toolInput ?? {}) as Record<
+      toolInput: (liveToolInput ?? selectedView.toolInput ?? {}) as Record<
         string,
         unknown
       >,
-      result: liveToolOutput,
-      toolMeta:
-        (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
-        undefined,
-      state:
+      toolOutput: liveToolOutput,
+      toolState:
         selectedView.toolState === "output-error"
           ? "output-error"
           : "output-available",
-      errorText: selectedView.toolErrorText,
-      renderOverride: {
-        serverId: serverNameForView || selectedView.serverId,
-        isOffline: getServerConnectionStatus(serverNameForView) !== "connected",
-        cachedWidgetHtmlUrl: selectedView.widgetHtmlUrl ?? undefined,
-        initialWidgetState:
-          selectedView.protocol === "openai-apps"
-            ? (liveWidgetState ?? selectedView.widgetState)
-            : undefined,
-        resourceUri:
-          selectedView.protocol === "mcp-apps"
-            ? selectedView.resourceUri
-            : undefined,
-        toolMetadata:
-          (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
-          undefined,
-      },
-      toolCallId: `view-preview-${selectedView._id}`,
+      toolErrorText: selectedView.toolErrorText,
+      toolMetadata:
+        (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
+        undefined,
+      serverId: serverNameForView || selectedView.serverId,
+      isOffline: getServerConnectionStatus(serverNameForView) !== "connected",
+      cachedWidgetHtmlUrl: selectedView.widgetHtmlUrl ?? undefined,
+      resourceUri:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.resourceUri
+          : undefined,
+      initialWidgetState:
+        selectedView.protocol === "openai-apps"
+          ? (liveWidgetState ?? selectedView.widgetState)
+          : undefined,
+      widgetCsp:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.widgetCsp
+          : undefined,
+      widgetPermissions:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.widgetPermissions
+          : undefined,
+      widgetPermissive:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.widgetPermissive
+          : undefined,
+      prefersBorder: selectedView.prefersBorder,
+    });
+
+    setPendingExecution({
+      ...replay,
       replaceExisting: true,
     });
   }, [

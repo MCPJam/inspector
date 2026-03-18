@@ -84,6 +84,7 @@ export interface WidgetDebugInfo {
   protocol: "openai-apps" | "mcp-apps";
   widgetState: unknown;
   globals: WidgetGlobals;
+  prefersBorder?: boolean;
   updatedAt: number;
   /** CSP configuration and violation tracking */
   csp?: WidgetCspInfo;
@@ -169,6 +170,10 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
             theme: "dark",
             displayMode: "inline",
           },
+        prefersBorder:
+          info.prefersBorder !== undefined
+            ? info.prefersBorder
+            : existing?.prefersBorder,
         csp: existing?.csp, // Preserve CSP violations across updates
         widgetHtml: existing?.widgetHtml, // Preserve cached HTML for save view feature
         modelContext: existing?.modelContext, // Preserve model context across updates
@@ -318,6 +323,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         protocol: existing?.protocol ?? "mcp-apps",
         widgetState: existing?.widgetState ?? null,
         globals: existing?.globals ?? { theme: "dark", displayMode: "inline" },
+        prefersBorder: existing?.prefersBorder,
         csp: existing?.csp,
         modelContext: existing?.modelContext,
         widgetHtml: html,

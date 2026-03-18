@@ -4,28 +4,33 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CheckCircle2, XCircle } from "lucide-react";
+import { CheckCircle2, XCircle, AlertTriangle } from "lucide-react";
 import { EvalSuiteRun } from "./types";
 
 interface PassCriteriaBadgeProps {
   run: EvalSuiteRun;
   variant?: "compact" | "detailed";
+  metricLabel?: string;
 }
 
 export function PassCriteriaBadge({
   run,
   variant = "compact",
+  metricLabel = "Accuracy",
 }: PassCriteriaBadgeProps) {
   // Get criteria and result from DB fields
   const minimumPassRate = run.passCriteria?.minimumPassRate ?? 100;
   const result = run.result ?? "pending";
   const status = run.status ?? "pending";
-  // passRate is stored as decimal (0-1), convert to percentage (0-100)
-  const passRateDecimal = run.summary?.passRate ?? 0;
-  const passRate = passRateDecimal * 100;
+  // passRate may be stored as decimal (0-1) or percentage (0-100); normalize to 0-100
+  const rawPassRate = run.summary?.passRate ?? 0;
+  const passRate =
+    rawPassRate <= 1 && rawPassRate > 0 ? rawPassRate * 100 : rawPassRate;
 
   const passed = result === "passed";
   const isRunning = status === "running" || status === "pending";
+  const failedCount = run.summary?.failed ?? 0;
+  const passedWithFailures = passed && failedCount > 0;
 
   // Don't show pass/fail badge while run is in progress
   if (isRunning) {
@@ -39,26 +44,39 @@ export function PassCriteriaBadge({
           <Badge
             variant="outline"
             className={
-              passed
-                ? "gap-1 bg-success/50 text-success-foreground border-success/50 hover:bg-success/70"
-                : "gap-1 bg-destructive/50 text-destructive-foreground border-destructive/50 hover:bg-destructive/70"
+              passedWithFailures
+                ? "gap-1 bg-amber-500/20 text-amber-600 border-amber-500/40 hover:bg-amber-500/30 dark:text-amber-400"
+                : passed
+                  ? "gap-1 bg-success/50 text-success-foreground border-success/50 hover:bg-success/70"
+                  : "gap-1 bg-destructive/50 text-destructive-foreground border-destructive/50 hover:bg-destructive/70"
             }
           >
-            {passed ? (
+            {passedWithFailures ? (
+              <AlertTriangle className="h-3 w-3" />
+            ) : passed ? (
               <CheckCircle2 className="h-3 w-3" />
             ) : (
               <XCircle className="h-3 w-3" />
             )}
-            {passed ? "Passed" : "Failed"}
+            {passedWithFailures
+              ? `Passed (${failedCount} failed)`
+              : passed
+                ? "Passed"
+                : "Failed"}
           </Badge>
         </TooltipTrigger>
         <TooltipContent className="max-w-xs">
           <div className="space-y-1 text-xs">
             <div className="font-medium text-white">
-              {passed ? "✓ Suite Passed" : "✗ Suite Failed"}
+              {passedWithFailures
+                ? `⚠ Suite Passed with ${failedCount} failure${failedCount !== 1 ? "s" : ""}`
+                : passed
+                  ? "✓ Suite Passed"
+                  : "✗ Suite Failed"}
             </div>
             <div className="text-white">
-              Required: {minimumPassRate}% Accuracy
+              Required: {minimumPassRate}% {metricLabel} · Actual:{" "}
+              {passRate.toFixed(0)}%
             </div>
           </div>
         </TooltipContent>
@@ -84,12 +102,12 @@ export function PassCriteriaBadge({
         <div className="flex items-center gap-2">
           <span className="text-muted-foreground">Criteria:</span>
           <Badge variant="outline" className="text-xs">
-            Min {minimumPassRate}% Accuracy
+            Min {minimumPassRate}% {metricLabel}
           </Badge>
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-muted-foreground">Accuracy:</span>
+          <span className="text-muted-foreground">{metricLabel}:</span>
           <span className="font-mono">{passRate.toFixed(1)}%</span>
           <span className="text-muted-foreground">
             (threshold: {minimumPassRate}%)
@@ -98,7 +116,8 @@ export function PassCriteriaBadge({
 
         {!passed && passRate < minimumPassRate && (
           <div className="mt-2 rounded border-l-2 border-destructive bg-destructive/10 p-2 text-xs">
-            Accuracy {passRate.toFixed(1)}% below threshold {minimumPassRate}%
+            {metricLabel} {passRate.toFixed(1)}% below threshold{" "}
+            {minimumPassRate}%
           </div>
         )}
       </div>

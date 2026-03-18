@@ -576,6 +576,40 @@ describe("EvalSuite", () => {
     });
   });
 
+  describe("expectedToolCalls forwarding", () => {
+    it("should expose expectedToolCalls from individual test configs", () => {
+      const suite = new EvalSuite();
+      const expected = [{ toolName: "search", arguments: { q: "test" } }];
+
+      suite.add(
+        new EvalTest({
+          name: "with-expected",
+          test: async (agent) => {
+            await agent.prompt("Search");
+            return true;
+          },
+          expectedToolCalls: expected,
+        })
+      );
+      suite.add(
+        new EvalTest({
+          name: "without-expected",
+          test: async (agent) => {
+            await agent.prompt("Other");
+            return true;
+          },
+        })
+      );
+
+      expect(suite.get("with-expected")!.getConfig().expectedToolCalls).toEqual(
+        expected
+      );
+      expect(
+        suite.get("without-expected")!.getConfig().expectedToolCalls
+      ).toBeUndefined();
+    });
+  });
+
   describe("empty suite handling", () => {
     it("should handle running empty suite", async () => {
       const agent = createMockAgent(async () => {

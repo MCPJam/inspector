@@ -49,6 +49,7 @@ COPY mcpjam-inspector/shared ./shared
 
 # Layer 4: Build SDK first (changes infrequently, required by server and client)
 COPY sdk/src ../sdk/src
+COPY sdk/skills ../sdk/skills
 RUN npm run build:sdk
 
 # Layer 5: Build lib (changes infrequently)
@@ -57,6 +58,8 @@ RUN npm run build:lib
 
 # Layer 6: Build server (changes moderately, depends on SDK)
 COPY mcpjam-inspector/server ./server
+COPY mcpjam-inspector/scripts ./scripts
+RUN npm run bundle:chatgpt && npm run bundle:mcp-apps && npm run bundle:sandbox-proxies
 RUN npm run build:server
 
 # Layer 7: Build client (changes most frequently, depends on SDK and shared)

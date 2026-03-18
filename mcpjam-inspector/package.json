@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.0.4",
+  "version": "2.0.9",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -82,7 +82,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.36",
@@ -93,6 +94,7 @@
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.71",
     "@ai-sdk/xai": "^3.0.46",
+    "@axiomhq/js": "^1.4.0",
     "@convex-dev/auth": "^0.0.88",
     "@convex-dev/workos": "^0.0.1",
     "@dnd-kit/core": "^6.3.1",

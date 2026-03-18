@@ -25,7 +25,10 @@ describe("OAuth client metadata logo_uri", () => {
 
   it("MCPOAuthProvider includes logo_uri in clientMetadata", async () => {
     const { MCPOAuthProvider } = await import("../mcp-oauth");
-    const provider = new MCPOAuthProvider("test-server");
+    const provider = new MCPOAuthProvider(
+      "test-server",
+      "https://example.com/mcp",
+    );
     expect(provider.clientMetadata).toHaveProperty(
       "logo_uri",
       EXPECTED_LOGO_URI,

@@ -39,4 +39,18 @@ describe("hosted-navigation", () => {
     expect(resolved.rawSection).toBe("registry");
     expect(resolved.normalizedSection).toBe("servers");
   });
+
+  it("allows ci-evals in hosted mode", () => {
+    const resolved = resolveHostedNavigation("#ci-evals", true);
+    expect(resolved.normalizedTab).toBe("ci-evals");
+    expect(resolved.isBlocked).toBe(false);
+  });
+
+  it("treats sandboxes as a normal hosted app tab", () => {
+    const resolved = resolveHostedNavigation("#sandboxes", true);
+    expect(resolved.normalizedTab).toBe("sandboxes");
+    expect(resolved.isBlocked).toBe(false);
+    expect(resolved.shouldSelectAllServers).toBe(false);
+    expect(resolved.shouldClearChatMessages).toBe(true);
+  });
 });

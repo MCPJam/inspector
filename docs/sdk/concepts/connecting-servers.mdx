@@ -65,6 +65,37 @@ const manager = new MCPClientManager({
 - Shared team servers
 - Serverless deployments
 
+### HTTP Authentication Options
+
+For HTTP servers, `MCPClientManager` supports three auth patterns:
+
+- `accessToken` for a static bearer token
+- `refreshToken` + `clientId` for non-interactive OAuth token exchange with automatic refresh
+- `authProvider` when you need to provide a custom MCP SDK OAuth provider
+
+If you already have a refresh token, you can let the SDK handle access token exchange and refresh for you:
+
+```typescript
+const manager = new MCPClientManager({
+  asana: {
+    url: "https://mcp.asana.com/mcp",
+    refreshToken: process.env.ASANA_REFRESH_TOKEN!,
+    clientId: process.env.ASANA_CLIENT_ID!,
+    clientSecret: process.env.ASANA_CLIENT_SECRET,
+  },
+});
+```
+
+With this configuration, the SDK:
+
+- exchanges the refresh token for an access token during connection
+- automatically retries with a fresh access token when the server returns an auth challenge
+- stores rotated refresh tokens returned by the authorization server
+
+<Note>
+`refreshToken` is only supported for HTTP servers. When you use it, do not also set `accessToken`, `authProvider`, or an `Authorization` header in `requestInit.headers`.
+</Note>
+
 ## Connecting and Disconnecting
 
 After configuring servers, you must explicitly connect:
@@ -75,6 +106,7 @@ await manager.connectToServer("myServer");
 
 // Now you can use it
 const tools = await manager.listTools("myServer");
+console.log("Available tools:", tools.tools.map((tool) => tool.name));
 
 // Always disconnect when done
 await manager.disconnectServer("myServer");
@@ -144,7 +176,7 @@ const manager = new MCPClientManager({
 
 await manager.connectToServer("myServer");
 
-// Get tools in AI SDK format
+// Get tools for TestAgent
 const tools = await manager.getTools();
 
 // Create agent with those tools
@@ -176,9 +208,9 @@ try {
 Verify a server is responsive:
 
 ```typescript
-const isHealthy = await manager.pingServer("myServer");
-
-if (!isHealthy) {
+try {
+  manager.pingServer("myServer");
+} catch {
   console.warn("Server not responding, reconnecting...");
   await manager.disconnectServer("myServer");
   await manager.connectToServer("myServer");

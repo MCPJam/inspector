@@ -48,6 +48,8 @@ export const DEFAULT_CRITERIA: PassCriteria = {
 export function computeIterationResult(
   iteration: {
     status: "pending" | "running" | "completed" | "failed" | "cancelled";
+    result?: "pending" | "passed" | "failed" | "cancelled";
+    resultSource?: "reported" | "derived";
     testCaseSnapshot?: {
       expectedToolCalls: Array<{
         toolName: string;
@@ -61,6 +63,16 @@ export function computeIterationResult(
   },
   criteria?: PassCriteria,
 ): "pending" | "passed" | "failed" | "cancelled" {
+  if (
+    iteration.resultSource === "reported" &&
+    (iteration.result === "pending" ||
+      iteration.result === "passed" ||
+      iteration.result === "failed" ||
+      iteration.result === "cancelled")
+  ) {
+    return iteration.result;
+  }
+
   // Handle status-based results first
   if (iteration.status === "pending" || iteration.status === "running") {
     return "pending";
@@ -82,6 +94,10 @@ export function computeIterationPassed(
   iteration: EvalIteration,
   criteria?: PassCriteria,
 ): boolean {
+  if (iteration.resultSource === "reported") {
+    return iteration.result === "passed";
+  }
+
   const actual = iteration.actualToolCalls || [];
   const expected = iteration.testCaseSnapshot?.expectedToolCalls || [];
   const isNegativeTest = iteration.testCaseSnapshot?.isNegativeTest;

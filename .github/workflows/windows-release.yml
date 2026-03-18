@@ -36,36 +36,13 @@ jobs:
         with:
           node-version: 24.14.0
 
-      - name: Clean dependencies
-        run: |
-          npm cache clean --force
-          if (Test-Path "node_modules") { Remove-Item "node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
-          if (Test-Path "package-lock.json") { Remove-Item "package-lock.json" -Force -ErrorAction SilentlyContinue }
-          if (Test-Path "client/node_modules") { Remove-Item "client/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
-          if (Test-Path "client/package-lock.json") { Remove-Item "client/package-lock.json" -Force -ErrorAction SilentlyContinue }
-          if (Test-Path "server/node_modules") { Remove-Item "server/node_modules" -Force -Recurse -ErrorAction SilentlyContinue }
-          if (Test-Path "server/package-lock.json") { Remove-Item "server/package-lock.json" -Force -ErrorAction SilentlyContinue }
-        shell: powershell
-
-      - name: Install dependencies fresh
-        run: |
-          npm install --legacy-peer-deps --no-optional
-          npm run install:deps
-          cd ../sdk
-          npm install --legacy-peer-deps
-          cd ..
+      - name: Install dependencies from lockfiles
+        run: npm run deps:ci
         shell: powershell
 
       - name: Rebuild native modules for Windows
         run: |
-          # Rebuild esbuild specifically to fix version mismatch
-          cd server
           npm rebuild esbuild --verbose
-          cd ..
-          # Install Windows-specific binaries
-          npm i -D @rollup/rollup-win32-x64-msvc@^4
-          cd client
-          npm i lightningcss@^1 --save-dev
         shell: powershell
 
       - name: Restore code signing cert

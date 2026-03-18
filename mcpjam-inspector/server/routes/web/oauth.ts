@@ -8,8 +8,16 @@ import {
   OAuthProxyError,
 } from "../../utils/oauth-proxy.js";
 import { ErrorCode, WebRouteError, mapRuntimeError } from "./errors.js";
+import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
+import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 
 const oauthWeb = new Hono();
+
+// Require some form of bearer token (guest or WorkOS) on all OAuth proxy routes
+oauthWeb.use("*", bearerAuthMiddleware);
+
+// Rate limit guest users on OAuth proxy routes
+oauthWeb.use("*", guestRateLimitMiddleware);
 
 function statusToErrorCode(status: number): ErrorCode {
   if (status === 400) return ErrorCode.VALIDATION_ERROR;

@@ -1,4 +1,5 @@
 import { HOSTED_MODE } from "@/lib/config";
+import { getGuestBearerToken } from "@/lib/guest-session";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
@@ -7,7 +8,14 @@ export interface HostedApiContext {
   serverIdsByName: Record<string, string>;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
+  guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
+  sandboxToken?: string;
+  isAuthenticated?: boolean;
+  /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
+  hasSession?: boolean;
+  /** Maps server name → MCPServerConfig for guest mode (no Convex). */
+  serverConfigs?: Record<string, unknown>;
 }
 
 type HostedAccessScope = "workspace_member" | "chat_v2";
@@ -22,14 +30,102 @@ let cachedBearerToken: { token: string; expiresAt: number } | null = null;
 
 const TOKEN_CACHE_TTL_MS = 30_000;
 
-function resetTokenCache() {
+export function resetTokenCache() {
   cachedBearerToken = null;
+}
+
+function readStoredGuestOAuthAccessToken(
+  serverName: string,
+): string | undefined {
+  if (typeof window === "undefined") return undefined;
+
+  try {
+    const raw = localStorage.getItem(`mcp-tokens-${serverName}`);
+    if (!raw) return undefined;
+
+    const parsed = JSON.parse(raw) as { access_token?: unknown };
+    if (
+      typeof parsed.access_token === "string" &&
+      parsed.access_token.trim().length > 0
+    ) {
+      return parsed.access_token;
+    }
+  } catch {
+    // Ignore malformed localStorage data and fall back to in-memory context.
+  }
+
+  return undefined;
 }
 
 function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
   }
+}
+
+/**
+ * True when running in hosted mode as a direct guest connection.
+ * Direct guests store server configs in localStorage and connect directly
+ * without Convex authorization.
+ */
+export function isGuestMode(): boolean {
+  if (!HOSTED_MODE) return false;
+  return !hostedApiContext.workspaceId && !hostedApiContext.isAuthenticated;
+}
+
+export function shouldRetryHostedAuth401(): boolean {
+  if (!HOSTED_MODE) return false;
+  return !hostedApiContext.isAuthenticated;
+}
+
+/**
+ * Hosted guest access comes in 2 shapes:
+ * - direct guest: no workspace, direct serverUrl requests
+ * - hosted shared/sandbox guest: workspace-scoped share or sandbox token,
+ *   Convex-backed requests
+ */
+function hasHostedGuestAccess(): boolean {
+  if (!HOSTED_MODE) return false;
+  if (hostedApiContext.isAuthenticated) return false;
+  return (
+    !hostedApiContext.workspaceId ||
+    !!hostedApiContext.shareToken ||
+    !!hostedApiContext.sandboxToken
+  );
+}
+
+/**
+ * Prefer the guest bearer for both direct guests and shared guests.
+ * Shared guests still use Convex-backed requests; they only differ in how the
+ * bearer is obtained.
+ */
+function shouldPreferGuestBearer(): boolean {
+  return hasHostedGuestAccess();
+}
+
+export function buildGuestServerRequest(
+  config: unknown,
+  oauthAccessToken?: string,
+): Record<string, unknown> {
+  const httpConfig = config as {
+    url?: string | URL;
+    requestInit?: { headers?: Record<string, string> };
+  };
+  if (!httpConfig.url) {
+    throw new Error("Guest server config must have a URL");
+  }
+  const urlStr =
+    typeof httpConfig.url === "string"
+      ? httpConfig.url
+      : httpConfig.url.toString();
+  const headers = httpConfig.requestInit?.headers;
+  return {
+    serverUrl: urlStr,
+    ...(headers && Object.keys(headers).length > 0
+      ? { serverHeaders: headers }
+      : {}),
+    ...(oauthAccessToken ? { oauthAccessToken } : {}),
+  };
 }
 
 export function setHostedApiContext(next: HostedApiContext | null): void {
@@ -108,20 +204,42 @@ export function getHostedShareToken(): string | undefined {
   return hostedApiContext.shareToken;
 }
 
-function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedShareToken() ? "chat_v2" : undefined;
+export function getHostedSandboxToken(): string | undefined {
+  return hostedApiContext.sandboxToken;
 }
 
-export function buildHostedServerRequest(serverNameOrId: string): {
-  workspaceId: string;
-  serverId: string;
-  oauthAccessToken?: string;
-  accessScope?: HostedAccessScope;
-  shareToken?: string;
-} {
+function getHostedAccessScope(): HostedAccessScope | undefined {
+  return getHostedShareToken() || getHostedSandboxToken()
+    ? "chat_v2"
+    : undefined;
+}
+
+export function buildHostedServerRequest(
+  serverNameOrId: string,
+): Record<string, unknown> {
+  // Guest path: use directly-provided server config (no Convex)
+  if (isGuestMode()) {
+    const config = hostedApiContext.serverConfigs?.[serverNameOrId];
+    if (!config) {
+      throw new Error(
+        `No guest server config found for "${serverNameOrId}". ` +
+          "The server may not be loaded yet.",
+      );
+    }
+    // Prefer persisted OAuth tokens so guest requests can keep working even if
+    // React state has not yet synchronized token updates.
+    const oauthToken =
+      readStoredGuestOAuthAccessToken(serverNameOrId) ??
+      hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId];
+
+    return buildGuestServerRequest(config, oauthToken);
+  }
+
+  // Authenticated path: resolve via Convex server mappings
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
   const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
   const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
@@ -129,6 +247,7 @@ export function buildHostedServerRequest(serverNameOrId: string): {
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
   };
 }
 
@@ -138,10 +257,12 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   shareToken?: string;
+  sandboxToken?: string;
 } {
   const serverIds = resolveHostedServerIds(serverNamesOrIds);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
   const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
@@ -149,6 +270,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
   };
 }
 
@@ -171,19 +293,47 @@ export async function getHostedAuthorizationHeader(): Promise<string | null> {
     return `Bearer ${cachedBearerToken.token}`;
   }
 
-  const getAccessToken = hostedApiContext.getAccessToken;
-  if (!getAccessToken) return null;
+  // In guest mode, bypass WorkOS token bootstrap entirely and use a guest
+  // bearer token directly. This avoids stale/invalid WorkOS tokens from
+  // masking valid guest sessions.
+  if (shouldPreferGuestBearer()) {
+    const guestToken = await getGuestBearerToken();
+    if (guestToken) {
+      cachedBearerToken = {
+        token: guestToken,
+        expiresAt: now + TOKEN_CACHE_TTL_MS,
+      };
+      return `Bearer ${guestToken}`;
+    }
+  }
 
-  const token = await getAccessToken();
-  if (!token) {
-    cachedBearerToken = null;
+  // Try WorkOS (logged-in user)
+  const getAccessToken = hostedApiContext.getAccessToken;
+  if (getAccessToken) {
+    try {
+      const token = await getAccessToken();
+      if (token) {
+        cachedBearerToken = { token, expiresAt: now + TOKEN_CACHE_TTL_MS };
+        return `Bearer ${token}`;
+      }
+    } catch {
+      // WorkOS LoginRequiredError — not authenticated, fall through to guest
+    }
+  }
+
+  if (!hasHostedGuestAccess()) {
     return null;
   }
 
-  cachedBearerToken = {
-    token,
-    expiresAt: now + TOKEN_CACHE_TTL_MS,
-  };
+  // Fall back to guest token for explicit guest-capable surfaces only.
+  const guestToken = await getGuestBearerToken();
+  if (guestToken) {
+    cachedBearerToken = {
+      token: guestToken,
+      expiresAt: now + TOKEN_CACHE_TTL_MS,
+    };
+    return `Bearer ${guestToken}`;
+  }
 
-  return `Bearer ${token}`;
+  return null;
 }
