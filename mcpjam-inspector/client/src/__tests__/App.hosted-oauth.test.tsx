@@ -119,7 +119,7 @@ vi.mock("../lib/oauth/mcp-oauth", () => ({
 }));
 
 vi.mock("../components/ServersTab", () => ({
-  ServersTab: () => <div />,
+  ServersTab: () => <div>Servers Tab</div>,
 }));
 vi.mock("../components/ToolsTab", () => ({
   ToolsTab: () => <div />,
@@ -152,7 +152,7 @@ vi.mock("../components/ViewsTab", () => ({
   ViewsTab: () => <div />,
 }));
 vi.mock("../components/SandboxesTab", () => ({
-  SandboxesTab: () => <div />,
+  SandboxesTab: () => <div>Sandboxes Tab</div>,
 }));
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
@@ -296,5 +296,32 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(mockHandleOAuthCallback).toHaveBeenCalledWith("oauth-code");
     });
+  });
+
+  it("navigates back to the sandboxes tab after callback completion", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    writeHostedOAuthPendingMarker({
+      surface: "sandbox",
+      serverName: "asana",
+      serverUrl: "https://mcp.asana.com/sse",
+      returnHash: "#sandboxes",
+    });
+    mockHandleOAuthCallback.mockResolvedValue({
+      success: true,
+      serverName: "asana",
+      serverConfig: {
+        url: "https://mcp.asana.com/sse",
+        requestInit: { headers: { Authorization: "Bearer token" } },
+      },
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(window.location.hash).toBe("#sandboxes");
+      expect(screen.getByText("Sandboxes Tab")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 });

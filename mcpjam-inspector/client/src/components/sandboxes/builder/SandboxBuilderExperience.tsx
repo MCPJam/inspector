@@ -1,4 +1,4 @@
-import { startTransition, useCallback, useState } from "react";
+import { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useSandboxList, type SandboxSettings } from "@/hooks/useSandboxes";
 import {
@@ -34,28 +34,42 @@ export default function SandboxBuilderExperience({
   const workspaceName =
     workspaces.find((workspace) => workspace._id === workspaceId)?.name ?? null;
 
-  const restoredSession = workspaceId
-    ? readBuilderSession(workspaceId)
-    : null;
-
   const [selectedSandboxId, setSelectedSandboxId] = useState<string | null>(
-    () => restoredSession?.sandboxId ?? null,
+    null,
   );
-  const [draft, setDraft] = useState<SandboxDraftConfig | null>(
-    () => (restoredSession?.draft as SandboxDraftConfig | null) ?? null,
-  );
+  const [draft, setDraft] = useState<SandboxDraftConfig | null>(null);
+  const [restoredViewMode, setRestoredViewMode] = useState<
+    "builder" | "insights" | "preview" | undefined
+  >();
 
-  const restoredViewMode = restoredSession?.viewMode as
-    | "builder"
-    | "insights"
-    | "preview"
-    | undefined;
+  // Restore builder session from sessionStorage when workspaceId becomes
+  // available. After an OAuth redirect the page reloads and Convex needs to
+  // reconnect, so workspaceId is null on the first render — useState
+  // initializers would miss the saved session.
+  const restoredForWorkspaceRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!workspaceId) return;
+    if (restoredForWorkspaceRef.current === workspaceId) return;
+    restoredForWorkspaceRef.current = workspaceId;
+
+    const session = readBuilderSession(workspaceId);
+    if (!session || (!session.sandboxId && !session.draft)) return;
+
+    startTransition(() => {
+      setSelectedSandboxId(session.sandboxId);
+      setDraft((session.draft as SandboxDraftConfig | null) ?? null);
+      setRestoredViewMode(
+        session.viewMode as "builder" | "insights" | "preview" | undefined,
+      );
+    });
+  }, [workspaceId]);
 
   const handleCreateSandbox = useCallback(() => {
     const blankStarter = SANDBOX_STARTERS.find((s) => s.id === "blank")!;
     startTransition(() => {
       setSelectedSandboxId(null);
       setDraft(blankStarter.createDraft(getDefaultHostedModelId()));
+      setRestoredViewMode(undefined);
     });
   }, []);
 
@@ -63,6 +77,7 @@ export default function SandboxBuilderExperience({
     startTransition(() => {
       setDraft(null);
       setSelectedSandboxId(sandbox.sandboxId);
+      setRestoredViewMode(undefined);
     });
   }, []);
 
@@ -94,6 +109,7 @@ export default function SandboxBuilderExperience({
             startTransition(() => {
               setSelectedSandboxId(null);
               setDraft(null);
+              setRestoredViewMode(undefined);
             });
           }}
         />
@@ -104,6 +120,7 @@ export default function SandboxBuilderExperience({
           onOpenSandbox={(sandboxId) =>
             startTransition(() => {
               setSelectedSandboxId(sandboxId);
+              setRestoredViewMode(undefined);
             })
           }
           onCreateSandbox={handleCreateSandbox}
