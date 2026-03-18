@@ -247,8 +247,7 @@ describe("mergeHeaders: Authorization header stripping for auth server requests"
     await stepUntil(machine, getState, "authorization_request");
 
     // Simulate user completing browser authorization
-    const currentState = getState();
-    Object.assign(currentState, {
+    machine.updateState({
       currentStep: "received_authorization_code",
       authorizationCode: "mock-auth-code",
     });
