@@ -16,6 +16,7 @@ import {
   Link2,
   Loader2,
 
+  MessageSquareText,
   Plus,
   Save,
   Settings,
@@ -71,6 +72,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 
 import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
+import { SandboxUsagePanel } from "@/components/sandboxes/SandboxUsagePanel";
 import {
   useSandbox,
   useSandboxMutations,
@@ -183,7 +185,7 @@ function updateSelectedServerIds(
     : currentServerIds;
 }
 
-type ViewMode = "builder" | "preview";
+type ViewMode = "builder" | "insights" | "preview";
 
 function BuilderHeader({
   title,
@@ -192,6 +194,8 @@ function BuilderHeader({
   canPreview,
   isCanvasActive,
   isPreviewActive,
+  isInsightsActive,
+  canOpenInsights,
   isSettingsOpen,
   onBack,
   onSave,
@@ -200,6 +204,7 @@ function BuilderHeader({
   onOpenFullPreview,
   onCopyLink,
   onOpenShareSettings,
+  onToggleInsights,
   onToggleSettings,
 }: {
   title: string;
@@ -208,6 +213,8 @@ function BuilderHeader({
   canPreview: boolean;
   isCanvasActive: boolean;
   isPreviewActive: boolean;
+  isInsightsActive: boolean;
+  canOpenInsights: boolean;
   isSettingsOpen: boolean;
   onBack: () => void;
   onSave: () => void;
@@ -216,6 +223,7 @@ function BuilderHeader({
   onOpenFullPreview: () => void;
   onCopyLink: () => void;
   onOpenShareSettings: () => void;
+  onToggleInsights: () => void;
   onToggleSettings: () => void;
 }) {
   return (
@@ -292,6 +300,16 @@ function BuilderHeader({
             <Save className="mr-1.5 size-4" />
           )}
           Save
+        </Button>
+        <Button
+          variant={isInsightsActive ? "secondary" : "outline"}
+          className="rounded-xl"
+          disabled={!canOpenInsights}
+          onClick={onToggleInsights}
+          title="Usage"
+        >
+          <MessageSquareText className="mr-1.5 size-4" />
+          Usage
         </Button>
         <Button
           variant={isSettingsOpen ? "secondary" : "outline"}
@@ -1340,6 +1358,8 @@ export function SandboxBuilderView({
         canPreview={!!shareLink}
         isCanvasActive={viewMode === "builder"}
         isPreviewActive={viewMode === "preview"}
+        isInsightsActive={viewMode === "insights"}
+        canOpenInsights={!!sandbox}
         isSettingsOpen={isSettingsOpen}
         onBack={onBack}
         onSave={() => void saveSandbox()}
@@ -1351,11 +1371,21 @@ export function SandboxBuilderView({
           setIsSettingsOpen(true);
           setActiveSettingsTab("share");
         }}
+        onToggleInsights={() => {
+          setViewMode((current) =>
+            current === "insights" ? "builder" : "insights",
+          );
+        }}
         onToggleSettings={() => {
           setIsSettingsOpen((current) => !current);
         }}
       />
 
+      {viewMode === "insights" && sandbox ? (
+        <div className="min-h-0 flex-1">
+          <SandboxUsagePanel sandbox={sandbox} />
+        </div>
+      ) : (
       <div className="min-h-0 flex-1 p-4">
           <div ref={panelGroupContainerRef} className="h-full">
             <ResizablePanelGroup direction="horizontal" className="h-full">
@@ -1470,6 +1500,7 @@ export function SandboxBuilderView({
             </ResizablePanelGroup>
           </div>
         </div>
+      )}
 
       <Sheet
         open={isMobile && isSettingsOpen}
