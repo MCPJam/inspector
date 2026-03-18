@@ -122,6 +122,25 @@ export function useServerState({
     opTokenRef.current.set(name, next);
     return next;
   };
+
+  const failPendingOAuthConnection = useCallback(
+    (errorMessage: string) => {
+      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      if (pendingServerName) {
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: pendingServerName,
+          error: errorMessage,
+        });
+      }
+
+      localStorage.removeItem("mcp-oauth-return-hash");
+      localStorage.removeItem("mcp-oauth-pending");
+
+      return pendingServerName;
+    },
+    [dispatch],
+  );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
@@ -388,6 +407,8 @@ export function useServerState({
 
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
+      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+
       try {
         const result = await handleOAuthCallback(code);
 
@@ -468,12 +489,17 @@ export function useServerState({
           error instanceof Error ? error.message : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
-
-        localStorage.removeItem("mcp-oauth-return-hash");
-        localStorage.removeItem("mcp-oauth-pending");
+        const failedServerName =
+          failPendingOAuthConnection(errorMessage) ?? pendingServerName;
+        if (failedServerName) {
+          logger.warn("Marked pending OAuth connection as failed", {
+            serverName: failedServerName,
+            error: errorMessage,
+          });
+        }
       }
     },
-    [dispatch, logger, storeInitInfo],
+    [dispatch, failPendingOAuthConnection, logger, storeInitInfo],
   );
 
   useEffect(() => {
@@ -495,6 +521,7 @@ export function useServerState({
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
     const error = urlParams.get("error");
+    const errorDescription = urlParams.get("error_description");
     if (code) {
       if (localStorage.getItem(SHARED_OAUTH_PENDING_KEY)) {
         return; // Handled by App.tsx shared OAuth interception
@@ -513,9 +540,24 @@ export function useServerState({
 
       handleOAuthCallbackComplete(code);
     } else if (error) {
-      toast.error(`OAuth authorization failed: ${error}`);
-      localStorage.removeItem("mcp-oauth-pending");
-      window.history.replaceState({}, document.title, window.location.pathname);
+      const errorMessage = errorDescription
+        ? `${error}: ${errorDescription}`
+        : error;
+      const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
+
+      toast.error(`OAuth authorization failed: ${errorMessage}`);
+      const failedServerName = failPendingOAuthConnection(errorMessage);
+      logger.warn("OAuth authorization failed before callback completion", {
+        serverName: failedServerName,
+        error,
+        errorDescription,
+      });
+      oauthCallbackHandledRef.current = true;
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname + savedHash,
+      );
     }
   }, [
     isLoading,
@@ -524,7 +566,9 @@ export function useServerState({
     useLocalFallback,
     isLoadingWorkspaces,
     effectiveActiveWorkspaceId,
+    failPendingOAuthConnection,
     handleOAuthCallbackComplete,
+    logger,
   ]);
 
   const handleConnect = useCallback(
