@@ -37,8 +37,10 @@ import {
 import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
+import { TextPart } from "./text-part";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
+type TraceDisplayMode = "markdown" | "json-markdown";
 const SAVE_VIEW_BUTTON_USED_KEY = "mcpjam-save-view-button-used";
 const SAVE_VIEW_REDIRECTED_KEY = "mcpjam-save-view-redirected";
 
@@ -134,9 +136,21 @@ export function ToolPart({
   const inputData = (part as any).input;
   const outputData = (part as any).output;
   const errorText = (part as any).errorText ?? (part as any).error;
+  const traceDisplayText =
+    typeof (part as { traceDisplayText?: unknown }).traceDisplayText ===
+    "string"
+      ? (part as { traceDisplayText: string }).traceDisplayText
+      : undefined;
+  const traceDisplayMode = (part as { traceDisplayMode?: TraceDisplayMode })
+    .traceDisplayMode;
+  const hasAttachedTraceDisplay = Boolean(
+    traceDisplayText &&
+    (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
+  );
   const hasInput = inputData !== undefined && inputData !== null;
   const hasOutput = outputData !== undefined && outputData !== null;
   const hasError = state === "output-error" && !!errorText;
+  const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
@@ -403,6 +417,90 @@ export function ToolPart({
     </span>
   );
 
+  const renderToolInput = () =>
+    hasInput ? (
+      <div className="space-y-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+          Input
+        </div>
+        <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
+          <JsonEditor
+            height="100%"
+            viewOnly
+            value={inputData}
+            className="p-2 text-[11px]"
+            collapsible
+            defaultExpandDepth={2}
+          />
+        </div>
+      </div>
+    ) : null;
+
+  const renderAttachedTraceDisplay = () =>
+    hasAttachedTraceDisplay && traceDisplayText ? (
+      <div className="space-y-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+          Result
+        </div>
+        <div
+          data-testid="tool-part-readable-result"
+          className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto px-3 py-2"
+        >
+          <TextPart text={traceDisplayText} role="assistant" />
+        </div>
+      </div>
+    ) : null;
+
+  const renderToolResult = () =>
+    showRawResult ? (
+      <div className="space-y-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+          Result
+        </div>
+        <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
+          <JsonEditor
+            height="100%"
+            viewOnly
+            value={outputData}
+            className="p-2 text-[11px]"
+            collapsible
+            defaultExpandDepth={2}
+          />
+        </div>
+      </div>
+    ) : null;
+
+  const renderToolError = () =>
+    hasError ? (
+      <div className="space-y-1">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+          Error
+        </div>
+        <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
+          {errorText}
+        </div>
+      </div>
+    ) : null;
+
+  const renderToolData = () => {
+    if (!hasInput && !showRawResult && !hasError && !hasAttachedTraceDisplay) {
+      return (
+        <div className="text-muted-foreground/70">
+          No tool details available.
+        </div>
+      );
+    }
+
+    return (
+      <div className="space-y-4">
+        {renderToolInput()}
+        {renderAttachedTraceDisplay()}
+        {renderToolResult()}
+        {renderToolError()}
+      </div>
+    );
+  };
+
   return (
     <div
       className={cn(
@@ -520,59 +618,7 @@ export function ToolPart({
         <div className="border-t border-border/40 px-3 py-3">
           {!hideDiagnosticsUI && (
             <>
-              {hasWidgetDebug && activeDebugTab === "data" && (
-                <div className="space-y-4">
-                  {hasInput && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        Input
-                      </div>
-                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                        <JsonEditor
-                          height="100%"
-                          viewOnly
-                          value={inputData}
-                          className="p-2 text-[11px]"
-                          collapsible
-                          defaultExpandDepth={2}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {hasOutput && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        Result
-                      </div>
-                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                        <JsonEditor
-                          height="100%"
-                          viewOnly
-                          value={outputData}
-                          className="p-2 text-[11px]"
-                          collapsible
-                          defaultExpandDepth={2}
-                        />
-                      </div>
-                    </div>
-                  )}
-                  {hasError && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        Error
-                      </div>
-                      <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
-                        {errorText}
-                      </div>
-                    </div>
-                  )}
-                  {!hasInput && !hasOutput && !hasError && (
-                    <div className="text-muted-foreground/70">
-                      No tool details available.
-                    </div>
-                  )}
-                </div>
-              )}
+              {hasWidgetDebug && activeDebugTab === "data" && renderToolData()}
               {hasWidgetDebug && activeDebugTab === "state" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -681,62 +727,7 @@ export function ToolPart({
                   )}
                 </div>
               )}
-              {!hasWidgetDebug && (
-                <div className="space-y-4">
-                  {hasInput && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        Input
-                      </div>
-                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                        <JsonEditor
-                          height="100%"
-                          viewOnly
-                          value={inputData}
-                          className="p-2 text-[11px]"
-                          collapsible
-                          defaultExpandDepth={2}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {hasOutput && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        Result
-                      </div>
-                      <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-                        <JsonEditor
-                          height="100%"
-                          viewOnly
-                          value={outputData}
-                          className="p-2 text-[11px]"
-                          collapsible
-                          defaultExpandDepth={2}
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {hasError && (
-                    <div className="space-y-1">
-                      <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-                        Error
-                      </div>
-                      <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-destructive">
-                        {errorText}
-                      </div>
-                    </div>
-                  )}
-
-                  {!hasInput && !hasOutput && !hasError && (
-                    <div className="text-muted-foreground/70">
-                      No tool details available.
-                    </div>
-                  )}
-                </div>
-              )}
+              {!hasWidgetDebug && renderToolData()}
             </>
           )}
           {needsApproval && approvalVisualState === "pending" && (

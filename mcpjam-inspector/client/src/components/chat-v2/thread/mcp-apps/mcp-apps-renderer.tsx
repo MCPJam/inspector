@@ -69,6 +69,7 @@ import { fetchMcpAppsWidgetContent } from "./fetch-widget-content";
 import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
+import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -170,10 +171,11 @@ export function MCPAppsRenderer({
 }: MCPAppsRendererProps) {
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const sandboxHostStyle = useSandboxHostStyle();
 
   // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
-  const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
+  const playgroundHostStyle = useUIPlaygroundStore((s) => s.hostStyle);
   const playgroundCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const cspMode: CspMode = isPlaygroundActive
     ? playgroundCspMode
@@ -528,6 +530,7 @@ export function MCPAppsRenderer({
       toolName,
       protocol: "mcp-apps",
       widgetState: null, // MCP Apps don't have widget state in the same way
+      prefersBorder,
       globals: {
         theme: themeMode,
         displayMode: effectiveDisplayMode,
@@ -547,6 +550,7 @@ export function MCPAppsRenderer({
     timeZone,
     deviceCapabilities,
     safeAreaInsets,
+    prefersBorder,
   ]);
 
   // Update globals in debug store when they change
@@ -572,7 +576,10 @@ export function MCPAppsRenderer({
 
   // CSS Variables for theming (SEP-1865 styles.variables)
   // These are sent via hostContext.styles.variables - the SDK should pass them through
-  const useChatGPTStyle = isPlaygroundActive && hostStyle === "chatgpt";
+  const effectiveHostStyle = isPlaygroundActive
+    ? playgroundHostStyle
+    : (sandboxHostStyle ?? "claude");
+  const useChatGPTStyle = effectiveHostStyle === "chatgpt";
   const styleVariables = useMemo(
     () =>
       useChatGPTStyle

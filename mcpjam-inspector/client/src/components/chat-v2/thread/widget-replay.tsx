@@ -13,6 +13,8 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
+import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import { getSandboxProtocolOverride } from "@/lib/sandbox-host-style";
 import type { DisplayMode } from "@/stores/ui-playground-store";
 
 export interface WidgetReplayProps {
@@ -78,9 +80,14 @@ export function WidgetReplay({
   displayMode,
   onDisplayModeChange,
   onAppSupportedDisplayModesChange,
-  selectedProtocolOverrideIfBothExists = UIType.OPENAI_SDK,
+  selectedProtocolOverrideIfBothExists,
   minimalMode = false,
 }: WidgetReplayProps) {
+  const sandboxHostStyle = useSandboxHostStyle();
+  const protocolOverride =
+    selectedProtocolOverrideIfBothExists ??
+    getSandboxProtocolOverride(sandboxHostStyle) ??
+    UIType.OPENAI_SDK;
   const effectiveToolMeta =
     renderOverride?.toolMetadata ??
     toolMetadata ??
@@ -98,7 +105,7 @@ export function WidgetReplay({
   if (
     uiType === UIType.OPENAI_SDK ||
     (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
-      selectedProtocolOverrideIfBothExists === UIType.OPENAI_SDK)
+      protocolOverride === UIType.OPENAI_SDK)
   ) {
     if (
       toolState !== "output-available" &&
@@ -151,7 +158,7 @@ export function WidgetReplay({
   if (
     uiType === UIType.MCP_APPS ||
     (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
-      selectedProtocolOverrideIfBothExists === UIType.MCP_APPS)
+      protocolOverride === UIType.MCP_APPS)
   ) {
     if (
       toolState !== "output-available" &&

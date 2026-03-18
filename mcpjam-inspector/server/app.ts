@@ -5,9 +5,8 @@ import { bodyLimit } from "hono/body-limit";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger.js";
 import { serveStatic } from "@hono/node-server/serve-static";
-import dotenv from "dotenv";
-import { existsSync, readFileSync } from "fs";
-import { join, dirname, resolve } from "path";
+import { readFileSync } from "fs";
+import { dirname } from "path";
 import { fileURLToPath } from "url";
 
 // Import routes
@@ -27,7 +26,6 @@ import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token.js";
-import { initGuestTokenSecret, getGuestJwks } from "./services/guest-token.js";
 import { isAllowedHost } from "./utils/localhost-check.js";
 import {
   sessionAuthMiddleware,
@@ -35,46 +33,17 @@ import {
 } from "./middleware/session-auth.js";
 import { originValidationMiddleware } from "./middleware/origin-validation.js";
 import { securityHeadersMiddleware } from "./middleware/security-headers.js";
+import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env.js";
+import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
+import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 export function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
-  const envFile =
-    process.env.NODE_ENV === "production" ? ".env.production" : ".env.local";
-
-  // Determine where to look for .env file:
-  // 1. Electron packaged: use process.resourcesPath directly
-  // 2. npm package: package root (two levels up from dist/server)
-  // 3. Local dev: current working directory
-  let envPath = envFile;
-
-  if (process.env.IS_PACKAGED === "true" && (process as any).resourcesPath) {
-    // Electron packaged app - use process.resourcesPath directly
-    envPath = join((process as any).resourcesPath, envFile);
-  } else if (process.env.ELECTRON_APP === "true") {
-    // Electron dev mode - already handled by src/main.ts setting env vars
-    envPath = join(process.env.ELECTRON_RESOURCES_PATH || ".", envFile);
-  } else {
-    // npm package or local dev
-    const packageRoot = resolve(__dirname, "..", "..");
-    const packageEnvPath = join(packageRoot, envFile);
-    if (existsSync(packageEnvPath)) {
-      envPath = packageEnvPath;
-    }
-  }
-
-  dotenv.config({ path: envPath });
-
-  // Validate required env vars
-  if (!process.env.CONVEX_HTTP_URL) {
-    throw new Error(
-      `CONVEX_HTTP_URL is required but not set. Tried loading from: ${envPath}\n` +
-        `IS_PACKAGED=${process.env.IS_PACKAGED}, resourcesPath=${(process as any).resourcesPath}\n` +
-        `File exists: ${existsSync(envPath)}`,
-    );
-  }
+  const loadedEnv = loadInspectorEnv(__dirname);
+  warnOnConvexDevMisconfiguration(loadedEnv);
 
   // Ensure PATH includes user shell paths so child processes (e.g., npx) can be found
   // This is crucial when launched from GUI apps (Electron) where PATH is minimal
@@ -85,8 +54,7 @@ export function createHonoApp() {
   // Generate session token for API authentication
   generateSessionToken();
 
-  // Initialize RS256 key pair for guest JWTs
-  initGuestTokenSecret();
+  startGuestAuthProvisioningInBackground();
 
   const app = new Hono();
   const strictModeResponse = (c: any, path: string) =>
@@ -218,11 +186,32 @@ export function createHonoApp() {
     return c.json({ status: "ok", timestamp: new Date().toISOString() });
   });
 
-  // Guest JWT JWKS endpoint — public, cacheable, no auth required.
-  // Convex uses this to verify guest JWTs natively.
-  app.get("/guest/jwks", (c) => {
-    c.header("Cache-Control", "public, max-age=3600");
-    return c.json(getGuestJwks());
+  // Guest JWT JWKS compatibility endpoint — public, no auth required.
+  // The canonical JWKS now lives on Convex; Inspector proxies it here.
+  app.get("/guest/jwks", async () => {
+    const response = await fetchRemoteGuestJwks();
+    if (!response) {
+      return Response.json(
+        { error: "Guest JWKS unavailable" },
+        {
+          status: 503,
+          headers: {
+            "Cache-Control": "no-store",
+            "Content-Type": "application/json",
+          },
+        },
+      );
+    }
+
+    return new Response(await response.text(), {
+      status: response.status,
+      headers: {
+        "Cache-Control":
+          response.headers.get("cache-control") || "public, max-age=300",
+        "Content-Type":
+          response.headers.get("content-type") || "application/json",
+      },
+    });
   });
 
   // Session token endpoint (for dev mode where HTML isn't served by this server)

@@ -1,5 +1,4 @@
 import { serve } from "@hono/node-server";
-import dotenv from "dotenv";
 import fixPath from "fix-path";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -8,17 +7,17 @@ import { bodyLimit } from "hono/body-limit";
 import { logger } from "hono/logger";
 import { logger as appLogger } from "./utils/logger";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { readFileSync, existsSync } from "fs";
-import { join, dirname, resolve } from "path";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { MCPClientManager } from "@mcpjam/sdk";
+import { loadInspectorEnv, warnOnConvexDevMisconfiguration } from "./env";
 
 // Security imports
 import {
   generateSessionToken,
   getSessionToken,
 } from "./services/session-token";
-import { initGuestTokenSecret } from "./services/guest-token";
 import { isAllowedHost } from "./utils/localhost-check";
 import {
   sessionAuthMiddleware,
@@ -27,6 +26,7 @@ import {
 import { originValidationMiddleware } from "./middleware/origin-validation";
 import { securityHeadersMiddleware } from "./middleware/security-headers";
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
+import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 
 // Handle unhandled promise rejections gracefully (Node.js v24+ throws by default)
 // This prevents the server from crashing when MCP connections are closed while
@@ -180,11 +180,14 @@ try {
   fixPath();
 } catch {}
 
+// Load environment variables early so route handlers can read CONVEX_HTTP_URL
+const loadedEnv = loadInspectorEnv(__dirname);
+warnOnConvexDevMisconfiguration(loadedEnv);
+
 // Generate session token for API authentication
 generateSessionToken();
 
-// Initialize guest token secret for hosted mode
-initGuestTokenSecret();
+startGuestAuthProvisioningInBackground();
 const app = new Hono().onError((err, c) => {
   appLogger.error("Unhandled error:", err);
 
@@ -203,39 +206,6 @@ const strictModeResponse = (c: any, path: string) =>
     },
     410,
   );
-
-// Load environment variables early so route handlers can read CONVEX_HTTP_URL
-const envFile =
-  process.env.NODE_ENV === "production"
-    ? ".env.production"
-    : ".env.development";
-
-// Determine where to look for .env file:
-// 1. Electron: Resources folder
-// 2. npm package: package root (two levels up from dist/server)
-// 3. Local dev: current working directory
-let envPath = envFile;
-if (
-  process.env.ELECTRON_APP === "true" &&
-  process.env.ELECTRON_RESOURCES_PATH
-) {
-  envPath = join(process.env.ELECTRON_RESOURCES_PATH, envFile);
-} else {
-  const packageRoot = resolve(__dirname, "..", "..");
-  const packageEnvPath = join(packageRoot, envFile);
-  if (existsSync(packageEnvPath)) {
-    envPath = packageEnvPath;
-  }
-}
-
-dotenv.config({ path: envPath });
-
-// Validate required env vars
-if (!process.env.CONVEX_HTTP_URL) {
-  throw new Error(
-    "CONVEX_HTTP_URL is required but not set. Please set it via environment variable or .env file.",
-  );
-}
 
 // Initialize centralized MCPJam Client Manager and wire RPC logging to SSE bus
 const mcpClientManager = new MCPClientManager(
@@ -465,18 +435,15 @@ const server = serve({
 });
 
 // Handle graceful shutdown
-process.on("SIGINT", async () => {
+async function shutdown() {
   console.log("\n🛑 Shutting down gracefully...");
   await tunnelManager.closeAll();
   server.close();
+  await appLogger.flush();
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", async () => {
-  console.log("\n🛑 Shutting down gracefully...");
-  await tunnelManager.closeAll();
-  server.close();
-  process.exit(0);
-});
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
 
 export default app;

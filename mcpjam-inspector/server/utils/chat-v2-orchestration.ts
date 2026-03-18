@@ -39,6 +39,7 @@ export interface PrepareChatV2Options {
   temperature?: number;
   requireToolApproval?: boolean;
   customProviders?: CustomProviderConfig[];
+  includeMcpToolInventory?: boolean;
 }
 
 export interface PrepareChatV2Result {
@@ -46,6 +47,79 @@ export interface PrepareChatV2Result {
   enhancedSystemPrompt: string;
   resolvedTemperature: number | undefined;
   scrubMessages: (msgs: ModelMessage[]) => ModelMessage[];
+}
+
+interface MCPToolPromptEntry {
+  name: string;
+  description?: string;
+}
+
+function truncateToolDescription(
+  description: string | undefined,
+  maxLength = 160,
+): string | undefined {
+  if (!description) return undefined;
+
+  const normalized = description.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 3)}...`;
+}
+
+function buildMcpToolInventoryPrompt(
+  mcpTools: Record<string, unknown>,
+  selectedServers?: string[],
+): string {
+  const serverGroups = new Map<string, MCPToolPromptEntry[]>();
+
+  for (const [name, tool] of Object.entries(mcpTools)) {
+    if (!tool || typeof tool !== "object") continue;
+
+    const toolRecord = tool as Record<string, unknown>;
+    const serverId =
+      typeof toolRecord._serverId === "string"
+        ? toolRecord._serverId
+        : undefined;
+    if (!serverId) continue;
+
+    const existing = serverGroups.get(serverId) ?? [];
+    existing.push({
+      name,
+      description:
+        typeof toolRecord.description === "string"
+          ? truncateToolDescription(toolRecord.description)
+          : undefined,
+    });
+    serverGroups.set(serverId, existing);
+  }
+
+  if (serverGroups.size === 0) return "";
+
+  const preferredServerIds = Array.from(new Set(selectedServers ?? [])).filter(
+    (serverId) => serverGroups.has(serverId),
+  );
+  const remainingServerIds = Array.from(serverGroups.keys())
+    .filter((serverId) => !preferredServerIds.includes(serverId))
+    .sort((left, right) => left.localeCompare(right));
+  const orderedServerIds = [...preferredServerIds, ...remainingServerIds];
+
+  const serverSections = orderedServerIds
+    .map((serverId) => {
+      const toolLines = [...(serverGroups.get(serverId) ?? [])]
+        .sort((left, right) => left.name.localeCompare(right.name))
+        .map(({ name, description }) =>
+          description ? `- ${name}: ${description}` : `- ${name}`,
+        )
+        .join("\n");
+
+      return `Server ${serverId}:\n${toolLines}`;
+    })
+    .join("\n\n");
+
+  return [
+    "## Connected MCP Tools",
+    "You have direct access to the following MCP tools. If the user asks what tools or servers are available, answer from this list instead of saying you do not have MCP visibility.",
+    serverSections,
+  ].join("\n\n");
 }
 
 /**
@@ -64,6 +138,7 @@ export async function prepareChatV2(
     temperature,
     requireToolApproval,
     customProviders,
+    includeMcpToolInventory,
   } = options;
 
   // 1. Get MCP + skill tools
@@ -75,15 +150,21 @@ export async function prepareChatV2(
     HOSTED_MODE
       ? { tools: {}, systemPromptSection: "" }
       : await getSkillToolsAndPrompt();
+  const toolInventoryPromptSection = includeMcpToolInventory
+    ? buildMcpToolInventoryPrompt(mcpTools, selectedServers)
+    : "";
 
-  const finalSkillTools = requireToolApproval
+  const finalSkillTools: Record<string, unknown> = requireToolApproval
     ? Object.fromEntries(
         Object.entries(skillTools).map(([name, tool]) => [
           name,
-          { ...tool, needsApproval: true },
+          {
+            ...(tool && typeof tool === "object" ? tool : {}),
+            needsApproval: true,
+          },
         ]),
       )
-    : skillTools;
+    : (skillTools as Record<string, unknown>);
 
   const allTools = { ...mcpTools, ...finalSkillTools } as ToolSet;
 
@@ -99,9 +180,13 @@ export async function prepareChatV2(
   }
 
   // 3. System prompt concatenation
-  const enhancedSystemPrompt = systemPrompt
-    ? systemPrompt + skillsPromptSection
-    : skillsPromptSection;
+  const enhancedSystemPrompt = [
+    systemPrompt,
+    toolInventoryPromptSection,
+    skillsPromptSection,
+  ]
+    .filter((section): section is string => Boolean(section?.trim()))
+    .join("\n\n");
 
   // 4. Temperature resolution
   const resolvedTemperature = isGPT5Model(modelDefinition.id)

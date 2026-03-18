@@ -1,14 +1,13 @@
-/**
- * Guest Session Endpoint Tests
- *
- * Tests for POST /api/web/guest-session.
- * Covers token issuance, response format, and IP-based rate limiting.
- */
-
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Hono } from "hono";
 import guestSession from "../guest-session.js";
-import { initGuestTokenSecret } from "../../../services/guest-token.js";
+
+const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
+const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+const ORIGINAL_REMOTE_URL = process.env.MCPJAM_GUEST_SESSION_URL;
+const ORIGINAL_SHARED_SECRET = process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+const ORIGINAL_HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE;
+const ORIGINAL_FETCH = global.fetch;
 
 function createTestApp(): Hono {
   const app = new Hono();
@@ -18,10 +17,57 @@ function createTestApp(): Hono {
 
 describe("POST /guest-session", () => {
   let app: Hono;
+  let sessionCounter: number;
 
   beforeEach(() => {
-    initGuestTokenSecret();
+    vi.restoreAllMocks();
+    sessionCounter = 0;
+    process.env.NODE_ENV = "test";
+    process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+    delete process.env.MCPJAM_GUEST_SESSION_URL;
+    delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
+      "test-guest-session-secret";
+    global.fetch = vi.fn().mockImplementation(async () => {
+      sessionCounter += 1;
+      return new Response(
+        JSON.stringify({
+          guestId: `00000000-0000-4000-8000-${String(sessionCounter).padStart(12, "0")}`,
+          token: `header-${sessionCounter}.payload-${sessionCounter}.signature-${sessionCounter}`,
+          expiresAt: Date.now() + 60_000 + sessionCounter,
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+    }) as typeof fetch;
     app = createTestApp();
+  });
+
+  afterEach(() => {
+    process.env.NODE_ENV = ORIGINAL_NODE_ENV;
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    if (ORIGINAL_REMOTE_URL === undefined) {
+      delete process.env.MCPJAM_GUEST_SESSION_URL;
+    } else {
+      process.env.MCPJAM_GUEST_SESSION_URL = ORIGINAL_REMOTE_URL;
+    }
+    if (ORIGINAL_HOSTED_MODE === undefined) {
+      delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    } else {
+      process.env.VITE_MCPJAM_HOSTED_MODE = ORIGINAL_HOSTED_MODE;
+    }
+    if (ORIGINAL_SHARED_SECRET === undefined) {
+      delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+    } else {
+      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET = ORIGINAL_SHARED_SECRET;
+    }
+    global.fetch = ORIGINAL_FETCH;
   });
 
   describe("token issuance", () => {
@@ -90,6 +136,103 @@ describe("POST /guest-session", () => {
     it("returns 404 for DELETE requests", async () => {
       const res = await app.request("/guest-session", { method: "DELETE" });
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("remote guest session mode", () => {
+    it("relays through hosted Inspector in local production", async () => {
+      process.env.NODE_ENV = "production";
+      delete process.env.VITE_MCPJAM_HOSTED_MODE;
+      delete process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET;
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            guestId: "guest-remote",
+            token: "remote-token",
+            expiresAt: 123456789,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ) as typeof fetch;
+
+      const res = await app.request("/guest-session", { method: "POST" });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({
+        guestId: "guest-remote",
+        token: "remote-token",
+        expiresAt: 123456789,
+      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://app.mcpjam.com/api/web/guest-session",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          signal: expect.anything(),
+        }),
+      );
+    });
+
+    it("proxies the Convex guest session in hosted production", async () => {
+      process.env.NODE_ENV = "production";
+      process.env.VITE_MCPJAM_HOSTED_MODE = "true";
+      process.env.CONVEX_HTTP_URL = "https://test-deployment.convex.site";
+      process.env.MCPJAM_GUEST_SESSION_SHARED_SECRET =
+        "test-guest-session-secret";
+      global.fetch = vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            guestId: "guest-remote",
+            token: "remote-token",
+            expiresAt: 123456789,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        ),
+      ) as typeof fetch;
+
+      const res = await app.request("/guest-session", { method: "POST" });
+      const data = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(data).toEqual({
+        guestId: "guest-remote",
+        token: "remote-token",
+        expiresAt: 123456789,
+      });
+      expect(global.fetch).toHaveBeenCalledWith(
+        "https://test-deployment.convex.site/guest/session",
+        expect.objectContaining({
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-mcpjam-guest-session-secret": "test-guest-session-secret",
+          },
+          signal: expect.anything(),
+        }),
+      );
+    });
+
+    it("returns 503 when the Convex guest session cannot be fetched", async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "nope" }), { status: 503 }),
+        ) as typeof fetch;
+
+      const res = await app.request("/guest-session", { method: "POST" });
+
+      expect(res.status).toBe(503);
+      const data = await res.json();
+      expect(data.code).toBe("INTERNAL_ERROR");
     });
   });
 

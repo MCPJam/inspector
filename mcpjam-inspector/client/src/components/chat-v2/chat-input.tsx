@@ -41,6 +41,7 @@ import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
 import { usePostHog } from "posthog-js/react";
+import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
 
 interface ChatInputProps {
   value: string;
@@ -132,6 +133,7 @@ export function ChatInput({
   minimalMode = false,
 }: ChatInputProps) {
   const posthog = usePostHog();
+  const sandboxHostStyle = useSandboxHostStyle();
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -324,13 +326,32 @@ export function ChatInput({
     );
   };
 
+  const composerClasses =
+    sandboxHostStyle === "chatgpt"
+      ? "sandbox-host-composer rounded-[1.75rem] border-transparent bg-[#f4f4f4] shadow-none dark:bg-[#2f2f2f]"
+      : sandboxHostStyle === "claude"
+        ? "sandbox-host-composer rounded-[1.35rem] border-[#d7cfbf] bg-[#f5f0e8] shadow-none dark:border-[#4b463d] dark:bg-[#34322e]"
+        : "rounded-3xl border border-border/40 bg-muted/70";
+  const activeSubmitButtonClasses =
+    sandboxHostStyle === "chatgpt"
+      ? "bg-[#1f1f1f] text-white hover:bg-[#303030] dark:bg-[#f4f4f4] dark:text-[#1f1f1f] dark:hover:bg-[#e8e8e8]"
+      : sandboxHostStyle === "claude"
+        ? "bg-[#e27d47] text-white hover:bg-[#d16f3d] dark:bg-[#d07b53] dark:text-[#fff7f0] dark:hover:bg-[#c06f49]"
+        : "bg-primary text-primary-foreground hover:bg-primary/90";
+  const inactiveSubmitButtonClasses =
+    sandboxHostStyle === "chatgpt"
+      ? "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed dark:bg-[#3a3a3a] dark:text-[#8a8a8a]"
+      : sandboxHostStyle === "claude"
+        ? "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed dark:bg-[#45413b] dark:text-[#8d857a]"
+        : "bg-muted text-muted-foreground cursor-not-allowed";
+
   return (
     <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
       <div
         ref={containerRef}
         className={cn(
-          "relative flex w-full flex-col rounded-3xl border border-border/40",
-          "bg-muted/70 px-2 pt-2 pb-2",
+          "relative flex w-full flex-col px-2 pt-2 pb-2",
+          composerClasses,
         )}
       >
         <PromptsPopover
@@ -571,8 +592,9 @@ export function ChatInput({
                   <Button
                     type="button"
                     size="icon"
-                    variant="destructive"
-                    className="size-[34px] rounded-full transition-colors bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    variant="secondary"
+                    className="size-[34px] rounded-full transition-colors"
+                    aria-label="Stop generating"
                     onClick={() => stop()}
                   >
                     <Square size={16} />
@@ -586,13 +608,14 @@ export function ChatInput({
                   <Button
                     type="submit"
                     size="icon"
+                    aria-label="Send message"
                     className={cn(
                       "size-[34px] rounded-full transition-colors",
                       (value.trim() || hasResults) &&
                         !disabled &&
                         !submitDisabled
-                        ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                        : "bg-muted text-muted-foreground cursor-not-allowed",
+                        ? activeSubmitButtonClasses
+                        : inactiveSubmitButtonClasses,
                     )}
                     disabled={
                       (!value.trim() && !hasResults) ||

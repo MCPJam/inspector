@@ -24,7 +24,7 @@ vi.mock("@/lib/apis/web/context", async () => {
     ...actual,
     getHostedAuthorizationHeader: vi.fn(),
     resetTokenCache: vi.fn(),
-    isGuestMode: vi.fn(),
+    shouldRetryHostedAuth401: vi.fn(),
   };
 });
 
@@ -33,7 +33,7 @@ import { forceRefreshGuestSession } from "@/lib/guest-session";
 import {
   getHostedAuthorizationHeader,
   resetTokenCache,
-  isGuestMode,
+  shouldRetryHostedAuth401,
 } from "@/lib/apis/web/context";
 
 describe("authFetch hosted 401 retry", () => {
@@ -41,7 +41,7 @@ describe("authFetch hosted 401 retry", () => {
     vi.mocked(getHostedAuthorizationHeader).mockReset();
     vi.mocked(resetTokenCache).mockReset();
     vi.mocked(forceRefreshGuestSession).mockReset();
-    vi.mocked(isGuestMode).mockReturnValue(true);
+    vi.mocked(shouldRetryHostedAuth401).mockReturnValue(true);
     vi.mocked(global.fetch).mockReset();
   });
 
@@ -49,7 +49,7 @@ describe("authFetch hosted 401 retry", () => {
     vi.restoreAllMocks();
   });
 
-  it("retries with fresh token on 401 in guest mode", async () => {
+  it("retries with fresh token on 401 when hosted auth is guest-backed", async () => {
     vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
       "Bearer stale-token",
     );
@@ -138,8 +138,8 @@ describe("authFetch hosted 401 retry", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it("does not retry when not in guest mode", async () => {
-    vi.mocked(isGuestMode).mockReturnValue(false);
+  it("does not retry when hosted auth is fully authenticated", async () => {
+    vi.mocked(shouldRetryHostedAuth401).mockReturnValue(false);
     vi.mocked(getHostedAuthorizationHeader).mockResolvedValueOnce(
       "Bearer workos-token",
     );

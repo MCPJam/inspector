@@ -135,6 +135,19 @@ export const isMCPJamProvidedModel = (modelId: string): boolean => {
   return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
 };
 
+// Models available to guest (unauthenticated) users.
+// Duplicated from backend GUEST_ALLOWED_MODELS — kept in sync manually
+// since the repos are separate. Backend is the authoritative enforcement.
+export const GUEST_ALLOWED_MODEL_IDS: string[] = [
+  "anthropic/claude-haiku-4.5",
+  "openai/gpt-5-mini",
+  "google/gemini-2.5-flash",
+];
+
+export const isGuestAllowedModel = (modelId: string): boolean => {
+  return GUEST_ALLOWED_MODEL_IDS.includes(modelId);
+};
+
 export const isGPT5Model = (modelId: string | Model): boolean => {
   const id = String(modelId);
   // Only disable temperature for OpenAI GPT-5 models (not MCPJam provided ones)

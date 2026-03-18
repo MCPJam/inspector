@@ -2,6 +2,7 @@ import type { EvalAgent } from "./EvalAgent.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { LatencyBreakdown } from "./types.js";
 import type {
+  EvalExpectedToolCall,
   EvalResultInput,
   MCPJamReportingConfig,
 } from "./eval-reporting-types.js";
@@ -18,6 +19,7 @@ import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
 export interface EvalTestConfig {
   name: string;
   test: (agent: EvalAgent) => boolean | Promise<boolean>;
+  expectedToolCalls?: EvalExpectedToolCall[];
 }
 
 /**
@@ -101,32 +103,94 @@ class Semaphore {
   }
 }
 
-/**
- * Timeout wrapper for promises
- */
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`Operation timed out after ${ms}ms`));
-    }, ms);
-
-    promise
-      .then((value) => {
-        clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((error) => {
-        clearTimeout(timer);
-        reject(error);
-      });
-  });
-}
+const ITERATION_ABORT_GRACE_MS = 1000;
 
 /**
  * Sleep for a given number of milliseconds
  */
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mergeAbortSignals(
+  first?: AbortSignal,
+  second?: AbortSignal
+): AbortSignal | undefined {
+  if (!first) {
+    return second;
+  }
+
+  if (!second) {
+    return first;
+  }
+
+  if (first.aborted) {
+    return AbortSignal.abort(first.reason);
+  }
+
+  if (second.aborted) {
+    return AbortSignal.abort(second.reason);
+  }
+
+  const controller = new AbortController();
+  const abort = (signal: AbortSignal) => {
+    cleanup();
+    controller.abort(signal.reason);
+  };
+  const onFirstAbort = () => abort(first);
+  const onSecondAbort = () => abort(second);
+  const cleanup = () => {
+    first.removeEventListener("abort", onFirstAbort);
+    second.removeEventListener("abort", onSecondAbort);
+  };
+
+  first.addEventListener("abort", onFirstAbort, { once: true });
+  second.addEventListener("abort", onSecondAbort, { once: true });
+
+  return controller.signal;
+}
+
+function collectPromptMetrics(
+  promptResults: PromptResult[]
+): Pick<IterationResult, "latencies" | "tokens" | "prompts"> {
+  const latencies = promptResults.map((result) => result.getLatency());
+
+  return {
+    latencies:
+      latencies.length > 0 ? latencies : [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
+    tokens: {
+      total: promptResults.reduce(
+        (sum, result) => sum + result.totalTokens(),
+        0
+      ),
+      input: promptResults.reduce(
+        (sum, result) => sum + result.inputTokens(),
+        0
+      ),
+      output: promptResults.reduce(
+        (sum, result) => sum + result.outputTokens(),
+        0
+      ),
+    },
+    prompts: promptResults,
+  };
+}
+
+function wrapAgentWithAbortSignal(
+  agent: EvalAgent,
+  abortSignal: AbortSignal
+): EvalAgent {
+  return {
+    prompt: (message, options) =>
+      agent.prompt(message, {
+        ...options,
+        abortSignal: mergeAbortSignals(options?.abortSignal, abortSignal),
+      }),
+    withOptions: (options) =>
+      wrapAgentWithAbortSignal(agent.withOptions(options), abortSignal),
+    getPromptHistory: () => agent.getPromptHistory(),
+    resetPromptHistory: () => agent.resetPromptHistory(),
+  };
 }
 
 /**
@@ -189,39 +253,48 @@ export class EvalTest {
       await semaphore.acquire();
       try {
         let lastError: string | undefined;
+        let iterationAgent: EvalAgent | undefined;
 
         for (let attempt = 0; attempt <= retries; attempt++) {
+          const abortController = new AbortController();
+          const timeoutError = new Error(
+            `Operation timed out after ${timeoutMs}ms`
+          );
+          let timeoutTriggered = false;
+          let timeoutId: ReturnType<typeof setTimeout> | undefined;
+          let hardTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
           try {
             // Create a fresh agent clone for this iteration to avoid race conditions
             // when multiple iterations run concurrently
-            const iterationAgent = agent.withOptions({});
-
-            const passed = await withTimeout(
-              Promise.resolve(testFn(iterationAgent)),
-              timeoutMs
+            iterationAgent = wrapAgentWithAbortSignal(
+              agent.withOptions({}),
+              abortController.signal
             );
-
-            // Get metrics from this iteration's prompt history
+            const hardTimeoutPromise = new Promise<never>((_, reject) => {
+              timeoutId = setTimeout(() => {
+                timeoutTriggered = true;
+                abortController.abort(timeoutError);
+                hardTimeoutId = setTimeout(
+                  () => reject(timeoutError),
+                  ITERATION_ABORT_GRACE_MS
+                );
+              }, timeoutMs);
+            });
+            const passed = await Promise.race([
+              Promise.resolve().then(() => testFn(iterationAgent!)),
+              hardTimeoutPromise,
+            ]);
             const promptResults = iterationAgent.getPromptHistory();
-            const latencies = promptResults.map((r) => r.getLatency());
-            const tokens = {
-              total: promptResults.reduce((sum, r) => sum + r.totalTokens(), 0),
-              input: promptResults.reduce((sum, r) => sum + r.inputTokens(), 0),
-              output: promptResults.reduce(
-                (sum, r) => sum + r.outputTokens(),
-                0
-              ),
-            };
+            const promptMetrics = collectPromptMetrics(promptResults);
 
             return {
               passed,
-              latencies:
-                latencies.length > 0
-                  ? latencies
-                  : [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
-              tokens,
+              ...promptMetrics,
+              ...(timeoutTriggered && !passed
+                ? { error: timeoutError.message }
+                : {}),
               retryCount: attempt,
-              prompts: promptResults,
             };
           } catch (error) {
             lastError = error instanceof Error ? error.message : String(error);
@@ -229,13 +302,23 @@ export class EvalTest {
             if (attempt < retries) {
               await sleep(100 * Math.pow(2, attempt));
             }
+          } finally {
+            if (timeoutId) {
+              clearTimeout(timeoutId);
+            }
+            if (hardTimeoutId) {
+              clearTimeout(hardTimeoutId);
+            }
           }
         }
 
+        const promptMetrics = collectPromptMetrics(
+          iterationAgent?.getPromptHistory() ?? []
+        );
+
         return {
           passed: false,
-          latencies: [{ e2eMs: 0, llmMs: 0, mcpMs: 0 }],
-          tokens: { total: 0, input: 0, output: 0 },
+          ...promptMetrics,
           error: lastError,
           retryCount: retries,
         };
@@ -308,7 +391,11 @@ export class EvalTest {
   private buildEvalResultInputs(
     iterations: IterationResult[]
   ): EvalResultInput[] {
-    return iterationsToEvalResultInputs(this.getName(), iterations);
+    return iterationsToEvalResultInputs(
+      this.getName(),
+      iterations,
+      this.config.expectedToolCalls
+    );
   }
 
   private aggregateResults(iterations: IterationResult[]): EvalRunResult {

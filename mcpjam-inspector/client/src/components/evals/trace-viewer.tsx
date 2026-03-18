@@ -147,6 +147,7 @@ export function TraceViewer({
               showSaveViewButton={false}
               minimalMode={true}
               interactive={false}
+              reasoningDisplayMode="collapsed"
             />
           ))}
         </div>

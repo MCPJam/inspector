@@ -2,14 +2,25 @@
  * TestAgent - Runs LLM prompts with tool calling for evals
  */
 
-import { generateText, stepCountIs, dynamicTool, jsonSchema } from "ai";
-import type { ToolSet, ModelMessage, UserModelMessage } from "ai";
+import {
+  generateText,
+  hasToolCall,
+  stepCountIs,
+  dynamicTool,
+  jsonSchema,
+} from "ai";
+import type {
+  StopCondition,
+  ToolSet,
+  ModelMessage,
+  UserModelMessage,
+} from "ai";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
 import type { CreateModelOptions } from "./model-factory.js";
 import { extractToolCalls } from "./tool-extraction.js";
 import { PromptResult } from "./PromptResult.js";
-import type { CustomProvider } from "./types.js";
+import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
 import type { EvalAgent, PromptOptions } from "./EvalAgent.js";
 import type { Tool, AiSdkTool } from "./mcp-client-manager/types.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
@@ -85,6 +96,13 @@ function convertToToolSet(tools: Tool[]): ToolSet {
   }
   return toolSet;
 }
+
+type StartedToolCall = {
+  toolCallId: string;
+  toolName: string;
+  arguments: Record<string, unknown>;
+  shortCircuited: boolean;
+};
 
 /**
  * Agent for running LLM prompts with tool calling.
@@ -283,7 +301,9 @@ export class TestAgent implements EvalAgent {
 
   private createInstrumentedTools(
     onLatency: (ms: number) => void,
-    snapshotBuffer: Map<string, EvalWidgetSnapshotInput>
+    snapshotBuffer: Map<string, EvalWidgetSnapshotInput>,
+    pendingStepToolCalls: StartedToolCall[],
+    shortCircuitTools?: Set<string>
   ): ToolSet {
     const instrumented: ToolSet = {};
     for (const [name, tool] of Object.entries(this.tools)) {
@@ -294,13 +314,38 @@ export class TestAgent implements EvalAgent {
           ...tool,
           execute: async (args: any, options: any) => {
             const start = Date.now();
+            const toolCallId =
+              typeof options?.toolCallId === "string"
+                ? options.toolCallId
+                : `${name}-${pendingStepToolCalls.length + 1}`;
+            const toolInput = (args ?? {}) as Record<string, unknown>;
+            const shouldShortCircuit = shortCircuitTools?.has(name) ?? false;
+
+            pendingStepToolCalls.push({
+              toolCallId,
+              toolName: name,
+              arguments: toolInput,
+              shortCircuited: shouldShortCircuit,
+            });
+
             try {
+              if (shouldShortCircuit) {
+                return CallToolResultSchema.parse({
+                  content: [
+                    {
+                      type: "text",
+                      text: "[skipped by stopAfterToolCall]",
+                    },
+                  ],
+                });
+              }
+
               const result = await originalExecute(args, options);
               await this.captureMcpAppSnapshot({
                 toolName: name,
                 tool,
                 options,
-                toolInput: args as Record<string, unknown>,
+                toolInput,
                 toolOutput: result,
                 snapshotBuffer,
               });
@@ -316,6 +361,52 @@ export class TestAgent implements EvalAgent {
       }
     }
     return instrumented;
+  }
+
+  private resolveStopWhen(
+    stopWhen?: PromptOptions["stopWhen"],
+    stopAfterToolCall?: PromptOptions["stopAfterToolCall"]
+  ): Array<StopCondition<ToolSet>> {
+    const base = [stepCountIs(this.maxSteps)];
+    const conditions =
+      stopWhen == null ? [] : Array.isArray(stopWhen) ? stopWhen : [stopWhen];
+    const stopAfterConditions = this.normalizeStopAfterToolCall(
+      stopAfterToolCall
+    ).map((toolName) => hasToolCall(toolName));
+
+    return [...base, ...conditions, ...stopAfterConditions];
+  }
+
+  private normalizeStopAfterToolCall(
+    stopAfterToolCall?: PromptOptions["stopAfterToolCall"]
+  ): string[] {
+    if (stopAfterToolCall == null) {
+      return [];
+    }
+
+    return Array.isArray(stopAfterToolCall)
+      ? stopAfterToolCall
+      : [stopAfterToolCall];
+  }
+
+  private buildPartialAssistantMessages(
+    pendingStepToolCalls: StartedToolCall[]
+  ): ModelMessage[] {
+    if (pendingStepToolCalls.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        role: "assistant",
+        content: pendingStepToolCalls.map((toolCall) => ({
+          type: "tool-call" as const,
+          toolCallId: toolCall.toolCallId,
+          toolName: toolCall.toolName,
+          input: toolCall.arguments,
+        })),
+      },
+    ];
   }
 
   /**
@@ -374,6 +465,12 @@ export class TestAgent implements EvalAgent {
     let totalLlmMs = 0;
     let stepMcpMs = 0; // MCP time within current step
     const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
+    const completedToolCalls: PromptToolCall[] = [];
+    const pendingStepToolCalls: StartedToolCall[] = [];
+    let lastCompletedStepMessages: ModelMessage[] = [];
+    let partialInputTokens = 0;
+    let partialOutputTokens = 0;
+    let lastCompletedStepText = "";
 
     try {
       const modelOptions: CreateModelOptions = {
@@ -381,16 +478,25 @@ export class TestAgent implements EvalAgent {
         customProviders: this.customProviders,
       };
       const model = createModelFromString(this.model, modelOptions);
+      const stopAfterToolCallNames = this.normalizeStopAfterToolCall(
+        options?.stopAfterToolCall
+      );
 
       // Instrument tools to track MCP execution time
-      const instrumentedTools = this.createInstrumentedTools((ms) => {
-        totalMcpMs += ms;
-        stepMcpMs += ms; // Accumulate per-step for LLM calculation
-      }, widgetSnapshots);
+      const instrumentedTools = this.createInstrumentedTools(
+        (ms) => {
+          totalMcpMs += ms;
+          stepMcpMs += ms; // Accumulate per-step for LLM calculation
+        },
+        widgetSnapshots,
+        pendingStepToolCalls,
+        new Set(stopAfterToolCallNames)
+      );
 
       // Build messages array if context is provided for multi-turn
       const contextMessages = this.buildContextMessages(options?.context);
       const userMessage: UserModelMessage = { role: "user", content: message };
+      const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
 
       // Cast model to any to handle AI SDK version compatibility
       const result = await generateText({
@@ -405,16 +511,41 @@ export class TestAgent implements EvalAgent {
         ...(this.temperature !== undefined && {
           temperature: this.temperature,
         }),
-        // Use stopWhen with stepCountIs for controlling max agentic steps
-        // AI SDK v6+ uses this instead of maxSteps
-        stopWhen: stepCountIs(this.maxSteps),
-        onStepFinish: () => {
+        ...(options?.abortSignal !== undefined && {
+          abortSignal: options.abortSignal,
+        }),
+        ...(resolvedTimeout !== undefined && {
+          timeout: resolvedTimeout,
+        }),
+        stopWhen: this.resolveStopWhen(
+          options?.stopWhen,
+          options?.stopAfterToolCall
+        ),
+        onStepFinish: (stepResult) => {
           const now = Date.now();
           const stepDuration = now - lastStepEndTime;
           // LLM time for this step = step duration - MCP time in this step
           totalLlmMs += Math.max(0, stepDuration - stepMcpMs);
           lastStepEndTime = now;
           stepMcpMs = 0; // Reset for next step
+
+          if (!stepResult) {
+            return;
+          }
+
+          partialInputTokens += stepResult.usage?.inputTokens ?? 0;
+          partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
+          lastCompletedStepText = stepResult.text ?? "";
+          lastCompletedStepMessages = stepResult.response?.messages
+            ? [...stepResult.response.messages]
+            : [];
+          completedToolCalls.push(
+            ...stepResult.toolCalls.map((toolCall) => ({
+              toolName: toolCall.toolName,
+              arguments: (toolCall.input ?? {}) as Record<string, unknown>,
+            }))
+          );
+          pendingStepToolCalls.length = 0;
         },
       });
 
@@ -452,19 +583,51 @@ export class TestAgent implements EvalAgent {
       return this.lastResult;
     } catch (error) {
       const e2eMs = Date.now() - startTime;
+      const abortReason = options?.abortSignal?.aborted
+        ? options.abortSignal.reason
+        : undefined;
       const errorMessage =
-        error instanceof Error ? error.message : String(error);
+        abortReason instanceof Error
+          ? abortReason.message
+          : abortReason != null
+            ? String(abortReason)
+            : error instanceof Error
+              ? error.message
+              : String(error);
+      const partialMessages: ModelMessage[] = [
+        { role: "user", content: message },
+        ...lastCompletedStepMessages,
+        ...this.buildPartialAssistantMessages(pendingStepToolCalls),
+      ];
+      const partialToolCalls = [
+        ...completedToolCalls,
+        ...pendingStepToolCalls.map((toolCall) => ({
+          toolName: toolCall.toolName,
+          arguments: toolCall.arguments,
+        })),
+      ];
+      const totalTokens = partialInputTokens + partialOutputTokens;
 
-      this.lastResult = PromptResult.error(
-        errorMessage,
-        {
+      this.lastResult = PromptResult.from({
+        prompt: message,
+        messages: partialMessages,
+        text: lastCompletedStepText,
+        toolCalls: partialToolCalls,
+        usage: {
+          inputTokens: partialInputTokens,
+          outputTokens: partialOutputTokens,
+          totalTokens,
+        },
+        latency: {
           e2eMs,
           llmMs: totalLlmMs,
           mcpMs: totalMcpMs,
         },
-        message,
-        { provider: this._parsedProvider, model: this._parsedModel }
-      );
+        error: errorMessage,
+        provider: this._parsedProvider,
+        model: this._parsedModel,
+        widgetSnapshots: Array.from(widgetSnapshots.values()),
+      });
       this.promptHistory.push(this.lastResult);
       return this.lastResult;
     }

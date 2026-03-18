@@ -27,8 +27,20 @@ vi.mock("../thread/parts/tool-part", () => ({
 }));
 
 vi.mock("../thread/parts/reasoning-part", () => ({
-  ReasoningPart: ({ text, state }: { text: string; state: string }) => (
-    <div data-testid="reasoning-part" data-state={state}>
+  ReasoningPart: ({
+    text,
+    state,
+    displayMode,
+  }: {
+    text: string;
+    state: string;
+    displayMode?: string;
+  }) => (
+    <div
+      data-testid="reasoning-part"
+      data-state={state}
+      data-display-mode={displayMode ?? "inline"}
+    >
       {text}
     </div>
   ),
@@ -208,13 +220,55 @@ describe("PartSwitch", () => {
     });
 
     it("passes state to ReasoningPart", () => {
-      const part = { type: "reasoning", text: "Done", state: "complete" };
+      const part = { type: "reasoning", text: "Done", state: "done" };
 
       render(<PartSwitch {...defaultProps} part={part as any} />);
 
       expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
         "data-state",
-        "complete",
+        "done",
+      );
+    });
+
+    it("passes reasoning display mode to ReasoningPart", () => {
+      const part = {
+        type: "reasoning",
+        text: "Hidden in traces",
+        state: "done",
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          reasoningDisplayMode="collapsed"
+        />,
+      );
+
+      expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
+        "data-display-mode",
+        "collapsed",
+      );
+    });
+
+    it("passes collapsible reasoning display mode to ReasoningPart", () => {
+      const part = {
+        type: "reasoning",
+        text: "Owner thread reasoning",
+        state: "done",
+      };
+
+      render(
+        <PartSwitch
+          {...defaultProps}
+          part={part as any}
+          reasoningDisplayMode="collapsible"
+        />,
+      );
+
+      expect(screen.getByTestId("reasoning-part")).toHaveAttribute(
+        "data-display-mode",
+        "collapsible",
       );
     });
   });

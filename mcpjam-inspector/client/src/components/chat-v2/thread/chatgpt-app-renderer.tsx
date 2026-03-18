@@ -884,6 +884,7 @@ export function ChatGPTAppRenderer({
       toolName,
       protocol: "openai-apps",
       widgetState: initialWidgetState ?? null,
+      prefersBorder,
       globals: {
         theme: themeMode,
         displayMode: effectiveDisplayMode,
@@ -908,6 +909,7 @@ export function ChatGPTAppRenderer({
     capabilities,
     safeAreaInsets,
     initialWidgetState,
+    prefersBorder,
   ]);
 
   useEffect(() => {

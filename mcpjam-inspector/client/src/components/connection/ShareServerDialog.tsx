@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  BarChart3,
   Clock,
   Copy,
   Globe,
@@ -44,8 +45,8 @@ import {
   useServerShareMutations,
   useServerShareSettings,
 } from "@/hooks/useServerShares";
-import { slugify } from "@/lib/shared-server-session";
-import { HOSTED_MODE } from "@/lib/config";
+import { getShareableAppOrigin, slugify } from "@/lib/shared-server-session";
+import { ShareUsageDialog } from "./share-usage/ShareUsageDialog";
 
 interface ShareServerDialogProps {
   isOpen: boolean;
@@ -82,12 +83,14 @@ export function ShareServerDialog({
   const [email, setEmail] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isMutating, setIsMutating] = useState(false);
+  const [view, setView] = useState<"settings" | "usage">("settings");
 
   useEffect(() => {
     if (!isOpen) {
       setEmail("");
       setIsLoading(false);
       setIsMutating(false);
+      setView("settings");
       return;
     }
 
@@ -136,9 +139,7 @@ export function ShareServerDialog({
     if (!settings?.link?.token) return;
     try {
       const slug = slugify(serverName);
-      const origin = HOSTED_MODE
-        ? window.location.origin
-        : "https://app.mcpjam.com";
+      const origin = getShareableAppOrigin();
       const shareUrl = `${origin}/shared/${slug}/${encodeURIComponent(settings.link.token)}`;
       await navigator.clipboard.writeText(shareUrl);
       toast.success("Share link copied");
@@ -223,227 +224,255 @@ export function ShareServerDialog({
   };
 
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[480px] gap-0">
-        <DialogHeader>
-          <DialogTitle>Share &ldquo;{serverName}&rdquo;</DialogTitle>
-        </DialogHeader>
+    <>
+      <Dialog
+        open={isOpen && view === "settings"}
+        onOpenChange={(open) => !open && onClose()}
+      >
+        <DialogContent className="sm:max-w-[480px] gap-0">
+          <DialogHeader>
+            <DialogTitle>Share &ldquo;{serverName}&rdquo;</DialogTitle>
+          </DialogHeader>
 
-        {!isAuthenticated ? (
-          <p className="text-sm text-muted-foreground pt-4">
-            Sign in to manage shared server access.
-          </p>
-        ) : isLoading && !settings ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground pt-4">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            Loading share settings...
-          </div>
-        ) : !settings ? (
-          <p className="text-sm text-muted-foreground pt-4">
-            Unable to load sharing settings.
-          </p>
-        ) : (
-          <>
-            {/* Email invite input — top, prominent */}
-            <div className="flex gap-2 pt-4 pb-5">
-              <Input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="Add people by email"
-                className="flex-1"
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    void handleInvite();
-                  }
-                }}
-              />
-              <Button
-                onClick={() => void handleInvite()}
-                disabled={!email.trim() || isMutating}
-              >
-                {isMutating && email.trim() ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  "Invite"
-                )}
-              </Button>
+          {!isAuthenticated ? (
+            <p className="text-sm text-muted-foreground pt-4">
+              Sign in to manage shared server access.
+            </p>
+          ) : isLoading && !settings ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground pt-4">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading share settings...
             </div>
-
-            {/* People with access */}
-            <div className="space-y-1">
-              <p className="text-sm font-medium">People with access</p>
-              <div className="max-h-[220px] overflow-y-auto -mx-1">
-                {/* Current user (owner) */}
-                <div className="flex items-center gap-3 px-1 py-1.5 rounded-md">
-                  <Avatar className="size-8 shrink-0">
-                    <AvatarImage src={profilePictureUrl} alt={displayName} />
-                    <AvatarFallback className="text-xs">
-                      {displayInitials}
-                    </AvatarFallback>
-                  </Avatar>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-sm truncate">{displayName}</p>
-                      <span className="text-xs text-muted-foreground">
-                        (you)
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground truncate">
-                      {user?.email}
-                    </p>
-                  </div>
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    Owner
-                  </span>
-                </div>
-
-                {activeMembers.length === 0 ? (
-                  <p className="text-sm text-muted-foreground px-1 py-3">
-                    No one has been invited yet.
-                  </p>
-                ) : (
-                  activeMembers.map((member) => {
-                    const name = member.user?.name || member.email;
-                    const isPending = !member.userId;
-                    const initials = getInitials(name);
-
-                    return (
-                      <div
-                        key={member._id}
-                        className="flex items-center gap-3 px-1 py-1.5 rounded-md hover:bg-muted/50"
-                      >
-                        {isPending ? (
-                          <div className="size-8 rounded-full bg-muted flex items-center justify-center shrink-0">
-                            <Clock className="size-3.5 text-muted-foreground" />
-                          </div>
-                        ) : (
-                          <Avatar className="size-8 shrink-0">
-                            <AvatarImage
-                              src={member.user?.imageUrl || undefined}
-                              alt={name}
-                            />
-                            <AvatarFallback className="text-xs">
-                              {initials}
-                            </AvatarFallback>
-                          </Avatar>
-                        )}
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm truncate">{name}</p>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {member.email}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {isPending && (
-                            <span className="text-xs text-muted-foreground">
-                              Pending
-                            </span>
-                          )}
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                            onClick={() => void handleRemoveMember(member)}
-                            disabled={isMutating}
-                          >
-                            <X className="size-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-
-            {/* General access */}
-            <div className="space-y-2 pt-3">
-              <p className="text-sm font-medium">General access</p>
-              <div className="flex items-center gap-3">
-                <div
-                  className={`size-8 rounded-full flex items-center justify-center shrink-0 ${
-                    settings.mode === "any_signed_in_with_link"
-                      ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-                      : "bg-muted text-muted-foreground"
-                  }`}
+          ) : !settings ? (
+            <p className="text-sm text-muted-foreground pt-4">
+              Unable to load sharing settings.
+            </p>
+          ) : (
+            <>
+              {/* Email invite input — top, prominent */}
+              <div className="flex gap-2 pt-4 pb-5">
+                <Input
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Add people by email"
+                  className="flex-1"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void handleInvite();
+                    }
+                  }}
+                />
+                <Button
+                  onClick={() => void handleInvite()}
+                  disabled={!email.trim() || isMutating}
                 >
-                  {settings.mode === "any_signed_in_with_link" ? (
-                    <Globe className="size-4" />
+                  {isMutating && email.trim() ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
-                    <Lock className="size-4" />
+                    "Invite"
+                  )}
+                </Button>
+              </div>
+
+              {/* People with access */}
+              <div className="space-y-1">
+                <p className="text-sm font-medium">People with access</p>
+                <div className="max-h-[220px] overflow-y-auto -mx-1">
+                  {/* Current user (owner) */}
+                  <div className="flex items-center gap-3 px-1 py-1.5 rounded-md">
+                    <Avatar className="size-8 shrink-0">
+                      <AvatarImage src={profilePictureUrl} alt={displayName} />
+                      <AvatarFallback className="text-xs">
+                        {displayInitials}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-sm truncate">{displayName}</p>
+                        <span className="text-xs text-muted-foreground">
+                          (you)
+                        </span>
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {user?.email}
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      Owner
+                    </span>
+                  </div>
+
+                  {activeMembers.length === 0 ? (
+                    <p className="text-sm text-muted-foreground px-1 py-3">
+                      No one has been invited yet.
+                    </p>
+                  ) : (
+                    activeMembers.map((member) => {
+                      const name = member.user?.name || member.email;
+                      const isPending = !member.userId;
+                      const initials = getInitials(name);
+
+                      return (
+                        <div
+                          key={member._id}
+                          className="flex items-center gap-3 px-1 py-1.5 rounded-md hover:bg-muted/50"
+                        >
+                          {isPending ? (
+                            <div className="size-8 rounded-full bg-muted flex items-center justify-center shrink-0">
+                              <Clock className="size-3.5 text-muted-foreground" />
+                            </div>
+                          ) : (
+                            <Avatar className="size-8 shrink-0">
+                              <AvatarImage
+                                src={member.user?.imageUrl || undefined}
+                                alt={name}
+                              />
+                              <AvatarFallback className="text-xs">
+                                {initials}
+                              </AvatarFallback>
+                            </Avatar>
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm truncate">{name}</p>
+                            <p className="text-xs text-muted-foreground truncate">
+                              {member.email}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {isPending && (
+                              <span className="text-xs text-muted-foreground">
+                                Pending
+                              </span>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                              onClick={() => void handleRemoveMember(member)}
+                              disabled={isMutating}
+                            >
+                              <X className="size-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <Select
-                    value={settings.mode}
-                    onValueChange={(value) =>
-                      void handleModeChange(value as ServerShareMode)
-                    }
-                    disabled={isMutating}
+              </div>
+
+              {/* General access */}
+              <div className="space-y-2 pt-3">
+                <p className="text-sm font-medium">General access</p>
+                <div className="flex items-center gap-3">
+                  <div
+                    className={`size-8 rounded-full flex items-center justify-center shrink-0 ${
+                      settings.mode === "any_signed_in_with_link"
+                        ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                        : "bg-muted text-muted-foreground"
+                    }`}
                   >
-                    <SelectTrigger className="h-auto border-none shadow-none px-0 py-0 font-medium text-sm w-auto gap-1">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="any_signed_in_with_link">
-                        Anyone with the link
-                      </SelectItem>
-                      <SelectItem value="invited_only">
-                        Invited users only
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="text-xs text-muted-foreground">
-                    {settings.mode === "any_signed_in_with_link"
-                      ? "Anyone signed in with the link can chat"
-                      : "Only invited people can chat"}
-                  </p>
+                    {settings.mode === "any_signed_in_with_link" ? (
+                      <Globe className="size-4" />
+                    ) : (
+                      <Lock className="size-4" />
+                    )}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <Select
+                      value={settings.mode}
+                      onValueChange={(value) =>
+                        void handleModeChange(value as ServerShareMode)
+                      }
+                      disabled={isMutating}
+                    >
+                      <SelectTrigger className="h-auto border-none shadow-none px-0 py-0 font-medium text-sm w-auto gap-1">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="any_signed_in_with_link">
+                          Anyone with the link
+                        </SelectItem>
+                        <SelectItem value="invited_only">
+                          Invited users only
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {settings.mode === "any_signed_in_with_link"
+                        ? "Anyone signed in with the link can chat"
+                        : "Only invited people can chat"}
+                    </p>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <Separator className="mt-4 mb-3" />
+              <Separator className="mt-4 mb-3" />
 
-            {/* Footer: Copy link + Done */}
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() => void handleCopyLink()}
-                  disabled={isMutating}
-                >
-                  <Link2 className="size-3.5" />
-                  Copy link
-                </Button>
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-muted-foreground"
-                        onClick={() => void handleRotate()}
-                        disabled={isMutating}
-                      >
-                        <RotateCw className="size-3.5" />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      Reset link (invalidates current link)
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
+              {/* Footer: Copy link + Usage + Done */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1.5"
+                    onClick={() => void handleCopyLink()}
+                    disabled={isMutating}
+                  >
+                    <Link2 className="size-3.5" />
+                    Copy link
+                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0 text-muted-foreground"
+                          onClick={() => void handleRotate()}
+                          disabled={isMutating}
+                        >
+                          <RotateCw className="size-3.5" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Reset link (invalidates current link)
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+                <div className="flex items-center gap-2">
+                  {settings?.shareId && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1.5"
+                      onClick={() => setView("usage")}
+                    >
+                      <BarChart3 className="size-3.5" />
+                      Usage
+                    </Button>
+                  )}
+                  <Button size="sm" onClick={onClose}>
+                    Done
+                  </Button>
+                </div>
               </div>
-              <Button size="sm" onClick={onClose}>
-                Done
-              </Button>
-            </div>
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+      {settings?.shareId && (
+        <ShareUsageDialog
+          isOpen={isOpen && view === "usage"}
+          onClose={onClose}
+          onBackToSettings={() => setView("settings")}
+          sourceType="serverShare"
+          sourceId={settings.shareId}
+          title={serverName}
+        />
+      )}
+    </>
   );
 }

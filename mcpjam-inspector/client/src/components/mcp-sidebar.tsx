@@ -15,6 +15,7 @@ import {
   MessageCircleQuestionIcon,
   GitBranch,
   GraduationCap,
+  Box,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -25,6 +26,7 @@ import {
   SidebarFooter,
   SidebarHeader,
 } from "@/components/ui/sidebar";
+import { useConvexAuth } from "convex/react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
@@ -96,6 +98,12 @@ const navigationSections: NavSection[] = [
         title: "Chat",
         url: "#chat-v2",
         icon: MessageCircle,
+      },
+      {
+        title: "Sandboxes",
+        url: "#sandboxes",
+        icon: Box,
+        featureFlag: "sandboxes-enabled",
       },
     ],
   },
@@ -225,7 +233,10 @@ export function MCPSidebar({
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
-  const learningEnabled = import.meta.env.DEV || learningFlagEnabled;
+  const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
+  const { isAuthenticated } = useConvexAuth();
+  const learningEnabled =
+    import.meta.env.DEV || (!!learningFlagEnabled && isAuthenticated);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
@@ -317,10 +328,11 @@ export function MCPSidebar({
     : null;
   const featureFlags = useMemo(
     () => ({
-      "ci-evals-enabled": !!ciEvalsEnabled,
+      "ci-evals-enabled": !!ciEvalsEnabled && isAuthenticated,
       "mcpjam-learning": !!learningEnabled,
+      "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
     }),
-    [ciEvalsEnabled, learningEnabled],
+    [ciEvalsEnabled, learningEnabled, sandboxesEnabled, isAuthenticated],
   );
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,

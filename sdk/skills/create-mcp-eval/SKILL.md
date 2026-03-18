@@ -172,7 +172,7 @@ await manager.connectToServer("server-id", {
   env: { API_KEY: "..." },
 });
 
-// Get AI SDK-compatible tools for TestAgent
+// Get tools for TestAgent
 const tools = await manager.getToolsForAiSdk(["server-id"]);
 
 // Cleanup
@@ -185,6 +185,7 @@ await manager.disconnectAllServers();
 
 ```typescript
 import { TestAgent } from "@mcpjam/sdk";
+import { hasToolCall } from "@mcpjam/sdk";
 
 const agent = new TestAgent({
   tools,                              // from manager.getToolsForAiSdk()
@@ -199,6 +200,18 @@ const result = await agent.prompt("List all projects");
 // Multi-turn with context
 const r1 = await agent.prompt("Get my user profile");
 const r2 = await agent.prompt("List workspaces for that user", { context: r1 });
+
+// Stop the loop after the step where a tool is called
+const r3 = await agent.prompt("Search tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+r3.hasToolCall("search_tasks");          // true
+
+// Bound prompt runtime
+const r4 = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500 },
+});
+r4.hasError();                           // true if the prompt timed out
 
 // Mock agent for deterministic tests (no LLM needed)
 const mockAgent = TestAgent.mock(async (message) =>
@@ -215,6 +228,10 @@ const mockAgent = TestAgent.mock(async (message) =>
   })
 );
 ```
+
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+
+`timeout` bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` is accepted for parity but mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
 
 ### PromptResult — Inspect Agent Responses
 
@@ -998,4 +1015,3 @@ it("selects search_tasks", async () => {
   expect(result.hasToolCall("search_tasks")).toBe(true);
 }, 90_000);
 ```
-
