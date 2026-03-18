@@ -221,9 +221,7 @@ export function getLifecycleStepGuide(
   return LIFECYCLE_GUIDE_METADATA[step];
 }
 
-export function getLifecycleStepIndex(
-  step: McpLifecycleStep20250326,
-): number {
+export function getLifecycleStepIndex(step: McpLifecycleStep20250326): number {
   const index = HTTP_STEP_ORDER.indexOf(step);
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }

@@ -42,12 +42,8 @@ describe("buildMcpLifecycleScenario20250326", () => {
     });
 
     it("shutdown actions involve the process actor", () => {
-      const closeStdin = scenario.actions.find(
-        (a) => a.id === "close_stdin",
-      );
-      const processExit = scenario.actions.find(
-        (a) => a.id === "process_exit",
-      );
+      const closeStdin = scenario.actions.find((a) => a.id === "close_stdin");
+      const processExit = scenario.actions.find((a) => a.id === "process_exit");
 
       expect(closeStdin?.from).toBe("client");
       expect(closeStdin?.to).toBe("process");
@@ -56,9 +52,7 @@ describe("buildMcpLifecycleScenario20250326", () => {
     });
 
     it("SIGTERM/SIGKILL is annotated on close_stdin details, not a separate step", () => {
-      const closeStdin = scenario.actions.find(
-        (a) => a.id === "close_stdin",
-      );
+      const closeStdin = scenario.actions.find((a) => a.id === "close_stdin");
       expect(closeStdin?.details).toBeDefined();
       const fallbackDetail = closeStdin?.details?.find(
         (d) => d.label === "Fallback",
@@ -163,9 +157,7 @@ describe("buildMcpLifecycleScenario20250326", () => {
       const initialized = scenario.actions.find(
         (a) => a.id === "initialized_notification",
       );
-      const noteDetail = initialized?.details?.find(
-        (d) => d.label === "Note",
-      );
+      const noteDetail = initialized?.details?.find((d) => d.label === "Note");
       expect(String(noteDetail?.value)).toMatch(/No requests.*before/i);
     });
 

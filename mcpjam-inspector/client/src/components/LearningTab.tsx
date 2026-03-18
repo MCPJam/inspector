@@ -85,10 +85,7 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
             <ArrowLeft className="h-3.5 w-3.5" />
           </Button>
           <h2 className="text-sm font-semibold">MCP Protocol Lifecycle</h2>
-          <Badge
-            variant="secondary"
-            className="text-[10px] h-4 px-1.5"
-          >
+          <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
             HTTP
           </Badge>
         </div>
@@ -126,9 +123,7 @@ export function LearningTab() {
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
 
   if (selectedConcept === "mcp-lifecycle") {
-    return (
-      <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />
-    );
+    return <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />;
   }
 
   return <LearningLandingPage onSelect={setSelectedConcept} />;

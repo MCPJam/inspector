@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { buildNodesAndEdges } from "../diagramBuilder";
-import type { SequenceDiagramActorConfig, SequenceDiagramAction } from "../types";
+import type {
+  SequenceDiagramActorConfig,
+  SequenceDiagramAction,
+} from "../types";
 
 // --- Test fixtures ---
 
@@ -22,19 +25,54 @@ const fourActors: SequenceDiagramActorConfig[] = [
 ];
 
 const twoActions: SequenceDiagramAction[] = [
-  { id: "step1", label: "Request", description: "A request", from: "client", to: "server" },
-  { id: "step2", label: "Response", description: "A response", from: "server", to: "client" },
+  {
+    id: "step1",
+    label: "Request",
+    description: "A request",
+    from: "client",
+    to: "server",
+  },
+  {
+    id: "step2",
+    label: "Response",
+    description: "A response",
+    from: "server",
+    to: "client",
+  },
 ];
 
 const threeActorActions: SequenceDiagramAction[] = [
-  { id: "step1", label: "Request", description: "A request", from: "client", to: "server" },
-  { id: "step2", label: "Response", description: "A response", from: "server", to: "client" },
-  { id: "step3", label: "Close", description: "Close", from: "client", to: "process" },
+  {
+    id: "step1",
+    label: "Request",
+    description: "A request",
+    from: "client",
+    to: "server",
+  },
+  {
+    id: "step2",
+    label: "Response",
+    description: "A response",
+    from: "server",
+    to: "client",
+  },
+  {
+    id: "step3",
+    label: "Close",
+    description: "Close",
+    from: "client",
+    to: "process",
+  },
 ];
 
 const twoActorPositions = { client: 100, server: 350 };
 const threeActorPositions = { client: 100, server: 350, process: 600 };
-const fourActorPositions = { browser: 100, client: 350, mcpServer: 650, authServer: 950 };
+const fourActorPositions = {
+  browser: 100,
+  client: 350,
+  mcpServer: 650,
+  authServer: 950,
+};
 
 // --- Tests ---
 
@@ -48,7 +86,10 @@ describe("buildNodesAndEdges", () => {
       });
       const actorNodes = nodes.filter((n) => n.type === "actor");
       expect(actorNodes).toHaveLength(2);
-      expect(actorNodes.map((n) => n.id)).toEqual(["actor-client", "actor-server"]);
+      expect(actorNodes.map((n) => n.id)).toEqual([
+        "actor-client",
+        "actor-server",
+      ]);
     });
 
     it("creates one actor node per actor (3 actors)", () => {
@@ -235,7 +276,13 @@ describe("buildNodesAndEdges", () => {
     it("marks future steps as 'pending'", () => {
       const actions: SequenceDiagramAction[] = [
         ...twoActions,
-        { id: "step3", label: "Extra", description: "Extra", from: "client", to: "server" },
+        {
+          id: "step3",
+          label: "Extra",
+          description: "Extra",
+          from: "client",
+          to: "server",
+        },
       ];
       const { edges } = buildNodesAndEdges({
         actors: twoActors,

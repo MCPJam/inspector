@@ -1,4 +1,7 @@
-import type { SequenceDiagramActorConfig, SequenceDiagramAction } from "@/components/sequence-diagram";
+import type {
+  SequenceDiagramActorConfig,
+  SequenceDiagramAction,
+} from "@/components/sequence-diagram";
 
 /**
  * MCP Lifecycle steps for the 2025-03-26 spec.

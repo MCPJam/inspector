@@ -57,7 +57,12 @@ const edges: Edge[] = [
     source: "actor-client",
     target: "actor-server",
     type: "actionEdge",
-    data: { stepId: "step1", label: "Request", description: "A request", status: "current" },
+    data: {
+      stepId: "step1",
+      label: "Request",
+      description: "A request",
+      status: "current",
+    },
   },
 ];
 

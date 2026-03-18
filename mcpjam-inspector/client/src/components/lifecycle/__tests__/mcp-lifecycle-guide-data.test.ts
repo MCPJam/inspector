@@ -91,12 +91,8 @@ describe("getLifecycleStepIndex", () => {
   });
 
   it("returns MAX_SAFE_INTEGER for stdio-only steps", () => {
-    expect(getLifecycleStepIndex("close_stdin")).toBe(
-      Number.MAX_SAFE_INTEGER,
-    );
-    expect(getLifecycleStepIndex("process_exit")).toBe(
-      Number.MAX_SAFE_INTEGER,
-    );
+    expect(getLifecycleStepIndex("close_stdin")).toBe(Number.MAX_SAFE_INTEGER);
+    expect(getLifecycleStepIndex("process_exit")).toBe(Number.MAX_SAFE_INTEGER);
   });
 });
 

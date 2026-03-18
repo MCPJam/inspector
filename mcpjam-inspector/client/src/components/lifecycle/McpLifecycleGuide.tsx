@@ -52,13 +52,10 @@ function useScrollSpy(
   const sectionRefs = useRef<Map<string, HTMLElement>>(new Map());
   const rafId = useRef(0);
 
-  const registerSection = useCallback(
-    (id: string, el: HTMLElement | null) => {
-      if (el) sectionRefs.current.set(id, el);
-      else sectionRefs.current.delete(id);
-    },
-    [],
-  );
+  const registerSection = useCallback((id: string, el: HTMLElement | null) => {
+    if (el) sectionRefs.current.set(id, el);
+    else sectionRefs.current.delete(id);
+  }, []);
 
   useEffect(() => {
     if (!enabled || !scrollContainerRef.current) return;
