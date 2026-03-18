@@ -49,7 +49,7 @@ export function useSharedChatThreadList({
   const queryArgs =
     sourceType === "sandbox"
       ? sourceId
-        ? ({ sandboxId: sourceId, limit: 50 } as any)
+        ? ({ sandboxId: sourceId, limit: 50, includeInternal: true } as any)
         : "skip"
       : sourceId
         ? ({ shareId: sourceId, limit: 50 } as any)
