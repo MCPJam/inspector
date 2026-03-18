@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
   ChevronsUpDown,
+  ExternalLink,
   Globe,
   Loader2,
   Lock,
@@ -25,6 +26,7 @@ import { AddServerModal } from "@/components/connection/AddServerModal";
 import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { ChatTabV2 } from "@/components/ChatTabV2";
 import {
   Collapsible,
   CollapsibleContent,
@@ -38,6 +40,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -49,17 +58,34 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
+import { useIsMobile } from "@/hooks/use-mobile";
+import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
+import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
+import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import {
   getSandboxHostLabel,
   getSandboxHostLogo,
   type SandboxHostStyle,
 } from "@/lib/sandbox-host-style";
+import {
+  SANDBOX_OAUTH_PENDING_KEY,
+  buildPlaygroundSandboxLink,
+  type SandboxBootstrapPayload,
+  type SandboxBootstrapServer,
+  writePlaygroundSession,
+} from "@/lib/sandbox-session";
 
 interface WorkspaceServerOption {
   _id: string;
   name: string;
   transportType: "stdio" | "http";
   url?: string;
+  useOAuth?: boolean;
+  oauthScopes?: string[];
+  clientId?: string;
 }
 
 function isInsecureUrl(url: string | undefined): boolean {
@@ -83,6 +109,51 @@ interface SandboxEditorProps {
 const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 const HOST_STYLE_OPTIONS: SandboxHostStyle[] = ["claude", "chatgpt"];
 
+function createPlaygroundId(): string {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `playground-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getSandboxOAuthRowCopy(status: string): {
+  description: string;
+  buttonLabel: string | null;
+} {
+  switch (status) {
+    case "launching":
+      return {
+        description: "Opening consent screen…",
+        buttonLabel: null,
+      };
+    case "resuming":
+      return {
+        description: "Finishing authorization…",
+        buttonLabel: null,
+      };
+    case "verifying":
+      return {
+        description: "Verifying access…",
+        buttonLabel: null,
+      };
+    case "error":
+      return {
+        description: "Authorization could not be completed. Try again.",
+        buttonLabel: "Authorize again",
+      };
+    case "needs_auth":
+    default:
+      return {
+        description: "You'll return here automatically after consent.",
+        buttonLabel: "Authorize",
+      };
+  }
+}
+
 export function SandboxEditor({
   sandbox,
   workspaceId,
@@ -95,6 +166,7 @@ export function SandboxEditor({
     useSandboxMutations();
   const { createServer } = useServerMutations();
   const isCreateMode = !sandbox;
+  const isMobile = useIsMobile();
 
   const hostedModels = useMemo(
     () =>
@@ -132,6 +204,14 @@ export function SandboxEditor({
   const [isEditingTitle, setIsEditingTitle] = useState(isCreateMode);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [previewChatKey, setPreviewChatKey] = useState(0);
+  const [previewPlaygroundId, setPreviewPlaygroundId] = useState(() =>
+    createPlaygroundId(),
+  );
+  const previewHasOpenedRef = useRef(false);
+  const previewPendingRestartRef = useRef(false);
+  const previewIsInitialFingerprintRef = useRef(true);
 
   // Reset form when the selected sandbox changes or the editor switches modes.
   useEffect(() => {
@@ -147,6 +227,12 @@ export function SandboxEditor({
       setMode("any_signed_in_with_link");
       setSelectedServerIds([]);
       setIsEditingTitle(true);
+      setIsPreviewOpen(false);
+      setPreviewChatKey(0);
+      setPreviewPlaygroundId(createPlaygroundId());
+      previewHasOpenedRef.current = false;
+      previewPendingRestartRef.current = false;
+      previewIsInitialFingerprintRef.current = true;
       return;
     }
 
@@ -161,12 +247,126 @@ export function SandboxEditor({
     setMode(sandbox.mode);
     setSelectedServerIds(sandbox.servers.map((s) => s.serverId));
     setIsEditingTitle(false);
+    setIsPreviewOpen(false);
+    setPreviewChatKey(0);
+    setPreviewPlaygroundId(createPlaygroundId());
+    previewHasOpenedRef.current = false;
+    previewPendingRestartRef.current = false;
+    previewIsInitialFingerprintRef.current = true;
   }, [hostedModels, sandbox]);
 
   const availableServers = useMemo(
     () => workspaceServers.filter((s) => s.transportType === "http"),
     [workspaceServers],
   );
+
+  const previewToken = sandbox?.link?.token?.trim() || null;
+  const canPreview = Boolean(previewToken);
+  const previewName = name.trim() || sandbox?.name || "Sandbox Preview";
+  const normalizedSystemPrompt = systemPrompt.trim() || DEFAULT_SYSTEM_PROMPT;
+  const behaviorFingerprint = useMemo(
+    () =>
+      JSON.stringify({
+        selectedServerIds: [...selectedServerIds].sort(),
+        systemPrompt: normalizedSystemPrompt,
+        modelId,
+        temperature,
+        requireToolApproval,
+      }),
+    [
+      modelId,
+      normalizedSystemPrompt,
+      requireToolApproval,
+      selectedServerIds,
+      temperature,
+    ],
+  );
+  const selectedPreviewServers = useMemo(() => {
+    const savedServersById = new Map(
+      (sandbox?.servers ?? []).map((server) => [server.serverId, server]),
+    );
+
+    return selectedServerIds
+      .map((serverId) => {
+        const workspaceServer = availableServers.find(
+          (server) => server._id === serverId,
+        );
+        if (workspaceServer) {
+          return {
+            serverId: workspaceServer._id,
+            serverName: workspaceServer.name,
+            useOAuth: Boolean(workspaceServer.useOAuth),
+            serverUrl: workspaceServer.url ?? null,
+            clientId: workspaceServer.clientId ?? null,
+            oauthScopes: workspaceServer.oauthScopes ?? null,
+          } satisfies SandboxBootstrapServer;
+        }
+
+        const savedServer = savedServersById.get(serverId);
+        if (!savedServer) {
+          return {
+            serverId,
+            serverName: serverId,
+            useOAuth: false,
+            serverUrl: null,
+            clientId: null,
+            oauthScopes: null,
+          } satisfies SandboxBootstrapServer;
+        }
+
+        return {
+          serverId: savedServer.serverId,
+          serverName: savedServer.serverName,
+          useOAuth: savedServer.useOAuth,
+          serverUrl: savedServer.serverUrl,
+          clientId: savedServer.clientId,
+          oauthScopes: savedServer.oauthScopes,
+        } satisfies SandboxBootstrapServer;
+      })
+      .filter((server) => !!server.serverId && !!server.serverName);
+  }, [availableServers, sandbox?.servers, selectedServerIds]);
+  const previewServerConfigs = useMemo(() => {
+    return Object.fromEntries(
+      selectedPreviewServers.map((server) => [
+        server.serverName,
+        {
+          name: server.serverName,
+          config: {
+            url: server.serverUrl ?? "https://sandbox-preview.invalid",
+          } as any,
+          lastConnectionTime: new Date(),
+          connectionStatus: "connected",
+          retryCount: 0,
+          enabled: true,
+        } satisfies ServerWithName,
+      ]),
+    );
+  }, [selectedPreviewServers]);
+  const {
+    oauthStateByServerId,
+    pendingOAuthServers,
+    authorizeServer,
+    markOAuthRequired,
+  } = useHostedOAuthGate({
+    surface: "sandbox",
+    pendingKey: SANDBOX_OAUTH_PENDING_KEY,
+    servers: selectedPreviewServers,
+  });
+  const previewOAuthTokens = useMemo(() => {
+    const entries = selectedPreviewServers
+      .map((server) => {
+        const token = getStoredTokens(server.serverName)?.access_token;
+        return token ? ([server.serverId, token] as const) : null;
+      })
+      .filter((entry): entry is readonly [string, string] =>
+        Array.isArray(entry),
+      );
+
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }, [oauthStateByServerId, selectedPreviewServers]);
+  const isFinishingPreviewOAuth =
+    pendingOAuthServers.length > 0 &&
+    pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
 
   const hasUnsavedChanges = useMemo(() => {
     if (isCreateMode) return true;
@@ -336,6 +536,123 @@ export function SandboxEditor({
     }
   };
 
+  const restartPreview = useCallback(() => {
+    setPreviewPlaygroundId(createPlaygroundId());
+    setPreviewChatKey((current) => current + 1);
+  }, []);
+
+  useEffect(() => {
+    if (!sandbox || !previewToken) {
+      return;
+    }
+
+    const payload: SandboxBootstrapPayload = {
+      workspaceId: sandbox.workspaceId,
+      sandboxId: sandbox.sandboxId,
+      name: previewName,
+      description: description.trim() || undefined,
+      hostStyle,
+      mode,
+      allowGuestAccess,
+      viewerIsWorkspaceMember: true,
+      systemPrompt: normalizedSystemPrompt,
+      modelId,
+      temperature,
+      requireToolApproval,
+      servers: selectedPreviewServers,
+    };
+
+    writePlaygroundSession({
+      token: previewToken,
+      payload,
+      surface: "preview",
+      playgroundId: previewPlaygroundId,
+      updatedAt: Date.now(),
+    });
+  }, [
+    allowGuestAccess,
+    description,
+    hostStyle,
+    mode,
+    modelId,
+    normalizedSystemPrompt,
+    previewName,
+    previewPlaygroundId,
+    previewToken,
+    requireToolApproval,
+    sandbox,
+    selectedPreviewServers,
+    temperature,
+  ]);
+
+  useEffect(() => {
+    if (previewIsInitialFingerprintRef.current) {
+      previewIsInitialFingerprintRef.current = false;
+      return;
+    }
+
+    if (!canPreview) {
+      return;
+    }
+
+    if (!isPreviewOpen) {
+      if (previewHasOpenedRef.current) {
+        previewPendingRestartRef.current = true;
+      }
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      restartPreview();
+    }, 400);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [behaviorFingerprint, canPreview, restartPreview]);
+
+  useEffect(() => {
+    if (!isPreviewOpen || !canPreview || !previewPendingRestartRef.current) {
+      return;
+    }
+
+    previewPendingRestartRef.current = false;
+    restartPreview();
+  }, [canPreview, isPreviewOpen, restartPreview]);
+
+  const handleOpenPreview = useCallback(() => {
+    if (!previewToken) {
+      return;
+    }
+
+    previewHasOpenedRef.current = true;
+    setIsPreviewOpen(true);
+  }, [previewToken]);
+
+  const handleOpenFullPreview = useCallback(() => {
+    if (!previewToken) {
+      toast.error("Save the sandbox first to preview");
+      return;
+    }
+
+    window.open(
+      buildPlaygroundSandboxLink(
+        previewToken,
+        previewName,
+        previewPlaygroundId,
+      ),
+      "_blank",
+      "noopener,noreferrer",
+    );
+  }, [previewName, previewPlaygroundId, previewToken]);
+
+  const handlePreviewOAuthRequired = useCallback(
+    (details?: HostedOAuthRequiredDetails) => {
+      markOAuthRequired(details);
+    },
+    [markOAuthRequired],
+  );
+
   return (
     <div className="flex h-full flex-col">
       {/* Sticky header */}
@@ -379,6 +696,15 @@ export function SandboxEditor({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleOpenPreview}
+            disabled={!canPreview}
+            className="h-9 px-4 text-xs font-medium"
+          >
+            Preview
+          </Button>
           {hasUnsavedChanges && (
             <Button
               size="sm"
@@ -728,6 +1054,138 @@ export function SandboxEditor({
         initialData={{ type: "http" }}
         requireHttps
       />
+
+      <Sheet open={isPreviewOpen} onOpenChange={setIsPreviewOpen}>
+        <SheetContent
+          side={isMobile ? "bottom" : "right"}
+          className={
+            isMobile
+              ? "h-full w-full max-w-none border-0 p-0 sm:max-w-none"
+              : "w-full border-l p-0 sm:max-w-none lg:w-[min(820px,100vw)]"
+          }
+        >
+          <SheetHeader className="border-b px-5 py-4 pr-14">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <SheetTitle>Preview</SheetTitle>
+                <SheetDescription>
+                  Preview the saved sandbox with your draft config.
+                </SheetDescription>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={restartPreview}
+                  disabled={!canPreview}
+                >
+                  Reload
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleOpenFullPreview}
+                  disabled={!canPreview}
+                >
+                  <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+                  Open full preview
+                </Button>
+              </div>
+            </div>
+          </SheetHeader>
+
+          <div className="flex min-h-0 flex-1 flex-col bg-muted/20">
+            {!sandbox || !previewToken ? (
+              <div className="flex flex-1 items-center justify-center p-6">
+                <div className="max-w-sm rounded-2xl border border-dashed bg-background p-6 text-center">
+                  <h3 className="text-base font-semibold">
+                    Preview unavailable
+                  </h3>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Save the sandbox to generate a preview link.
+                  </p>
+                </div>
+              </div>
+            ) : pendingOAuthServers.length > 0 ? (
+              <div className="flex flex-1 items-center justify-center p-6">
+                <div className="w-full max-w-xl rounded-2xl border bg-background p-6">
+                  <h3 className="text-center text-base font-semibold">
+                    {isFinishingPreviewOAuth
+                      ? "Finishing authorization"
+                      : "Authorization Required"}
+                  </h3>
+                  <p className="mt-2 text-center text-sm text-muted-foreground">
+                    {isFinishingPreviewOAuth
+                      ? "Finishing authorization for the required sandbox servers."
+                      : "Authorize the required sandbox servers to continue."}
+                  </p>
+                  <div className="mt-5 space-y-3">
+                    {pendingOAuthServers.map(({ server, state }) => {
+                      const rowCopy = getSandboxOAuthRowCopy(state.status);
+                      return (
+                        <div
+                          key={server.serverId}
+                          className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium">
+                              {server.serverName}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {state.status === "error" && state.errorMessage
+                                ? state.errorMessage
+                                : rowCopy.description}
+                            </p>
+                          </div>
+                          {rowCopy.buttonLabel ? (
+                            <Button
+                              size="sm"
+                              onClick={() => void authorizeServer(server)}
+                            >
+                              {rowCopy.buttonLabel}
+                            </Button>
+                          ) : (
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <SandboxHostStyleProvider value={hostStyle}>
+                <div
+                  className="flex min-h-0 flex-1"
+                  data-host-style={hostStyle}
+                >
+                  <ChatTabV2
+                    key={previewChatKey}
+                    connectedOrConnectingServerConfigs={previewServerConfigs}
+                    selectedServerNames={selectedPreviewServers.map(
+                      (server) => server.serverName,
+                    )}
+                    minimalMode
+                    reasoningDisplayMode="hidden"
+                    hostedWorkspaceIdOverride={sandbox.workspaceId}
+                    hostedSelectedServerIdsOverride={selectedPreviewServers.map(
+                      (server) => server.serverId,
+                    )}
+                    hostedOAuthTokensOverride={previewOAuthTokens}
+                    hostedSandboxToken={previewToken}
+                    hostedSandboxSurface="preview"
+                    initialModelId={modelId}
+                    initialSystemPrompt={normalizedSystemPrompt}
+                    initialTemperature={temperature}
+                    initialRequireToolApproval={requireToolApproval}
+                    onOAuthRequired={handlePreviewOAuthRequired}
+                  />
+                </div>
+              </SandboxHostStyleProvider>
+            )}
+          </div>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }

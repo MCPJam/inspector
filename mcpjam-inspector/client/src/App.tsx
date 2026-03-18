@@ -115,6 +115,7 @@ export default function App() {
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
+  const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const {
     getAccessToken,
     signIn,
@@ -207,11 +208,9 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-pending");
       localStorage.removeItem("mcp-oauth-return-hash");
-      window.history.replaceState(
-        {},
-        "",
-        `/${resolveHostedOAuthReturnHash(callbackContext)}`,
-      );
+      const returnHash = resolveHostedOAuthReturnHash(callbackContext);
+      window.history.replaceState({}, "", `/${returnHash}`);
+      window.dispatchEvent(new Event("hashchange"));
     };
 
     if (error || !code) {
@@ -544,8 +543,19 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
       applyNavigation("servers", { updateHash: true });
+    } else if (
+      activeTab === "learning" &&
+      (learningEnabled !== true || !isAuthenticated)
+    ) {
+      applyNavigation("servers", { updateHash: true });
     }
-  }, [ciEvalsEnabled, activeTab, applyNavigation]);
+  }, [
+    ciEvalsEnabled,
+    learningEnabled,
+    isAuthenticated,
+    activeTab,
+    applyNavigation,
+  ]);
 
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });
@@ -748,8 +758,8 @@ export default function App() {
             <ErrorBoundary
               fallback={
                 <div className="flex items-center justify-center h-full text-muted-foreground">
-                  Something went wrong in the OAuth Debugger. Try refreshing
-                  the page.
+                  Something went wrong in the OAuth Debugger. Try refreshing the
+                  page.
                 </div>
               }
             >

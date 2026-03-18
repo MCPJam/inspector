@@ -35,6 +35,8 @@ import { Separator } from "@/components/ui/separator";
 interface SandboxShareSectionProps {
   sandbox: SandboxSettings;
   onUpdated?: (sandbox: SandboxSettings) => void;
+  appearance?: "default" | "builder";
+  workspaceName?: string | null;
 }
 
 export function SandboxShareSection({

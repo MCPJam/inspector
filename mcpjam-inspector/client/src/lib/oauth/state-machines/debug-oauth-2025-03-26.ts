@@ -763,6 +763,7 @@ export const createDebugOAuthStateMachine = (
 
               const clientMetadata: Record<string, any> = {
                 client_name: "MCP Inspector Debug Client",
+                logo_uri: "https://www.mcpjam.com/mcp_jam_2row.png",
                 redirect_uris: [redirectUri],
                 grant_types: ["authorization_code", "refresh_token"],
                 response_types: ["code"],

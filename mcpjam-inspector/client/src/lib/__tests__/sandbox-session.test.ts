@@ -1,19 +1,29 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildPlaygroundSandboxLink,
   buildSandboxLink,
+  clearBuilderSession,
+  clearPlaygroundSession,
   clearSandboxSession,
   clearSandboxSignInReturnPath,
   extractSandboxTokenFromPath,
   hasActiveSandboxSession,
+  readBuilderSession,
+  readPlaygroundSession,
+  readSandboxSurfaceFromUrl,
   readSandboxSession,
   readSandboxSignInReturnPath,
   SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
+  writeBuilderSession,
+  writePlaygroundSession,
   writeSandboxSession,
   writeSandboxSignInReturnPath,
 } from "../sandbox-session";
 
 describe("sandbox-session", () => {
   beforeEach(() => {
+    localStorage.clear();
+    sessionStorage.clear();
     clearSandboxSession();
     clearSandboxSignInReturnPath();
   });
@@ -82,6 +92,7 @@ describe("sandbox-session", () => {
     expect(readSandboxSession()).toEqual({
       token: "sandbox-token",
       payload,
+      surface: "share_link",
     });
   });
 
@@ -112,6 +123,29 @@ describe("sandbox-session", () => {
         workspaceId: "ws_1",
         sandboxId: "sbx_1",
         name: "Legacy Sandbox",
+        description: undefined,
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+      surface: "share_link",
+    });
+  });
+
+  it("preserves preview surface when explicitly stored", () => {
+    writeSandboxSession({
+      token: "sandbox-token",
+      surface: "preview",
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Playground Sandbox",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
@@ -123,6 +157,70 @@ describe("sandbox-session", () => {
         servers: [],
       },
     });
+
+    expect(readSandboxSession()?.surface).toBe("preview");
+  });
+
+  it("round-trips playground sessions until their ttl expires", () => {
+    writePlaygroundSession({
+      playgroundId: "pg_123",
+      token: "sandbox-token",
+      surface: "preview",
+      updatedAt: Date.now(),
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Playground Sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+
+    const stored = readPlaygroundSession("pg_123");
+    expect(stored).toEqual(
+      expect.objectContaining({
+        playgroundId: "pg_123",
+        token: "sandbox-token",
+        surface: "preview",
+      }),
+    );
+    expect(typeof stored?.updatedAt).toBe("number");
+
+    if (!stored) {
+      throw new Error("expected stored playground session");
+    }
+
+    localStorage.setItem(
+      "mcpjam_sandbox_playground_session_v1:pg_123",
+      JSON.stringify({
+        ...stored,
+        updatedAt: Date.now() - 24 * 60 * 60 * 1000 - 1,
+      }),
+    );
+
+    expect(readPlaygroundSession("pg_123")).toBeNull();
+  });
+
+  it("reads sandbox surface from the url query", () => {
+    expect(readSandboxSurfaceFromUrl("?surface=preview")).toBe("preview");
+    expect(readSandboxSurfaceFromUrl("?surface=share_link")).toBe("share_link");
+    expect(readSandboxSurfaceFromUrl("?surface=other")).toBe("share_link");
+    expect(readSandboxSurfaceFromUrl("")).toBe("share_link");
+  });
+
+  it("builds sandbox playground links with preview surface params", () => {
+    expect(
+      buildPlaygroundSandboxLink("token 123", "Demo Sandbox", "pg_123"),
+    ).toBe(
+      `${window.location.origin}/sandbox/demo-sandbox/token%20123?playground=1&surface=preview&playgroundId=pg_123`,
+    );
   });
 
   it("round-trips sandbox sign-in return path", () => {
@@ -145,5 +243,80 @@ describe("sandbox-session", () => {
     expect(buildSandboxLink("token 123", "Demo Sandbox")).toBe(
       `${window.location.origin}/sandbox/demo-sandbox/token%20123`,
     );
+  });
+
+  it("clears stored playground sessions", () => {
+    writePlaygroundSession({
+      playgroundId: "pg_123",
+      token: "sandbox-token",
+      surface: "preview",
+      updatedAt: Date.now(),
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+
+    clearPlaygroundSession("pg_123");
+    expect(readPlaygroundSession("pg_123")).toBeNull();
+  });
+
+  describe("builder session", () => {
+    it("returns null when no session exists", () => {
+      expect(readBuilderSession("ws_1")).toBeNull();
+    });
+
+    it("round-trips a builder session", () => {
+      const session = {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        draft: { name: "Test", hostStyle: "claude" },
+        viewMode: "preview",
+      };
+
+      writeBuilderSession(session);
+      expect(readBuilderSession("ws_1")).toEqual(session);
+    });
+
+    it("returns null when workspaceId does not match", () => {
+      writeBuilderSession({
+        workspaceId: "ws_1",
+        sandboxId: null,
+        draft: null,
+        viewMode: "builder",
+      });
+
+      expect(readBuilderSession("ws_other")).toBeNull();
+    });
+
+    it("clears the builder session", () => {
+      writeBuilderSession({
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        draft: null,
+        viewMode: "builder",
+      });
+
+      clearBuilderSession();
+      expect(readBuilderSession("ws_1")).toBeNull();
+    });
+
+    it("returns null for corrupted JSON", () => {
+      sessionStorage.setItem(
+        "mcpjam_sandbox_builder_session_v1",
+        "not-valid-json",
+      );
+      expect(readBuilderSession("ws_1")).toBeNull();
+    });
   });
 });

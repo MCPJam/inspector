@@ -64,4 +64,11 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabAllowed("oauth-flow")).toBe(true);
     expect(isHostedHashTabBlocked("oauth-flow")).toBe(false);
   });
+
+  it("keeps learning hidden in hosted navigation", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).not.toContain("learning");
+    expect(HOSTED_HASH_ALLOWED_TABS).not.toContain("learning");
+    expect(isHostedSidebarTabAllowed("learning")).toBe(false);
+    expect(isHostedHashTabAllowed("learning")).toBe(false);
+  });
 });
