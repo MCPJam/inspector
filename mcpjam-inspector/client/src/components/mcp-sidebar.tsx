@@ -232,9 +232,11 @@ export function MCPSidebar({
 }: MCPSidebarProps) {
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
-  const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
+  const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const { isAuthenticated } = useConvexAuth();
+  const learningEnabled =
+    import.meta.env.DEV || (!!learningFlagEnabled && isAuthenticated);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
@@ -327,7 +329,7 @@ export function MCPSidebar({
   const featureFlags = useMemo(
     () => ({
       "ci-evals-enabled": !!ciEvalsEnabled && isAuthenticated,
-      "mcpjam-learning": !!learningEnabled && isAuthenticated,
+      "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
     }),
     [ciEvalsEnabled, learningEnabled, sandboxesEnabled, isAuthenticated],
