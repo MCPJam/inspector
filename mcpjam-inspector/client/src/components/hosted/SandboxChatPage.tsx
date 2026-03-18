@@ -15,6 +15,8 @@ import {
   buildSandboxLink,
   clearSandboxSession,
   extractSandboxTokenFromPath,
+  readPlaygroundSession,
+  readSandboxSurfaceFromUrl,
   readSandboxSession,
   SANDBOX_OAUTH_PENDING_KEY,
   type SandboxSession,
@@ -43,6 +45,7 @@ type SandboxErrorKind =
   | "access_denied"
   | "guest_blocked"
   | "invalid_link"
+  | "playground_expired"
   | "unexpected";
 
 interface SandboxDisplayError {
@@ -164,6 +167,17 @@ function getSandboxDisplayError(
     error.code === "NOT_FOUND" ||
     normalizedMessage.includes("invalid or has expired") ||
     normalizedMessage.includes("invalid or expired");
+  const isPlaygroundExpired = normalizedMessage.includes(
+    "playground session expired",
+  );
+
+  if (isPlaygroundExpired) {
+    return {
+      kind: "playground_expired",
+      title: "Preview unavailable",
+      message: error.message,
+    };
+  }
 
   if (requiresSignIn || isAccessDenied) {
     return {
@@ -238,10 +252,48 @@ export function SandboxChatPage({
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const themeMode = usePreferencesStore((s) => s.themeMode);
 
-  const [session, setSession] = useState<SandboxSession | null>(() =>
-    readSandboxSession(),
+  const playgroundParams = useMemo(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const isPlayground = params.get("playground") === "1";
+      const playgroundId = params.get("playgroundId");
+      return isPlayground && playgroundId ? { playgroundId } : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const readCurrentSession = useCallback(() => {
+    return playgroundParams
+      ? readPlaygroundSession(playgroundParams.playgroundId)
+      : readSandboxSession();
+  }, [playgroundParams]);
+
+  const writeCurrentSession = useCallback(
+    (nextSession: SandboxSession) => {
+      if (playgroundParams) {
+        return;
+      }
+
+      writeSandboxSession(nextSession);
+    },
+    [playgroundParams],
   );
-  const [isResolving, setIsResolving] = useState(!!pathToken);
+
+  const clearCurrentSession = useCallback(() => {
+    if (playgroundParams) {
+      return;
+    }
+
+    clearSandboxSession();
+  }, [playgroundParams]);
+
+  const [session, setSession] = useState<SandboxSession | null>(() =>
+    readCurrentSession(),
+  );
+  const [isResolving, setIsResolving] = useState(
+    Boolean(pathToken || playgroundParams),
+  );
   const [routeError, setRouteError] = useState<SandboxRouteError | null>(null);
 
   const oauthServers = useMemo(() => session?.payload.servers ?? [], [session]);
@@ -319,6 +371,24 @@ export function SandboxChatPage({
     let cancelled = false;
 
     const resolve = async () => {
+      if (playgroundParams) {
+        const snapshot = readPlaygroundSession(playgroundParams.playgroundId);
+        if (snapshot) {
+          setSession({ ...snapshot, surface: "internal" });
+          setRouteError(null);
+        } else {
+          setSession(null);
+          setRouteError(
+            createSandboxRouteError(
+              410,
+              "Playground session expired. Return to the builder to preview.",
+            ),
+          );
+        }
+        setIsResolving(false);
+        return;
+      }
+
       const tokenFromPath = pathToken?.trim() || null;
 
       if (tokenFromPath) {
@@ -351,8 +421,9 @@ export function SandboxChatPage({
           const nextSession: SandboxSession = {
             token: tokenFromPath,
             payload,
+            surface: readSandboxSurfaceFromUrl(window.location.search),
           };
-          writeSandboxSession(nextSession);
+          writeCurrentSession(nextSession);
           setSession(nextSession);
           setRouteError(null);
 
@@ -363,7 +434,7 @@ export function SandboxChatPage({
         } catch (error) {
           if (cancelled) return;
           setSession(null);
-          clearSandboxSession();
+          clearCurrentSession();
 
           const nextError = isSandboxRouteError(error)
             ? error
@@ -393,7 +464,7 @@ export function SandboxChatPage({
         return;
       }
 
-      const recovered = readSandboxSession();
+      const recovered = readCurrentSession();
       if (recovered) {
         setSession(recovered);
         setRouteError(null);
@@ -415,7 +486,15 @@ export function SandboxChatPage({
     return () => {
       cancelled = true;
     };
-  }, [getAccessToken, isAuthLoading, pathToken]);
+  }, [
+    clearCurrentSession,
+    getAccessToken,
+    isAuthLoading,
+    pathToken,
+    playgroundParams,
+    readCurrentSession,
+    writeCurrentSession,
+  ]);
 
   useEffect(() => {
     if (!session) return;
@@ -589,6 +668,7 @@ export function SandboxChatPage({
           )}
           hostedOAuthTokensOverride={oauthTokensForChat}
           hostedSandboxToken={session.token}
+          hostedSandboxSurface={session.surface ?? "share_link"}
           initialModelId={session.payload.modelId}
           initialSystemPrompt={session.payload.systemPrompt}
           initialTemperature={session.payload.temperature}

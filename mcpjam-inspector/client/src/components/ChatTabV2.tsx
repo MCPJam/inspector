@@ -55,6 +55,7 @@ interface ChatTabProps {
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedShareToken?: string;
   hostedSandboxToken?: string;
+  hostedSandboxSurface?: "internal" | "share_link";
   initialModelId?: string;
   initialSystemPrompt?: string;
   initialTemperature?: number;
@@ -91,6 +92,7 @@ export function ChatTabV2({
   hostedOAuthTokensOverride,
   hostedShareToken,
   hostedSandboxToken,
+  hostedSandboxSurface,
   initialModelId,
   initialSystemPrompt,
   initialTemperature,
@@ -210,6 +212,7 @@ export function ChatTabV2({
     hostedOAuthTokens: effectiveHostedOAuthTokens,
     hostedShareToken,
     hostedSandboxToken,
+    hostedSandboxSurface,
     initialModelId,
     initialSystemPrompt,
     initialTemperature,

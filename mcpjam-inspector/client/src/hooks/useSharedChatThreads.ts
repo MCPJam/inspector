@@ -5,6 +5,7 @@ export type SharedChatSourceType = "serverShare" | "sandbox";
 export interface SharedChatThread {
   _id: string;
   sourceType: SharedChatSourceType;
+  surface?: "internal" | "share_link";
   shareId?: string;
   sandboxId?: string;
   chatSessionId: string;

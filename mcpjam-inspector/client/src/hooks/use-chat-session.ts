@@ -69,12 +69,18 @@ export interface UseChatSessionOptions {
   hostedShareToken?: string;
   /** Optional sandbox token for hosted sandbox chat sessions */
   hostedSandboxToken?: string;
+  /** Surface classification for hosted sandbox chat sessions */
+  hostedSandboxSurface?: "internal" | "share_link";
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
+  /** Fixed initial model for hosted sandbox sessions */
+  initialModelId?: string;
   /** Initial system prompt (defaults to DEFAULT_SYSTEM_PROMPT) */
   initialSystemPrompt?: string;
   /** Initial temperature (defaults to 0.7) */
   initialTemperature?: number;
+  /** Initial tool approval mode for hosted sandbox sessions */
+  initialRequireToolApproval?: boolean;
   /** Callback when chat is reset */
   onReset?: () => void;
 }
@@ -198,8 +204,12 @@ export function useChatSession({
   hostedOAuthTokens,
   hostedShareToken,
   hostedSandboxToken,
+  hostedSandboxSurface,
+  minimalMode = false,
+  initialModelId,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
+  initialRequireToolApproval = false,
   onReset,
 }: UseChatSessionOptions): UseChatSessionReturn {
   const { getAccessToken } = useAuth();
@@ -243,7 +253,9 @@ export function useChatSession({
   >(null);
   const [systemPromptTokenCountLoading, setSystemPromptTokenCountLoading] =
     useState(false);
-  const [requireToolApproval, setRequireToolApproval] = useState(false);
+  const [requireToolApproval, setRequireToolApproval] = useState(
+    initialRequireToolApproval,
+  );
   const requireToolApprovalRef = useRef(requireToolApproval);
   requireToolApprovalRef.current = requireToolApproval;
   const directGuestMode =
@@ -310,16 +322,25 @@ export function useChatSession({
   const { selectedModelId, setSelectedModelId } = usePersistedModel();
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
+    if (initialModelId) {
+      return (
+        availableModels.find((model) => String(model.id) === initialModelId) ??
+        fallback
+      );
+    }
     if (!selectedModelId) return fallback;
     const found = availableModels.find((m) => String(m.id) === selectedModelId);
     return found ?? fallback;
-  }, [availableModels, selectedModelId]);
+  }, [availableModels, initialModelId, selectedModelId]);
 
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {
+      if (initialModelId) {
+        return;
+      }
       setSelectedModelId(String(model.id));
     },
-    [setSelectedModelId],
+    [initialModelId, setSelectedModelId],
   );
 
   const isMcpJamModel = useMemo(() => {
@@ -373,6 +394,9 @@ export function useChatSession({
         accessScope: "chat_v2" as const,
         ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
         ...(hostedSandboxToken ? { sandboxToken: hostedSandboxToken } : {}),
+        ...(hostedSandboxToken && hostedSandboxSurface
+          ? { surface: hostedSandboxSurface }
+          : {}),
         ...(hostedOAuthTokens && Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
           : {}),
@@ -412,6 +436,7 @@ export function useChatSession({
     hostedOAuthTokens,
     hostedShareToken,
     hostedSandboxToken,
+    hostedSandboxSurface,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -518,6 +543,18 @@ export function useChatSession({
     setMessages([]);
     onResetRef.current?.();
   }, [setMessages]);
+
+  useEffect(() => {
+    setSystemPrompt(initialSystemPrompt);
+  }, [initialSystemPrompt]);
+
+  useEffect(() => {
+    setTemperature(initialTemperature);
+  }, [initialTemperature]);
+
+  useEffect(() => {
+    setRequireToolApproval(initialRequireToolApproval);
+  }, [initialRequireToolApproval]);
 
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {

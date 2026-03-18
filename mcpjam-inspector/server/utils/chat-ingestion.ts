@@ -10,6 +10,7 @@ interface PersistChatSessionOptions {
   authHeader?: string;
   workspaceId?: string;
   sourceType?: "serverShare" | "sandbox" | "direct";
+  surface?: "internal" | "share_link";
   shareToken?: string;
   sandboxToken?: string;
   serverId?: string;
@@ -88,6 +89,7 @@ export async function persistChatSessionToConvex(
         modelSource: options.modelSource,
         ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
         ...(options.sourceType ? { sourceType: options.sourceType } : {}),
+        ...(options.surface ? { surface: options.surface } : {}),
         ...(options.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options.sandboxToken ? { sandboxToken: options.sandboxToken } : {}),
         ...(options.serverId ? { serverId: options.serverId } : {}),
@@ -117,31 +119,22 @@ export async function persistChatSessionToConvex(
     });
 
     if (!response.ok) {
-      logger.warn(
-        "[chat-session-persistence] Failed to persist chat session",
-        undefined,
-        {
-          status: response.status,
-          responsePreview: await readResponsePreview(response),
-        },
-      );
+      logger.warn("[chat-session-persistence] Failed to persist chat session", {
+        status: response.status,
+        responsePreview: await readResponsePreview(response),
+      });
     }
   } catch (error) {
     if (isAbortError(error)) {
-      logger.warn(
-        "[chat-session-persistence] Timed out persisting chat session",
-        undefined,
-        {
-          timeoutMs,
-        },
-      );
+      logger.warn("[chat-session-persistence] Timed out persisting chat session", {
+        timeoutMs,
+      });
       return;
     }
 
-    logger.warn(
-      "[chat-session-persistence] Error persisting chat session",
-      error,
-    );
+    logger.warn("[chat-session-persistence] Error persisting chat session", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   } finally {
     clearTimeout(timeoutId);
   }

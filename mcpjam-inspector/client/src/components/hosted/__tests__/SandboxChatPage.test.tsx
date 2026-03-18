@@ -5,6 +5,7 @@ import { SandboxChatPage } from "../SandboxChatPage";
 import {
   SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY,
   clearSandboxSession,
+  writePlaygroundSession,
   writeSandboxSession,
 } from "@/lib/sandbox-session";
 import {
@@ -191,6 +192,67 @@ describe("SandboxChatPage", () => {
         reasoningDisplayMode: "hidden",
       }),
     );
+  });
+
+  it("loads playground sessions from local storage and skips bootstrap", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    window.history.replaceState(
+      {},
+      "",
+      "/sandbox/demo/sandbox-token?playground=1&playgroundId=pg_123",
+    );
+
+    writePlaygroundSession({
+      playgroundId: "pg_123",
+      token: "sandbox-token",
+      surface: "internal",
+      updatedAt: Date.now(),
+      payload: {
+        workspaceId: "ws_1",
+        sandboxId: "sbx_1",
+        name: "Playground Sandbox",
+        description: "Hosted sandbox",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsWorkspaceMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+
+    render(<SandboxChatPage pathToken="sandbox-token" />);
+
+    expect(await screen.findByTestId("sandbox-chat-tab")).toBeInTheDocument();
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockChatTabV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostedSandboxSurface: "internal",
+      }),
+    );
+  });
+
+  it("shows a clear error when a playground session has expired", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/sandbox/demo/sandbox-token?playground=1&playgroundId=missing",
+    );
+
+    render(<SandboxChatPage pathToken="sandbox-token" />);
+
+    expect(
+      await screen.findByRole("heading", { name: "Preview unavailable" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Playground session expired. Return to the builder to preview.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("shows curated copy for an invalid or expired sandbox link", async () => {

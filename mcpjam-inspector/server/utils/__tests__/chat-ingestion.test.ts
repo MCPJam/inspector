@@ -36,6 +36,7 @@ describe("chat-ingestion", () => {
       authHeader: "Bearer bearer-token",
       shareToken: "share-token",
       sourceType: "serverShare",
+      surface: "share_link",
       sessionMessages: [
         {
           role: "assistant",
@@ -70,6 +71,7 @@ describe("chat-ingestion", () => {
         text: "Saved trace response",
       },
     ]);
+    expect(body.surface).toBe("share_link");
   });
 
   it("logs a bounded sanitized response preview on ingest failures", async () => {
@@ -97,14 +99,13 @@ describe("chat-ingestion", () => {
 
     expect(mockLogger.warn).toHaveBeenCalledWith(
       "[chat-session-persistence] Failed to persist chat session",
-      undefined,
       expect.objectContaining({
         status: 500,
         responsePreview: expect.any(String),
       }),
     );
 
-    const [, , metadata] = mockLogger.warn.mock.calls[0];
+    const [, metadata] = mockLogger.warn.mock.calls[0];
     expect(metadata.responsePreview).toContain("[redacted-secret]");
     expect(metadata.responsePreview).toContain("[redacted-email]");
     expect(metadata.responsePreview).toContain("Bearer [redacted-token]");
@@ -155,7 +156,6 @@ describe("chat-ingestion", () => {
     );
     expect(mockLogger.warn).toHaveBeenCalledWith(
       "[chat-session-persistence] Timed out persisting chat session",
-      undefined,
       {
         timeoutMs: 50,
       },
