@@ -115,6 +115,7 @@ export default function App() {
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
+  const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const {
     getAccessToken,
     signIn,
@@ -542,8 +543,19 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
       applyNavigation("servers", { updateHash: true });
+    } else if (
+      activeTab === "learning" &&
+      (learningEnabled !== true || !isAuthenticated)
+    ) {
+      applyNavigation("servers", { updateHash: true });
     }
-  }, [ciEvalsEnabled, activeTab, applyNavigation]);
+  }, [
+    ciEvalsEnabled,
+    learningEnabled,
+    isAuthenticated,
+    activeTab,
+    applyNavigation,
+  ]);
 
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });

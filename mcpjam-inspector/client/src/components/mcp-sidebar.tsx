@@ -235,8 +235,7 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const { isAuthenticated } = useConvexAuth();
-  const learningEnabled =
-    import.meta.env.DEV || (!!learningFlagEnabled && isAuthenticated);
+  const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const { updateReady, restartAndInstall } = useUpdateNotification();
   const [toolsDataMap, setToolsDataMap] = useState<
