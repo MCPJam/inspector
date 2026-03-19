@@ -16,6 +16,19 @@ import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-r
 // Store original fetch for restoration
 const originalFetch = window.fetch;
 
+/**
+ * Derive the Convex HTTP actions URL (*.convex.site) from the Convex client URL.
+ */
+function getConvexSiteUrl(): string | null {
+  const siteUrl = (import.meta as any).env?.VITE_CONVEX_SITE_URL;
+  if (siteUrl) return siteUrl;
+  const cloudUrl = (import.meta as any).env?.VITE_CONVEX_URL;
+  if (cloudUrl && typeof cloudUrl === "string") {
+    return cloudUrl.replace(".convex.cloud", ".convex.site");
+  }
+  return null;
+}
+
 interface StoredOAuthDiscoveryState {
   serverUrl: string;
   discoveryState: OAuthDiscoveryState;
@@ -30,9 +43,13 @@ function clearStoredDiscoveryState(serverName: string): void {
 }
 
 /**
- * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS
+ * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS.
+ * When a registryServerId is provided, token exchange/refresh is routed through
+ * the Convex HTTP registry OAuth endpoints which inject server-side secrets.
  */
-function createOAuthFetchInterceptor(): typeof fetch {
+function createOAuthFetchInterceptor(
+  registryServerId?: string,
+): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -51,6 +68,36 @@ function createOAuthFetchInterceptor(): typeof fetch {
 
     if (!isOAuthRequest) {
       return await originalFetch(input, init);
+    }
+
+    // For registry servers, route token exchange/refresh through Convex HTTP actions
+    if (registryServerId) {
+      const isTokenRequest = url.match(/\/token$/);
+      if (isTokenRequest) {
+        const convexSiteUrl = getConvexSiteUrl();
+        if (convexSiteUrl) {
+          const body = init?.body ? await serializeBody(init.body) : undefined;
+          const isRefresh =
+            typeof body === "object" &&
+            body !== null &&
+            (body as any).grant_type === "refresh_token";
+          const endpoint = isRefresh
+            ? "/registry/oauth/refresh"
+            : "/registry/oauth/token";
+          const response = await originalFetch(
+            `${convexSiteUrl}${endpoint}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                registryServerId,
+                ...(typeof body === "object" && body !== null ? body : {}),
+              }),
+            },
+          );
+          return response;
+        }
+      }
     }
 
     // Proxy OAuth requests through our server
@@ -116,6 +163,8 @@ export interface MCPOAuthOptions {
   scopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  /** When set, uses Convex /registry/oauth/* routes instead of standard proxy */
+  registryServerId?: string;
 }
 
 export interface OAuthResult {
@@ -308,7 +357,7 @@ export async function initiateOAuth(
   options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
+  const interceptedFetch = createOAuthFetchInterceptor(options.registryServerId);
   window.fetch = interceptedFetch;
 
   try {
@@ -326,10 +375,13 @@ export async function initiateOAuth(
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
-    // Store OAuth configuration (scopes) for recovery if connection fails
+    // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig: any = {};
     if (options.scopes && options.scopes.length > 0) {
       oauthConfig.scopes = options.scopes;
+    }
+    if (options.registryServerId) {
+      oauthConfig.registryServerId = options.registryServerId;
     }
     localStorage.setItem(
       `mcp-oauth-config-${options.serverName}`,
@@ -424,13 +476,22 @@ export async function initiateOAuth(
 export async function handleOAuthCallback(
   authorizationCode: string,
 ): Promise<OAuthResult & { serverName?: string }> {
+  // Get pending server name from localStorage (needed before creating interceptor)
+  const serverName = localStorage.getItem("mcp-oauth-pending");
+
+  // Read registryServerId from stored OAuth config if present
+  const storedOAuthConfig = serverName
+    ? localStorage.getItem(`mcp-oauth-config-${serverName}`)
+    : null;
+  const registryServerId = storedOAuthConfig
+    ? JSON.parse(storedOAuthConfig).registryServerId
+    : undefined;
+
   // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
+  const interceptedFetch = createOAuthFetchInterceptor(registryServerId);
   window.fetch = interceptedFetch;
 
   try {
-    // Get pending server name from localStorage
-    const serverName = localStorage.getItem("mcp-oauth-pending");
     if (!serverName) {
       throw new Error("No pending OAuth flow found");
     }
@@ -596,8 +657,16 @@ export async function waitForTokens(
 export async function refreshOAuthTokens(
   serverName: string,
 ): Promise<OAuthResult> {
+  // Read registryServerId from stored OAuth config if present
+  const storedOAuthConfig = localStorage.getItem(
+    `mcp-oauth-config-${serverName}`,
+  );
+  const registryServerId = storedOAuthConfig
+    ? JSON.parse(storedOAuthConfig).registryServerId
+    : undefined;
+
   // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
+  const interceptedFetch = createOAuthFetchInterceptor(registryServerId);
   window.fetch = interceptedFetch;
 
   try {

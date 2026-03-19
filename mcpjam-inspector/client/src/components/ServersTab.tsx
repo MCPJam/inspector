@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, FileText } from "lucide-react";
+import { Plus, FileText, Package, ArrowRight } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
@@ -14,6 +14,8 @@ import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
+import { useQuery } from "convex/react";
+import type { RegistryServer } from "@/hooks/useRegistryServers";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import {
@@ -151,6 +153,9 @@ interface ServersTabProps {
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
   isLoadingWorkspaces?: boolean;
+  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
+  onLeaveWorkspace?: () => void;
+  onNavigateToRegistry?: () => void;
 }
 
 export function ServersTab({
@@ -163,9 +168,23 @@ export function ServersTab({
   workspaces,
   activeWorkspaceId,
   isLoadingWorkspaces,
+  onWorkspaceShared,
+  onLeaveWorkspace,
+  onNavigateToRegistry,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
+
+  // Fetch featured registry servers for the quick-connect section
+  const registryServers = useQuery(
+    "registryServers:listRegistryServers" as any,
+    isAuthenticated ? ({} as any) : "skip",
+  ) as RegistryServer[] | undefined;
+  const featuredRegistryServers = useMemo(() => {
+    if (!registryServers) return [];
+    const featured = registryServers.filter((s) => s.featured);
+    return (featured.length > 0 ? featured : registryServers).slice(0, 4);
+  }, [registryServers]);
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -570,6 +589,67 @@ export function ServersTab({
           {renderServerActionsMenu()}
         </div>
       </div>
+
+      {/* Quick Connect from Registry */}
+      {isAuthenticated && featuredRegistryServers.length > 0 && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-medium text-muted-foreground">
+              Quick Connect
+            </h3>
+            {onNavigateToRegistry && (
+              <Button
+                variant="link"
+                size="sm"
+                className="text-xs h-auto p-0"
+                onClick={onNavigateToRegistry}
+              >
+                View all in Registry
+                <ArrowRight className="h-3 w-3 ml-1" />
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {featuredRegistryServers.map((server) => (
+              <Card
+                key={server._id}
+                className="p-3 flex items-center gap-3 min-w-[220px] max-w-[280px] flex-shrink-0 cursor-pointer hover:bg-accent/50 transition-colors"
+                onClick={() =>
+                  onConnect({
+                    name: server.displayName,
+                    type: "http",
+                    url: server.transport.url,
+                    useOAuth: server.transport.useOAuth,
+                    oauthScopes: server.transport.oauthScopes,
+                    clientId: server.transport.clientId,
+                    registryServerId: server._id,
+                  })
+                }
+              >
+                {server.iconUrl ? (
+                  <img
+                    src={server.iconUrl}
+                    alt={server.displayName}
+                    className="h-8 w-8 rounded-md object-contain flex-shrink-0"
+                  />
+                ) : (
+                  <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                    <Package className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                )}
+                <div className="min-w-0">
+                  <p className="text-sm font-medium truncate">
+                    {server.displayName}
+                  </p>
+                  <p className="text-xs text-muted-foreground truncate">
+                    {server.publisher}
+                  </p>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Empty State */}
       <Card className="p-12 text-center">

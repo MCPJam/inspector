@@ -16,6 +16,7 @@ import {
   GitBranch,
   GraduationCap,
   Box,
+  Package,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -121,6 +122,11 @@ const navigationSections: NavSection[] = [
         title: "Servers",
         url: "#servers",
         icon: MCPIcon,
+      },
+      {
+        title: "Registry",
+        url: "#registry",
+        icon: Package,
       },
       {
         title: "Chat",

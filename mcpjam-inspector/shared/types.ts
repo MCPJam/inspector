@@ -598,6 +598,8 @@ export interface ServerFormData {
   clientId?: string;
   clientSecret?: string;
   requestTimeout?: number;
+  /** Convex _id of the registry server (for OAuth routing via /registry/oauth/token) */
+  registryServerId?: string;
 }
 
 export interface OauthTokens {
