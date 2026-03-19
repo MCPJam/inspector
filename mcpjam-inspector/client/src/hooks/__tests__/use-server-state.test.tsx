@@ -3,11 +3,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, AppAction } from "@/state/app-types";
 import { useServerState } from "../use-server-state";
 
-const { toastError, toastSuccess, handleOAuthCallbackMock } = vi.hoisted(() => ({
-  toastError: vi.fn(),
-  toastSuccess: vi.fn(),
-  handleOAuthCallbackMock: vi.fn(),
-}));
+const { toastError, toastSuccess, handleOAuthCallbackMock } = vi.hoisted(
+  () => ({
+    toastError: vi.fn(),
+    toastSuccess: vi.fn(),
+    handleOAuthCallbackMock: vi.fn(),
+  }),
+);
 
 vi.mock("sonner", () => ({
   toast: {

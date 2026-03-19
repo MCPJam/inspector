@@ -32,7 +32,9 @@ describe("mergeHeaders", () => {
     );
 
     expect(
-      Object.keys(result).filter((key) => key.toLowerCase() === "authorization"),
+      Object.keys(result).filter(
+        (key) => key.toLowerCase() === "authorization",
+      ),
     ).toHaveLength(1);
     expect(result.Authorization).toBe("Bearer new-token");
   });
