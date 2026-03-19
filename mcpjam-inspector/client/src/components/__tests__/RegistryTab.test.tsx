@@ -249,9 +249,7 @@ describe("RegistryTab", () => {
 
     it("shows Connected badge for connected servers", () => {
       mockHookReturn = {
-        registryServers: [
-          createMockServer({ connectionStatus: "connected" }),
-        ],
+        registryServers: [createMockServer({ connectionStatus: "connected" })],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
@@ -293,9 +291,7 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
 
-      expect(
-        screen.getByRole("button", { name: "All" }),
-      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Productivity" }),
       ).toBeInTheDocument();

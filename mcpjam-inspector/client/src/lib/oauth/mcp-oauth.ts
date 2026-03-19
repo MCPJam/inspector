@@ -47,9 +47,7 @@ function clearStoredDiscoveryState(serverName: string): void {
  * When a registryServerId is provided, token exchange/refresh is routed through
  * the Convex HTTP registry OAuth endpoints which inject server-side secrets.
  */
-function createOAuthFetchInterceptor(
-  registryServerId?: string,
-): typeof fetch {
+function createOAuthFetchInterceptor(registryServerId?: string): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
@@ -84,17 +82,14 @@ function createOAuthFetchInterceptor(
           const endpoint = isRefresh
             ? "/registry/oauth/refresh"
             : "/registry/oauth/token";
-          const response = await originalFetch(
-            `${convexSiteUrl}${endpoint}`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                registryServerId,
-                ...(typeof body === "object" && body !== null ? body : {}),
-              }),
-            },
-          );
+          const response = await originalFetch(`${convexSiteUrl}${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              registryServerId,
+              ...(typeof body === "object" && body !== null ? body : {}),
+            }),
+          });
           return response;
         }
       }
@@ -357,7 +352,9 @@ export async function initiateOAuth(
   options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
   // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor(options.registryServerId);
+  const interceptedFetch = createOAuthFetchInterceptor(
+    options.registryServerId,
+  );
   window.fetch = interceptedFetch;
 
   try {
