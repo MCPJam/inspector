@@ -11,7 +11,10 @@ import {
   createDebugOAuthStateMachine as createDebugOAuthStateMachine20251125,
   EMPTY_OAUTH_FLOW_STATE_V2 as EMPTY_OAUTH_FLOW_STATE_20251125,
 } from "../state-machines/debug-oauth-2025-11-25";
-import type { OAuthFlowState, OAuthStateMachine } from "../state-machines/types";
+import type {
+  OAuthFlowState,
+  OAuthStateMachine,
+} from "../state-machines/types";
 
 const EXPECTED_LOGO_URI = "https://www.mcpjam.com/mcp_jam_2row.png";
 const REDIRECT_URI = "https://app.mcpjam.com/oauth/callback/debug";
@@ -98,26 +101,29 @@ describe("OAuth debugger DCR client metadata", () => {
       emptyState: EMPTY_OAUTH_FLOW_STATE_20251125,
       expectedClientName: "MCPJam Inspector Debug Client",
     },
-  ])("%s includes logo_uri in the DCR registration payload", async (flowCase) => {
-    vi.useFakeTimers();
+  ])(
+    "%s includes logo_uri in the DCR registration payload",
+    async (flowCase) => {
+      vi.useFakeTimers();
 
-    const { machine, getState } = createStateMachineHarness(flowCase);
+      const { machine, getState } = createStateMachineHarness(flowCase);
 
-    await machine.proceedToNextStep();
+      await machine.proceedToNextStep();
 
-    expect(getState().currentStep).toBe("request_client_registration");
-    expect(getState().lastRequest).toMatchObject({
-      method: "POST",
-      url: REGISTRATION_ENDPOINT,
-      body: {
-        client_name: flowCase.expectedClientName,
-        logo_uri: EXPECTED_LOGO_URI,
-        redirect_uris: [REDIRECT_URI],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-        scope: "read write",
-      },
-    });
-  });
+      expect(getState().currentStep).toBe("request_client_registration");
+      expect(getState().lastRequest).toMatchObject({
+        method: "POST",
+        url: REGISTRATION_ENDPOINT,
+        body: {
+          client_name: flowCase.expectedClientName,
+          logo_uri: EXPECTED_LOGO_URI,
+          redirect_uris: [REDIRECT_URI],
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+          scope: "read write",
+        },
+      });
+    },
+  );
 });
