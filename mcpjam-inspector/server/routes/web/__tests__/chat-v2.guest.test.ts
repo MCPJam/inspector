@@ -105,7 +105,9 @@ describe("web routes — chat-v2 guest mode", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    testGuestKeyDir = mkdtempSync(path.join(os.tmpdir(), "chat-v2-guest-test-"));
+    testGuestKeyDir = mkdtempSync(
+      path.join(os.tmpdir(), "chat-v2-guest-test-"),
+    );
     process.env.GUEST_JWT_KEY_DIR = testGuestKeyDir;
     initGuestTokenSecret();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
