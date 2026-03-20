@@ -14,7 +14,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
-import { WorkspaceSelector } from "./connection/WorkspaceSelector";
+import { WorkspaceVisibilityBadge } from "./workspace/WorkspaceVisibilityBadge";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -140,13 +140,8 @@ interface ServersTabProps {
   onRemove: (serverName: string) => void;
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
-  onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
-  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function ServersTab({
@@ -158,13 +153,8 @@ export function ServersTab({
   onRemove,
   workspaces,
   activeWorkspaceId,
-  onSwitchWorkspace,
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
   isLoadingWorkspaces,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
@@ -251,6 +241,8 @@ export function ServersTab({
   const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "Workspace";
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const organizationId = activeWorkspace?.organizationId;
+  const visibility = activeWorkspace?.visibility;
   const { serversRecord: sharedWorkspaceServersRecord } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
@@ -344,39 +336,31 @@ export function ServersTab({
       >
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-6">
-                <WorkspaceSelector
-                  activeWorkspaceId={activeWorkspaceId}
-                  workspaces={workspaces}
-                  onSwitchWorkspace={onSwitchWorkspace}
-                  onCreateWorkspace={onCreateWorkspace}
-                  onUpdateWorkspace={onUpdateWorkspace}
-                  onDeleteWorkspace={onDeleteWorkspace}
-                  isLoading={isLoadingWorkspaces}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                {isAuthenticated && user && (
-                  <WorkspaceMembersFacepile
-                    workspaceName={workspaceName}
-                    workspaceServers={connectedOrConnectingServerConfigs}
-                    currentUser={user}
-                    sharedWorkspaceId={sharedWorkspaceId}
-                    onWorkspaceShared={onWorkspaceShared}
-                    onLeaveWorkspace={onLeaveWorkspace}
-                  />
-                )}
-                <WorkspaceShareButton
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex items-center gap-2">
+              {sharedWorkspaceId ? (
+                <WorkspaceVisibilityBadge visibility={visibility} compact />
+              ) : null}
+              {isAuthenticated && user && (
+                <WorkspaceMembersFacepile
                   workspaceName={workspaceName}
                   workspaceServers={connectedOrConnectingServerConfigs}
+                  currentUser={user}
                   sharedWorkspaceId={sharedWorkspaceId}
+                  organizationId={organizationId}
+                  visibility={visibility}
                   onWorkspaceShared={onWorkspaceShared}
-                  onLeaveWorkspace={onLeaveWorkspace}
                 />
-                {renderServerActionsMenu()}
-              </div>
+              )}
+              <WorkspaceShareButton
+                workspaceName={workspaceName}
+                workspaceServers={connectedOrConnectingServerConfigs}
+                sharedWorkspaceId={sharedWorkspaceId}
+                organizationId={organizationId}
+                visibility={visibility}
+                onWorkspaceShared={onWorkspaceShared}
+              />
+              {renderServerActionsMenu()}
             </div>
           </div>
 
@@ -459,35 +443,29 @@ export function ServersTab({
   const renderEmptyContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
       {/* Header Section */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <WorkspaceSelector
-            activeWorkspaceId={activeWorkspaceId}
-            workspaces={workspaces}
-            onSwitchWorkspace={onSwitchWorkspace}
-            onCreateWorkspace={onCreateWorkspace}
-            onUpdateWorkspace={onUpdateWorkspace}
-            onDeleteWorkspace={onDeleteWorkspace}
-            isLoading={isLoadingWorkspaces}
-          />
-        </div>
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
+          {sharedWorkspaceId ? (
+            <WorkspaceVisibilityBadge visibility={visibility} compact />
+          ) : null}
           {isAuthenticated && user && (
             <WorkspaceMembersFacepile
               workspaceName={workspaceName}
               workspaceServers={connectedOrConnectingServerConfigs}
               currentUser={user}
               sharedWorkspaceId={sharedWorkspaceId}
+              organizationId={organizationId}
+              visibility={visibility}
               onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
           <WorkspaceShareButton
             workspaceName={workspaceName}
             workspaceServers={connectedOrConnectingServerConfigs}
             sharedWorkspaceId={sharedWorkspaceId}
+            organizationId={organizationId}
+            visibility={visibility}
             onWorkspaceShared={onWorkspaceShared}
-            onLeaveWorkspace={onLeaveWorkspace}
           />
           {renderServerActionsMenu()}
         </div>

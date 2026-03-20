@@ -1,13 +1,20 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
+import type { WorkspaceVisibility } from "@/state/app-types";
 
-export type WorkspaceMembershipRole = "owner" | "admin" | "member";
+export type WorkspaceMembershipRole = "owner" | "admin" | "member" | "guest";
+export type WorkspaceMemberAccessSource =
+  | "organization"
+  | "workspace"
+  | "invite";
 
 export interface RemoteWorkspace {
   _id: string;
   name: string;
   description?: string;
   servers: Record<string, any>;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
   ownerId: string;
   createdAt: number;
   updatedAt: number;
@@ -40,12 +47,18 @@ export interface RemoteServer {
 export interface WorkspaceMember {
   _id: string;
   workspaceId: string;
+  organizationId?: string;
   userId?: string;
   email: string;
   role?: WorkspaceMembershipRole;
   addedBy: string;
   addedAt: number;
+  revokedAt?: number;
   isOwner: boolean;
+  isPending: boolean;
+  hasAccess: boolean;
+  accessSource: WorkspaceMemberAccessSource;
+  canRemove: boolean;
   user: {
     name: string;
     email: string;
@@ -55,12 +68,16 @@ export interface WorkspaceMember {
 
 export function useWorkspaceQueries({
   isAuthenticated,
+  organizationId,
 }: {
   isAuthenticated: boolean;
+  organizationId?: string;
 }) {
   const workspaces = useQuery(
     "workspaces:getMyWorkspaces" as any,
-    isAuthenticated ? ({} as any) : "skip",
+    isAuthenticated
+      ? ((organizationId ? { organizationId } : {}) as any)
+      : "skip",
   ) as RemoteWorkspace[] | undefined;
 
   const isLoading = isAuthenticated && workspaces === undefined;
@@ -96,12 +113,12 @@ export function useWorkspaceMembers({
 
   const activeMembers = useMemo(() => {
     if (!members) return [];
-    return members.filter((m) => m.userId !== undefined);
+    return members.filter((m) => !m.isPending);
   }, [members]);
 
   const pendingMembers = useMemo(() => {
     if (!members) return [];
-    return members.filter((m) => m.userId === undefined);
+    return members.filter((m) => m.isPending);
   }, [members]);
 
   return {
@@ -117,21 +134,19 @@ export function useWorkspaceMutations() {
   const createWorkspace = useMutation("workspaces:createWorkspace" as any);
   const updateWorkspace = useMutation("workspaces:updateWorkspace" as any);
   const deleteWorkspace = useMutation("workspaces:deleteWorkspace" as any);
-  const addMember = useMutation("workspaces:addMember" as any);
-  const changeMemberRole = useMutation("workspaces:changeMemberRole" as any);
-  const transferWorkspaceOwnership = useMutation(
-    "workspaces:transferWorkspaceOwnership" as any,
+  const inviteWorkspaceMember = useMutation(
+    "workspaces:inviteWorkspaceMember" as any,
   );
-  const removeMember = useMutation("workspaces:removeMember" as any);
+  const removeWorkspaceMember = useMutation(
+    "workspaces:removeWorkspaceMember" as any,
+  );
 
   return {
     createWorkspace,
     updateWorkspace,
     deleteWorkspace,
-    addMember,
-    changeMemberRole,
-    transferWorkspaceOwnership,
-    removeMember,
+    inviteWorkspaceMember,
+    removeWorkspaceMember,
   };
 }
 

@@ -107,9 +107,6 @@ function getHostedOAuthCallbackErrorMessage(): string {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
-  const [activeOrganizationId, setActiveOrganizationId] = useState<
-    string | undefined
-  >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
@@ -337,6 +334,8 @@ export default function App() {
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    activeOrganizationId,
+    setActiveOrganizationId,
   } = useAppState();
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
@@ -502,7 +501,9 @@ export default function App() {
         return;
       }
 
-      setActiveOrganizationId(resolved.organizationId);
+      if (resolved.organizationId) {
+        setActiveOrganizationId(resolved.organizationId);
+      }
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
@@ -664,6 +665,13 @@ export default function App() {
         onNavigate={handleNavigate}
         activeTab={activeTab}
         servers={workspaceServers}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        onSwitchWorkspace={handleSwitchWorkspace}
+        onCreateWorkspace={handleCreateWorkspace}
+        onDeleteWorkspace={handleDeleteWorkspace}
+        isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+        activeOrganizationId={activeOrganizationId}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <Header activeServerSelectorProps={activeServerSelectorProps} />
@@ -679,13 +687,8 @@ export default function App() {
               onRemove={handleRemoveServer}
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
-              onSwitchWorkspace={handleSwitchWorkspace}
-              onCreateWorkspace={handleCreateWorkspace}
-              onUpdateWorkspace={handleUpdateWorkspace}
-              onDeleteWorkspace={handleDeleteWorkspace}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
               onWorkspaceShared={handleWorkspaceShared}
-              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "tools" && (
@@ -706,7 +709,6 @@ export default function App() {
             <ViewsTab
               selectedServer={appState.selectedServer}
               onWorkspaceShared={handleWorkspaceShared}
-              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "sandboxes" && (
@@ -793,6 +795,9 @@ export default function App() {
             <SettingsTab
               convexWorkspaceId={convexWorkspaceId}
               workspaceName={activeWorkspace?.name ?? null}
+              workspaceVisibility={activeWorkspace?.visibility ?? null}
+              activeWorkspaceId={activeWorkspaceId}
+              onUpdateWorkspace={handleUpdateWorkspace}
             />
           )}
           {activeTab === "support" && <SupportTab />}

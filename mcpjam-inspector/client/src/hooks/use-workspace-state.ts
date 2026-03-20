@@ -29,6 +29,7 @@ export interface UseWorkspaceStateParams {
   dispatch: Dispatch<AppAction>;
   isAuthenticated: boolean;
   isAuthLoading: boolean;
+  activeOrganizationId?: string;
   logger: LoggerLike;
 }
 
@@ -37,10 +38,14 @@ export function useWorkspaceState({
   dispatch,
   isAuthenticated,
   isAuthLoading,
+  activeOrganizationId,
   logger,
 }: UseWorkspaceStateParams) {
   const { workspaces: remoteWorkspaces, isLoading: isLoadingWorkspaces } =
-    useWorkspaceQueries({ isAuthenticated });
+    useWorkspaceQueries({
+      isAuthenticated,
+      organizationId: activeOrganizationId,
+    });
   const {
     createWorkspace: convexCreateWorkspace,
     updateWorkspace: convexUpdateWorkspace,
@@ -140,6 +145,8 @@ export function useWorkspaceState({
             createdAt: new Date(rw.createdAt),
             updatedAt: new Date(rw.updatedAt),
             sharedWorkspaceId: rw._id,
+            organizationId: rw.organizationId,
+            visibility: rw.visibility,
           } as Workspace,
         ];
       }),

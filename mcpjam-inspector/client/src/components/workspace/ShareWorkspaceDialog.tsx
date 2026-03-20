@@ -1,9 +1,10 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -11,7 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { Clock, X, LogOut } from "lucide-react";
+import { Building2, Clock, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   type WorkspaceMember,
@@ -22,16 +23,20 @@ import {
 import { useConvexAuth } from "convex/react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { serializeServersForSharing } from "@/lib/workspace-serialization";
-import { User } from "@workos-inc/authkit-js";
+import type { WorkspaceVisibility } from "@/state/app-types";
+import type { User } from "@workos-inc/authkit-js";
+import { WorkspaceVisibilityBadge } from "./WorkspaceVisibilityBadge";
+
 interface ShareWorkspaceDialogProps {
   isOpen: boolean;
   onClose: () => void;
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
   currentUser: User;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 function resolveWorkspaceRole(
@@ -41,61 +46,95 @@ function resolveWorkspaceRole(
   return member.isOwner ? "owner" : "member";
 }
 
+function buildInviteToastMessage(
+  result: { kind: string },
+  email: string,
+): string {
+  switch (result.kind) {
+    case "organization_member_added":
+      return `${email} added to the organization. They now have access to this workspace.`;
+    case "organization_invite_pending":
+      return `Invitation sent to ${email}. They'll get access to this workspace once they join the organization.`;
+    case "workspace_access_granted":
+      return `${email} has been added to the workspace.`;
+    case "workspace_invite_pending":
+      return `Invitation sent to ${email}. They'll get workspace access once they join the organization.`;
+    case "already_pending":
+      return `${email} already has a pending invite.`;
+    case "already_has_access":
+      return `${email} already has access to this workspace.`;
+    default:
+      return `${email} has been invited.`;
+  }
+}
+
+function getMemberAccessDescription(
+  member: WorkspaceMember,
+  visibility: WorkspaceVisibility,
+): string | null {
+  if (visibility === "public") {
+    if (
+      member.role === "owner" ||
+      member.role === "admin" ||
+      member.role === "guest"
+    ) {
+      return `Organization ${member.role}`;
+    }
+    return null;
+  }
+
+  if (member.accessSource === "organization") {
+    return member.role === "owner" || member.role === "admin"
+      ? `Access via organization ${member.role}`
+      : "Access via organization";
+  }
+
+  if (member.accessSource === "workspace") {
+    return "Explicit workspace access";
+  }
+
+  return null;
+}
+
 export function ShareWorkspaceDialog({
   isOpen,
   onClose,
   workspaceName,
   workspaceServers,
   sharedWorkspaceId,
+  organizationId,
+  visibility,
   currentUser,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: ShareWorkspaceDialogProps) {
   const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
-  const [isLeaving, setIsLeaving] = useState(false);
 
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
-  const { createWorkspace, addMember, removeMember } = useWorkspaceMutations();
+  const { createWorkspace, inviteWorkspaceMember, removeWorkspaceMember } =
+    useWorkspaceMutations();
 
   const { activeMembers, pendingMembers } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: sharedWorkspaceId || null,
   });
 
+  const workspaceVisibility: WorkspaceVisibility = visibility ?? "public";
+  const isPublicWorkspace = workspaceVisibility === "public";
+
   const currentMember = activeMembers.find(
-    (m) => m.email.toLowerCase() === currentUser.email?.toLowerCase(),
+    (member) => member.email.toLowerCase() === currentUser.email?.toLowerCase(),
   );
   const currentRole: WorkspaceMembershipRole | null = !sharedWorkspaceId
     ? "owner"
     : currentMember
       ? resolveWorkspaceRole(currentMember)
       : null;
-  const canInviteMembers = !sharedWorkspaceId ? true : !!currentRole;
-
-  const canRemoveActiveMember = (member: WorkspaceMember): boolean => {
-    if (!currentRole) return false;
-
-    const isSelf =
-      member.email.toLowerCase() === currentUser.email?.toLowerCase();
-    if (isSelf) return false;
-
-    const memberRole = resolveWorkspaceRole(member);
-    if (currentRole === "owner") {
-      return memberRole !== "owner";
-    }
-    if (currentRole === "admin") {
-      return memberRole === "member";
-    }
-    return false;
-  };
-
-  const canRemovePendingMember = (): boolean => {
-    if (!currentRole) return false;
-    return currentRole === "owner" || currentRole === "admin";
-  };
+  const canManageMembers = !sharedWorkspaceId
+    ? true
+    : currentRole === "owner" || currentRole === "admin";
 
   useEffect(() => {
     if (isOpen) {
@@ -103,14 +142,17 @@ export function ShareWorkspaceDialog({
         workspace_name: workspaceName,
         is_already_shared: !!sharedWorkspaceId,
         member_count: activeMembers.length + pendingMembers.length,
+        workspace_visibility: workspaceVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
     }
+    // Only fire when the dialog opens, not on downstream state changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
   const handleInvite = async () => {
-    if (!email.trim() || !canInviteMembers) return;
+    if (!email.trim() || !canManageMembers) return;
 
     setIsInviting(true);
     try {
@@ -128,28 +170,23 @@ export function ShareWorkspaceDialog({
         }
       }
 
-      const result = await addMember({
+      const result = await inviteWorkspaceMember({
         workspaceId: currentWorkspaceId!,
         email: email.trim(),
       });
 
-      if (result.isPending) {
-        toast.success(
-          `Invitation sent to ${email}. They'll get access once they sign up.`,
-        );
-      } else {
-        toast.success(`${email} has been added to the workspace.`);
-      }
+      toast.success(buildInviteToastMessage(result, email.trim()));
       setEmail("");
       posthog.capture("workspace_invite_sent", {
         workspace_name: workspaceName,
         is_new_share: !sharedWorkspaceId,
-        is_pending: result.isPending,
+        invite_kind: result.kind,
+        workspace_visibility: workspaceVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
     } catch (error) {
-      toast.error((error as Error).message || "Failed to add member");
+      toast.error((error as Error).message || "Failed to invite member");
     } finally {
       setIsInviting(false);
     }
@@ -157,14 +194,27 @@ export function ShareWorkspaceDialog({
 
   const handleRemoveMember = async (memberEmail: string) => {
     if (!sharedWorkspaceId) return;
+
     try {
-      await removeMember({
+      const result = await removeWorkspaceMember({
         workspaceId: sharedWorkspaceId,
         email: memberEmail,
       });
-      toast.success("Member removed");
+
+      if (!result.changed) {
+        toast.success("No workspace access to remove.");
+        return;
+      }
+
+      toast.success(
+        result.removed === "pending_invite"
+          ? "Invite cancelled"
+          : "Workspace access removed",
+      );
       posthog.capture("workspace_member_removed", {
         workspace_name: workspaceName,
+        removed_kind: result.removed,
+        workspace_visibility: workspaceVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
@@ -173,27 +223,10 @@ export function ShareWorkspaceDialog({
     }
   };
 
-  const handleLeaveWorkspace = async () => {
-    if (!sharedWorkspaceId || !currentUser.email) return;
-    setIsLeaving(true);
-    try {
-      await removeMember({
-        workspaceId: sharedWorkspaceId,
-        email: currentUser.email,
-      });
-      toast.success("You have left the workspace");
-      posthog.capture("workspace_left", {
-        workspace_name: workspaceName,
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-      });
-      onClose();
-      onLeaveWorkspace?.();
-    } catch (error) {
-      toast.error((error as Error).message || "Failed to leave workspace");
-    } finally {
-      setIsLeaving(false);
-    }
+  const openOrganizationMembers = () => {
+    if (!organizationId) return;
+    window.location.hash = `organizations/${organizationId}`;
+    onClose();
   };
 
   const displayName =
@@ -203,13 +236,44 @@ export function ShareWorkspaceDialog({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>Share "{workspaceName}" Workspace</DialogTitle>
+          <DialogTitle className="flex flex-wrap items-center gap-2">
+            <span>Share "{workspaceName}" Workspace</span>
+            <WorkspaceVisibilityBadge visibility={workspaceVisibility} />
+          </DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
-          {canInviteMembers && (
+          <div className="space-y-3">
+            <DialogDescription className="text-sm text-muted-foreground">
+              {isPublicWorkspace
+                ? "This workspace is available to everyone in this organization. Invite people to the organization to give them access."
+                : "Only invited organization members can access this workspace. If someone is not in the organization yet, they'll be invited first and granted workspace access after signup."}
+            </DialogDescription>
+
+            {isPublicWorkspace && organizationId && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={openOrganizationMembers}
+              >
+                <Building2 className="size-4 mr-2" />
+                Manage organization members
+              </Button>
+            )}
+
+            {sharedWorkspaceId && !canManageMembers && (
+              <p className="text-sm text-muted-foreground">
+                {isPublicWorkspace
+                  ? "Organization admins can invite people here because public workspace access follows organization membership."
+                  : "Organization admins can invite people and manage private workspace access."}
+              </p>
+            )}
+          </div>
+
+          {canManageMembers && (
             <div className="space-y-2">
               <label className="text-sm font-medium">Invite with email</label>
               <div className="flex gap-2">
@@ -217,25 +281,25 @@ export function ShareWorkspaceDialog({
                   placeholder="Enter email address"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleInvite()}
+                  onKeyDown={(e) => e.key === "Enter" && void handleInvite()}
                   className="flex-1"
                 />
                 <Button
-                  onClick={handleInvite}
+                  onClick={() => void handleInvite()}
                   disabled={!email.trim() || isInviting}
                 >
-                  {isInviting ? "..." : "Invite"}
+                  {isInviting
+                    ? "..."
+                    : isPublicWorkspace
+                      ? "Invite to organization"
+                      : "Invite to workspace"}
                 </Button>
               </div>
             </div>
           )}
 
           <div className="space-y-2">
-            <label className="text-sm font-medium">
-              {sharedWorkspaceId
-                ? "People with access"
-                : "Only you have access"}
-            </label>
+            <label className="text-sm font-medium">Has access</label>
             <div className="space-y-1 max-h-[300px] overflow-y-auto">
               {!sharedWorkspaceId && (
                 <div className="flex items-center gap-3 p-2 rounded-md">
@@ -268,7 +332,10 @@ export function ShareWorkspaceDialog({
                 const isSelf =
                   memberEmail.toLowerCase() ===
                   currentUser.email?.toLowerCase();
-                const canRemove = canRemoveActiveMember(member);
+                const memberDescription = getMemberAccessDescription(
+                  member,
+                  workspaceVisibility,
+                );
 
                 return (
                   <div
@@ -296,13 +363,19 @@ export function ShareWorkspaceDialog({
                       <p className="text-xs text-muted-foreground truncate">
                         {memberEmail}
                       </p>
+                      {memberDescription && (
+                        <p className="text-xs text-muted-foreground truncate">
+                          {memberDescription}
+                        </p>
+                      )}
                     </div>
-                    {canRemove && (
+                    {member.canRemove && (
                       <Button
                         variant="ghost"
                         size="sm"
                         className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => handleRemoveMember(memberEmail)}
+                        aria-label={`Remove ${memberEmail} from workspace`}
+                        onClick={() => void handleRemoveMember(memberEmail)}
                       >
                         <X className="size-4" />
                       </Button>
@@ -310,58 +383,44 @@ export function ShareWorkspaceDialog({
                   </div>
                 );
               })}
-
-              {pendingMembers.length > 0 && (
-                <>
-                  <div className="pt-2 pb-1">
-                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                      Pending (awaiting signup)
-                    </p>
-                  </div>
-                  {pendingMembers.map((member) => (
-                    <div
-                      key={member._id}
-                      className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50"
-                    >
-                      <div className="size-9 rounded-full bg-muted flex items-center justify-center">
-                        <Clock className="size-4 text-muted-foreground" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {member.email}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          Invited - waiting for signup
-                        </p>
-                      </div>
-                      {canRemovePendingMember() && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          onClick={() => handleRemoveMember(member.email)}
-                        >
-                          <X className="size-4" />
-                        </Button>
-                      )}
-                    </div>
-                  ))}
-                </>
-              )}
             </div>
           </div>
 
-          {/* Show leave button for non-owners of shared workspaces */}
-          {sharedWorkspaceId && currentRole !== "owner" && !!currentRole && (
-            <Button
-              variant="outline"
-              className="w-full text-destructive hover:text-destructive hover:bg-destructive/10"
-              onClick={handleLeaveWorkspace}
-              disabled={isLeaving}
-            >
-              <LogOut className="size-4 mr-2" />
-              {isLeaving ? "Leaving..." : "Leave workspace"}
-            </Button>
+          {!isPublicWorkspace && pendingMembers.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Invited</label>
+              <div className="space-y-1 max-h-[220px] overflow-y-auto">
+                {pendingMembers.map((member) => (
+                  <div
+                    key={member._id}
+                    className="flex items-center gap-3 p-2 rounded-md hover:bg-muted/50"
+                  >
+                    <div className="size-9 rounded-full bg-muted flex items-center justify-center">
+                      <Clock className="size-4 text-muted-foreground" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {member.email}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Invited to the organization and workspace
+                      </p>
+                    </div>
+                    {member.canRemove && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
+                        aria-label={`Cancel invite for ${member.email}`}
+                        onClick={() => void handleRemoveMember(member.email)}
+                      >
+                        <X className="size-4" />
+                      </Button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       </DialogContent>

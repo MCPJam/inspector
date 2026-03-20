@@ -33,7 +33,11 @@ import { CreateOrganizationDialog } from "@/components/organization/CreateOrgani
 import { HOSTED_MODE } from "@/lib/config";
 import { Button } from "@/components/ui/button";
 
-export function SidebarUser() {
+export function SidebarUser({
+  activeOrganizationId,
+}: {
+  activeOrganizationId?: string;
+}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
   const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
@@ -53,6 +57,10 @@ export function SidebarUser() {
   const displayName = convexUser?.name || workOsName || "User";
   const email = user?.email ?? "";
   const initials = getInitials(displayName);
+  const activeOrgName = activeOrganizationId
+    ? sortedOrganizations.find((org) => org._id === activeOrganizationId)?.name
+    : undefined;
+  const subtitle = activeOrgName || email;
 
   const handleSignOut = () => {
     const isElectron = (window as any).isElectron;
@@ -121,7 +129,7 @@ export function SidebarUser() {
                 <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                   <span className="truncate font-semibold">{displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {email}
+                    {subtitle}
                   </span>
                 </div>
                 <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
@@ -150,7 +158,7 @@ export function SidebarUser() {
                       {displayName}
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
-                      {email}
+                      {subtitle}
                     </span>
                   </div>
                 </div>

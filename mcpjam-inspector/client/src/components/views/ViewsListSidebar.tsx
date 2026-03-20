@@ -5,6 +5,8 @@ import { type AnyView } from "@/hooks/useViews";
 import { User } from "@workos-inc/authkit-js";
 import { WorkspaceMembersFacepile } from "@/components/workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "@/components/workspace/WorkspaceShareButton";
+import { WorkspaceVisibilityBadge } from "@/components/workspace/WorkspaceVisibilityBadge";
+import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface ViewsListSidebarProps {
   views: AnyView[];
@@ -20,10 +22,11 @@ interface ViewsListSidebarProps {
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
   currentUser?: User | null;
   isAuthenticated?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function ViewsListSidebar({
@@ -39,10 +42,11 @@ export function ViewsListSidebar({
   workspaceName,
   workspaceServers,
   sharedWorkspaceId,
+  organizationId,
+  visibility,
   currentUser,
   isAuthenticated,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: ViewsListSidebarProps) {
   return (
     <>
@@ -50,22 +54,27 @@ export function ViewsListSidebar({
       <div className="p-4 border-b flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Views</h2>
         <div className="flex items-center gap-2">
+          {sharedWorkspaceId ? (
+            <WorkspaceVisibilityBadge visibility={visibility} compact />
+          ) : null}
           {isAuthenticated && currentUser && (
             <WorkspaceMembersFacepile
               workspaceName={workspaceName}
               workspaceServers={workspaceServers}
               currentUser={currentUser}
               sharedWorkspaceId={sharedWorkspaceId}
+              organizationId={organizationId}
+              visibility={visibility}
               onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
           <WorkspaceShareButton
             workspaceName={workspaceName}
             workspaceServers={workspaceServers}
             sharedWorkspaceId={sharedWorkspaceId}
+            organizationId={organizationId}
+            visibility={visibility}
             onWorkspaceShared={onWorkspaceShared}
-            onLeaveWorkspace={onLeaveWorkspace}
           />
         </div>
       </div>
