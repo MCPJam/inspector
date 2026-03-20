@@ -34,10 +34,7 @@ interface SettingsTabProps {
   convexWorkspaceId: string | null;
   workspaceName: string | null;
   activeWorkspaceId: string;
-  onUpdateWorkspace: (
-    workspaceId: string,
-    updates: Partial<Workspace>,
-  ) => void;
+  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
 }
 
 export function SettingsTab({
