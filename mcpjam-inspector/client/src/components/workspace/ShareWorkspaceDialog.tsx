@@ -26,7 +26,6 @@ import { serializeServersForSharing } from "@/lib/workspace-serialization";
 import type { WorkspaceVisibility } from "@/state/app-types";
 import type { User } from "@workos-inc/authkit-js";
 
-
 interface ShareWorkspaceDialogProps {
   isOpen: boolean;
   onClose: () => void;
@@ -238,9 +237,7 @@ export function ShareWorkspaceDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle>
-            Share "{workspaceName}" Workspace
-          </DialogTitle>
+          <DialogTitle>Share "{workspaceName}" Workspace</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-6">
