@@ -42,7 +42,10 @@ export function useWorkspaceState({
   logger,
 }: UseWorkspaceStateParams) {
   const { workspaces: remoteWorkspaces, isLoading: isLoadingWorkspaces } =
-    useWorkspaceQueries({ isAuthenticated, organizationId: activeOrganizationId });
+    useWorkspaceQueries({
+      isAuthenticated,
+      organizationId: activeOrganizationId,
+    });
   const {
     createWorkspace: convexCreateWorkspace,
     updateWorkspace: convexUpdateWorkspace,
