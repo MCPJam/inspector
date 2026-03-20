@@ -296,4 +296,11 @@ describe("highlightJson", () => {
     const html = highlightJson('{ "a": 1 }');
     expect(html).toContain(" ");
   });
+
+  it("styles untokenized trailing content as punctuation", () => {
+    const html = highlightJson('{"a": 1}\n');
+    expect(html).toContain(
+      '<span class="json-punctuation">\n</span>',
+    );
+  });
 });

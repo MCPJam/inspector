@@ -1,0 +1,52 @@
+import { describe, expect, it } from "vitest";
+import {
+  extractDisplayFromToolResult,
+  extractDisplayFromValue,
+} from "../tool-result-text";
+
+describe("tool-result-text", () => {
+  describe("extractDisplayFromValue", () => {
+    it("keeps plain text as text", () => {
+      expect(extractDisplayFromValue("hello world")).toEqual({
+        kind: "text",
+        text: "hello world",
+      });
+    });
+
+    it("parses JSON object strings into structured JSON", () => {
+      expect(extractDisplayFromValue('{"users":[{"id":"1"}]}')).toEqual({
+        kind: "json",
+        value: { users: [{ id: "1" }] },
+      });
+    });
+
+    it("keeps JSON primitives as text", () => {
+      expect(extractDisplayFromValue("123")).toEqual({
+        kind: "text",
+        text: "123",
+      });
+      expect(extractDisplayFromValue('"ok"')).toEqual({
+        kind: "text",
+        text: '"ok"',
+      });
+    });
+  });
+
+  describe("extractDisplayFromToolResult", () => {
+    it("parses JSON inside text content blocks", () => {
+      expect(
+        extractDisplayFromToolResult({
+          content: [
+            {
+              type: "text",
+              text: '{"users":[{"id":"1"}],"hasNextPage":false}',
+            },
+          ],
+        }),
+      ).toEqual({
+        kind: "json",
+        value: { users: [{ id: "1" }], hasNextPage: false },
+      });
+    });
+  });
+});

@@ -99,7 +99,7 @@ const CopyableValue = memo(function CopyableValue({
 
   return (
     <span
-      className="relative inline-flex items-center group/copy"
+      className="relative group/copy"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >

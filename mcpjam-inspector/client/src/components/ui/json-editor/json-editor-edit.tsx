@@ -27,6 +27,7 @@ interface JsonEditorEditProps {
   showLineNumbers?: boolean;
   collapseStringsAfterLength?: number;
   wrapLongLinesInEdit?: boolean;
+  wrapLongLinesInView?: boolean;
 }
 
 interface LineLayout {
@@ -44,8 +45,8 @@ function getCursorPosition(textarea: HTMLTextAreaElement): CursorPosition {
   return { line, column };
 }
 
-function getCharsPerVisualLine(textarea: HTMLTextAreaElement): number {
-  const styles = window.getComputedStyle(textarea);
+function getCharsPerVisualLine(element: HTMLElement): number {
+  const styles = window.getComputedStyle(element);
   const probe = document.createElement("span");
   probe.textContent = "0";
   probe.style.font = styles.font;
@@ -62,7 +63,7 @@ function getCharsPerVisualLine(textarea: HTMLTextAreaElement): number {
 
   const paddingLeft = Number.parseFloat(styles.paddingLeft) || 0;
   const paddingRight = Number.parseFloat(styles.paddingRight) || 0;
-  const availableWidth = textarea.clientWidth - paddingLeft - paddingRight;
+  const availableWidth = element.clientWidth - paddingLeft - paddingRight;
 
   if (availableWidth <= 0) {
     return DEFAULT_CHARS_PER_VISUAL_LINE;
@@ -82,7 +83,7 @@ function countVisualRows(line: string, charsPerVisualLine: number): number {
   return Math.max(1, Math.ceil(displayLength / charsPerVisualLine));
 }
 
-function buildLineLayouts(
+export function buildLineLayouts(
   lines: string[],
   lineWrapEnabled: boolean,
   charsPerVisualLine: number,
@@ -190,9 +191,11 @@ export function JsonEditorEdit({
   showLineNumbers = true,
   collapseStringsAfterLength,
   wrapLongLinesInEdit = false,
+  wrapLongLinesInView = false,
 }: JsonEditorEditProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
+  const readOnlyViewportRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -207,7 +210,7 @@ export function JsonEditorEdit({
   const [charsPerVisualLine, setCharsPerVisualLine] = useState(
     DEFAULT_CHARS_PER_VISUAL_LINE,
   );
-  const lineWrapEnabled = wrapLongLinesInEdit && !readOnly;
+  const lineWrapEnabled = readOnly ? wrapLongLinesInView : wrapLongLinesInEdit;
   const lines = useMemo(() => content.split("\n"), [content]);
   const lineLayouts = useMemo(
     () => buildLineLayouts(lines, lineWrapEnabled, charsPerVisualLine),
@@ -224,20 +227,23 @@ export function JsonEditorEdit({
     activeLineTop - scrollTop + EDITOR_VERTICAL_PADDING;
 
   const refreshCharsPerVisualLine = useCallback(() => {
-    if (!lineWrapEnabled || !textareaRef.current) {
+    const measurementElement = readOnly ? highlightRef.current : textareaRef.current;
+
+    if (!lineWrapEnabled || !measurementElement) {
       return;
     }
 
-    const nextCharsPerLine = getCharsPerVisualLine(textareaRef.current);
+    const nextCharsPerLine = getCharsPerVisualLine(measurementElement);
     setCharsPerVisualLine((current) =>
       current === nextCharsPerLine ? current : nextCharsPerLine,
     );
-  }, [lineWrapEnabled]);
+  }, [lineWrapEnabled, readOnly]);
 
   // Phase 2: Virtualized line numbers
   const lineNumberVirtualizer = useVirtualizer({
     count: lineCount,
-    getScrollElement: () => lineNumbersRef.current,
+    getScrollElement: () =>
+      readOnly ? readOnlyViewportRef.current : lineNumbersRef.current,
     estimateSize: (index) => lineLayouts[index]?.height ?? LINE_HEIGHT,
     overscan: 20,
   });
@@ -463,16 +469,17 @@ export function JsonEditorEdit({
     window.addEventListener("resize", refreshCharsPerVisualLine);
 
     let resizeObserver: ResizeObserver | undefined;
-    if (window.ResizeObserver && textareaRef.current) {
+    const measurementElement = readOnly ? highlightRef.current : textareaRef.current;
+    if (window.ResizeObserver && measurementElement) {
       resizeObserver = new ResizeObserver(() => refreshCharsPerVisualLine());
-      resizeObserver.observe(textareaRef.current);
+      resizeObserver.observe(measurementElement);
     }
 
     return () => {
       window.removeEventListener("resize", refreshCharsPerVisualLine);
       resizeObserver?.disconnect();
     };
-  }, [lineWrapEnabled, refreshCharsPerVisualLine]);
+  }, [lineWrapEnabled, readOnly, refreshCharsPerVisualLine]);
 
   const containerStyle: React.CSSProperties = {
     height: height ?? "auto",
@@ -482,17 +489,6 @@ export function JsonEditorEdit({
   const fontStyle: React.CSSProperties = {
     fontFamily: "var(--font-code)",
   };
-
-  // Sync scroll for read-only mode (sync line numbers with content)
-  const handleReadOnlyScroll = useCallback(
-    (e: React.UIEvent<HTMLPreElement>) => {
-      const scrollTop = e.currentTarget.scrollTop;
-      if (lineNumbersRef.current) {
-        lineNumbersRef.current.scrollTop = scrollTop;
-      }
-    },
-    [],
-  );
 
   return (
     <div
@@ -504,8 +500,15 @@ export function JsonEditorEdit({
       )}
       style={containerStyle}
     >
+      {readOnly && showLineNumbers && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-0 z-0 w-12 bg-muted/50 border-r border-border/50"
+        />
+      )}
+
       {/* Line numbers - virtualized for performance */}
-      {showLineNumbers && (
+      {showLineNumbers && !readOnly && (
         <div
           ref={lineNumbersRef}
           className="flex-shrink-0 h-full overflow-hidden bg-muted/50 text-right select-none border-r border-border/50"
@@ -527,8 +530,7 @@ export function JsonEditorEdit({
                   key={virtualRow.index}
                   className={cn(
                     "leading-5 transition-colors duration-150 absolute left-0 right-0 pr-2",
-                    !readOnly &&
-                      lineNum === activeLine &&
+                    lineNum === activeLine &&
                       isFocused &&
                       "text-foreground font-medium",
                   )}
@@ -548,21 +550,63 @@ export function JsonEditorEdit({
       {/* Editor area with overlay */}
       <div className="relative flex-1 min-w-0 h-full overflow-hidden">
         {readOnly ? (
-          /* Read-only mode: Use JsonHighlighter with per-value copy */
-          <pre
-            ref={highlightRef}
-            className={cn(
-              "h-full p-3 text-xs leading-5 whitespace-pre-wrap break-all overflow-auto m-0",
-              "select-text cursor-text",
-            )}
-            style={fontStyle}
-            onScroll={handleReadOnlyScroll}
+          <div
+            ref={readOnlyViewportRef}
+            className="relative z-10 flex h-full min-h-0 min-w-0 items-start overflow-y-auto overflow-x-hidden overscroll-none"
           >
-            <JsonHighlighter
-              content={content}
-              collapseStringsAfterLength={collapseStringsAfterLength}
-            />
-          </pre>
+            {showLineNumbers && (
+              <div
+                ref={lineNumbersRef}
+                className="self-stretch flex-shrink-0 text-right select-none"
+                style={{ width: "3rem" }}
+              >
+                <div
+                  className="py-3 pr-2 text-xs text-muted-foreground leading-5 relative"
+                  style={{
+                    ...fontStyle,
+                    height: `${lineNumberVirtualizer.getTotalSize()}px`,
+                  }}
+                >
+                  {lineNumberVirtualizer.getVirtualItems().map((virtualRow) => {
+                    const lineNum = virtualRow.index + 1;
+                    const lineHeight =
+                      lineLayouts[virtualRow.index]?.height ?? LINE_HEIGHT;
+                    return (
+                      <div
+                        key={virtualRow.index}
+                        className="leading-5 transition-colors duration-150 absolute left-0 right-0 pr-2"
+                        style={{
+                          transform: `translateY(${virtualRow.start}px)`,
+                          height: `${lineHeight}px`,
+                        }}
+                      >
+                        {lineNum}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <div className="relative self-start flex-1 min-w-0 overflow-x-auto overflow-y-hidden">
+              {/* Read-only mode: Use JsonHighlighter with per-value copy */}
+              <pre
+                ref={highlightRef}
+                className={cn(
+                  "p-3 text-xs leading-5 m-0 select-text cursor-text",
+                  lineWrapEnabled
+                    ? "w-full whitespace-pre-wrap break-words"
+                    : "w-max min-w-full whitespace-pre",
+                )}
+                style={fontStyle}
+              >
+                <JsonHighlighter
+                  content={content}
+                  collapseStringsAfterLength={collapseStringsAfterLength}
+                />
+              </pre>
+            </div>
+          </div>
         ) : (
           <>
             {/* Syntax highlighted overlay (behind textarea) - viewport-based for performance */}
