@@ -16,7 +16,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { Workspace } from "@/state/app-types";
 
-
 interface SidebarWorkspaceSelectorProps {
   activeWorkspaceId: string;
   workspaces: Record<string, Workspace>;
