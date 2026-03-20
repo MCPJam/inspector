@@ -51,10 +51,7 @@ function safeSerializeForCompare(value: unknown): string {
   }
 }
 
-export function ViewsTab({
-  selectedServer,
-  onWorkspaceShared,
-}: ViewsTabProps) {
+export function ViewsTab({ selectedServer, onWorkspaceShared }: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const posthog = usePostHog();
