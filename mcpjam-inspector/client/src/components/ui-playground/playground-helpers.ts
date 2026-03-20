@@ -94,6 +94,7 @@ export function createDeterministicToolMessages(
         assistantParts.push({
           type: "data-result",
           data: display.value,
+          autoHeight: true,
         } as any);
       } else if (display?.kind === "text") {
         assistantParts.push({

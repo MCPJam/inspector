@@ -27,6 +27,7 @@ describe("createDeterministicToolMessages", () => {
     expect(messages[1].parts[2]).toMatchObject({
       type: "data-result",
       data: result,
+      autoHeight: true,
     });
   });
 
@@ -49,6 +50,7 @@ describe("createDeterministicToolMessages", () => {
     expect(messages[1].parts[2]).toMatchObject({
       type: "data-result",
       data: { users: [{ id: "1", name: "Ada" }] },
+      autoHeight: true,
     });
   });
 
@@ -153,7 +155,7 @@ describe("createDeterministicToolMessages", () => {
     expect(messages[1].parts).toHaveLength(2);
   });
 
-  it("does not inject text part for empty string result", () => {
+  it("preserves empty string results as text output", () => {
     const { messages } = createDeterministicToolMessages(
       "empty",
       {},
@@ -161,10 +163,14 @@ describe("createDeterministicToolMessages", () => {
       undefined,
     );
 
-    expect(messages[1].parts).toHaveLength(2);
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "text",
+      text: "",
+    });
   });
 
-  it("does not inject text part for whitespace-only string result", () => {
+  it("preserves whitespace-only string results as text output", () => {
     const { messages } = createDeterministicToolMessages(
       "empty",
       {},
@@ -172,7 +178,11 @@ describe("createDeterministicToolMessages", () => {
       undefined,
     );
 
-    expect(messages[1].parts).toHaveLength(2);
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "text",
+      text: "   ",
+    });
   });
 
   it("skips non-text content blocks in the content array", () => {

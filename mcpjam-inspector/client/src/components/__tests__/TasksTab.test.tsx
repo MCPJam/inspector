@@ -151,4 +151,33 @@ describe("TasksTab", () => {
 
     expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
   });
+
+  it("preserves empty-string pending requests as text", async () => {
+    const inputRequiredTask = {
+      ...completedTask,
+      status: "input_required",
+    };
+
+    mockListTasks.mockResolvedValue({ tasks: [inputRequiredTask] });
+    mockGetTask.mockResolvedValue(inputRequiredTask);
+    mockGetTaskResult.mockResolvedValue("");
+
+    const { container } = render(
+      <TasksTab serverConfig={createServerConfig()} serverName="test-server" />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText("task-1")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByText("task-1"));
+
+    await waitFor(() => {
+      const pre = container.querySelector("pre");
+      expect(pre).not.toBeNull();
+      expect(pre?.textContent).toBe("");
+    });
+
+    expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
+  });
 });

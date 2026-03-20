@@ -211,6 +211,7 @@ export function JsonEditorEdit({
     DEFAULT_CHARS_PER_VISUAL_LINE,
   );
   const lineWrapEnabled = readOnly ? wrapLongLinesInView : wrapLongLinesInEdit;
+  const readOnlyAutoHeight = readOnly && height === "auto";
   const lines = useMemo(() => content.split("\n"), [content]);
   const lineLayouts = useMemo(
     () => buildLineLayouts(lines, lineWrapEnabled, charsPerVisualLine),
@@ -548,16 +549,29 @@ export function JsonEditorEdit({
       )}
 
       {/* Editor area with overlay */}
-      <div className="relative flex-1 min-w-0 h-full overflow-hidden">
+      <div
+        className={cn(
+          "relative flex-1 min-w-0",
+          readOnlyAutoHeight ? "overflow-visible" : "h-full overflow-hidden",
+        )}
+      >
         {readOnly ? (
           <div
             ref={readOnlyViewportRef}
-            className="relative z-10 flex h-full min-h-0 min-w-0 items-start overflow-y-auto overflow-x-hidden overscroll-none"
+            className={cn(
+              "relative z-10 flex min-w-0 items-start",
+              readOnlyAutoHeight
+                ? "h-auto overflow-visible"
+                : "h-full min-h-0 overflow-x-hidden overflow-y-auto overscroll-none",
+            )}
           >
             {showLineNumbers && (
               <div
                 ref={lineNumbersRef}
-                className="self-stretch flex-shrink-0 text-right select-none"
+                className={cn(
+                  "flex-shrink-0 text-right select-none",
+                  readOnlyAutoHeight ? "self-start" : "self-stretch",
+                )}
                 style={{ width: "3rem" }}
               >
                 <div
@@ -588,7 +602,14 @@ export function JsonEditorEdit({
               </div>
             )}
 
-            <div className="relative self-start flex-1 min-w-0 overflow-x-auto overflow-y-hidden">
+            <div
+              className={cn(
+                "relative self-start flex-1 min-w-0",
+                readOnlyAutoHeight
+                  ? "overflow-visible"
+                  : "overflow-x-auto overflow-y-hidden",
+              )}
+            >
               {/* Read-only mode: Use JsonHighlighter with per-value copy */}
               <pre
                 ref={highlightRef}

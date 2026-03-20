@@ -316,6 +316,56 @@ describe("PromptsTab", () => {
 
       expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
     });
+
+    it("preserves whitespace-only prompt responses as text", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([{ name: "blank-prompt" }]);
+      mockGetPrompt.mockResolvedValue({ content: "   \n\n" });
+
+      const { container } = render(
+        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("blank-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("blank-prompt"));
+
+      await waitFor(() => {
+        const pre = container.querySelector("pre");
+        expect(pre).not.toBeNull();
+        expect(pre?.textContent).toBe("   \n\n");
+      });
+
+      expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
+    });
+
+    it("preserves empty-string prompt responses as text", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([{ name: "empty-prompt" }]);
+      mockGetPrompt.mockResolvedValue({ content: "" });
+
+      const { container } = render(
+        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("empty-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("empty-prompt"));
+
+      await waitFor(() => {
+        const pre = container.querySelector("pre");
+        expect(pre).not.toBeNull();
+        expect(pre?.textContent).toBe("");
+      });
+
+      expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
+    });
   });
 
   describe("prompt arguments", () => {

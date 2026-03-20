@@ -29,9 +29,10 @@ function parseStructuredJsonText(
   return null;
 }
 
-function getNonEmptyText(value: unknown): string | null {
+function getTrimmedText(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  return value.trim() ? value : null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
 }
 
 function isEmptyToolResultEnvelope(record: Record<string, unknown>): boolean {
@@ -57,13 +58,12 @@ export function extractDisplayFromValue(value: unknown): DisplayValue | null {
   }
 
   if (typeof value === "string") {
-    const text = getNonEmptyText(value);
-    if (!text) return null;
-
-    const structuredJson = parseStructuredJsonText(text);
+    const structuredJson = getTrimmedText(value)
+      ? parseStructuredJsonText(value.trim())
+      : null;
     return structuredJson
       ? { kind: "json", value: structuredJson }
-      : { kind: "text", text };
+      : { kind: "text", text: value };
   }
 
   if (typeof value === "number" || typeof value === "boolean") {
@@ -86,7 +86,7 @@ export function extractDisplayFromToolResult(
 
   const record = result as Record<string, unknown>;
   if (isEmptyToolResultEnvelope(record)) return null;
-  const directText = getNonEmptyText(record.text);
+  const directText = getTrimmedText(record.text);
   if (directText) {
     return extractDisplayFromValue(directText);
   }

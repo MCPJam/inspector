@@ -29,15 +29,23 @@ function getJsonPartHeight(value: unknown): number {
   );
 }
 
-export function JsonPart({ label, value }: { label: string; value: unknown }) {
+export function JsonPart({
+  label,
+  value,
+  autoHeight = false,
+}: {
+  label: string;
+  value: unknown;
+  autoHeight?: boolean;
+}) {
   const height = useMemo(() => getJsonPartHeight(value), [value]);
 
   return (
     <div className="space-y-1 text-xs">
       <div className="font-medium">{label}</div>
       <JsonEditor
-        height={height}
-        maxHeight={MAX_JSON_PART_HEIGHT}
+        height={autoHeight ? "auto" : height}
+        maxHeight={autoHeight ? undefined : MAX_JSON_PART_HEIGHT}
         value={value}
         viewOnly
       />

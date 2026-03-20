@@ -788,7 +788,7 @@ export function TasksTab({
                   </p>
                 </div>
               ) : selectedTask.status === "input_required" ? (
-                pendingRequest ? (
+                pendingRequest !== null && pendingRequest !== undefined ? (
                   <div className="flex-1 min-h-0 border border-border rounded-md overflow-hidden">
                     {pendingRequestDisplay?.kind === "text" ? (
                       <pre className="h-full overflow-auto whitespace-pre-wrap p-4 text-xs font-mono bg-muted/30">

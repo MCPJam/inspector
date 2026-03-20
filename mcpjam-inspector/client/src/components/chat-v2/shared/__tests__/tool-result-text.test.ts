@@ -20,6 +20,20 @@ describe("tool-result-text", () => {
       });
     });
 
+    it("keeps whitespace-only strings as text", () => {
+      expect(extractDisplayFromValue("   \n\n")).toEqual({
+        kind: "text",
+        text: "   \n\n",
+      });
+    });
+
+    it("keeps empty strings as text", () => {
+      expect(extractDisplayFromValue("")).toEqual({
+        kind: "text",
+        text: "",
+      });
+    });
+
     it("parses JSON object strings into structured JSON", () => {
       expect(extractDisplayFromValue('{"users":[{"id":"1"}]}')).toEqual({
         kind: "json",

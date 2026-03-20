@@ -477,7 +477,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
               {error}
             </div>
           </div>
-        ) : promptContent ? (
+        ) : promptContent !== null && promptContent !== undefined ? (
           <div className="flex-1 min-h-0 p-4 flex flex-col">
             {promptDisplay?.kind === "text" ? (
               <pre className="flex-1 min-h-0 whitespace-pre-wrap text-xs font-mono bg-muted/30 p-4 rounded-md border border-border overflow-auto">
