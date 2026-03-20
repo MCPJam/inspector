@@ -13,6 +13,13 @@ describe("tool-result-text", () => {
       });
     });
 
+    it("preserves plain text whitespace exactly", () => {
+      expect(extractDisplayFromValue("  hello world  \n")).toEqual({
+        kind: "text",
+        text: "  hello world  \n",
+      });
+    });
+
     it("parses JSON object strings into structured JSON", () => {
       expect(extractDisplayFromValue('{"users":[{"id":"1"}]}')).toEqual({
         kind: "json",
@@ -46,6 +53,22 @@ describe("tool-result-text", () => {
       ).toEqual({
         kind: "json",
         value: { users: [{ id: "1" }], hasNextPage: false },
+      });
+    });
+
+    it("preserves whitespace in plain text content blocks", () => {
+      expect(
+        extractDisplayFromToolResult({
+          content: [
+            {
+              type: "text",
+              text: "  line one\nline two  \n",
+            },
+          ],
+        }),
+      ).toEqual({
+        kind: "text",
+        text: "  line one\nline two  \n",
       });
     });
   });

@@ -103,7 +103,18 @@ export function ResourceTemplatesTab({
     }
   }, [selectedTemplateData?.uriTemplate, templateOverrides]);
 
-  async function fetchTemplates() {
+  useEffect(() => {
+    if (serverConfig && serverName) {
+      fetchTemplates();
+    }
+  }, [serverConfig, serverName]);
+
+  // Register refresh function for parent component
+  useEffect(() => {
+    onRegisterRefresh?.(fetchTemplates);
+  }, [onRegisterRefresh]);
+
+  const fetchTemplates = async () => {
     if (!serverName) return;
 
     setFetchingTemplates(true);
@@ -137,18 +148,7 @@ export function ResourceTemplatesTab({
     } finally {
       setFetchingTemplates(false);
     }
-  }
-
-  useEffect(() => {
-    if (serverConfig && serverName) {
-      fetchTemplates();
-    }
-  }, [serverConfig, serverName]);
-
-  // Register refresh function for parent component
-  useEffect(() => {
-    onRegisterRefresh?.(fetchTemplates);
-  }, [onRegisterRefresh]);
+  };
 
   const updateParamValue = (paramName: string, value: string) => {
     setTemplateOverrides((prev) => ({ ...prev, [paramName]: value }));
