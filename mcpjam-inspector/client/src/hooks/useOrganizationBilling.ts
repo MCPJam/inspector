@@ -1,16 +1,25 @@
 import { useAction, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 
+export type OrganizationPlan = "free" | "starter" | "team" | "enterprise";
+export type BillingInterval = "monthly" | "annual";
+
 export interface OrganizationBillingStatus {
   organizationId: string;
   organizationName: string;
-  plan: "oss" | "pro";
+  plan: OrganizationPlan;
+  billingInterval: BillingInterval | null;
+  billingConfigured: boolean;
   subscriptionStatus: string | null;
   canManageBilling: boolean;
   isOwner: boolean;
   hasCustomer: boolean;
   stripeCurrentPeriodEnd: number | null;
   stripePriceId: string | null;
+}
+
+export function isPaidPlan(plan: OrganizationPlan): boolean {
+  return plan !== "free";
 }
 
 export function useOrganizationBilling(organizationId: string | null) {
@@ -20,7 +29,7 @@ export function useOrganizationBilling(organizationId: string | null) {
   ) as OrganizationBillingStatus | undefined;
 
   const createCheckout = useAction(
-    "billing:createOrganizationProCheckoutSession" as any,
+    "billing:createOrganizationCheckoutSession" as any,
   );
   const createPortal = useAction(
     "billing:createOrganizationBillingPortalSession" as any,
@@ -31,7 +40,11 @@ export function useOrganizationBilling(organizationId: string | null) {
   const [error, setError] = useState<string | null>(null);
 
   const startCheckout = useCallback(
-    async (returnUrl: string) => {
+    async (
+      returnUrl: string,
+      tier: "starter" | "team" = "starter",
+      billingInterval: BillingInterval = "monthly",
+    ) => {
       if (!organizationId) throw new Error("Organization is required");
       setIsStartingCheckout(true);
       setError(null);
@@ -39,6 +52,8 @@ export function useOrganizationBilling(organizationId: string | null) {
         const result = await createCheckout({
           organizationId,
           returnUrl,
+          tier,
+          billingInterval,
         });
         return result.checkoutUrl as string;
       } catch (err) {
