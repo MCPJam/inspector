@@ -120,9 +120,6 @@ export function SidebarUser() {
                 </Avatar>
                 <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                   <span className="truncate font-semibold">{displayName}</span>
-                  <span className="truncate text-xs text-muted-foreground">
-                    {email}
-                  </span>
                 </div>
                 <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
               </SidebarMenuButton>
@@ -191,13 +188,6 @@ export function SidebarUser() {
                       </AvatarFallback>
                     </Avatar>
                     <span className="flex-1 truncate">{org.name}</span>
-                    <Settings
-                      className="size-4 text-muted-foreground hover:text-foreground"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.location.hash = `organizations/${org._id}`;
-                      }}
-                    />
                   </DropdownMenuItem>
                 ))
               ) : (

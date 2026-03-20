@@ -13,7 +13,6 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "tools",
   "resources",
   "prompts",
-  "support",
   "settings",
   "oauth-flow",
   "learning",

@@ -3,7 +3,6 @@ import { useState, useEffect, useMemo } from "react";
 import {
   Hammer,
   MessageCircle,
-  Settings,
   MessageSquareCode,
   BookOpen,
   FlaskConical,
@@ -12,7 +11,6 @@ import {
   Layers,
   ListTodo,
   SquareSlash,
-  MessageCircleQuestionIcon,
   GitBranch,
   GraduationCap,
   Box,
@@ -184,21 +182,6 @@ const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "#tasks",
         icon: ListTodo,
-      },
-    ],
-  },
-  {
-    id: "settings",
-    items: [
-      {
-        title: "Support",
-        url: "#support",
-        icon: MessageCircleQuestionIcon,
-      },
-      {
-        title: "Settings",
-        url: "#settings",
-        icon: Settings,
       },
     ],
   },
