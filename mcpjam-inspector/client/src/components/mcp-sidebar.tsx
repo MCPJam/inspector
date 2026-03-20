@@ -229,6 +229,7 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
+  activeOrganizationId?: string;
 }
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
@@ -243,6 +244,7 @@ export function MCPSidebar({
   onCreateWorkspace,
   onDeleteWorkspace,
   isLoadingWorkspaces,
+  activeOrganizationId,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -409,7 +411,7 @@ export function MCPSidebar({
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <SidebarUser />
+        <SidebarUser activeOrganizationId={activeOrganizationId} />
       </SidebarFooter>
     </Sidebar>
   );
