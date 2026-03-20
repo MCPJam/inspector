@@ -53,7 +53,8 @@ export function SidebarWorkspaceSelector({
   const workspaceName = activeWorkspace?.name || "No Workspace";
   const initial = workspaceName.charAt(0).toUpperCase();
   const showActiveVisibility =
-    Boolean(activeWorkspace?.sharedWorkspaceId) || Boolean(activeWorkspace?.visibility);
+    Boolean(activeWorkspace?.sharedWorkspaceId) ||
+    Boolean(activeWorkspace?.visibility);
 
   const workspaceList = Object.values(workspaces).sort((a, b) => {
     if (a.isDefault) return -1;
