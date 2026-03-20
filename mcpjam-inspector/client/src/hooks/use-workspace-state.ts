@@ -289,6 +289,7 @@ export function useWorkspaceState({
           const workspaceId = await convexCreateWorkspace({
             name,
             servers: {},
+            ...(activeOrganizationId ? { organizationId: activeOrganizationId } : {}),
           });
           if (switchTo && workspaceId) {
             setConvexActiveWorkspaceId(workspaceId as string);
@@ -319,7 +320,7 @@ export function useWorkspaceState({
       toast.success(`Workspace "${name}" created`);
       return newWorkspace.id;
     },
-    [isAuthenticated, convexCreateWorkspace, dispatch],
+    [isAuthenticated, convexCreateWorkspace, dispatch, activeOrganizationId],
   );
 
   const handleUpdateWorkspace = useCallback(
@@ -405,6 +406,7 @@ export function useWorkspaceState({
             name: newName,
             description: sourceWorkspace.description,
             servers: serializedServers,
+            ...(activeOrganizationId ? { organizationId: activeOrganizationId } : {}),
           });
           toast.success(`Workspace duplicated as "${newName}"`);
         } catch (error) {
@@ -417,7 +419,7 @@ export function useWorkspaceState({
         toast.success(`Workspace duplicated as "${newName}"`);
       }
     },
-    [effectiveWorkspaces, isAuthenticated, convexCreateWorkspace, dispatch],
+    [effectiveWorkspaces, isAuthenticated, convexCreateWorkspace, dispatch, activeOrganizationId],
   );
 
   const handleSetDefaultWorkspace = useCallback(
@@ -478,6 +480,7 @@ export function useWorkspaceState({
             name: workspaceData.name,
             description: workspaceData.description,
             servers: serializedServers,
+            ...(activeOrganizationId ? { organizationId: activeOrganizationId } : {}),
           });
           toast.success(`Workspace "${workspaceData.name}" imported`);
         } catch (error) {
@@ -497,7 +500,7 @@ export function useWorkspaceState({
         toast.success(`Workspace "${importedWorkspace.name}" imported`);
       }
     },
-    [isAuthenticated, convexCreateWorkspace, dispatch],
+    [isAuthenticated, convexCreateWorkspace, dispatch, activeOrganizationId],
   );
 
   return {
