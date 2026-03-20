@@ -291,9 +291,7 @@ describe("OrganizationsTab member management", () => {
     expect(
       screen.getByText("Only organization owners can manage billing."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Upgrade plan" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upgrade plan" })).toBeDisabled();
     expect(
       screen.queryByText("change-role-member@example.com"),
     ).not.toBeInTheDocument();

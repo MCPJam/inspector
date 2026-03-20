@@ -223,9 +223,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(
-      screen.getByRole("button", { name: "Upgrade plan" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upgrade plan" })).toBeDisabled();
     expect(
       screen.getByText("Only organization owners can manage billing."),
     ).toBeInTheDocument();
