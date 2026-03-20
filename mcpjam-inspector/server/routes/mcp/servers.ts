@@ -6,6 +6,20 @@ import { logger } from "../../utils/logger";
 import { HOSTED_MODE } from "../../config";
 
 const servers = new Hono();
+const SERVER_HEALTH_CHECK_TIMEOUT_MS = 5000;
+
+function getSafeConnectionStatus(
+  mcpClientManager: {
+    getConnectionStatus: (serverId: string) => string;
+  },
+  serverId: string,
+): string {
+  try {
+    return mcpClientManager.getConnectionStatus(serverId);
+  } catch {
+    return "disconnected";
+  }
+}
 
 // List all connected servers with their status
 servers.get("/", async (c) => {
@@ -38,24 +52,38 @@ servers.get("/", async (c) => {
 
 servers.get("/status/:serverId", async (c) => {
   let serverId: string | undefined;
+  const startedAt = Date.now();
   try {
     serverId = c.req.param("serverId");
     const mcpClientManager = c.mcpClientManager;
-    const status = mcpClientManager.pingServer(serverId);
+
+    await mcpClientManager.pingServer(serverId, {
+      timeout: SERVER_HEALTH_CHECK_TIMEOUT_MS,
+    });
 
     return c.json({
       success: true,
       serverId,
-      status,
+      connectionStatus: getSafeConnectionStatus(mcpClientManager, serverId),
+      healthStatus: "healthy",
+      latencyMs: Date.now() - startedAt,
+      checkedAt: new Date().toISOString(),
     });
   } catch (error) {
     logger.error("Error getting server status", error, { serverId });
     return c.json(
       {
         success: false,
+        serverId,
+        connectionStatus: serverId
+          ? getSafeConnectionStatus(c.mcpClientManager, serverId)
+          : "disconnected",
+        healthStatus: "unhealthy",
+        latencyMs: Date.now() - startedAt,
+        checkedAt: new Date().toISOString(),
         error: error instanceof Error ? error.message : "Unknown error",
       },
-      500,
+      503,
     );
   }
 });

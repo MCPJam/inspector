@@ -25,7 +25,7 @@ const createMockMcpClientManager = (overrides: Record<string, any> = {}) => ({
     },
   ]),
   getConnectionStatus: vi.fn().mockReturnValue("connected"),
-  pingServer: vi.fn().mockReturnValue("connected"),
+  pingServer: vi.fn().mockResolvedValue({}),
   getInitializationInfo: vi.fn().mockReturnValue({
     protocolVersion: "2024-11-05",
     capabilities: { tools: {}, resources: {} },
@@ -130,35 +130,44 @@ describe("GET /api/mcp/servers/status/:serverId", () => {
     const data = await res.json();
     expect(data.success).toBe(true);
     expect(data.serverId).toBe("server-1");
-    expect(data.status).toBe("connected");
+    expect(data.connectionStatus).toBe("connected");
+    expect(data.healthStatus).toBe("healthy");
+    expect(typeof data.latencyMs).toBe("number");
+    expect(typeof data.checkedAt).toBe("string");
 
-    expect(mcpClientManager.pingServer).toHaveBeenCalledWith("server-1");
+    expect(mcpClientManager.pingServer).toHaveBeenCalledWith("server-1", {
+      timeout: 5000,
+    });
   });
 
-  it("returns disconnected status for unhealthy server", async () => {
-    mcpClientManager.pingServer.mockReturnValue("disconnected");
+  it("returns unhealthy status when ping fails", async () => {
+    mcpClientManager.getConnectionStatus.mockReturnValue("connected");
+    mcpClientManager.pingServer.mockRejectedValue(new Error("Ping timeout"));
 
     const res = await app.request("/api/mcp/servers/status/server-2", {
       method: "GET",
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(503);
     const data = await res.json();
-    expect(data.status).toBe("disconnected");
+    expect(data.success).toBe(false);
+    expect(data.serverId).toBe("server-2");
+    expect(data.connectionStatus).toBe("connected");
+    expect(data.healthStatus).toBe("unhealthy");
+    expect(data.error).toBe("Ping timeout");
   });
 
-  it("returns 500 when status check fails", async () => {
-    mcpClientManager.pingServer.mockImplementation(() => {
-      throw new Error("Ping timeout");
-    });
+  it("returns 503 when status check fails", async () => {
+    mcpClientManager.pingServer.mockRejectedValue(new Error("Ping timeout"));
 
     const res = await app.request("/api/mcp/servers/status/server-1", {
       method: "GET",
     });
 
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(503);
     const data = await res.json();
     expect(data.success).toBe(false);
+    expect(data.healthStatus).toBe("unhealthy");
     expect(data.error).toBe("Ping timeout");
   });
 });

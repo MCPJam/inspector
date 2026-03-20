@@ -209,7 +209,7 @@ Verify a server is responsive:
 
 ```typescript
 try {
-  manager.pingServer("myServer");
+  await manager.pingServer("myServer");
 } catch {
   console.warn("Server not responding, reconnecting...");
   await manager.disconnectServer("myServer");
