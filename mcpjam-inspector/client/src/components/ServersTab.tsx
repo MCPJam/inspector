@@ -141,7 +141,6 @@ interface ServersTabProps {
   activeWorkspaceId: string;
   isLoadingWorkspaces?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function ServersTab({
@@ -155,7 +154,6 @@ export function ServersTab({
   activeWorkspaceId,
   isLoadingWorkspaces,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
@@ -348,7 +346,6 @@ export function ServersTab({
                   organizationId={organizationId}
                   visibility={visibility}
                   onWorkspaceShared={onWorkspaceShared}
-                  onLeaveWorkspace={onLeaveWorkspace}
                 />
               )}
               <WorkspaceShareButton
@@ -358,7 +355,6 @@ export function ServersTab({
                 organizationId={organizationId}
                 visibility={visibility}
                 onWorkspaceShared={onWorkspaceShared}
-                onLeaveWorkspace={onLeaveWorkspace}
               />
               {renderServerActionsMenu()}
             </div>
@@ -454,7 +450,6 @@ export function ServersTab({
               organizationId={organizationId}
               visibility={visibility}
               onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
           <WorkspaceShareButton
@@ -464,7 +459,6 @@ export function ServersTab({
             organizationId={organizationId}
             visibility={visibility}
             onWorkspaceShared={onWorkspaceShared}
-            onLeaveWorkspace={onLeaveWorkspace}
           />
           {renderServerActionsMenu()}
         </div>

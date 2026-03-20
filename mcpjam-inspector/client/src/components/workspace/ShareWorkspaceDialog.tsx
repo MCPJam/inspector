@@ -36,7 +36,6 @@ interface ShareWorkspaceDialogProps {
   visibility?: WorkspaceVisibility;
   currentUser: User;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 function resolveWorkspaceRole(
@@ -147,15 +146,9 @@ export function ShareWorkspaceDialog({
         environment: detectEnvironment(),
       });
     }
-  }, [
-    isOpen,
-    workspaceName,
-    sharedWorkspaceId,
-    activeMembers.length,
-    pendingMembers.length,
-    workspaceVisibility,
-    posthog,
-  ]);
+    // Only fire when the dialog opens, not on downstream state changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const handleInvite = async () => {
     if (!email.trim() || !canManageMembers) return;

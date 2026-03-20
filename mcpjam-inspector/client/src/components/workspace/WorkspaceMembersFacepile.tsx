@@ -19,7 +19,6 @@ interface WorkspaceMembersFacepileProps {
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function WorkspaceMembersFacepile({
@@ -30,7 +29,6 @@ export function WorkspaceMembersFacepile({
   organizationId,
   visibility,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: WorkspaceMembersFacepileProps) {
   const { profilePictureUrl } = useProfilePicture();
   const posthog = usePostHog();
@@ -80,7 +78,6 @@ export function WorkspaceMembersFacepile({
           visibility={visibility}
           currentUser={currentUser}
           onWorkspaceShared={onWorkspaceShared}
-          onLeaveWorkspace={onLeaveWorkspace}
         />
       </div>
     );
@@ -148,7 +145,6 @@ export function WorkspaceMembersFacepile({
         visibility={visibility}
         currentUser={currentUser}
         onWorkspaceShared={onWorkspaceShared}
-        onLeaveWorkspace={onLeaveWorkspace}
       />
     </div>
   );

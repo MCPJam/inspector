@@ -686,7 +686,6 @@ export default function App() {
               activeWorkspaceId={activeWorkspaceId}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
               onWorkspaceShared={handleWorkspaceShared}
-              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "tools" && (
@@ -707,7 +706,6 @@ export default function App() {
             <ViewsTab
               selectedServer={appState.selectedServer}
               onWorkspaceShared={handleWorkspaceShared}
-              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "sandboxes" && (

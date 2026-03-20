@@ -20,7 +20,6 @@ interface WorkspaceShareButtonProps {
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function WorkspaceShareButton({
@@ -30,7 +29,6 @@ export function WorkspaceShareButton({
   organizationId,
   visibility,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: WorkspaceShareButtonProps) {
   const { user } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -78,7 +76,6 @@ export function WorkspaceShareButton({
           visibility={visibility}
           currentUser={user}
           onWorkspaceShared={onWorkspaceShared}
-          onLeaveWorkspace={onLeaveWorkspace}
         />
       )}
     </>

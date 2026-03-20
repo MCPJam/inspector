@@ -26,7 +26,6 @@ interface ViewsListSidebarProps {
   currentUser?: User | null;
   isAuthenticated?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function ViewsListSidebar({
@@ -47,7 +46,6 @@ export function ViewsListSidebar({
   currentUser,
   isAuthenticated,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: ViewsListSidebarProps) {
   return (
     <>
@@ -64,7 +62,6 @@ export function ViewsListSidebar({
               organizationId={organizationId}
               visibility={visibility}
               onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
           <WorkspaceShareButton
@@ -74,7 +71,6 @@ export function ViewsListSidebar({
             organizationId={organizationId}
             visibility={visibility}
             onWorkspaceShared={onWorkspaceShared}
-            onLeaveWorkspace={onLeaveWorkspace}
           />
         </div>
       </div>
