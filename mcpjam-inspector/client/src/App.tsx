@@ -793,6 +793,7 @@ export default function App() {
             <SettingsTab
               convexWorkspaceId={convexWorkspaceId}
               workspaceName={activeWorkspace?.name ?? null}
+              workspaceVisibility={activeWorkspace?.visibility ?? null}
               activeWorkspaceId={activeWorkspaceId}
               onUpdateWorkspace={handleUpdateWorkspace}
             />

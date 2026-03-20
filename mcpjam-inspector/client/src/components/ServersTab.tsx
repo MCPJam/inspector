@@ -14,6 +14,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
+import { WorkspaceVisibilityBadge } from "./workspace/WorkspaceVisibilityBadge";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -337,6 +338,9 @@ export function ServersTab({
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
+              {sharedWorkspaceId ? (
+                <WorkspaceVisibilityBadge visibility={visibility} compact />
+              ) : null}
               {isAuthenticated && user && (
                 <WorkspaceMembersFacepile
                   workspaceName={workspaceName}
@@ -441,6 +445,9 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
+          {sharedWorkspaceId ? (
+            <WorkspaceVisibilityBadge visibility={visibility} compact />
+          ) : null}
           {isAuthenticated && user && (
             <WorkspaceMembersFacepile
               workspaceName={workspaceName}
