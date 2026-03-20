@@ -7,7 +7,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
-import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import { JsonEditor } from "@/components/ui/json-editor";
 
@@ -19,7 +19,12 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
 
-  const oauthTokens = server.oauthTokens || getStoredTokens(server.name);
+  const storedTokensState = server.oauthTokens
+    ? { tokens: undefined, isInvalid: false }
+    : getStoredTokensState(server.name);
+  const oauthTokens = server.oauthTokens ?? storedTokensState.tokens;
+  const hasInvalidStoredAuthData =
+    server.oauthTokens == null && storedTokensState.isInvalid;
   const isHttpServer = "url" in server.config;
 
   const initializationInfo = server.initializationInfo;
@@ -130,7 +135,22 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
   };
 
   const renderOAuthTokensSection = () => {
-    if (!isHttpServer || !oauthTokens) return null;
+    if (!isHttpServer) return null;
+
+    if (hasInvalidStoredAuthData) {
+      return (
+        <div className="space-y-3 text-xs pt-2">
+          <div className="text-sm font-medium text-muted-foreground">
+            OAuth Tokens
+          </div>
+          <div className="rounded-md bg-muted/40 p-3 text-sm text-muted-foreground">
+            Saved auth data is invalid. Reconnect this server to refresh tokens.
+          </div>
+        </div>
+      );
+    }
+
+    if (!oauthTokens) return null;
 
     return (
       <div className="space-y-3 text-xs pt-2">

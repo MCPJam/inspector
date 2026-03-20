@@ -70,6 +70,7 @@ describe("ServerDetailModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mockListTools.mockResolvedValue({
       tools: [],
       toolsMetadata: {},
@@ -238,6 +239,18 @@ describe("ServerDetailModal", () => {
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Enter" });
 
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("shows a reconnect message instead of crashing when stored auth data is invalid", () => {
+    localStorage.setItem("mcp-tokens-test-server", '{"access_token":"broken"');
+
+    render(<ServerDetailModal {...defaultProps} defaultTab="overview" />);
+
+    expect(
+      screen.getByText(
+        "Saved auth data is invalid. Reconnect this server to refresh tokens.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("disables the save button while an async save is pending", async () => {
