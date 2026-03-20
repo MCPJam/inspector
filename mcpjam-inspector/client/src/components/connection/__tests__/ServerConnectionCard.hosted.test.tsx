@@ -86,7 +86,6 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
         server={server}
         onDisconnect={vi.fn()}
         onReconnect={onReconnect}
-        onEdit={vi.fn()}
       />,
     );
 
