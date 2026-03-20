@@ -140,6 +140,8 @@ export function useWorkspaceState({
             createdAt: new Date(rw.createdAt),
             updatedAt: new Date(rw.updatedAt),
             sharedWorkspaceId: rw._id,
+            organizationId: rw.organizationId,
+            visibility: rw.visibility,
           } as Workspace,
         ];
       }),

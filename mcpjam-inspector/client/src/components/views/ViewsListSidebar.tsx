@@ -5,6 +5,7 @@ import { type AnyView } from "@/hooks/useViews";
 import { User } from "@workos-inc/authkit-js";
 import { WorkspaceMembersFacepile } from "@/components/workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "@/components/workspace/WorkspaceShareButton";
+import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface ViewsListSidebarProps {
   views: AnyView[];
@@ -20,10 +21,11 @@ interface ViewsListSidebarProps {
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
   currentUser?: User | null;
   isAuthenticated?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function ViewsListSidebar({
@@ -39,10 +41,11 @@ export function ViewsListSidebar({
   workspaceName,
   workspaceServers,
   sharedWorkspaceId,
+  organizationId,
+  visibility,
   currentUser,
   isAuthenticated,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: ViewsListSidebarProps) {
   return (
     <>
@@ -56,16 +59,18 @@ export function ViewsListSidebar({
               workspaceServers={workspaceServers}
               currentUser={currentUser}
               sharedWorkspaceId={sharedWorkspaceId}
+              organizationId={organizationId}
+              visibility={visibility}
               onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
           <WorkspaceShareButton
             workspaceName={workspaceName}
             workspaceServers={workspaceServers}
             sharedWorkspaceId={sharedWorkspaceId}
+            organizationId={organizationId}
+            visibility={visibility}
             onWorkspaceShared={onWorkspaceShared}
-            onLeaveWorkspace={onLeaveWorkspace}
           />
         </div>
       </div>

@@ -9,14 +9,16 @@ import { cn } from "@/lib/utils";
 import { User } from "@workos-inc/authkit-js";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface WorkspaceMembersFacepileProps {
   workspaceName: string;
   workspaceServers: Record<string, any>;
   currentUser: User;
   sharedWorkspaceId?: string | null;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function WorkspaceMembersFacepile({
@@ -24,8 +26,9 @@ export function WorkspaceMembersFacepile({
   workspaceServers,
   currentUser,
   sharedWorkspaceId,
+  organizationId,
+  visibility,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: WorkspaceMembersFacepileProps) {
   const { profilePictureUrl } = useProfilePicture();
   const posthog = usePostHog();
@@ -71,9 +74,10 @@ export function WorkspaceMembersFacepile({
           workspaceName={workspaceName}
           workspaceServers={workspaceServers}
           sharedWorkspaceId={sharedWorkspaceId}
+          organizationId={organizationId}
+          visibility={visibility}
           currentUser={currentUser}
           onWorkspaceShared={onWorkspaceShared}
-          onLeaveWorkspace={onLeaveWorkspace}
         />
       </div>
     );
@@ -137,9 +141,10 @@ export function WorkspaceMembersFacepile({
         workspaceName={workspaceName}
         workspaceServers={workspaceServers}
         sharedWorkspaceId={sharedWorkspaceId}
+        organizationId={organizationId}
+        visibility={visibility}
         currentUser={currentUser}
         onWorkspaceShared={onWorkspaceShared}
-        onLeaveWorkspace={onLeaveWorkspace}
       />
     </div>
   );
