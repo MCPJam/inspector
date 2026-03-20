@@ -112,7 +112,7 @@ export function ResourceTemplatesTab({
   // Register refresh function for parent component
   useEffect(() => {
     onRegisterRefresh?.(fetchTemplates);
-  }, [onRegisterRefresh]);
+  }, [onRegisterRefresh, fetchTemplates]);
 
   const fetchTemplates = async () => {
     if (!serverName) return;
