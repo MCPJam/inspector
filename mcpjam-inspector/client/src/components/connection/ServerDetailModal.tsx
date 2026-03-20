@@ -223,7 +223,10 @@ export function ServerDetailModal({
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent
-        className="max-w-2xl max-h-[85vh] flex flex-col"
+        className="max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.stopPropagation();
