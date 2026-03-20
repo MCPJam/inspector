@@ -17,8 +17,10 @@ import { Plus, Pencil, Trash2 } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 import { EditableText } from "./ui/editable-text";
+import { WorkspaceVisibilityBadge } from "./workspace/WorkspaceVisibilityBadge";
 import type { CustomProvider } from "@mcpjam/sdk";
 import type { Workspace } from "@/lib/types";
+import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface ProviderConfig {
   id: string;
@@ -33,6 +35,7 @@ interface ProviderConfig {
 interface SettingsTabProps {
   convexWorkspaceId: string | null;
   workspaceName: string | null;
+  workspaceVisibility?: WorkspaceVisibility | null;
   activeWorkspaceId: string;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
 }
@@ -40,6 +43,7 @@ interface SettingsTabProps {
 export function SettingsTab({
   convexWorkspaceId,
   workspaceName,
+  workspaceVisibility,
   activeWorkspaceId,
   onUpdateWorkspace,
 }: SettingsTabProps) {
@@ -313,6 +317,18 @@ export function SettingsTab({
                 className="text-sm"
                 placeholder="Workspace name"
               />
+            }
+          />
+          <SettingsRow
+            label="Access"
+            value={
+              convexWorkspaceId ? (
+                <WorkspaceVisibilityBadge visibility={workspaceVisibility} />
+              ) : (
+                <span className="text-sm text-muted-foreground">
+                  Not shared yet
+                </span>
+              )
             }
           />
           <AccountApiKeySection
