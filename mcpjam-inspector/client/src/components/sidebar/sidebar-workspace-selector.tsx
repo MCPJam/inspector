@@ -13,7 +13,11 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cn, getInitials } from "@/lib/utils";
+import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { useConvexAuth } from "convex/react";
+import { useProfilePicture } from "@/hooks/useProfilePicture";
 import type { Workspace } from "@/state/app-types";
 
 interface SidebarWorkspaceSelectorProps {
@@ -36,6 +40,16 @@ export function SidebarWorkspaceSelector({
   onNavigateToSettings,
 }: SidebarWorkspaceSelectorProps) {
   const { isMobile } = useSidebar();
+  const { isAuthenticated } = useConvexAuth();
+  const { profilePictureUrl } = useProfilePicture();
+
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+
+  const { activeMembers } = useWorkspaceMembers({
+    isAuthenticated,
+    workspaceId: sharedWorkspaceId,
+  });
 
   if (isLoading) {
     return (
@@ -50,9 +64,9 @@ export function SidebarWorkspaceSelector({
     );
   }
 
-  const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "No Workspace";
   const initial = workspaceName.charAt(0).toUpperCase();
+  const displayMembers = activeMembers.slice(0, 3);
   const workspaceList = Object.values(workspaces).sort((a, b) => {
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
@@ -87,6 +101,35 @@ export function SidebarWorkspaceSelector({
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold">{workspaceName}</span>
+                {displayMembers.length > 0 && (
+                  <div className="flex -space-x-1.5 mt-0.5">
+                    {displayMembers.map((member) => {
+                      const name = member.user?.name || member.email;
+                      const initials = getInitials(name);
+                      return (
+                        <Avatar
+                          key={member._id}
+                          className="size-5 border border-sidebar-background"
+                        >
+                          <AvatarImage
+                            src={member.user?.imageUrl || undefined}
+                            alt={name}
+                          />
+                          <AvatarFallback className="text-[8px] bg-muted">
+                            {initials}
+                          </AvatarFallback>
+                        </Avatar>
+                      );
+                    })}
+                    {activeMembers.length > 3 && (
+                      <div className="size-5 rounded-full border border-sidebar-background bg-muted flex items-center justify-center">
+                        <span className="text-[8px] text-muted-foreground font-medium">
+                          +{activeMembers.length - 3}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
             </SidebarMenuButton>
