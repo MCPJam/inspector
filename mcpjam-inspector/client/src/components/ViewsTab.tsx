@@ -1075,6 +1075,8 @@ export function ViewsTab({
               workspaceName={activeWorkspace?.name || "Workspace"}
               workspaceServers={activeWorkspace?.servers || {}}
               sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
+              organizationId={activeWorkspace?.organizationId}
+              visibility={activeWorkspace?.visibility}
               currentUser={user}
               isAuthenticated={isAuthenticated}
               onWorkspaceShared={onWorkspaceShared}

@@ -11,11 +11,14 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface WorkspaceShareButtonProps {
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
   onLeaveWorkspace?: () => void;
 }
@@ -24,6 +27,8 @@ export function WorkspaceShareButton({
   workspaceName,
   workspaceServers,
   sharedWorkspaceId,
+  organizationId,
+  visibility,
   onWorkspaceShared,
   onLeaveWorkspace,
 }: WorkspaceShareButtonProps) {
@@ -69,6 +74,8 @@ export function WorkspaceShareButton({
           workspaceName={workspaceName}
           workspaceServers={workspaceServers}
           sharedWorkspaceId={sharedWorkspaceId}
+          organizationId={organizationId}
+          visibility={visibility}
           currentUser={user}
           onWorkspaceShared={onWorkspaceShared}
           onLeaveWorkspace={onLeaveWorkspace}

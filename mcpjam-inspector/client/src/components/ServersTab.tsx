@@ -242,6 +242,8 @@ export function ServersTab({
   const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "Workspace";
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const organizationId = activeWorkspace?.organizationId;
+  const visibility = activeWorkspace?.visibility;
   const { serversRecord: sharedWorkspaceServersRecord } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
@@ -343,6 +345,8 @@ export function ServersTab({
                   workspaceServers={connectedOrConnectingServerConfigs}
                   currentUser={user}
                   sharedWorkspaceId={sharedWorkspaceId}
+                  organizationId={organizationId}
+                  visibility={visibility}
                   onWorkspaceShared={onWorkspaceShared}
                   onLeaveWorkspace={onLeaveWorkspace}
                 />
@@ -351,6 +355,8 @@ export function ServersTab({
                 workspaceName={workspaceName}
                 workspaceServers={connectedOrConnectingServerConfigs}
                 sharedWorkspaceId={sharedWorkspaceId}
+                organizationId={organizationId}
+                visibility={visibility}
                 onWorkspaceShared={onWorkspaceShared}
                 onLeaveWorkspace={onLeaveWorkspace}
               />
@@ -445,6 +451,8 @@ export function ServersTab({
               workspaceServers={connectedOrConnectingServerConfigs}
               currentUser={user}
               sharedWorkspaceId={sharedWorkspaceId}
+              organizationId={organizationId}
+              visibility={visibility}
               onWorkspaceShared={onWorkspaceShared}
               onLeaveWorkspace={onLeaveWorkspace}
             />
@@ -453,6 +461,8 @@ export function ServersTab({
             workspaceName={workspaceName}
             workspaceServers={connectedOrConnectingServerConfigs}
             sharedWorkspaceId={sharedWorkspaceId}
+            organizationId={organizationId}
+            visibility={visibility}
             onWorkspaceShared={onWorkspaceShared}
             onLeaveWorkspace={onLeaveWorkspace}
           />
