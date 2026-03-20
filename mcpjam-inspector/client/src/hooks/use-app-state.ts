@@ -9,6 +9,7 @@ import { useWorkspaceState } from "./use-workspace-state";
 import { useServerState } from "./use-server-state";
 
 export type { ServerWithName } from "@/state/app-types";
+export type { ServerUpdateResult } from "./use-server-state";
 
 export function useAppState() {
   const logger = useLogger("Connections");

@@ -76,7 +76,6 @@ const createServer = (
 const defaultProps = {
   onDisconnect: vi.fn(),
   onReconnect: vi.fn().mockResolvedValue(undefined),
-  onEdit: vi.fn(),
   onRemove: vi.fn(),
 };
 

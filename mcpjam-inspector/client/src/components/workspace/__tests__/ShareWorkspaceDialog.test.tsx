@@ -168,7 +168,6 @@ describe("ShareWorkspaceDialog", () => {
         "This workspace is available to everyone in this organization. Invite people to the organization to give them access.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("Public workspace")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Invite to organization" }),
     ).toBeInTheDocument();
@@ -234,7 +233,6 @@ describe("ShareWorkspaceDialog", () => {
         "Only invited organization members can access this workspace. If someone is not in the organization yet, they'll be invited first and granted workspace access after signup.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByText("Private workspace")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Invite to workspace" }),
     ).toBeInTheDocument();

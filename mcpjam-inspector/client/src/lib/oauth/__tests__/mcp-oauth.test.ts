@@ -268,5 +268,19 @@ describe("mcp-oauth", () => {
       expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();
       expect(mockSdkAuth).toHaveBeenCalledTimes(2);
     });
+
+    it("treats malformed stored token data as invalid instead of throwing", async () => {
+      const { getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+
+      localStorage.setItem("mcp-tokens-asana", '{"access_token":"broken"');
+      localStorage.setItem("mcp-client-asana", '{"client_id":"broken"');
+
+      expect(getStoredTokens("asana")).toBeUndefined();
+      expect(getStoredTokensState("asana")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
+    });
   });
 });
