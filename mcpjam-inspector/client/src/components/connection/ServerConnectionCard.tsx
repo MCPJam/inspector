@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Card } from "../ui/card";
 import { Button } from "../ui/button";
@@ -24,7 +24,6 @@ import {
   Trash2,
   AlertCircle,
   Share2,
-  Info,
   FileText,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
@@ -35,11 +34,7 @@ import {
 } from "./server-card-utils";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import {
-  listTools,
-  type ListToolsResultWithMetadata,
-} from "@/lib/apis/mcp-tools-api";
-import { ServerInfoModal } from "./ServerInfoModal";
+import type { ServerDetailTab } from "./ServerDetailModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
 import { generateAgentBrief } from "@/lib/generate-agent-brief";
 import {
@@ -76,22 +71,23 @@ interface ServerConnectionCardProps {
     serverName: string,
     options?: { forceOAuthFlow?: boolean },
   ) => Promise<void>;
-  onEdit: (server: ServerWithName) => void;
   onRemove?: (serverName: string) => void;
-  onServerInfoModalOpenChange?: (isOpen: boolean) => void;
   serverTunnelUrl?: string | null;
   hostedServerId?: string;
+  onOpenDetailModal?: (
+    server: ServerWithName,
+    defaultTab: ServerDetailTab,
+  ) => void;
 }
 
 export function ServerConnectionCard({
   server,
   onDisconnect,
   onReconnect,
-  onEdit,
   onRemove,
-  onServerInfoModalOpenChange,
   serverTunnelUrl,
   hostedServerId,
+  onOpenDetailModal,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
@@ -101,10 +97,7 @@ export function ServerConnectionCard({
   const [isExporting, setIsExporting] = useState(false);
   const [isCopyingBrief, setIsCopyingBrief] = useState(false);
   const [isErrorExpanded, setIsErrorExpanded] = useState(false);
-  const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [copiedField, setCopiedField] = useState<string | null>(null);
-  const [toolsData, setToolsData] =
-    useState<ListToolsResultWithMetadata | null>(null);
   const [tunnelUrl, setTunnelUrl] = useState<string | null>(
     serverTunnelUrl ?? null,
   );
@@ -122,26 +115,6 @@ export function ServerConnectionCard({
   // Extract server info from initializationInfo
   const serverIcon = initializationInfo?.serverVersion?.icons?.[0];
   const version = initializationInfo?.serverVersion?.version;
-  const serverTitle = initializationInfo?.serverVersion?.title;
-  const websiteUrl = initializationInfo?.serverVersion?.websiteUrl;
-  const protocolVersion = initializationInfo?.protocolVersion;
-  const instructions = initializationInfo?.instructions;
-  const serverCapabilities = initializationInfo?.serverCapabilities;
-
-  // Build capabilities list
-  const capabilities: string[] = [];
-  if (serverCapabilities?.tools) capabilities.push("Tools");
-  if (serverCapabilities?.prompts) capabilities.push("Prompts");
-  if (serverCapabilities?.resources) capabilities.push("Resources");
-
-  const hasInitInfo =
-    initializationInfo &&
-    (capabilities.length > 0 ||
-      protocolVersion ||
-      websiteUrl ||
-      instructions ||
-      serverCapabilities ||
-      serverTitle);
 
   const isConnected = server.connectionStatus === "connected";
   const isTunnelEnabled = !HOSTED_MODE;
@@ -172,26 +145,6 @@ export function ServerConnectionCard({
     isAuthenticated &&
     !isStdioServer &&
     !isInsecureHttpServer;
-
-  // Load tools when server is connected
-  useEffect(() => {
-    const loadTools = async () => {
-      if (server.connectionStatus !== "connected") {
-        setToolsData(null);
-        return;
-      }
-      try {
-        const result = await listTools({ serverId: server.name });
-        setToolsData(result);
-      } catch (err) {
-        // Silently fail - tools metadata is optional
-        console.error("Failed to load tools metadata:", err);
-        setToolsData(null);
-      }
-    };
-
-    loadTools();
-  }, [server.name, server.connectionStatus]);
 
   useEffect(() => {
     if (serverTunnelUrl !== undefined) {
@@ -364,9 +317,48 @@ export function ServerConnectionCard({
     }
   };
 
+  const isDetailModalEnabled = onOpenDetailModal != null;
+
+  const openDetailModal = useCallback(
+    (tab: ServerDetailTab, source: "card_click" | "kebab_edit") => {
+      if (!onOpenDetailModal) {
+        return;
+      }
+      onOpenDetailModal(server, tab);
+      posthog.capture("server_detail_modal_opened", {
+        source,
+        default_tab: tab,
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        server_id: server.name,
+      });
+    },
+    [onOpenDetailModal, posthog, server],
+  );
+
+  const handleCardClick = useCallback(() => {
+    if (!isDetailModalEnabled) {
+      return;
+    }
+    posthog.capture("server_card_clicked", {
+      location: "server_connection_card",
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+      server_id: server.name,
+    });
+    openDetailModal("configuration", "card_click");
+  }, [isDetailModalEnabled, server.name, posthog, openDetailModal]);
+
   return (
     <>
-      <Card className="group h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-all duration-200 hover:border-border hover:shadow-md">
+      <Card
+        className={`group h-full rounded-xl border border-border/50 bg-card/60 p-0 shadow-sm transition-all duration-200 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${
+          isDetailModalEnabled
+            ? "cursor-pointer hover:border-border hover:shadow-md hover:border-primary/40"
+            : ""
+        }`}
+        onClick={isDetailModalEnabled ? handleCardClick : undefined}
+      >
         <div className="p-4">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
@@ -391,10 +383,13 @@ export function ServerConnectionCard({
                 )}
               </div>
 
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                 {hasError && (
                   <button
-                    onClick={() => setIsErrorExpanded(true)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsErrorExpanded(true);
+                    }}
                     className="inline-flex items-center gap-1 rounded-full border border-red-300/60 bg-red-500/10 px-2 py-0.5 text-[11px] text-red-700 dark:text-red-300 cursor-pointer"
                   >
                     <AlertCircle className="h-3 w-3" />
@@ -494,12 +489,12 @@ export function ServerConnectionCard({
                           platform: detectPlatform(),
                           environment: detectEnvironment(),
                         });
-                        onEdit(server);
+                        openDetailModal("configuration", "kebab_edit");
                       }}
                       className="text-xs cursor-pointer"
                     >
                       <Edit className="h-3 w-3 mr-2" />
-                      Edit
+                      Configure
                     </DropdownMenuItem>
                     <DropdownMenuItem
                       onClick={() => {
@@ -565,10 +560,7 @@ export function ServerConnectionCard({
             </div>
           </div>
 
-          <div
-            className="relative mt-2 rounded-md border border-border/50 bg-muted/30 p-2 pr-8 font-mono text-xs text-muted-foreground"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="relative mt-2 rounded-md border border-border/50 bg-muted/30 p-2 pr-8 font-mono text-xs text-muted-foreground">
             <div className="break-all">{commandDisplay}</div>
             <button
               onClick={(e) => {
@@ -590,24 +582,6 @@ export function ServerConnectionCard({
               className="flex items-center gap-2"
               onClick={(e) => e.stopPropagation()}
             >
-              {hasInitInfo && (
-                <button
-                  onClick={() => {
-                    posthog.capture("view_server_info_clicked", {
-                      location: "server_connection_card",
-                      platform: detectPlatform(),
-                      environment: detectEnvironment(),
-                      server_id: server.name,
-                    });
-                    setIsInfoModalOpen(true);
-                    onServerInfoModalOpenChange?.(true);
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
-                >
-                  <Info className="h-3 w-3" strokeWidth={2.5} />
-                  <span>View server info</span>
-                </button>
-              )}
               {canShareServer && (
                 <button
                   onClick={() => {
@@ -683,7 +657,10 @@ export function ServerConnectionCard({
           </div>
 
           {hasError && (
-            <div className="mt-3 rounded-md border border-red-300/40 bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300">
+            <div
+              className="mt-3 rounded-md border border-red-300/40 bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300"
+              onClick={(e) => e.stopPropagation()}
+            >
               <div className="break-all">
                 {isErrorExpanded
                   ? server.lastError
@@ -709,7 +686,10 @@ export function ServerConnectionCard({
           )}
 
           {server.connectionStatus === "failed" && (
-            <div className="mt-2 text-xs text-muted-foreground">
+            <div
+              className="mt-2 text-xs text-muted-foreground"
+              onClick={(e) => e.stopPropagation()}
+            >
               Having trouble?{" "}
               <a
                 href="https://docs.mcpjam.com/troubleshooting/common-errors"
@@ -724,15 +704,6 @@ export function ServerConnectionCard({
           )}
         </div>
       </Card>
-      <ServerInfoModal
-        isOpen={isInfoModalOpen}
-        onClose={() => {
-          setIsInfoModalOpen(false);
-          onServerInfoModalOpenChange?.(false);
-        }}
-        server={server}
-        toolsData={toolsData}
-      />
       <TunnelExplanationModal
         isOpen={showTunnelExplanation}
         onClose={() => setShowTunnelExplanation(false)}

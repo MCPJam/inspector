@@ -29,7 +29,10 @@ const { mockHandleOAuthCallback, mockPosthogCapture, mockUseAppState } =
       handleConnect: vi.fn(),
       handleDisconnect: vi.fn(),
       handleReconnect: vi.fn(),
-      handleUpdate: vi.fn(),
+      handleUpdate: vi.fn().mockResolvedValue({
+        ok: true,
+        serverName: "test-server",
+      }),
       handleRemoveServer: vi.fn(),
       setSelectedServer: vi.fn(),
       toggleServerSelection: vi.fn(),

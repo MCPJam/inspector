@@ -11,6 +11,7 @@ import type { HttpServerConfig } from "@mcpjam/sdk";
 import { generateRandomString } from "./state-machines/shared/helpers";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -252,6 +253,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
+    captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
     // Store current hash to restore after OAuth callback
