@@ -102,6 +102,7 @@ vi.mock("sonner", () => ({
 vi.mock("@/hooks/useOrganizationBilling", () => ({
   useOrganizationBilling: (...args: unknown[]) =>
     mockUseOrganizationBilling(...args),
+  isPaidPlan: (plan: string) => plan !== "free",
 }));
 
 const organization = {
@@ -179,7 +180,9 @@ describe("OrganizationsTab member management", () => {
       billingStatus: {
         organizationId: "org-1",
         organizationName: "Acme Org",
-        plan: "oss",
+        plan: "free",
+        billingInterval: null,
+        billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: true,
         isOwner: true,
@@ -260,7 +263,9 @@ describe("OrganizationsTab member management", () => {
       billingStatus: {
         organizationId: "org-1",
         organizationName: "Acme Org",
-        plan: "oss",
+        plan: "free",
+        billingInterval: null,
+        billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: false,
         isOwner: false,
@@ -286,9 +291,7 @@ describe("OrganizationsTab member management", () => {
     expect(
       screen.getByText("Only organization owners can manage billing."),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Upgrade to MCPJam Pro" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upgrade plan" })).toBeDisabled();
     expect(
       screen.queryByText("change-role-member@example.com"),
     ).not.toBeInTheDocument();

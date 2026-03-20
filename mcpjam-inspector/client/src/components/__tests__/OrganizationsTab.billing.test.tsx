@@ -40,6 +40,7 @@ vi.mock("@/hooks/useOrganizations", () => ({
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
   useOrganizationBilling: vi.fn(),
+  isPaidPlan: (plan: string) => plan !== "free",
 }));
 
 vi.mock("../organization/OrganizationAuditLog", () => ({
@@ -92,12 +93,14 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
-  it("shows Upgrade CTA for OSS plan", () => {
+  it("shows Upgrade CTA for free plan", () => {
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
         organizationId: "org-1",
         organizationName: "Org One",
-        plan: "oss",
+        plan: "free",
+        billingInterval: null,
+        billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: true,
         isOwner: true,
@@ -123,11 +126,11 @@ describe("OrganizationsTab billing", () => {
     expect(screen.getByText("Billing account")).toBeInTheDocument();
     expect(screen.getByText("Not connected")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Upgrade to MCPJam Pro" }),
+      screen.getByRole("button", { name: "Upgrade plan" }),
     ).toBeInTheDocument();
   });
 
-  it("shows Manage subscription CTA for Pro plan", () => {
+  it("shows Manage subscription CTA for starter plan", () => {
     const periodEnd = 1_705_000_000_000;
     const formattedPeriodEnd = new Intl.DateTimeFormat(undefined, {
       month: "short",
@@ -139,7 +142,9 @@ describe("OrganizationsTab billing", () => {
       billingStatus: {
         organizationId: "org-1",
         organizationName: "Org One",
-        plan: "pro",
+        plan: "starter",
+        billingInterval: "monthly",
+        billingConfigured: true,
         subscriptionStatus: "active",
         canManageBilling: true,
         isOwner: true,
@@ -198,7 +203,9 @@ describe("OrganizationsTab billing", () => {
       billingStatus: {
         organizationId: "org-1",
         organizationName: "Org One",
-        plan: "oss",
+        plan: "free",
+        billingInterval: null,
+        billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: false,
         isOwner: false,
@@ -216,9 +223,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(
-      screen.getByRole("button", { name: "Upgrade to MCPJam Pro" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upgrade plan" })).toBeDisabled();
     expect(
       screen.getByText("Only organization owners can manage billing."),
     ).toBeInTheDocument();

@@ -1,8 +1,7 @@
 import { Hono } from "hono";
-import { issueGuestToken } from "../../services/guest-token.js";
 import {
+  fetchConvexGuestSession,
   fetchRemoteGuestSession,
-  shouldUseLocalGuestSigning,
 } from "../../utils/guest-session-source.js";
 import { ErrorCode } from "./errors.js";
 
@@ -31,13 +30,21 @@ function getClientIp(c: any): string {
   );
 }
 
+function shouldFetchGuestSessionFromConvex(): boolean {
+  if (process.env.VITE_MCPJAM_HOSTED_MODE === "true") {
+    return true;
+  }
+
+  return process.env.NODE_ENV !== "production";
+}
+
 /**
  * POST /api/web/guest-session
  *
  * Returns a guest bearer token for unauthenticated visitors.
- * Hosted web and local dev issue the token here using the local signer for
- * that runtime. Production local runtimes can proxy to the hosted
- * guest-session endpoint instead.
+ * Inspector rate-limits this endpoint locally, then either:
+ * - proxies to Convex in hosted web and local dev
+ * - relays through hosted Inspector in local production runtimes
  * Rate limited to 10 requests per minute per IP.
  */
 guestSession.post("/", async (c) => {
@@ -67,23 +74,21 @@ guestSession.post("/", async (c) => {
     ipWindows.set(ip, { count: 1, windowStart: now });
   }
 
-  if (!shouldUseLocalGuestSigning()) {
-    const session = await fetchRemoteGuestSession();
-    if (!session) {
-      return c.json(
-        {
-          code: ErrorCode.INTERNAL_ERROR,
-          message:
-            "Unable to obtain a guest session right now. Please try again.",
-        },
-        503,
-      );
-    }
-    return c.json(session);
+  const session = shouldFetchGuestSessionFromConvex()
+    ? await fetchConvexGuestSession()
+    : await fetchRemoteGuestSession();
+  if (!session) {
+    return c.json(
+      {
+        code: ErrorCode.INTERNAL_ERROR,
+        message:
+          "Unable to obtain a guest session right now. Please try again.",
+      },
+      503,
+    );
   }
 
-  const { guestId, token, expiresAt } = issueGuestToken();
-  return c.json({ guestId, token, expiresAt });
+  return c.json(session);
 });
 
 export default guestSession;

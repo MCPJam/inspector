@@ -10,6 +10,7 @@ export interface HostedApiContext {
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
   shareToken?: string;
+  sandboxToken?: string;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
   hasSession?: boolean;
@@ -80,12 +81,17 @@ export function shouldRetryHostedAuth401(): boolean {
 /**
  * Hosted guest access comes in 2 shapes:
  * - direct guest: no workspace, direct serverUrl requests
- * - shared guest: workspace-scoped share token, Convex-backed requests
+ * - hosted shared/sandbox guest: workspace-scoped share or sandbox token,
+ *   Convex-backed requests
  */
 function hasHostedGuestAccess(): boolean {
   if (!HOSTED_MODE) return false;
   if (hostedApiContext.isAuthenticated) return false;
-  return !hostedApiContext.workspaceId || !!hostedApiContext.shareToken;
+  return (
+    !hostedApiContext.workspaceId ||
+    !!hostedApiContext.shareToken ||
+    !!hostedApiContext.sandboxToken
+  );
 }
 
 /**
@@ -198,8 +204,14 @@ export function getHostedShareToken(): string | undefined {
   return hostedApiContext.shareToken;
 }
 
+export function getHostedSandboxToken(): string | undefined {
+  return hostedApiContext.sandboxToken;
+}
+
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedShareToken() ? "chat_v2" : undefined;
+  return getHostedShareToken() || getHostedSandboxToken()
+    ? "chat_v2"
+    : undefined;
 }
 
 export function buildHostedServerRequest(
@@ -227,6 +239,7 @@ export function buildHostedServerRequest(
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
   const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
   const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
@@ -234,6 +247,7 @@ export function buildHostedServerRequest(
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
   };
 }
 
@@ -243,10 +257,12 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   shareToken?: string;
+  sandboxToken?: string;
 } {
   const serverIds = resolveHostedServerIds(serverNamesOrIds);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
   const accessScope = getHostedAccessScope();
   return {
     workspaceId: getHostedWorkspaceId(),
@@ -254,6 +270,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
   };
 }
 

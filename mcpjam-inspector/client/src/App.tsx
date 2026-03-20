@@ -18,6 +18,7 @@ import { SettingsTab } from "./components/SettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
+import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -114,6 +115,7 @@ export default function App() {
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
+  const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const {
     getAccessToken,
     signIn,
@@ -206,11 +208,9 @@ export default function App() {
       clearHostedOAuthPendingState();
       localStorage.removeItem("mcp-oauth-pending");
       localStorage.removeItem("mcp-oauth-return-hash");
-      window.history.replaceState(
-        {},
-        "",
-        `/${resolveHostedOAuthReturnHash(callbackContext)}`,
-      );
+      const returnHash = resolveHostedOAuthReturnHash(callbackContext);
+      window.history.replaceState({}, "", `/${returnHash}`);
+      window.dispatchEvent(new Event("hashchange"));
     };
 
     if (error || !code) {
@@ -542,8 +542,19 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
       applyNavigation("servers", { updateHash: true });
+    } else if (
+      activeTab === "learning" &&
+      (learningEnabled !== true || !isAuthenticated)
+    ) {
+      applyNavigation("servers", { updateHash: true });
     }
-  }, [ciEvalsEnabled, activeTab, applyNavigation]);
+  }, [
+    ciEvalsEnabled,
+    learningEnabled,
+    isAuthenticated,
+    activeTab,
+    applyNavigation,
+  ]);
 
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });
@@ -639,7 +650,7 @@ export default function App() {
           isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
-          showOnlyOAuthServers: activeTab === "oauth-flow",
+          showOnlyOAuthServers: false,
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
@@ -745,14 +756,23 @@ export default function App() {
           )}
 
           {activeTab === "oauth-flow" && (
-            <OAuthFlowTab
-              serverConfigs={appState.servers}
-              selectedServerName={appState.selectedServer}
-              onSelectServer={setSelectedServer}
-              onSaveServerConfig={saveServerConfigWithoutConnecting}
-              onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
-              onRefreshTokens={handleRefreshTokensFromOAuthFlow}
-            />
+            <ErrorBoundary
+              fallback={
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Something went wrong in the OAuth Debugger. Try refreshing the
+                  page.
+                </div>
+              }
+            >
+              <OAuthFlowTab
+                serverConfigs={appState.servers}
+                selectedServerName={appState.selectedServer}
+                onSelectServer={setSelectedServer}
+                onSaveServerConfig={saveServerConfigWithoutConnecting}
+                onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
+                onRefreshTokens={handleRefreshTokensFromOAuthFlow}
+              />
+            </ErrorBoundary>
           )}
           {activeTab === "chat-v2" && (
             <ChatTabV2

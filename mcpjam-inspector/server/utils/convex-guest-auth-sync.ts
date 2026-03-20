@@ -1,89 +1,140 @@
-import { getGuestPublicKeyPem } from "../services/guest-token.js";
-import { shouldUseLocalGuestSigning } from "./guest-session-source.js";
+import {
+  getGuestPrivateKeyPem,
+  getGuestPublicKeyPem,
+  initGuestTokenSecret,
+} from "../services/guest-token.js";
+import { getGuestSessionSharedSecret } from "./guest-session-secret.js";
 import { logger } from "./logger.js";
 
-let syncStarted = false;
+let provisioningPromise: Promise<void> | null = null;
+let provisioningStarted = false;
 
-/**
- * When local guest signing is enabled in dev, push the guest public key and
- * Convex guest JWKS override so Convex can verify JWTs signed by this local
- * inspector process.
- */
-export function syncGuestAuthConfigToConvex(): void {
-  if (
-    process.env.NODE_ENV === "production" ||
-    !shouldUseLocalGuestSigning() ||
-    syncStarted
-  ) {
+function getConvexDeploymentForProvisioning(): string {
+  if (process.env.CONVEX_DEPLOYMENT) {
+    return process.env.CONVEX_DEPLOYMENT;
+  }
+
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    throw new Error("CONVEX_URL is required for guest auth provisioning");
+  }
+
+  const match = convexUrl.match(/https:\/\/([^.]+)\.convex\.cloud/);
+  if (!match) {
+    throw new Error(`Unsupported CONVEX_URL: ${convexUrl}`);
+  }
+
+  return `dev:${match[1]}`;
+}
+
+async function setConvexEnv(
+  convexEnv: NodeJS.ProcessEnv,
+  name: string,
+  value: string,
+): Promise<void> {
+  const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
+  const { execFile } = await import("child_process");
+
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      npxCommand,
+      ["convex", "env", "set", name, "--", value],
+      {
+        env: convexEnv,
+        timeout: 15_000,
+        maxBuffer: 1024 * 1024,
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (!error) {
+          resolve();
+          return;
+        }
+
+        reject(
+          new Error(
+            stderr?.trim() ||
+              stdout?.trim() ||
+              error.message ||
+              `convex env set ${name} failed`,
+          ),
+        );
+      },
+    );
+  });
+}
+
+function shouldProvisionGuestAuthToConvex(): boolean {
+  return (
+    process.env.NODE_ENV !== "production" && process.env.NODE_ENV !== "test"
+  );
+}
+
+export async function provisionGuestAuthConfigToConvex(): Promise<void> {
+  if (!shouldProvisionGuestAuthToConvex()) {
     return;
   }
 
-  syncStarted = true;
+  if (!provisioningPromise) {
+    provisioningPromise = (async () => {
+      if (!process.env.CONVEX_HTTP_URL) {
+        throw new Error(
+          "CONVEX_HTTP_URL is required for guest auth provisioning",
+        );
+      }
 
-  void (async () => {
-    try {
-      const pem = getGuestPublicKeyPem();
-      const convexUrl = process.env.CONVEX_URL;
-      if (!convexUrl) return;
+      initGuestTokenSecret();
 
-      const match = convexUrl.match(/https:\/\/([^.]+)\.convex\.cloud/);
-      if (!match) return;
-
-      const deploymentName = match[1];
-      const guestJwksUrl = new URL(
-        "/guest/jwks",
-        process.env.CONVEX_HTTP_URL ?? `https://${deploymentName}.convex.site`,
-      ).toString();
-
-      const npxCommand = process.platform === "win32" ? "npx.cmd" : "npx";
       const convexEnv = {
         ...process.env,
-        CONVEX_DEPLOYMENT: `dev:${deploymentName}`,
+        CONVEX_DEPLOYMENT: getConvexDeploymentForProvisioning(),
       };
+      const guestJwksUrl = new URL(
+        "/guest/jwks",
+        process.env.CONVEX_HTTP_URL,
+      ).toString();
 
-      const { execFile } = await import("child_process");
+      await setConvexEnv(
+        convexEnv,
+        "GUEST_JWT_PRIVATE_KEY",
+        getGuestPrivateKeyPem(),
+      );
+      await setConvexEnv(
+        convexEnv,
+        "GUEST_JWT_PUBLIC_KEY",
+        getGuestPublicKeyPem(),
+      );
+      await setConvexEnv(convexEnv, "GUEST_JWKS_URL", guestJwksUrl);
+      await setConvexEnv(
+        convexEnv,
+        "GUEST_SESSION_SHARED_SECRET",
+        getGuestSessionSharedSecret(),
+      );
 
-      const setConvexEnv = async (name: string, value: string) => {
-        await new Promise<void>((resolve, reject) => {
-          execFile(
-            npxCommand,
-            ["convex", "env", "set", name, "--", value],
-            {
-              env: convexEnv,
-              timeout: 15_000,
-              maxBuffer: 1024 * 1024,
-              windowsHide: true,
-            },
-            (error, stdout, stderr) => {
-              if (!error) {
-                resolve();
-                return;
-              }
-
-              reject(
-                new Error(
-                  stderr?.trim() ||
-                    stdout?.trim() ||
-                    error.message ||
-                    `convex env set ${name} failed`,
-                ),
-              );
-            },
-          );
-        });
-      };
-
-      await setConvexEnv("GUEST_JWT_PUBLIC_KEY", pem);
-      await setConvexEnv("GUEST_JWKS_URL", guestJwksUrl);
       logger.info(
-        `[guest-auth] Pushed guest key + JWKS URL to Convex (${deploymentName})`,
+        `[guest-auth] Provisioned Convex guest auth env (${convexEnv.CONVEX_DEPLOYMENT})`,
       );
-    } catch (err) {
-      logger.warn(
-        `[guest-auth] Failed to push guest auth config to Convex: ${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      );
-    }
-  })();
+    })().catch((error) => {
+      provisioningPromise = null;
+      throw error;
+    });
+  }
+
+  await provisioningPromise;
+}
+
+export function startGuestAuthProvisioningInBackground(): void {
+  if (!shouldProvisionGuestAuthToConvex() || provisioningStarted) {
+    return;
+  }
+
+  provisioningStarted = true;
+  void provisionGuestAuthConfigToConvex().catch((error) => {
+    provisioningStarted = false;
+    logger.warn(
+      `[guest-auth] Failed to provision Convex guest auth env in background: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
 }

@@ -87,6 +87,7 @@ export type MCPJamReportingConfig = {
   framework?: string;
   ci?: EvalCiMetadata;
   expectedIterations?: number;
+  tags?: string[];
 };
 
 export type ReportEvalResultsInput = MCPJamReportingConfig & {

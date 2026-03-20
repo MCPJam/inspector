@@ -19,7 +19,7 @@ function getInspectorEnvMode(): InspectorEnvMode {
 export function getInspectorEnvFileNames(
   mode: InspectorEnvMode = getInspectorEnvMode(),
 ): string[] {
-  return [`.env.${mode}.local`, ".env.local", `.env.${mode}`, ".env"];
+  return [`.env.${mode}.local`, `.env.${mode}`, ".env.local", ".env"];
 }
 
 export function resolveInspectorEnvDir(serverDir: string): string {

@@ -11,12 +11,16 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { aggregateSuite } from "./evals/helpers";
+import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
-import { CiSuiteListSidebar } from "./evals/ci-suite-list-sidebar";
+import {
+  CiSuiteListSidebar,
+  type SidebarMode,
+} from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
+import { CommitDetailView } from "./evals/commit-detail-view";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 
@@ -33,6 +37,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
+  const [sidebarMode, setSidebarMode] = useState<SidebarMode>("runs");
+  const [hasAutoSwitchedMode, setHasAutoSwitchedMode] = useState(false);
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -84,6 +90,28 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [queries.sortedSuites],
   );
 
+  const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
+
+  // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
+  useEffect(() => {
+    if (hasAutoSwitchedMode) return;
+    if (commitGroups.length === 0) return;
+    const allManual = commitGroups.every((g) =>
+      g.commitSha.startsWith("manual-"),
+    );
+    if (allManual) {
+      setSidebarMode("suites");
+      setHasAutoSwitchedMode(true);
+    }
+  }, [commitGroups, hasAutoSwitchedMode]);
+
+  const selectedCommitSha =
+    route.type === "commit-detail" ? route.commitSha : null;
+
+  const selectedCommitGroup = useMemo(() => {
+    if (!selectedCommitSha) return null;
+    return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
+  }, [commitGroups, selectedCommitSha]);
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
     return (
@@ -125,6 +153,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const handleSelectSuite = useCallback((suiteId: string) => {
     navigateToCiEvalsRoute({ type: "suite-overview", suiteId });
+  }, []);
+
+  const handleSelectCommit = useCallback((commitSha: string) => {
+    navigateToCiEvalsRoute({ type: "commit-detail", commitSha });
   }, []);
 
   const handleDeleteSuite = useCallback(
@@ -247,6 +279,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
             isLoading={queries.isOverviewLoading}
+            sidebarMode={sidebarMode}
+            onSidebarModeChange={setSidebarMode}
+            commitGroups={commitGroups}
+            selectedCommitSha={selectedCommitSha}
+            onSelectCommit={handleSelectCommit}
           />
         </ResizablePanel>
 
@@ -256,7 +293,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           defaultSize={70}
           className="flex flex-col overflow-hidden"
         >
-          {sdkSuites.length === 0 ? (
+          {route.type === "commit-detail" && selectedCommitGroup ? (
+            <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
+          ) : sdkSuites.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center max-w-md mx-auto p-8">
                 <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
@@ -281,8 +320,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                   Select a suite
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Choose a CI suite from the sidebar to inspect runs and test
-                  iterations.
+                  Choose a CI suite or commit from the sidebar to inspect runs
+                  and test iterations.
                 </p>
               </div>
             </div>
