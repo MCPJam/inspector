@@ -330,7 +330,6 @@ export default function App() {
     activeWorkspaceId,
     handleSwitchWorkspace,
     handleCreateWorkspace,
-    handleUpdateWorkspace,
     handleDeleteWorkspace,
     handleLeaveWorkspace,
     handleWorkspaceShared,
@@ -664,6 +663,12 @@ export default function App() {
         onNavigate={handleNavigate}
         activeTab={activeTab}
         servers={workspaceServers}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        onSwitchWorkspace={handleSwitchWorkspace}
+        onCreateWorkspace={handleCreateWorkspace}
+        onDeleteWorkspace={handleDeleteWorkspace}
+        isLoadingWorkspaces={isLoadingRemoteWorkspaces}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <Header activeServerSelectorProps={activeServerSelectorProps} />
@@ -679,10 +684,6 @@ export default function App() {
               onRemove={handleRemoveServer}
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
-              onSwitchWorkspace={handleSwitchWorkspace}
-              onCreateWorkspace={handleCreateWorkspace}
-              onUpdateWorkspace={handleUpdateWorkspace}
-              onDeleteWorkspace={handleDeleteWorkspace}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
               onWorkspaceShared={handleWorkspaceShared}
               onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
