@@ -15,7 +15,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import type { Workspace } from "@/state/app-types";
-import { WorkspaceVisibilityBadge } from "@/components/workspace/WorkspaceVisibilityBadge";
+
 
 interface SidebarWorkspaceSelectorProps {
   activeWorkspaceId: string;
@@ -52,10 +52,6 @@ export function SidebarWorkspaceSelector({
   const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "No Workspace";
   const initial = workspaceName.charAt(0).toUpperCase();
-  const showActiveVisibility =
-    Boolean(activeWorkspace?.sharedWorkspaceId) ||
-    Boolean(activeWorkspace?.visibility);
-
   const workspaceList = Object.values(workspaces).sort((a, b) => {
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
@@ -90,13 +86,6 @@ export function SidebarWorkspaceSelector({
               </div>
               <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold">{workspaceName}</span>
-                {showActiveVisibility ? (
-                  <WorkspaceVisibilityBadge
-                    visibility={activeWorkspace?.visibility}
-                    compact
-                    className="mt-1"
-                  />
-                ) : null}
               </div>
               <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
             </SidebarMenuButton>
@@ -122,13 +111,6 @@ export function SidebarWorkspaceSelector({
                   </div>
                   <div className="min-w-0 flex-1">
                     <span className="truncate block">{workspace.name}</span>
-                    {workspace.sharedWorkspaceId || workspace.visibility ? (
-                      <WorkspaceVisibilityBadge
-                        visibility={workspace.visibility}
-                        compact
-                        className="mt-1"
-                      />
-                    ) : null}
                   </div>
                 </div>
                 <button
