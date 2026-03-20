@@ -73,7 +73,11 @@ function getMemberAccessDescription(
   visibility: WorkspaceVisibility,
 ): string | null {
   if (visibility === "public") {
-    if (member.role === "owner" || member.role === "admin" || member.role === "guest") {
+    if (
+      member.role === "owner" ||
+      member.role === "admin" ||
+      member.role === "guest"
+    ) {
       return `Organization ${member.role}`;
     }
     return null;
@@ -109,11 +113,8 @@ export function ShareWorkspaceDialog({
 
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
-  const {
-    createWorkspace,
-    inviteWorkspaceMember,
-    removeWorkspaceMember,
-  } = useWorkspaceMutations();
+  const { createWorkspace, inviteWorkspaceMember, removeWorkspaceMember } =
+    useWorkspaceMutations();
 
   const { activeMembers, pendingMembers } = useWorkspaceMembers({
     isAuthenticated,

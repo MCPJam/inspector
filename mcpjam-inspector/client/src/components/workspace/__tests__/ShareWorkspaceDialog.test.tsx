@@ -42,7 +42,8 @@ vi.mock("@/hooks/useWorkspaces", async () => {
 
   return {
     ...actual,
-    useWorkspaceMembers: (...args: unknown[]) => mockUseWorkspaceMembers(...args),
+    useWorkspaceMembers: (...args: unknown[]) =>
+      mockUseWorkspaceMembers(...args),
     useWorkspaceMutations: () => ({
       createWorkspace: mockCreateWorkspace,
       inviteWorkspaceMember: mockInviteWorkspaceMember,
@@ -310,7 +311,9 @@ describe("ShareWorkspaceDialog", () => {
     fireEvent.change(screen.getByPlaceholderText("Enter email address"), {
       target: { value: "invitee@example.com" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Invite to workspace" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Invite to workspace" }),
+    );
 
     await waitFor(() => {
       expect(mockCreateWorkspace).toHaveBeenCalledWith({

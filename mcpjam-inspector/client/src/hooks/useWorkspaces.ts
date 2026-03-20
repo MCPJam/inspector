@@ -3,7 +3,10 @@ import { useQuery, useMutation } from "convex/react";
 import type { WorkspaceVisibility } from "@/state/app-types";
 
 export type WorkspaceMembershipRole = "owner" | "admin" | "member" | "guest";
-export type WorkspaceMemberAccessSource = "organization" | "workspace" | "invite";
+export type WorkspaceMemberAccessSource =
+  | "organization"
+  | "workspace"
+  | "invite";
 
 export interface RemoteWorkspace {
   _id: string;
