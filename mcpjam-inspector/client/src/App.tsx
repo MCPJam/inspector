@@ -330,6 +330,7 @@ export default function App() {
     activeWorkspaceId,
     handleSwitchWorkspace,
     handleCreateWorkspace,
+    handleUpdateWorkspace,
     handleDeleteWorkspace,
     handleLeaveWorkspace,
     handleWorkspaceShared,
@@ -794,6 +795,8 @@ export default function App() {
             <SettingsTab
               convexWorkspaceId={convexWorkspaceId}
               workspaceName={activeWorkspace?.name ?? null}
+              activeWorkspaceId={activeWorkspaceId}
+              onUpdateWorkspace={handleUpdateWorkspace}
             />
           )}
           {activeTab === "support" && <SupportTab />}

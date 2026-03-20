@@ -16,7 +16,9 @@ import { updateThemeMode } from "@/lib/theme-utils";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
+import { EditableText } from "./ui/editable-text";
 import type { CustomProvider } from "@mcpjam/sdk";
+import type { Workspace } from "@/lib/types";
 
 interface ProviderConfig {
   id: string;
@@ -31,11 +33,18 @@ interface ProviderConfig {
 interface SettingsTabProps {
   convexWorkspaceId: string | null;
   workspaceName: string | null;
+  activeWorkspaceId: string;
+  onUpdateWorkspace: (
+    workspaceId: string,
+    updates: Partial<Workspace>,
+  ) => void;
 }
 
 export function SettingsTab({
   convexWorkspaceId,
   workspaceName,
+  activeWorkspaceId,
+  onUpdateWorkspace,
 }: SettingsTabProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
@@ -296,6 +305,19 @@ export function SettingsTab({
 
         {/* Workspace */}
         <SettingsSection title="Workspace">
+          <SettingsRow
+            label="Name"
+            value={
+              <EditableText
+                value={workspaceName ?? ""}
+                onSave={(newName) =>
+                  onUpdateWorkspace(activeWorkspaceId, { name: newName })
+                }
+                className="text-sm"
+                placeholder="Workspace name"
+              />
+            }
+          />
           <AccountApiKeySection
             workspaceId={convexWorkspaceId}
             workspaceName={workspaceName}
