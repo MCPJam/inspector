@@ -35,7 +35,6 @@ import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persi
 interface ViewsTabProps {
   selectedServer?: string;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 interface EditSignatures {
@@ -52,11 +51,7 @@ function safeSerializeForCompare(value: unknown): string {
   }
 }
 
-export function ViewsTab({
-  selectedServer,
-  onWorkspaceShared,
-  onLeaveWorkspace,
-}: ViewsTabProps) {
+export function ViewsTab({ selectedServer, onWorkspaceShared }: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const posthog = usePostHog();
@@ -1075,10 +1070,11 @@ export function ViewsTab({
               workspaceName={activeWorkspace?.name || "Workspace"}
               workspaceServers={activeWorkspace?.servers || {}}
               sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
+              organizationId={activeWorkspace?.organizationId}
+              visibility={activeWorkspace?.visibility}
               currentUser={user}
               isAuthenticated={isAuthenticated}
               onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
         </ResizablePanel>
