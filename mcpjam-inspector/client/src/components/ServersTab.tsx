@@ -12,9 +12,6 @@ import { MCPIcon } from "./ui/mcp-icon";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
-import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
-import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
-
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -25,7 +22,6 @@ import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "./ui/skeleton";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { Workspace } from "@/state/app-types";
 import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
 import {
@@ -141,7 +137,6 @@ interface ServersTabProps {
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
   isLoadingWorkspaces?: boolean;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
 }
 
 export function ServersTab({
@@ -154,11 +149,9 @@ export function ServersTab({
   workspaces,
   activeWorkspaceId,
   isLoadingWorkspaces,
-  onWorkspaceShared,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
@@ -239,10 +232,7 @@ export function ServersTab({
 
   const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
   const activeWorkspace = workspaces[activeWorkspaceId];
-  const workspaceName = activeWorkspace?.name || "Workspace";
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
-  const organizationId = activeWorkspace?.organizationId;
-  const visibility = activeWorkspace?.visibility;
   const { serversRecord: sharedWorkspaceServersRecord } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
@@ -338,25 +328,6 @@ export function ServersTab({
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
-              {isAuthenticated && user && (
-                <WorkspaceMembersFacepile
-                  workspaceName={workspaceName}
-                  workspaceServers={connectedOrConnectingServerConfigs}
-                  currentUser={user}
-                  sharedWorkspaceId={sharedWorkspaceId}
-                  organizationId={organizationId}
-                  visibility={visibility}
-                  onWorkspaceShared={onWorkspaceShared}
-                />
-              )}
-              <WorkspaceShareButton
-                workspaceName={workspaceName}
-                workspaceServers={connectedOrConnectingServerConfigs}
-                sharedWorkspaceId={sharedWorkspaceId}
-                organizationId={organizationId}
-                visibility={visibility}
-                onWorkspaceShared={onWorkspaceShared}
-              />
               {renderServerActionsMenu()}
             </div>
           </div>
@@ -442,25 +413,6 @@ export function ServersTab({
       {/* Header Section */}
       <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
-          {isAuthenticated && user && (
-            <WorkspaceMembersFacepile
-              workspaceName={workspaceName}
-              workspaceServers={connectedOrConnectingServerConfigs}
-              currentUser={user}
-              sharedWorkspaceId={sharedWorkspaceId}
-              organizationId={organizationId}
-              visibility={visibility}
-              onWorkspaceShared={onWorkspaceShared}
-            />
-          )}
-          <WorkspaceShareButton
-            workspaceName={workspaceName}
-            workspaceServers={connectedOrConnectingServerConfigs}
-            sharedWorkspaceId={sharedWorkspaceId}
-            organizationId={organizationId}
-            visibility={visibility}
-            onWorkspaceShared={onWorkspaceShared}
-          />
           {renderServerActionsMenu()}
         </div>
       </div>

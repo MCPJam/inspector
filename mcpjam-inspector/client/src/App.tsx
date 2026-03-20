@@ -15,6 +15,7 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
 import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -688,7 +689,6 @@ export default function App() {
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-              onWorkspaceShared={handleWorkspaceShared}
             />
           )}
           {activeTab === "tools" && (
@@ -708,7 +708,6 @@ export default function App() {
           {activeTab === "views" && (
             <ViewsTab
               selectedServer={appState.selectedServer}
-              onWorkspaceShared={handleWorkspaceShared}
             />
           )}
           {activeTab === "sandboxes" && (
@@ -791,15 +790,19 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
-          {activeTab === "settings" && (
-            <SettingsTab
-              convexWorkspaceId={convexWorkspaceId}
-              workspaceName={activeWorkspace?.name ?? null}
-              workspaceVisibility={activeWorkspace?.visibility ?? null}
+          {activeTab === "workspace-settings" && (
+            <WorkspaceSettingsTab
               activeWorkspaceId={activeWorkspaceId}
+              workspace={activeWorkspace}
+              convexWorkspaceId={convexWorkspaceId}
+              workspaceServers={workspaceServers}
               onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
+              onWorkspaceShared={handleWorkspaceShared}
+              onNavigateAway={() => handleNavigate("servers")}
             />
           )}
+          {activeTab === "settings" && <SettingsTab />}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (

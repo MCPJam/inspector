@@ -2,11 +2,6 @@ import { Trash2, Pencil, Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { type AnyView } from "@/hooks/useViews";
-import { User } from "@workos-inc/authkit-js";
-import { WorkspaceMembersFacepile } from "@/components/workspace/WorkspaceMembersFacepile";
-import { WorkspaceShareButton } from "@/components/workspace/WorkspaceShareButton";
-
-import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface ViewsListSidebarProps {
   views: AnyView[];
@@ -19,14 +14,6 @@ interface ViewsListSidebarProps {
   deletingViewId: string | null;
   duplicatingViewId: string | null;
   isLoading: boolean;
-  workspaceName: string;
-  workspaceServers: Record<string, any>;
-  sharedWorkspaceId?: string | null;
-  organizationId?: string;
-  visibility?: WorkspaceVisibility;
-  currentUser?: User | null;
-  isAuthenticated?: boolean;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
 }
 
 export function ViewsListSidebar({
@@ -39,41 +26,12 @@ export function ViewsListSidebar({
   deletingViewId,
   duplicatingViewId,
   isLoading,
-  workspaceName,
-  workspaceServers,
-  sharedWorkspaceId,
-  organizationId,
-  visibility,
-  currentUser,
-  isAuthenticated,
-  onWorkspaceShared,
 }: ViewsListSidebarProps) {
   return (
     <>
       {/* Header */}
-      <div className="p-4 border-b flex items-center justify-between gap-2">
+      <div className="p-4 border-b">
         <h2 className="text-sm font-semibold">Views</h2>
-        <div className="flex items-center gap-2">
-          {isAuthenticated && currentUser && (
-            <WorkspaceMembersFacepile
-              workspaceName={workspaceName}
-              workspaceServers={workspaceServers}
-              currentUser={currentUser}
-              sharedWorkspaceId={sharedWorkspaceId}
-              organizationId={organizationId}
-              visibility={visibility}
-              onWorkspaceShared={onWorkspaceShared}
-            />
-          )}
-          <WorkspaceShareButton
-            workspaceName={workspaceName}
-            workspaceServers={workspaceServers}
-            sharedWorkspaceId={sharedWorkspaceId}
-            organizationId={organizationId}
-            visibility={visibility}
-            onWorkspaceShared={onWorkspaceShared}
-          />
-        </div>
       </div>
 
       {/* Views List */}

@@ -1,6 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { Layers } from "lucide-react";
 import { toast } from "sonner";
@@ -34,7 +33,6 @@ import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persi
 
 interface ViewsTabProps {
   selectedServer?: string;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
 }
 
 interface EditSignatures {
@@ -51,9 +49,8 @@ function safeSerializeForCompare(value: unknown): string {
   }
 }
 
-export function ViewsTab({ selectedServer, onWorkspaceShared }: ViewsTabProps) {
+export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const { user } = useAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
 
@@ -1067,14 +1064,6 @@ export function ViewsTab({ selectedServer, onWorkspaceShared }: ViewsTabProps) {
               deletingViewId={deletingViewId}
               duplicatingViewId={duplicatingViewId}
               isLoading={isViewsLoading}
-              workspaceName={activeWorkspace?.name || "Workspace"}
-              workspaceServers={activeWorkspace?.servers || {}}
-              sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
-              organizationId={activeWorkspace?.organizationId}
-              visibility={activeWorkspace?.visibility}
-              currentUser={user}
-              isAuthenticated={isAuthenticated}
-              onWorkspaceShared={onWorkspaceShared}
             />
           )}
         </ResizablePanel>

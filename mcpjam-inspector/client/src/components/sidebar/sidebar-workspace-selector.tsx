@@ -1,4 +1,4 @@
-import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
+import { ChevronsUpDown, Plus, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +23,7 @@ interface SidebarWorkspaceSelectorProps {
   onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoading?: boolean;
+  onNavigateToSettings?: () => void;
 }
 
 export function SidebarWorkspaceSelector({
@@ -32,6 +33,7 @@ export function SidebarWorkspaceSelector({
   onCreateWorkspace,
   onDeleteWorkspace,
   isLoading,
+  onNavigateToSettings,
 }: SidebarWorkspaceSelectorProps) {
   const { isMobile } = useSidebar();
 
@@ -132,6 +134,15 @@ export function SidebarWorkspaceSelector({
               <Plus className="size-4" />
               Add Workspace
             </DropdownMenuItem>
+            {onNavigateToSettings && (
+              <DropdownMenuItem
+                onClick={onNavigateToSettings}
+                className="cursor-pointer"
+              >
+                <Settings className="size-4" />
+                Workspace Settings
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
