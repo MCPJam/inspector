@@ -5,7 +5,7 @@ import { type AnyView } from "@/hooks/useViews";
 import { User } from "@workos-inc/authkit-js";
 import { WorkspaceMembersFacepile } from "@/components/workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "@/components/workspace/WorkspaceShareButton";
-import { WorkspaceVisibilityBadge } from "@/components/workspace/WorkspaceVisibilityBadge";
+
 import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface ViewsListSidebarProps {
@@ -54,9 +54,6 @@ export function ViewsListSidebar({
       <div className="p-4 border-b flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold">Views</h2>
         <div className="flex items-center gap-2">
-          {sharedWorkspaceId ? (
-            <WorkspaceVisibilityBadge visibility={visibility} compact />
-          ) : null}
           {isAuthenticated && currentUser && (
             <WorkspaceMembersFacepile
               workspaceName={workspaceName}

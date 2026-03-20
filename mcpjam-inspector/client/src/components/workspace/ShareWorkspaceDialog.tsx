@@ -25,7 +25,7 @@ import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { serializeServersForSharing } from "@/lib/workspace-serialization";
 import type { WorkspaceVisibility } from "@/state/app-types";
 import type { User } from "@workos-inc/authkit-js";
-import { WorkspaceVisibilityBadge } from "./WorkspaceVisibilityBadge";
+
 
 interface ShareWorkspaceDialogProps {
   isOpen: boolean;
@@ -238,9 +238,8 @@ export function ShareWorkspaceDialog({
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-[520px]">
         <DialogHeader>
-          <DialogTitle className="flex flex-wrap items-center gap-2">
-            <span>Share "{workspaceName}" Workspace</span>
-            <WorkspaceVisibilityBadge visibility={workspaceVisibility} />
+          <DialogTitle>
+            Share "{workspaceName}" Workspace
           </DialogTitle>
         </DialogHeader>
 
