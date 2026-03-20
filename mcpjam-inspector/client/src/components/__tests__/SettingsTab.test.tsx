@@ -46,9 +46,7 @@ vi.mock("../setting/AccountApiKeySection", () => ({
     workspaceId: string | null;
     workspaceName: string | null;
   }) => (
-    <div data-testid="account-api-key-section">
-      API Key: {workspaceName}
-    </div>
+    <div data-testid="account-api-key-section">API Key: {workspaceName}</div>
   ),
 }));
 
