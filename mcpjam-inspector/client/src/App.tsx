@@ -107,9 +107,6 @@ function getHostedOAuthCallbackErrorMessage(): string {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
-  const [activeOrganizationId, setActiveOrganizationId] = useState<
-    string | undefined
-  >(undefined);
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
@@ -337,6 +334,8 @@ export default function App() {
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    activeOrganizationId,
+    setActiveOrganizationId,
   } = useAppState();
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
@@ -502,7 +501,9 @@ export default function App() {
         return;
       }
 
-      setActiveOrganizationId(resolved.organizationId);
+      if (resolved.organizationId) {
+        setActiveOrganizationId(resolved.organizationId);
+      }
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
@@ -670,6 +671,7 @@ export default function App() {
         onCreateWorkspace={handleCreateWorkspace}
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+        activeOrganizationId={activeOrganizationId}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <Header activeServerSelectorProps={activeServerSelectorProps} />

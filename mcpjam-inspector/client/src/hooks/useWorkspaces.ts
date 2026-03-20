@@ -68,12 +68,16 @@ export interface WorkspaceMember {
 
 export function useWorkspaceQueries({
   isAuthenticated,
+  organizationId,
 }: {
   isAuthenticated: boolean;
+  organizationId?: string;
 }) {
   const workspaces = useQuery(
     "workspaces:getMyWorkspaces" as any,
-    isAuthenticated ? ({} as any) : "skip",
+    isAuthenticated
+      ? ((organizationId ? { organizationId } : {}) as any)
+      : "skip",
   ) as RemoteWorkspace[] | undefined;
 
   const isLoading = isAuthenticated && workspaces === undefined;
