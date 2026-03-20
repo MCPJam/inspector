@@ -332,6 +332,9 @@ export function useWorkspaceState({
           if (updates.description !== undefined) {
             updateData.description = updates.description;
           }
+          if (updates.visibility !== undefined) {
+            updateData.visibility = updates.visibility;
+          }
           if (updates.servers !== undefined) {
             logger.warn(
               "Ignoring servers in handleUpdateWorkspace for authenticated user - use individual server operations",

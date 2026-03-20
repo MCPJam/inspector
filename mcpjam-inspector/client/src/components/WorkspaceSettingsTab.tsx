@@ -26,6 +26,7 @@ interface WorkspaceSettingsTabProps {
   workspace: Workspace | undefined;
   convexWorkspaceId: string | null;
   workspaceServers: Record<string, ServerWithName>;
+  organizationName?: string;
   onUpdateWorkspace: (
     workspaceId: string,
     updates: Partial<Workspace>,
@@ -40,6 +41,7 @@ export function WorkspaceSettingsTab({
   workspace,
   convexWorkspaceId,
   workspaceServers,
+  organizationName,
   onUpdateWorkspace,
   onDeleteWorkspace,
   onWorkspaceShared,
@@ -101,6 +103,7 @@ export function WorkspaceSettingsTab({
                   sharedWorkspaceId={workspace?.sharedWorkspaceId}
                   organizationId={workspace?.organizationId}
                   visibility={workspace?.visibility}
+                  organizationName={organizationName}
                   onWorkspaceShared={onWorkspaceShared}
                 />
               )}
@@ -110,6 +113,7 @@ export function WorkspaceSettingsTab({
                 sharedWorkspaceId={workspace?.sharedWorkspaceId}
                 organizationId={workspace?.organizationId}
                 visibility={workspace?.visibility}
+                organizationName={organizationName}
                 onWorkspaceShared={onWorkspaceShared}
               />
             </div>

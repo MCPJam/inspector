@@ -35,6 +35,7 @@ import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
+import { useOrganizationQueries } from "./hooks/useOrganizations";
 
 // Import global styles
 import "./index.css";
@@ -338,6 +339,11 @@ export default function App() {
     activeOrganizationId,
     setActiveOrganizationId,
   } = useAppState();
+
+  const { sortedOrganizations } = useOrganizationQueries({ isAuthenticated });
+  const activeOrganizationName = sortedOrganizations.find(
+    (org) => org._id === activeOrganizationId,
+  )?.name;
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -796,6 +802,7 @@ export default function App() {
               workspace={activeWorkspace}
               convexWorkspaceId={convexWorkspaceId}
               workspaceServers={workspaceServers}
+              organizationName={activeOrganizationName}
               onUpdateWorkspace={handleUpdateWorkspace}
               onDeleteWorkspace={handleDeleteWorkspace}
               onWorkspaceShared={handleWorkspaceShared}

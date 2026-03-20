@@ -12,8 +12,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { Building2, Clock, X } from "lucide-react";
+import { Building2, ChevronDown, Clock, Globe, Lock, X } from "lucide-react";
 import { toast } from "sonner";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   type WorkspaceMember,
   type WorkspaceMembershipRole,
@@ -34,6 +41,7 @@ interface ShareWorkspaceDialogProps {
   sharedWorkspaceId?: string | null;
   organizationId?: string;
   visibility?: WorkspaceVisibility;
+  organizationName?: string;
   currentUser: User;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
 }
@@ -103,25 +111,36 @@ export function ShareWorkspaceDialog({
   sharedWorkspaceId,
   organizationId,
   visibility,
+  organizationName,
   currentUser,
   onWorkspaceShared,
 }: ShareWorkspaceDialogProps) {
   const posthog = usePostHog();
   const [email, setEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
+  const [currentVisibility, setCurrentVisibility] =
+    useState<WorkspaceVisibility>(visibility ?? "public");
+  const [isUpdatingVisibility, setIsUpdatingVisibility] = useState(false);
 
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
-  const { createWorkspace, inviteWorkspaceMember, removeWorkspaceMember } =
-    useWorkspaceMutations();
+  const {
+    createWorkspace,
+    updateWorkspace,
+    inviteWorkspaceMember,
+    removeWorkspaceMember,
+  } = useWorkspaceMutations();
 
   const { activeMembers, pendingMembers } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: sharedWorkspaceId || null,
   });
 
-  const workspaceVisibility: WorkspaceVisibility = visibility ?? "public";
-  const isPublicWorkspace = workspaceVisibility === "public";
+  useEffect(() => {
+    setCurrentVisibility(visibility ?? "public");
+  }, [visibility]);
+
+  const isPublicWorkspace = currentVisibility === "public";
 
   const currentMember = activeMembers.find(
     (member) => member.email.toLowerCase() === currentUser.email?.toLowerCase(),
@@ -141,7 +160,7 @@ export function ShareWorkspaceDialog({
         workspace_name: workspaceName,
         is_already_shared: !!sharedWorkspaceId,
         member_count: activeMembers.length + pendingMembers.length,
-        workspace_visibility: workspaceVisibility,
+        workspace_visibility: currentVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
@@ -149,6 +168,35 @@ export function ShareWorkspaceDialog({
     // Only fire when the dialog opens, not on downstream state changes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
+
+  const handleVisibilityChange = async (newVisibility: string) => {
+    const prev = currentVisibility;
+    setCurrentVisibility(newVisibility as WorkspaceVisibility);
+
+    if (!sharedWorkspaceId) return;
+
+    setIsUpdatingVisibility(true);
+    try {
+      await updateWorkspace({
+        workspaceId: sharedWorkspaceId,
+        visibility: newVisibility,
+      });
+      toast.success(
+        `Workspace visibility changed to ${newVisibility === "public" ? "organization" : "private"}`,
+      );
+      posthog.capture("workspace_visibility_changed", {
+        workspace_name: workspaceName,
+        new_visibility: newVisibility,
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+      });
+    } catch {
+      setCurrentVisibility(prev);
+      toast.error("Failed to update workspace visibility");
+    } finally {
+      setIsUpdatingVisibility(false);
+    }
+  };
 
   const handleInvite = async () => {
     if (!email.trim() || !canManageMembers) return;
@@ -162,6 +210,7 @@ export function ShareWorkspaceDialog({
         currentWorkspaceId = await createWorkspace({
           name: workspaceName,
           servers: serializedServers,
+          visibility: currentVisibility,
         });
 
         if (currentWorkspaceId) {
@@ -180,7 +229,7 @@ export function ShareWorkspaceDialog({
         workspace_name: workspaceName,
         is_new_share: !sharedWorkspaceId,
         invite_kind: result.kind,
-        workspace_visibility: workspaceVisibility,
+        workspace_visibility: currentVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
@@ -213,7 +262,7 @@ export function ShareWorkspaceDialog({
       posthog.capture("workspace_member_removed", {
         workspace_name: workspaceName,
         removed_kind: result.removed,
-        workspace_visibility: workspaceVisibility,
+        workspace_visibility: currentVisibility,
         platform: detectPlatform(),
         environment: detectEnvironment(),
       });
@@ -294,6 +343,84 @@ export function ShareWorkspaceDialog({
             </div>
           )}
 
+          {/* Access settings */}
+          {canManageMembers ? (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Access settings</label>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-background hover:bg-accent hover:text-accent-foreground transition-colors disabled:opacity-50"
+                    disabled={isUpdatingVisibility}
+                  >
+                    {currentVisibility === "public" ? (
+                      <Globe className="size-4 shrink-0" />
+                    ) : (
+                      <Lock className="size-4 shrink-0" />
+                    )}
+                    <span className="flex-1 text-left">
+                      {currentVisibility === "public"
+                        ? organizationName || "Organization"
+                        : "Private to members"}
+                    </span>
+                    <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent
+                  align="start"
+                  className="w-[--radix-dropdown-menu-trigger-width]"
+                >
+                  <DropdownMenuRadioGroup
+                    value={currentVisibility}
+                    onValueChange={handleVisibilityChange}
+                  >
+                    <DropdownMenuRadioItem value="public" className="items-start">
+                      <div>
+                        <div className="font-medium flex items-center gap-2">
+                          <Globe className="size-4" />{" "}
+                          {organizationName || "Organization"}
+                        </div>
+                        <p className="text-xs text-muted-foreground font-normal">
+                          Everyone in your organization can find and access this
+                          workspace.
+                        </p>
+                      </div>
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem
+                      value="private"
+                      className="items-start"
+                    >
+                      <div>
+                        <div className="font-medium flex items-center gap-2">
+                          <Lock className="size-4" /> Private to members
+                        </div>
+                        <p className="text-xs text-muted-foreground font-normal">
+                          Only invited members can find and access this workspace.
+                        </p>
+                      </div>
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Access settings</label>
+              <div className="flex items-center gap-2 px-3 py-2 text-sm rounded-md border border-input bg-muted/50">
+                {currentVisibility === "public" ? (
+                  <Globe className="size-4 shrink-0" />
+                ) : (
+                  <Lock className="size-4 shrink-0" />
+                )}
+                <span>
+                  {currentVisibility === "public"
+                    ? organizationName || "Organization"
+                    : "Private to members"}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
             <label className="text-sm font-medium">Has access</label>
             <div className="space-y-1 max-h-[300px] overflow-y-auto">
@@ -330,7 +457,7 @@ export function ShareWorkspaceDialog({
                   currentUser.email?.toLowerCase();
                 const memberDescription = getMemberAccessDescription(
                   member,
-                  workspaceVisibility,
+                  currentVisibility,
                 );
 
                 return (
