@@ -54,6 +54,28 @@ describe("tool-result-text", () => {
   });
 
   describe("extractDisplayFromToolResult", () => {
+    it("preserves whitespace in top-level text fields", () => {
+      expect(
+        extractDisplayFromToolResult({
+          text: "  hello world  \n",
+        }),
+      ).toEqual({
+        kind: "text",
+        text: "  hello world  \n",
+      });
+    });
+
+    it("keeps empty top-level text fields as text", () => {
+      expect(
+        extractDisplayFromToolResult({
+          text: "",
+        }),
+      ).toEqual({
+        kind: "text",
+        text: "",
+      });
+    });
+
     it("parses JSON inside text content blocks", () => {
       expect(
         extractDisplayFromToolResult({

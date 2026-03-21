@@ -86,9 +86,8 @@ export function extractDisplayFromToolResult(
 
   const record = result as Record<string, unknown>;
   if (isEmptyToolResultEnvelope(record)) return null;
-  const directText = getTrimmedText(record.text);
-  if (directText) {
-    return extractDisplayFromValue(directText);
+  if (typeof record.text === "string") {
+    return extractDisplayFromValue(record.text);
   }
 
   const directTextParts = collectTextParts(record.content);
