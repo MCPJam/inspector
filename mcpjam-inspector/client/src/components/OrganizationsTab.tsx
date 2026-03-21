@@ -308,7 +308,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
 
   const handleChangeMemberRole = async (
     member: OrganizationMember,
-    role: "admin" | "member",
+    role: "admin" | "member" | "guest",
   ) => {
     if (!isOwner) return;
 

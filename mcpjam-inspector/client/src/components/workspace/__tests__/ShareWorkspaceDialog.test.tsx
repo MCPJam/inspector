@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareWorkspaceDialog } from "../ShareWorkspaceDialog";
 
@@ -173,30 +174,26 @@ describe("ShareWorkspaceDialog", () => {
     });
   });
 
-  it("shows public workspace copy and manage-organization affordance", () => {
-    const { onClose } = renderDialog({
+  it("shows invite form on public workspace without description text", () => {
+    renderDialog({
       visibility: "public",
     });
 
+    // Description text and manage org button should be gone
     expect(
-      screen.getByText(
-        "This workspace is available to everyone in this organization. Invite people to the organization to give them access.",
-      ),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Public workspace")).toBeInTheDocument();
+      screen.queryByText(/available to everyone in this organization/),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Manage organization members" }),
+    ).not.toBeInTheDocument();
+
+    // Invite form should still be present
     expect(
       screen.getByRole("button", { name: "Invite" }),
     ).toBeInTheDocument();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "Manage organization members" }),
-    );
-
-    expect(window.location.hash).toBe("#organizations/org-1");
-    expect(onClose).toHaveBeenCalled();
   });
 
-  it("shows private workspace copy, pending invites, and role dropdowns", () => {
+  it("shows private workspace with pending invites and role dropdowns", () => {
     mockUseWorkspaceMembers.mockReturnValue({
       members: [
         createMember({
@@ -249,11 +246,11 @@ describe("ShareWorkspaceDialog", () => {
       visibility: "private",
     });
 
+    // Description text should not be present
     expect(
-      screen.getByText(
-        "Only invited organization members can access this workspace. If someone is not in the organization yet, they'll be invited first and granted workspace access after signup.",
-      ),
-    ).toBeInTheDocument();
+      screen.queryByText(/Only invited organization members/),
+    ).not.toBeInTheDocument();
+
     expect(
       screen.getByRole("button", { name: "Invite" }),
     ).toBeInTheDocument();
@@ -304,9 +301,7 @@ describe("ShareWorkspaceDialog", () => {
     });
 
     expect(
-      screen.getByText(
-        "Organization admins can invite people and manage private workspace access.",
-      ),
+      screen.getByText("Only workspace admins can invite people."),
     ).toBeInTheDocument();
     expect(screen.queryByText("Invite with email")).not.toBeInTheDocument();
     expect(
@@ -320,7 +315,7 @@ describe("ShareWorkspaceDialog", () => {
       visibility: "private",
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Enter email address"), {
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
       target: { value: "invitee@example.com" },
     });
     fireEvent.click(
@@ -383,13 +378,14 @@ describe("ShareWorkspaceDialog", () => {
       visibility: "private",
     });
 
-    // Open the role dropdown for the member
-    const editorButton = screen.getByRole("button", { name: /Editor/ });
-    fireEvent.click(editorButton);
+    // Open the role dropdown for the member (second Editor button; first is the invite role picker)
+    const user = userEvent.setup();
+    const editorButtons = screen.getAllByRole("button", { name: /Editor/ });
+    await user.click(editorButtons[editorButtons.length - 1]);
 
     // Click "Remove from workspace" in the dropdown
     const removeItem = await screen.findByText("Remove from workspace");
-    fireEvent.click(removeItem);
+    await user.click(removeItem);
 
     await waitFor(() => {
       expect(mockRemoveWorkspaceMember).toHaveBeenCalledWith({

@@ -4,7 +4,6 @@ import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -12,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { Building2, ChevronDown, Clock, Globe, Lock } from "lucide-react";
+import { ChevronDown, Clock, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   DropdownMenu,
@@ -270,12 +269,6 @@ export function ShareWorkspaceDialog({
     }
   };
 
-  const openOrganizationMembers = () => {
-    if (!organizationId) return;
-    window.location.hash = `organizations/${organizationId}`;
-    onClose();
-  };
-
   const displayName =
     [currentUser.firstName, currentUser.lastName].filter(Boolean).join(" ") ||
     "You";
@@ -289,33 +282,11 @@ export function ShareWorkspaceDialog({
         </DialogHeader>
 
         <div className="space-y-6">
-          <div className="space-y-3">
-            <DialogDescription className="text-sm text-muted-foreground">
-              {isPublicWorkspace
-                ? "This workspace is available to everyone in this organization. Invite people to the organization to give them access."
-                : "Only invited organization members can access this workspace. If someone is not in the organization yet, they'll be invited first and granted workspace access after signup."}
-            </DialogDescription>
-
-            {isPublicWorkspace && organizationId && (
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={openOrganizationMembers}
-              >
-                <Building2 className="size-4 mr-2" />
-                Manage organization members
-              </Button>
-            )}
-
-            {sharedWorkspaceId && !canManageMembers && (
-              <p className="text-sm text-muted-foreground">
-                {isPublicWorkspace
-                  ? "Organization admins can invite people here because public workspace access follows organization membership."
-                  : "Organization admins can invite people and manage private workspace access."}
-              </p>
-            )}
-          </div>
+          {sharedWorkspaceId && !canManageMembers && (
+            <p className="text-sm text-muted-foreground">
+              Only workspace admins can invite people.
+            </p>
+          )}
 
           {canManageMembers && (
             <div className="space-y-2">
@@ -576,7 +547,7 @@ export function ShareWorkspaceDialog({
             </div>
           </div>
 
-          {!isPublicWorkspace && pendingMembers.length > 0 && (
+          {pendingMembers.length > 0 && (
             <div className="space-y-2">
               <label className="text-sm font-medium">Invited</label>
               <div className="space-y-1 max-h-[220px] overflow-y-auto">
