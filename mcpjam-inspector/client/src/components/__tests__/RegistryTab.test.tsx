@@ -278,7 +278,7 @@ describe("RegistryTab", () => {
   });
 
   describe("category filtering", () => {
-    it("shows category filter pills when multiple categories exist", () => {
+    it("does not render category filter pills", () => {
       mockHookReturn = {
         registryServers: [
           createMockServer({ _id: "1", category: "Productivity" }),
@@ -292,16 +292,18 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
 
-      expect(screen.getByRole("button", { name: "All" })).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Productivity" }),
-      ).toBeInTheDocument();
+        screen.queryByRole("button", { name: "All" }),
+      ).not.toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Developer Tools" }),
-      ).toBeInTheDocument();
+        screen.queryByRole("button", { name: "Productivity" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Developer Tools" }),
+      ).not.toBeInTheDocument();
     });
 
-    it("filters servers when category pill is clicked", () => {
+    it("shows all servers without filtering", () => {
       const prodServer = createMockServer({
         _id: "1",
         displayName: "Notion",
@@ -324,11 +326,6 @@ describe("RegistryTab", () => {
 
       expect(screen.getByText("Notion")).toBeInTheDocument();
       expect(screen.getByText("GitHub")).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole("button", { name: "Productivity" }));
-
-      expect(screen.getByText("Notion")).toBeInTheDocument();
-      expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
     });
   });
 

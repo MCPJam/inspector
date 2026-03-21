@@ -182,7 +182,9 @@ export function ServersTab({
   ) as RegistryServer[] | undefined;
   const featuredRegistryServers = useMemo(() => {
     if (!registryServers) return [];
-    const featured = registryServers.filter((s) => s.featured);
+    const featured = registryServers
+      .filter((s) => s.sortOrder != null)
+      .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0));
     return (featured.length > 0 ? featured : registryServers).slice(0, 4);
   }, [registryServers]);
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
@@ -619,11 +621,11 @@ export function ServersTab({
                 onClick={() =>
                   onConnect({
                     name: server.displayName,
-                    type: "http",
+                    type: server.transport.transportType,
                     url: server.transport.url,
                     useOAuth: server.transport.useOAuth,
                     oauthScopes: server.transport.oauthScopes,
-                    clientId: server.transport.clientId,
+                    oauthCredentialKey: server.transport.oauthCredentialKey,
                     registryServerId: server._id,
                   })
                 }

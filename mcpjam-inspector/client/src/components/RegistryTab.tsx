@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Package,
   KeyRound,
@@ -46,7 +46,6 @@ export function RegistryTab({
 }: RegistryTabProps) {
   // isAuthenticated is passed through to the hook for Convex mutation gating,
   // but the registry is always browsable without auth.
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
 
   const { registryServers, categories, isLoading, connect, disconnect } =
@@ -71,12 +70,7 @@ export function RegistryTab({
     }
   }, [servers, onNavigate]);
 
-  const filteredServers = useMemo(() => {
-    if (!selectedCategory) return registryServers;
-    return registryServers.filter(
-      (s: EnrichedRegistryServer) => s.category === selectedCategory,
-    );
-  }, [registryServers, selectedCategory]);
+  const filteredServers = registryServers;
 
   const handleConnect = async (server: EnrichedRegistryServer) => {
     setConnectingIds((prev) => new Set(prev).add(server._id));
@@ -131,31 +125,6 @@ export function RegistryTab({
             Pre-configured MCP servers you can connect with one click.
           </p>
         </div>
-
-        {/* Category filter pills */}
-        {categories.length > 1 && (
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant={selectedCategory === null ? "default" : "outline"}
-              size="sm"
-              className="h-7 text-xs"
-              onClick={() => setSelectedCategory(null)}
-            >
-              All
-            </Button>
-            {categories.map((cat: string) => (
-              <Button
-                key={cat}
-                variant={selectedCategory === cat ? "default" : "outline"}
-                size="sm"
-                className="h-7 text-xs"
-                onClick={() => setSelectedCategory(cat)}
-              >
-                {cat}
-              </Button>
-            ))}
-          </div>
-        )}
 
         {/* Server cards grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

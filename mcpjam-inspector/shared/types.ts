@@ -597,6 +597,8 @@ export interface ServerFormData {
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
+  oauthCredentialKey?: string;
   requestTimeout?: number;
   /** Convex _id of the registry server (for OAuth routing via /registry/oauth/token) */
   registryServerId?: string;

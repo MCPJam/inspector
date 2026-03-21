@@ -12,47 +12,51 @@ const DEV_MOCK_REGISTRY =
 const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
   {
     _id: "mock_asana",
-    slug: "asana",
+    name: "com.asana.mcp",
     displayName: "Asana",
     description:
       "Connect to Asana to manage tasks, projects, and team workflows directly from your MCP client.",
     publisher: "MCPJam",
     category: "Project Management",
-    iconUrl: "https://cdn.worldvectorlogo.com/logos/asana-logo.svg",
+    iconUrl: "https://cdn.simpleicons.org/asana",
+    scope: "global",
     transport: {
-      type: "http",
+      transportType: "http",
       url: "https://mcp.asana.com/v2/mcp",
       useOAuth: true,
       oauthScopes: ["default"],
     },
-    approved: true,
-    featured: true,
+    status: "approved",
+    sortOrder: 1,
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
   {
     _id: "mock_linear",
-    slug: "linear",
+    name: "app.linear.mcp",
     displayName: "Linear",
     description:
       "Interact with Linear issues, projects, and cycles. Create, update, and search issues with natural language.",
     publisher: "MCPJam",
     category: "Project Management",
-    iconUrl: "https://asset.brandfetch.io/iduDa181eM/idYoMflFma.png",
+    iconUrl: "https://cdn.simpleicons.org/linear",
+    scope: "global",
     transport: {
-      type: "http",
+      transportType: "http",
       url: "https://mcp.linear.app/mcp",
       useOAuth: true,
       oauthScopes: ["read", "write"],
     },
-    approved: true,
-    featured: true,
+    status: "approved",
+    sortOrder: 2,
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
   {
     _id: "mock_notion",
-    slug: "notion",
+    name: "com.notion.mcp",
     displayName: "Notion",
     description:
       "Access and manage Notion pages, databases, and content. Search, create, and update your workspace.",
@@ -60,98 +64,110 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     category: "Productivity",
     iconUrl:
       "https://upload.wikimedia.org/wikipedia/commons/4/45/Notion_app_logo.png",
+    scope: "global",
     transport: {
-      type: "http",
+      transportType: "http",
       url: "https://mcp.notion.com/mcp",
       useOAuth: true,
       oauthScopes: ["read_content", "update_content"],
     },
-    approved: true,
-    featured: true,
+    status: "approved",
+    sortOrder: 3,
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
   {
     _id: "mock_slack",
-    slug: "slack",
+    name: "com.slack.mcp",
     displayName: "Slack",
     description:
       "Send messages, search conversations, and manage Slack channels directly through MCP.",
     publisher: "MCPJam",
     category: "Communication",
     iconUrl: "https://cdn.worldvectorlogo.com/logos/slack-new-logo.svg",
+    scope: "global",
     transport: {
-      type: "http",
+      transportType: "http",
       url: "https://mcp.slack.com/sse",
       useOAuth: true,
     },
-    approved: true,
-    featured: true,
+    status: "approved",
+    sortOrder: 4,
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
   {
     _id: "mock_github",
-    slug: "github",
+    name: "com.github.mcp",
     displayName: "GitHub",
     description:
       "Manage repositories, pull requests, issues, and code reviews. Automate your GitHub workflows.",
     publisher: "MCPJam",
     category: "Developer Tools",
+    scope: "global",
     transport: {
-      type: "http",
+      transportType: "http",
       url: "https://mcp.github.com/sse",
       useOAuth: true,
       oauthScopes: ["repo", "read:org"],
     },
-    approved: true,
+    status: "approved",
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
   {
     _id: "mock_jira",
-    slug: "jira",
+    name: "com.atlassian.jira.mcp",
     displayName: "Jira",
     description:
       "Create and manage Jira issues, sprints, and boards. Track project progress with natural language.",
     publisher: "MCPJam",
     category: "Project Management",
+    scope: "global",
     transport: {
-      type: "http",
+      transportType: "http",
       url: "https://mcp.atlassian.com/jira/sse",
       useOAuth: true,
     },
-    approved: true,
+    status: "approved",
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
   {
     _id: "mock_google_drive",
-    slug: "google-drive",
+    name: "com.google.drive.mcp",
     displayName: "Google Drive",
     description:
       "Search, read, and organize files in Google Drive. Access documents, spreadsheets, and presentations.",
     publisher: "MCPJam",
     category: "Productivity",
+    scope: "global",
     transport: {
-      type: "http",
+      transportType: "http",
       url: "https://mcp.googleapis.com/drive/sse",
       useOAuth: true,
     },
-    approved: true,
+    status: "approved",
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
   {
     _id: "mock_stripe",
-    slug: "stripe",
+    name: "com.stripe.mcp",
     displayName: "Stripe",
     description:
       "Query payments, subscriptions, and customer data. Monitor your Stripe business metrics.",
     publisher: "MCPJam",
     category: "Finance",
-    transport: { type: "http", url: "https://mcp.stripe.com/sse" },
-    approved: true,
+    scope: "global",
+    transport: { transportType: "http", url: "https://mcp.stripe.com/sse" },
+    status: "approved",
+    createdBy: "mock_user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },
@@ -163,21 +179,41 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
  */
 export interface RegistryServer {
   _id: string;
-  slug: string;
+  // Identity
+  name: string; // Reverse-DNS: "com.acme.internal-tools"
   displayName: string;
-  description: string;
-  publisher: string;
-  category: string;
+  description?: string;
   iconUrl?: string;
+  // Client type: "text" for any MCP client, "app" for rich-UI clients
+  clientType?: "text" | "app";
+  // Scope & ownership
+  scope: "global" | "organization";
+  organizationId?: string;
+  // Transport config
   transport: {
-    type: "http";
-    url: string;
+    transportType: "stdio" | "http";
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    url?: string;
+    headers?: Record<string, string>;
     useOAuth?: boolean;
     oauthScopes?: string[];
-    clientId?: string;
+    oauthCredentialKey?: string;
+    timeout?: number;
   };
-  approved: boolean;
-  featured?: boolean;
+  // Curation
+  category?: string;
+  tags?: string[];
+  version?: string;
+  publisher?: string;
+  repositoryUrl?: string;
+  sortOrder?: number;
+  // Governance
+  status: "approved" | "pending_review" | "deprecated";
+  meta?: unknown;
+  // Tracking
+  createdBy: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -189,7 +225,10 @@ export interface RegistryServerConnection {
   _id: string;
   registryServerId: string;
   workspaceId: string;
+  serverId: string; // the actual servers row
+  connectedBy: string;
   connectedAt: number;
+  configOverridden?: boolean;
 }
 
 export type RegistryConnectionStatus =
@@ -221,10 +260,10 @@ export function useRegistryServers({
   onConnect: (formData: ServerFormData) => void;
   onDisconnect?: (serverName: string) => void;
 }) {
-  // Fetch all approved registry servers (public — no auth required)
+  // Fetch all approved registry servers (requires Convex auth identity)
   const remoteRegistryServers = useQuery(
     "registryServers:listRegistryServers" as any,
-    DEV_MOCK_REGISTRY ? "skip" : ({} as any),
+    !DEV_MOCK_REGISTRY && isAuthenticated ? ({} as any) : "skip",
   ) as RegistryServer[] | undefined;
   const registryServers = DEV_MOCK_REGISTRY
     ? MOCK_REGISTRY_SERVERS
@@ -303,11 +342,11 @@ export function useRegistryServers({
     // 2. Trigger the local MCP connection
     onConnect({
       name: server.displayName,
-      type: "http",
+      type: server.transport.transportType,
       url: server.transport.url,
       useOAuth: server.transport.useOAuth,
       oauthScopes: server.transport.oauthScopes,
-      clientId: server.transport.clientId,
+      oauthCredentialKey: server.transport.oauthCredentialKey,
       registryServerId: server._id,
     });
   }
