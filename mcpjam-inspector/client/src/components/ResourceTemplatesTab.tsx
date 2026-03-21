@@ -11,6 +11,7 @@ import {
 import { FileCode, Play, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import {
   MCPServerConfig,
   type MCPResourceTemplate,
@@ -64,6 +65,29 @@ function buildUriFromTemplate(
   return template.expand(params);
 }
 
+function renderResourceTemplateTextContent(text: string) {
+  const display = extractDisplayFromValue(text);
+
+  if (display?.kind === "json") {
+    return (
+      <div className="p-4">
+        <JsonEditor
+          height="100%"
+          value={display.value}
+          readOnly
+          showToolbar={false}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
+      {display?.kind === "text" ? display.text : text}
+    </pre>
+  );
+}
+
 export function ResourceTemplatesTab({
   serverConfig,
   serverName,
@@ -102,18 +126,7 @@ export function ResourceTemplatesTab({
     }
   }, [selectedTemplateData?.uriTemplate, templateOverrides]);
 
-  useEffect(() => {
-    if (serverConfig && serverName) {
-      fetchTemplates();
-    }
-  }, [serverConfig, serverName]);
-
-  // Register refresh function for parent component
-  useEffect(() => {
-    onRegisterRefresh?.(fetchTemplates);
-  }, [onRegisterRefresh, fetchTemplates]);
-
-  const fetchTemplates = async () => {
+  async function fetchTemplates() {
     if (!serverName) return;
 
     setFetchingTemplates(true);
@@ -147,7 +160,18 @@ export function ResourceTemplatesTab({
     } finally {
       setFetchingTemplates(false);
     }
-  };
+  }
+
+  useEffect(() => {
+    if (serverConfig && serverName) {
+      fetchTemplates();
+    }
+  }, [serverConfig, serverName]);
+
+  // Register refresh function for parent component
+  useEffect(() => {
+    onRegisterRefresh?.(fetchTemplates);
+  }, [onRegisterRefresh, fetchTemplates]);
 
   const updateParamValue = (paramName: string, value: string) => {
     setTemplateOverrides((prev) => ({ ...prev, [paramName]: value }));
@@ -496,9 +520,9 @@ export function ResourceTemplatesTab({
                                   <div key={index} className="group">
                                     <div className="overflow-hidden">
                                       {content.type === "text" ? (
-                                        <pre className="text-xs font-mono whitespace-pre-wrap p-4 bg-background overflow-auto max-h-96">
-                                          {content.text}
-                                        </pre>
+                                        renderResourceTemplateTextContent(
+                                          content.text,
+                                        )
                                       ) : (
                                         <div className="p-4">
                                           <JsonEditor

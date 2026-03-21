@@ -21,6 +21,7 @@ import {
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import { MCPServerConfig, type MCPPrompt } from "@mcpjam/sdk";
 import {
   getPrompt as getPromptApi,
@@ -59,6 +60,7 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
   const selectedPromptData = useMemo(() => {
     return prompts.find((prompt) => prompt.name === selectedPrompt) ?? null;
   }, [prompts, selectedPrompt]);
+  const promptDisplay = extractDisplayFromValue(promptContent);
 
   useEffect(() => {
     if (serverConfig && serverName) {
@@ -475,16 +477,20 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
               {error}
             </div>
           </div>
-        ) : promptContent ? (
+        ) : promptContent !== null && promptContent !== undefined ? (
           <div className="flex-1 min-h-0 p-4 flex flex-col">
-            {typeof promptContent === "string" ? (
+            {promptDisplay?.kind === "text" ? (
               <pre className="flex-1 min-h-0 whitespace-pre-wrap text-xs font-mono bg-muted/30 p-4 rounded-md border border-border overflow-auto">
-                {promptContent}
+                {promptDisplay.text}
               </pre>
             ) : (
               <div className="flex-1 min-h-0">
                 <JsonEditor
-                  value={promptContent}
+                  value={
+                    promptDisplay?.kind === "json"
+                      ? promptDisplay.value
+                      : promptContent
+                  }
                   readOnly
                   showToolbar={false}
                   height="100%"

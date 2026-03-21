@@ -316,10 +316,15 @@ export function highlightJson(json: string): string {
   let result = "";
   let lastIndex = 0;
 
+  const appendUntokenizedSegment = (segment: string) => {
+    if (!segment) return;
+    result += `<span class="json-punctuation">${escapeHtml(segment)}</span>`;
+  };
+
   for (const token of tokens) {
     // Add any characters between tokens (whitespace)
     if (token.start > lastIndex) {
-      result += escapeHtml(json.slice(lastIndex, token.start));
+      appendUntokenizedSegment(json.slice(lastIndex, token.start));
     }
 
     // Add the token with its class
@@ -330,7 +335,7 @@ export function highlightJson(json: string): string {
 
   // Add any remaining characters
   if (lastIndex < json.length) {
-    result += escapeHtml(json.slice(lastIndex));
+    appendUntokenizedSegment(json.slice(lastIndex));
   }
 
   return result;

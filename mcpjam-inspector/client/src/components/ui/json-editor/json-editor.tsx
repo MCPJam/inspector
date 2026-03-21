@@ -55,6 +55,7 @@ export function JsonEditor({
   expandJsonStrings = false,
   autoFormatOnEdit = true,
   wrapLongLinesInEdit = false,
+  wrapLongLinesInView = true,
   showLineNumbers = true,
   toolbarLeftContent,
   toolbarRightContent,
@@ -184,6 +185,7 @@ export function JsonEditor({
           onCollapseChange={onCollapseChange}
           showLineNumbers={showLineNumbers}
           collapseStringsAfterLength={collapseStringsAfterLength}
+          wrapLongLinesInView={wrapLongLinesInView}
         />
       </ErrorBoundary>
     );
@@ -248,6 +250,7 @@ export function JsonEditor({
               onCollapseChange={onCollapseChange}
               showLineNumbers={showLineNumbers}
               collapseStringsAfterLength={collapseStringsAfterLength}
+              wrapLongLinesInView={wrapLongLinesInView}
             />
           ) : (
             <JsonEditorEdit
@@ -262,6 +265,7 @@ export function JsonEditor({
               maxHeight={isMaximized ? undefined : maxHeight}
               showLineNumbers={showLineNumbers}
               wrapLongLinesInEdit={wrapLongLinesInEdit}
+              wrapLongLinesInView={wrapLongLinesInView}
             />
           )}
         </div>

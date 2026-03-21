@@ -43,6 +43,10 @@ export interface JsonEditorProps {
   // Soft-wrap long lines in edit mode while preserving logical line numbers
   wrapLongLinesInEdit?: boolean;
 
+  // Soft-wrap long lines in read-only flat view. Enabled by default because
+  // most product surfaces use the viewer for inspection rather than raw code.
+  wrapLongLinesInView?: boolean;
+
   // Show or hide the line number gutter
   showLineNumbers?: boolean;
 
