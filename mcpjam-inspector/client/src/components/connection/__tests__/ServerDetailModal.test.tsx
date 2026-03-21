@@ -32,22 +32,26 @@ vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
     Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
       Boolean((meta as Record<string, unknown>)?.["ui.resourceUri"]),
     ),
-  isOpenAIApp: (toolsData: {
-    toolsMetadata?: Record<string, unknown>;
-  } | null) =>
+  isOpenAIApp: (
+    toolsData: {
+      toolsMetadata?: Record<string, unknown>;
+    } | null,
+  ) =>
     Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
       Boolean(
         (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
-          !(meta as Record<string, unknown>)?.["ui.resourceUri"],
+        !(meta as Record<string, unknown>)?.["ui.resourceUri"],
       ),
     ),
-  isOpenAIAppAndMCPApp: (toolsData: {
-    toolsMetadata?: Record<string, unknown>;
-  } | null) =>
+  isOpenAIAppAndMCPApp: (
+    toolsData: {
+      toolsMetadata?: Record<string, unknown>;
+    } | null,
+  ) =>
     Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
       Boolean(
         (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
-          (meta as Record<string, unknown>)?.["ui.resourceUri"],
+        (meta as Record<string, unknown>)?.["ui.resourceUri"],
       ),
     ),
 }));
