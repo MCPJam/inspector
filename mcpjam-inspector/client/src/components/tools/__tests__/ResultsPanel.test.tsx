@@ -63,11 +63,7 @@ describe("ResultsPanel", () => {
     };
 
     render(
-      <ResultsPanel
-        error=""
-        structuredContentValid={false}
-        result={result}
-      />,
+      <ResultsPanel error="" structuredContentValid={false} result={result} />,
     );
 
     expect(mockJsonEditor.mock.calls.map(([props]) => props)).toEqual(

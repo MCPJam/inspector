@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 
-export type OrganizationMembershipRole = "owner" | "admin" | "member";
+export type OrganizationMembershipRole = "owner" | "admin" | "member" | "guest";
 
 export interface Organization {
   _id: string;
@@ -12,6 +12,7 @@ export interface Organization {
   createdBy: string;
   createdAt: number;
   updatedAt: number;
+  myRole?: string;
 }
 
 export interface OrganizationMember {

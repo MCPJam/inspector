@@ -22,8 +22,7 @@ vi.mock("@/lib/apis/mcp-tasks-api", () => ({
   getTaskResult: (...args: unknown[]) => mockGetTaskResult(...args),
   cancelTask: (...args: unknown[]) => mockCancelTask(...args),
   getLatestProgress: (...args: unknown[]) => mockGetLatestProgress(...args),
-  getTaskCapabilities: (...args: unknown[]) =>
-    mockGetTaskCapabilities(...args),
+  getTaskCapabilities: (...args: unknown[]) => mockGetTaskCapabilities(...args),
 }));
 
 vi.mock("@/lib/task-tracker", () => ({

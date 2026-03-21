@@ -19,6 +19,7 @@ interface WorkspaceShareButtonProps {
   sharedWorkspaceId?: string | null;
   organizationId?: string;
   visibility?: WorkspaceVisibility;
+  organizationName?: string;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
 }
 
@@ -28,6 +29,7 @@ export function WorkspaceShareButton({
   sharedWorkspaceId,
   organizationId,
   visibility,
+  organizationName,
   onWorkspaceShared,
 }: WorkspaceShareButtonProps) {
   const { user } = useAuth();
@@ -74,6 +76,7 @@ export function WorkspaceShareButton({
           sharedWorkspaceId={sharedWorkspaceId}
           organizationId={organizationId}
           visibility={visibility}
+          organizationName={organizationName}
           currentUser={user}
           onWorkspaceShared={onWorkspaceShared}
         />

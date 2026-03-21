@@ -15,6 +15,7 @@ import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
 import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -34,6 +35,7 @@ import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
+import { useOrganizationQueries } from "./hooks/useOrganizations";
 
 // Import global styles
 import "./index.css";
@@ -337,6 +339,31 @@ export default function App() {
     activeOrganizationId,
     setActiveOrganizationId,
   } = useAppState();
+
+  const { sortedOrganizations, isLoading: isLoadingOrganizations } =
+    useOrganizationQueries({ isAuthenticated });
+  const activeOrganizationName = sortedOrganizations.find(
+    (org) => org._id === activeOrganizationId,
+  )?.name;
+
+  useEffect(() => {
+    if (!isAuthenticated || !activeOrganizationId || isLoadingOrganizations) {
+      return;
+    }
+
+    const activeOrganizationExists = sortedOrganizations.some(
+      (org) => org._id === activeOrganizationId,
+    );
+    if (!activeOrganizationExists) {
+      setActiveOrganizationId(undefined);
+    }
+  }, [
+    activeOrganizationId,
+    isAuthenticated,
+    isLoadingOrganizations,
+    setActiveOrganizationId,
+    sortedOrganizations,
+  ]);
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -688,7 +715,6 @@ export default function App() {
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-              onWorkspaceShared={handleWorkspaceShared}
             />
           )}
           {activeTab === "tools" && (
@@ -706,10 +732,7 @@ export default function App() {
             <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
           )}
           {activeTab === "views" && (
-            <ViewsTab
-              selectedServer={appState.selectedServer}
-              onWorkspaceShared={handleWorkspaceShared}
-            />
+            <ViewsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "sandboxes" && (
             <SandboxesTab workspaceId={convexWorkspaceId} />
@@ -791,15 +814,20 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
-          {activeTab === "settings" && (
-            <SettingsTab
-              convexWorkspaceId={convexWorkspaceId}
-              workspaceName={activeWorkspace?.name ?? null}
-              workspaceVisibility={activeWorkspace?.visibility ?? null}
+          {activeTab === "workspace-settings" && (
+            <WorkspaceSettingsTab
               activeWorkspaceId={activeWorkspaceId}
+              workspace={activeWorkspace}
+              convexWorkspaceId={convexWorkspaceId}
+              workspaceServers={workspaceServers}
+              organizationName={activeOrganizationName}
               onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
+              onWorkspaceShared={handleWorkspaceShared}
+              onNavigateAway={() => handleNavigate("servers")}
             />
           )}
+          {activeTab === "settings" && <SettingsTab />}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (

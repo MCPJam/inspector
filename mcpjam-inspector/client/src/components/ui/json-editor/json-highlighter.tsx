@@ -266,9 +266,7 @@ export function JsonHighlighter({
 
     // Add any remaining content
     if (lastIndex < content.length) {
-      result.push(
-        renderUntokenizedSegment(`ws-end`, content.slice(lastIndex)),
-      );
+      result.push(renderUntokenizedSegment(`ws-end`, content.slice(lastIndex)));
     }
 
     return result;

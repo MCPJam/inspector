@@ -1,4 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ShareWorkspaceDialog } from "../ShareWorkspaceDialog";
 
@@ -7,6 +8,8 @@ const mockUseWorkspaceMembers = vi.fn();
 const mockCreateWorkspace = vi.fn();
 const mockInviteWorkspaceMember = vi.fn();
 const mockRemoveWorkspaceMember = vi.fn();
+const mockUpdateWorkspaceMemberRole = vi.fn();
+const mockUpdateWorkspaceInviteRole = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 
@@ -48,6 +51,8 @@ vi.mock("@/hooks/useWorkspaces", async () => {
       createWorkspace: mockCreateWorkspace,
       inviteWorkspaceMember: mockInviteWorkspaceMember,
       removeWorkspaceMember: mockRemoveWorkspaceMember,
+      updateWorkspaceMemberRole: mockUpdateWorkspaceMemberRole,
+      updateWorkspaceInviteRole: mockUpdateWorkspaceInviteRole,
     }),
   };
 });
@@ -57,14 +62,22 @@ function createMember({
   role = "member",
   accessSource = "organization",
   canRemove = false,
+  canChangeRole = false,
+  workspaceRole,
   isPending = false,
 }: {
   email: string;
   role?: "owner" | "admin" | "member" | "guest";
   accessSource?: "organization" | "workspace" | "invite";
   canRemove?: boolean;
+  canChangeRole?: boolean;
+  workspaceRole?: "admin" | "editor";
   isPending?: boolean;
 }) {
+  const isOrgPrivileged = role === "owner" || role === "admin";
+  const resolvedWorkspaceRole =
+    workspaceRole ?? (isOrgPrivileged ? "admin" : "editor");
+
   return {
     _id: `${isPending ? "pending" : "member"}-${email}`,
     workspaceId: "ws-1",
@@ -72,6 +85,8 @@ function createMember({
     userId: isPending ? undefined : `user-${email}`,
     email,
     role,
+    workspaceRole: resolvedWorkspaceRole,
+    canChangeRole,
     addedBy: "user-owner",
     addedAt: 1,
     revokedAt: undefined,
@@ -153,34 +168,30 @@ describe("ShareWorkspaceDialog", () => {
         }),
       ],
       pendingMembers: [],
+      canManageMembers: true,
       isLoading: false,
       hasPendingMembers: false,
     });
   });
 
-  it("shows public workspace copy and manage-organization affordance", () => {
-    const { onClose } = renderDialog({
+  it("shows invite form on public workspace without description text", () => {
+    renderDialog({
       visibility: "public",
     });
 
+    // Description text and manage org button should be gone
     expect(
-      screen.getByText(
-        "This workspace is available to everyone in this organization. Invite people to the organization to give them access.",
-      ),
-    ).toBeInTheDocument();
+      screen.queryByText(/available to everyone in this organization/),
+    ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Invite to organization" }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Manage organization members" }),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Manage organization members" }),
-    );
-
-    expect(window.location.hash).toBe("#organizations/org-1");
-    expect(onClose).toHaveBeenCalled();
+    // Invite form should still be present
+    expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
   });
 
-  it("shows private workspace copy, pending invites, and scoped revoke actions", () => {
+  it("shows private workspace with pending invites and role dropdowns", () => {
     mockUseWorkspaceMembers.mockReturnValue({
       members: [
         createMember({
@@ -192,11 +203,13 @@ describe("ShareWorkspaceDialog", () => {
           role: "member",
           accessSource: "workspace",
           canRemove: true,
+          canChangeRole: true,
         }),
         createMember({
           email: "pending@example.com",
           accessSource: "invite",
           canRemove: true,
+          canChangeRole: true,
           isPending: true,
         }),
       ],
@@ -210,6 +223,7 @@ describe("ShareWorkspaceDialog", () => {
           role: "member",
           accessSource: "workspace",
           canRemove: true,
+          canChangeRole: true,
         }),
       ],
       pendingMembers: [
@@ -217,9 +231,11 @@ describe("ShareWorkspaceDialog", () => {
           email: "pending@example.com",
           accessSource: "invite",
           canRemove: true,
+          canChangeRole: true,
           isPending: true,
         }),
       ],
+      canManageMembers: true,
       isLoading: false,
       hasPendingMembers: true,
     });
@@ -228,31 +244,19 @@ describe("ShareWorkspaceDialog", () => {
       visibility: "private",
     });
 
+    // Description text should not be present
     expect(
-      screen.getByText(
-        "Only invited organization members can access this workspace. If someone is not in the organization yet, they'll be invited first and granted workspace access after signup.",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Invite to workspace" }),
-    ).toBeInTheDocument();
+      screen.queryByText(/Only invited organization members/),
+    ).not.toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
     expect(screen.getByText("Has access")).toBeInTheDocument();
     expect(screen.getByText("Invited")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Remove member@example.com from workspace",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", {
-        name: "Cancel invite for pending@example.com",
-      }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", {
-        name: "Remove owner@example.com from workspace",
-      }),
-    ).not.toBeInTheDocument();
+
+    // Org owner shows static "Admin" label (not changeable)
+    // Members with canChangeRole show dropdown trigger with role label
+    const editorButtons = screen.getAllByRole("button", { name: /Editor/ });
+    expect(editorButtons.length).toBeGreaterThanOrEqual(1);
   });
 
   it("shows a read-only private dialog for non-admin members", () => {
@@ -278,6 +282,7 @@ describe("ShareWorkspaceDialog", () => {
         }),
       ],
       pendingMembers: [],
+      canManageMembers: false,
       isLoading: false,
       hasPendingMembers: false,
     });
@@ -292,13 +297,11 @@ describe("ShareWorkspaceDialog", () => {
     });
 
     expect(
-      screen.getByText(
-        "Organization admins can invite people and manage private workspace access.",
-      ),
+      screen.getByText("Only workspace admins can invite people."),
     ).toBeInTheDocument();
     expect(screen.queryByText("Invite with email")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Invite to workspace" }),
+      screen.queryByRole("button", { name: "Invite" }),
     ).not.toBeInTheDocument();
   });
 
@@ -308,30 +311,30 @@ describe("ShareWorkspaceDialog", () => {
       visibility: "private",
     });
 
-    fireEvent.change(screen.getByPlaceholderText("Enter email address"), {
+    fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
       target: { value: "invitee@example.com" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Invite to workspace" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() => {
       expect(mockCreateWorkspace).toHaveBeenCalledWith({
         name: "Acme",
         servers: {},
+        visibility: "private",
       });
     });
     expect(onWorkspaceShared).toHaveBeenCalledWith("ws-created");
     expect(mockInviteWorkspaceMember).toHaveBeenCalledWith({
       workspaceId: "ws-created",
       email: "invitee@example.com",
+      role: "editor",
     });
     expect(mockToastSuccess).toHaveBeenCalledWith(
       "Invitation sent to invitee@example.com. They'll get workspace access once they join the organization.",
     );
   });
 
-  it("calls the workspace-scoped removal mutation for removable private entries", async () => {
+  it("calls the workspace-scoped removal mutation via role dropdown", async () => {
     mockUseWorkspaceMembers.mockReturnValue({
       members: [
         createMember({
@@ -343,6 +346,7 @@ describe("ShareWorkspaceDialog", () => {
           role: "member",
           accessSource: "workspace",
           canRemove: true,
+          canChangeRole: true,
         }),
       ],
       activeMembers: [
@@ -355,9 +359,11 @@ describe("ShareWorkspaceDialog", () => {
           role: "member",
           accessSource: "workspace",
           canRemove: true,
+          canChangeRole: true,
         }),
       ],
       pendingMembers: [],
+      canManageMembers: true,
       isLoading: false,
       hasPendingMembers: false,
     });
@@ -366,11 +372,14 @@ describe("ShareWorkspaceDialog", () => {
       visibility: "private",
     });
 
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: "Remove member@example.com from workspace",
-      }),
-    );
+    // Open the role dropdown for the member (second Editor button; first is the invite role picker)
+    const user = userEvent.setup();
+    const editorButtons = screen.getAllByRole("button", { name: /Editor/ });
+    await user.click(editorButtons[editorButtons.length - 1]);
+
+    // Click "Remove from workspace" in the dropdown
+    const removeItem = await screen.findByText("Remove from workspace");
+    await user.click(removeItem);
 
     await waitFor(() => {
       expect(mockRemoveWorkspaceMember).toHaveBeenCalledWith({

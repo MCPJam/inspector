@@ -106,6 +106,27 @@ export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
     );
   }
 
+  const myRole = organization.myRole;
+  const hasAccess = myRole === "owner" || myRole === "admin";
+
+  if (!hasAccess) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8">
+        <div className="text-center space-y-4 max-w-md">
+          <Building2 className="size-12 text-muted-foreground/50 mx-auto" />
+          <h2 className="text-2xl font-bold">Access restricted</h2>
+          <p className="text-muted-foreground">
+            You don't have permission to view organization settings. Contact an
+            admin or owner for access.
+          </p>
+          <Button onClick={() => (window.location.hash = "servers")}>
+            Go to Servers
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return <OrganizationPage organization={organization} />;
 }
 
@@ -308,7 +329,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
 
   const handleChangeMemberRole = async (
     member: OrganizationMember,
-    role: "admin" | "member",
+    role: "admin" | "member" | "guest",
   ) => {
     if (!isOwner) return;
 

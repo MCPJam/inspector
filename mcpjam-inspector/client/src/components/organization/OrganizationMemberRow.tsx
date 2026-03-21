@@ -23,7 +23,7 @@ interface OrganizationMemberRowProps {
   role?: OrganizationMembershipRole;
   canEditRole?: boolean;
   isRoleUpdating?: boolean;
-  onRoleChange?: (role: "admin" | "member") => void;
+  onRoleChange?: (role: "admin" | "member" | "guest") => void;
   onTransferOwnership?: () => void;
   isTransferringOwnership?: boolean;
   onRemove?: () => void;
@@ -112,7 +112,7 @@ export function OrganizationMemberRow({
           <Select
             value={effectiveRole}
             onValueChange={(value) =>
-              onRoleChange?.(value as "admin" | "member")
+              onRoleChange?.(value as "admin" | "member" | "guest")
             }
             disabled={isRoleUpdating}
           >
@@ -124,6 +124,7 @@ export function OrganizationMemberRow({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value="guest">guest</SelectItem>
               <SelectItem value="member">member</SelectItem>
               <SelectItem value="admin">admin</SelectItem>
             </SelectContent>
