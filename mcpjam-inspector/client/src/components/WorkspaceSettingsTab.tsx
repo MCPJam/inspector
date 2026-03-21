@@ -20,6 +20,7 @@ import {
 } from "./ui/alert-dialog";
 import type { Workspace } from "@/state/app-types";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 
 interface WorkspaceSettingsTabProps {
   activeWorkspaceId: string;
@@ -27,7 +28,10 @@ interface WorkspaceSettingsTabProps {
   convexWorkspaceId: string | null;
   workspaceServers: Record<string, ServerWithName>;
   organizationName?: string;
-  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
+  onUpdateWorkspace: (
+    workspaceId: string,
+    updates: Partial<Workspace>,
+  ) => Promise<void>;
   onDeleteWorkspace: (workspaceId: string) => Promise<boolean>;
   onWorkspaceShared: (sharedWorkspaceId: string) => void;
   onNavigateAway: () => void;
@@ -46,10 +50,23 @@ export function WorkspaceSettingsTab({
 }: WorkspaceSettingsTabProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
+  const { activeMembers, canManageMembers } = useWorkspaceMembers({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
 
   const workspaceName = workspace?.name ?? "";
   const workspaceDescription = workspace?.description ?? "";
   const isDefault = workspace?.isDefault ?? false;
+  const currentMember = activeMembers.find(
+    (member) => member.email.toLowerCase() === user?.email?.toLowerCase(),
+  );
+  const canManageWorkspaceSettings =
+    !isAuthenticated || !convexWorkspaceId ? true : canManageMembers;
+  const canDeleteWorkspace =
+    !isAuthenticated || !convexWorkspaceId
+      ? true
+      : currentMember?.role === "owner" || currentMember?.role === "admin";
 
   return (
     <div className="h-full overflow-y-auto">
@@ -66,6 +83,7 @@ export function WorkspaceSettingsTab({
                 onSave={(newName) =>
                   onUpdateWorkspace(activeWorkspaceId, { name: newName })
                 }
+                disabled={!canManageWorkspaceSettings}
                 className="text-sm"
                 placeholder="Workspace name"
               />
@@ -81,6 +99,7 @@ export function WorkspaceSettingsTab({
                     description: newDesc,
                   })
                 }
+                disabled={!canManageWorkspaceSettings}
                 className="text-sm"
                 placeholder="Add a description..."
               />
@@ -133,12 +152,18 @@ export function WorkspaceSettingsTab({
               <span className="text-xs text-muted-foreground">
                 {isDefault
                   ? "Switch to another workspace first"
-                  : "Permanently delete this workspace and all its data"}
+                  : !canDeleteWorkspace
+                    ? "Only organization admins can delete this workspace"
+                    : "Permanently delete this workspace and all its data"}
               </span>
             </div>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive" size="sm" disabled={isDefault}>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={isDefault || !canDeleteWorkspace}
+                >
                   Delete
                 </Button>
               </AlertDialogTrigger>

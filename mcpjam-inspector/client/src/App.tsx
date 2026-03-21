@@ -340,10 +340,30 @@ export default function App() {
     setActiveOrganizationId,
   } = useAppState();
 
-  const { sortedOrganizations } = useOrganizationQueries({ isAuthenticated });
+  const { sortedOrganizations, isLoading: isLoadingOrganizations } =
+    useOrganizationQueries({ isAuthenticated });
   const activeOrganizationName = sortedOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
+
+  useEffect(() => {
+    if (!isAuthenticated || !activeOrganizationId || isLoadingOrganizations) {
+      return;
+    }
+
+    const activeOrganizationExists = sortedOrganizations.some(
+      (org) => org._id === activeOrganizationId,
+    );
+    if (!activeOrganizationExists) {
+      setActiveOrganizationId(undefined);
+    }
+  }, [
+    activeOrganizationId,
+    isAuthenticated,
+    isLoadingOrganizations,
+    setActiveOrganizationId,
+    sortedOrganizations,
+  ]);
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {

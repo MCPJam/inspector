@@ -326,7 +326,7 @@ export function useWorkspaceState({
   );
 
   const handleUpdateWorkspace = useCallback(
-    async (workspaceId: string, updates: Partial<Workspace>) => {
+    async (workspaceId: string, updates: Partial<Workspace>): Promise<void> => {
       if (isAuthenticated) {
         try {
           const updateData: any = { workspaceId };
@@ -344,9 +344,13 @@ export function useWorkspaceState({
           }
           await convexUpdateWorkspace(updateData);
         } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
           logger.error("Failed to update workspace", {
-            error: error instanceof Error ? error.message : "Unknown error",
+            error: errorMessage,
           });
+          toast.error(errorMessage);
+          throw error instanceof Error ? error : new Error(errorMessage);
         }
       } else {
         dispatch({ type: "UPDATE_WORKSPACE", workspaceId, updates });
