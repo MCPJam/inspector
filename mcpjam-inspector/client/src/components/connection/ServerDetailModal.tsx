@@ -340,7 +340,9 @@ export function ServerDetailModal({
               >
                 <Button
                   type="submit"
-                  disabled={isDuplicateServerName || isSaving || !formState.hasChanges}
+                  disabled={
+                    isDuplicateServerName || isSaving || !formState.hasChanges
+                  }
                   size="sm"
                 >
                   {isSaving ? (
