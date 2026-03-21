@@ -228,7 +228,9 @@ export function JsonEditorEdit({
     activeLineTop - scrollTop + EDITOR_VERTICAL_PADDING;
 
   const refreshCharsPerVisualLine = useCallback(() => {
-    const measurementElement = readOnly ? highlightRef.current : textareaRef.current;
+    const measurementElement = readOnly
+      ? highlightRef.current
+      : textareaRef.current;
 
     if (!lineWrapEnabled || !measurementElement) {
       return;
@@ -470,7 +472,9 @@ export function JsonEditorEdit({
     window.addEventListener("resize", refreshCharsPerVisualLine);
 
     let resizeObserver: ResizeObserver | undefined;
-    const measurementElement = readOnly ? highlightRef.current : textareaRef.current;
+    const measurementElement = readOnly
+      ? highlightRef.current
+      : textareaRef.current;
     if (window.ResizeObserver && measurementElement) {
       resizeObserver = new ResizeObserver(() => refreshCharsPerVisualLine());
       resizeObserver.observe(measurementElement);

@@ -15,12 +15,8 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
-import { AccountApiKeySection } from "./setting/AccountApiKeySection";
-import { EditableText } from "./ui/editable-text";
 
 import type { CustomProvider } from "@mcpjam/sdk";
-import type { Workspace } from "@/lib/types";
-import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface ProviderConfig {
   id: string;
@@ -32,21 +28,7 @@ interface ProviderConfig {
   getApiKeyUrl: string;
 }
 
-interface SettingsTabProps {
-  convexWorkspaceId: string | null;
-  workspaceName: string | null;
-  workspaceVisibility?: WorkspaceVisibility | null;
-  activeWorkspaceId: string;
-  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-}
-
-export function SettingsTab({
-  convexWorkspaceId,
-  workspaceName,
-  workspaceVisibility,
-  activeWorkspaceId,
-  onUpdateWorkspace,
-}: SettingsTabProps) {
+export function SettingsTab() {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
   const {
@@ -301,27 +283,6 @@ export function SettingsTab({
                 />
               </div>
             }
-          />
-        </SettingsSection>
-
-        {/* Workspace */}
-        <SettingsSection title="Workspace">
-          <SettingsRow
-            label="Name"
-            value={
-              <EditableText
-                value={workspaceName ?? ""}
-                onSave={(newName) =>
-                  onUpdateWorkspace(activeWorkspaceId, { name: newName })
-                }
-                className="text-sm"
-                placeholder="Workspace name"
-              />
-            }
-          />
-          <AccountApiKeySection
-            workspaceId={convexWorkspaceId}
-            workspaceName={workspaceName}
           />
         </SettingsSection>
 
