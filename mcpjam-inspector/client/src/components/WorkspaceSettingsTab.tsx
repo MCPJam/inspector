@@ -68,8 +68,6 @@ export function WorkspaceSettingsTab({
       ? true
       : currentMember?.role === "owner" || currentMember?.role === "admin";
 
-
-
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-8 max-w-4xl space-y-8">
