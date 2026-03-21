@@ -211,6 +211,7 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
     serverSuiteId,
     selectedServer,
     isServerConnected,
+    organizationId,
     mutations.createTestSuiteMutation,
     handlers.handleCreateTestCase,
   ]);
@@ -259,6 +260,7 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
     serverSuiteId,
     selectedServer,
     isServerConnected,
+    organizationId,
     mutations.createTestSuiteMutation,
     handlers.handleGenerateTests,
   ]);
