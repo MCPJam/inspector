@@ -1,8 +1,24 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ServerFormData } from "@/shared/types.js";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { hasOAuthConfig, getStoredTokens } from "@/lib/oauth/mcp-oauth";
 import { HOSTED_MODE } from "@/lib/config";
+
+interface InitialFormValues {
+  name: string;
+  type: "stdio" | "http";
+  url: string;
+  commandInput: string;
+  authType: "oauth" | "bearer" | "none";
+  bearerToken: string;
+  oauthScopesInput: string;
+  useCustomClientId: boolean;
+  clientId: string;
+  clientSecret: string;
+  envVars: Array<{ key: string; value: string }>;
+  customHeaders: Array<{ key: string; value: string }>;
+  requestTimeout: string;
+}
 
 export function useServerForm(
   server?: ServerWithName,
@@ -36,6 +52,8 @@ export function useServerForm(
   const [showConfiguration, setShowConfiguration] = useState<boolean>(false);
   const [showEnvVars, setShowEnvVars] = useState<boolean>(false);
   const [showAuthSettings, setShowAuthSettings] = useState<boolean>(false);
+
+  const initialValues = useRef<InitialFormValues | null>(null);
 
   // Initialize form with server data (for edit mode)
   useEffect(() => {
@@ -83,42 +101,50 @@ export function useServerForm(
         clientSecretValue = clientInfo?.client_secret || "";
       }
 
-      setName(server.name);
-      setType(server.config.command ? "stdio" : "http");
-      setUrl(isHttpServer && config.url ? config.url.toString() : "");
+      // Derive local values used for both state initialization and snapshot
+      const serverType: "stdio" | "http" = server.config.command ? "stdio" : "http";
+      const serverUrl = isHttpServer && config.url ? config.url.toString() : "";
+      const fullCommand = server.config.command
+        ? [server.config.command, ...(server.config.args || [])]
+            .filter(Boolean)
+            .join(" ")
+        : "";
+      const hasBearer =
+        isHttpServer &&
+        config.requestInit?.headers &&
+        typeof config.requestInit.headers === "object" &&
+        "Authorization" in config.requestInit.headers &&
+        typeof config.requestInit.headers.Authorization === "string" &&
+        config.requestInit.headers.Authorization.startsWith("Bearer ");
+      const bearerTokenValue = hasBearer
+        ? (config.requestInit!.headers as Record<string, string>).Authorization.replace("Bearer ", "")
+        : "";
+      const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
+        ? "oauth"
+        : hasBearer
+          ? "bearer"
+          : "none";
+      const timeoutValue = String(config.timeout || 10000);
 
-      // For STDIO servers, combine command and args into commandInput
-      if (server.config.command) {
-        const fullCommand = [
-          server.config.command,
-          ...(server.config.args || []),
-        ]
-          .filter(Boolean)
-          .join(" ");
+      setName(server.name);
+      setType(serverType);
+      setUrl(serverUrl);
+      if (fullCommand) {
         setCommandInput(fullCommand);
       }
 
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
       setOauthScopesInput(scopes.join(" "));
-      setRequestTimeout(String(config.timeout || 10000));
+      setRequestTimeout(timeoutValue);
 
       // Set auth type based on multiple OAuth detection sources
-      if (hasOAuth) {
+      if (resolvedAuthType === "oauth") {
         setAuthType("oauth");
         setShowAuthSettings(true);
-      } else if (
-        isHttpServer &&
-        config.requestInit?.headers &&
-        typeof config.requestInit.headers === "object" &&
-        "Authorization" in config.requestInit.headers &&
-        typeof config.requestInit.headers.Authorization === "string" &&
-        config.requestInit.headers.Authorization.startsWith("Bearer ")
-      ) {
+      } else if (resolvedAuthType === "bearer") {
         setAuthType("bearer");
-        setBearerToken(
-          config.requestInit.headers.Authorization.replace("Bearer ", ""),
-        );
+        setBearerToken(bearerTokenValue);
         setShowAuthSettings(true);
       } else {
         setAuthType("none");
@@ -133,8 +159,9 @@ export function useServerForm(
       }
 
       // Initialize env vars for STDIO servers
+      let envArray: Array<{ key: string; value: string }> = [];
       if (!isHttpServer && config.env) {
-        const envArray = Object.entries(config.env).map(([key, value]) => ({
+        envArray = Object.entries(config.env).map(([key, value]) => ({
           key,
           value: String(value),
         }));
@@ -142,16 +169,34 @@ export function useServerForm(
       }
 
       // Initialize custom headers for HTTP servers (excluding Authorization)
+      let headersArray: Array<{ key: string; value: string }> = [];
       if (
         isHttpServer &&
         config.requestInit?.headers &&
         typeof config.requestInit.headers === "object"
       ) {
-        const headersArray = Object.entries(config.requestInit.headers)
+        headersArray = Object.entries(config.requestInit.headers)
           .filter(([key]) => key !== "Authorization")
           .map(([key, value]) => ({ key, value: String(value) }));
         setCustomHeaders(headersArray);
       }
+
+      // Capture initial values for change detection
+      initialValues.current = {
+        name: server.name,
+        type: serverType,
+        url: serverUrl,
+        commandInput: fullCommand,
+        authType: resolvedAuthType,
+        bearerToken: bearerTokenValue,
+        oauthScopesInput: scopes.join(" "),
+        useCustomClientId: !!clientIdValue,
+        clientId: clientIdValue,
+        clientSecret: clientSecretValue,
+        envVars: envArray,
+        customHeaders: headersArray,
+        requestTimeout: timeoutValue,
+      };
     }
   }, [server]);
 
@@ -333,7 +378,31 @@ export function useServerForm(
     setShowAuthSettings(false);
   };
 
+  // Derive hasChanges by comparing current state against initial snapshot
+  const hasChanges = (() => {
+    if (!initialValues.current) return true; // New server — always allow save
+    const iv = initialValues.current;
+    return (
+      name !== iv.name ||
+      type !== iv.type ||
+      url !== iv.url ||
+      commandInput !== iv.commandInput ||
+      authType !== iv.authType ||
+      bearerToken !== iv.bearerToken ||
+      oauthScopesInput !== iv.oauthScopesInput ||
+      useCustomClientId !== iv.useCustomClientId ||
+      clientId !== iv.clientId ||
+      clientSecret !== iv.clientSecret ||
+      requestTimeout !== iv.requestTimeout ||
+      JSON.stringify(envVars) !== JSON.stringify(iv.envVars) ||
+      JSON.stringify(customHeaders) !== JSON.stringify(iv.customHeaders)
+    );
+  })();
+
   return {
+    // Change detection
+    hasChanges,
+
     // Form data
     name,
     setName,

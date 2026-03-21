@@ -177,6 +177,7 @@ describe("ServerDetailModal", () => {
 
     const input = screen.getByDisplayValue("test-server");
     await user.click(input);
+    await user.type(input, "-edited");
     await user.keyboard("{Enter}");
 
     await waitFor(() => {
@@ -254,6 +255,7 @@ describe("ServerDetailModal", () => {
   });
 
   it("disables the save button while an async save is pending", async () => {
+    const user = userEvent.setup();
     let resolveSubmit:
       | ((value: { ok: boolean; serverName: string }) => void)
       | undefined;
@@ -265,6 +267,10 @@ describe("ServerDetailModal", () => {
     );
 
     render(<ServerDetailModal {...defaultProps} onSubmit={onSubmit} />);
+
+    // Make a change so the save button becomes enabled
+    const input = screen.getByDisplayValue("test-server");
+    await user.type(input, "-edited");
 
     const saveButton = screen.getByRole("button", { name: "Save Changes" });
     fireEvent.click(saveButton);
