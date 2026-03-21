@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  getWorkosDevMode,
-  getWorkosRedirectUri,
-} from "../workos-config";
+import { getWorkosDevMode, getWorkosRedirectUri } from "../workos-config";
 
 describe("workos-config", () => {
   beforeEach(() => {

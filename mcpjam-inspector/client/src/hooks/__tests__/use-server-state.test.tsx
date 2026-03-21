@@ -228,7 +228,7 @@ describe("useServerState OAuth callback failures", () => {
   it("detects retryable transport errors after OAuth", () => {
     expect(
       shouldRetryOAuthConnectionFailure(
-        'Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (404).',
+        "Streamable HTTP error: Request timed out. SSE error: SSE error: Non-200 status code (404).",
       ),
     ).toBe(true);
     expect(
@@ -242,7 +242,10 @@ describe("useServerState OAuth callback failures", () => {
     vi.useFakeTimers();
 
     localStorage.setItem("mcp-oauth-pending", "demo-server");
-    localStorage.setItem("mcp-serverUrl-demo-server", "https://example.com/mcp");
+    localStorage.setItem(
+      "mcp-serverUrl-demo-server",
+      "https://example.com/mcp",
+    );
     localStorage.setItem("mcp-oauth-return-hash", "#demo-server");
     window.history.replaceState({}, "", "/oauth/callback?code=test-code");
 
