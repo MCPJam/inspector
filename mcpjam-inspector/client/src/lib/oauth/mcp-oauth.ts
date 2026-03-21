@@ -42,6 +42,19 @@ function clearStoredDiscoveryState(serverName: string): void {
   localStorage.removeItem(getDiscoveryStorageKey(serverName));
 }
 
+function getStoredRegistryServerId(
+  serverName: string | null,
+): string | undefined {
+  if (!serverName) return undefined;
+  try {
+    const raw = localStorage.getItem(`mcp-oauth-config-${serverName}`);
+    if (!raw) return undefined;
+    return JSON.parse(raw).registryServerId;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS.
  * When a registryServerId is provided, token exchange/refresh is routed through
@@ -477,12 +490,7 @@ export async function handleOAuthCallback(
   const serverName = localStorage.getItem("mcp-oauth-pending");
 
   // Read registryServerId from stored OAuth config if present
-  const storedOAuthConfig = serverName
-    ? localStorage.getItem(`mcp-oauth-config-${serverName}`)
-    : null;
-  const registryServerId = storedOAuthConfig
-    ? JSON.parse(storedOAuthConfig).registryServerId
-    : undefined;
+  const registryServerId = getStoredRegistryServerId(serverName);
 
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor(registryServerId);
@@ -655,12 +663,7 @@ export async function refreshOAuthTokens(
   serverName: string,
 ): Promise<OAuthResult> {
   // Read registryServerId from stored OAuth config if present
-  const storedOAuthConfig = localStorage.getItem(
-    `mcp-oauth-config-${serverName}`,
-  );
-  const registryServerId = storedOAuthConfig
-    ? JSON.parse(storedOAuthConfig).registryServerId
-    : undefined;
+  const registryServerId = getStoredRegistryServerId(serverName);
 
   // Install fetch interceptor for OAuth metadata requests
   const interceptedFetch = createOAuthFetchInterceptor(registryServerId);

@@ -611,9 +611,11 @@ export function ServersTab({
           </div>
           <div className="flex gap-3 overflow-x-auto pb-1">
             {featuredRegistryServers.map((server) => (
-              <Card
+              <button
                 key={server._id}
-                className="p-3 flex items-center gap-3 min-w-[220px] max-w-[280px] flex-shrink-0 cursor-pointer hover:bg-accent/50 transition-colors"
+                type="button"
+                aria-label={`Connect ${server.displayName}`}
+                className="p-3 flex items-center gap-3 min-w-[220px] max-w-[280px] flex-shrink-0 rounded-xl border bg-card text-card-foreground hover:bg-accent/50 transition-colors text-left"
                 onClick={() =>
                   onConnect({
                     name: server.displayName,
@@ -645,7 +647,7 @@ export function ServersTab({
                     {server.publisher}
                   </p>
                 </div>
-              </Card>
+              </button>
             ))}
           </div>
         </div>

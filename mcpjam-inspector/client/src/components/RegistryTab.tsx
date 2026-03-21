@@ -83,6 +83,14 @@ export function RegistryTab({
     localStorage.setItem("registry-pending-redirect", server.displayName);
     try {
       await connect(server);
+    } catch (error) {
+      if (
+        localStorage.getItem("registry-pending-redirect") ===
+        server.displayName
+      ) {
+        localStorage.removeItem("registry-pending-redirect");
+      }
+      throw error;
     } finally {
       setConnectingIds((prev) => {
         const next = new Set(prev);

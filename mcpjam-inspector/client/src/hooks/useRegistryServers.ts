@@ -6,7 +6,8 @@ import type { ServerFormData } from "@/shared/types.js";
  * Dev-only mock registry servers for local UI testing.
  * Set to `true` to bypass Convex and render sample cards.
  */
-const DEV_MOCK_REGISTRY = import.meta.env.DEV && true;
+const DEV_MOCK_REGISTRY =
+  import.meta.env.DEV && import.meta.env.VITE_DEV_MOCK_REGISTRY === "true";
 
 const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
   {
@@ -280,7 +281,15 @@ export function useRegistryServers({
     return Array.from(cats).sort();
   }, [enrichedServers]);
 
-  const isLoading = !DEV_MOCK_REGISTRY && registryServers === undefined;
+  const connectionsAreLoading =
+    !DEV_MOCK_REGISTRY &&
+    isAuthenticated &&
+    !!workspaceId &&
+    connections === undefined;
+
+  const isLoading =
+    !DEV_MOCK_REGISTRY &&
+    (registryServers === undefined || connectionsAreLoading);
 
   async function connect(server: RegistryServer) {
     // 1. Record the connection in Convex (only when authenticated with a workspace)

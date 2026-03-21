@@ -73,6 +73,7 @@ describe("RegistryTab", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    localStorage.clear();
     mockConnect.mockResolvedValue(undefined);
     mockDisconnect.mockResolvedValue(undefined);
     mockHookReturn = {
