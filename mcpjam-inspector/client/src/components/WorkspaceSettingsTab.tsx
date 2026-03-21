@@ -80,10 +80,8 @@ export function WorkspaceSettingsTab({
             workspaceName={workspaceName}
             onSelect={(iconName) =>
               onUpdateWorkspace(activeWorkspaceId, { icon: iconName })
-}
-            onRemove={() =>
-              onUpdateWorkspace(activeWorkspaceId, { icon: "" })
             }
+            onRemove={() => onUpdateWorkspace(activeWorkspaceId, { icon: "" })}
             size="lg"
           />
           <div className="flex flex-1 flex-col items-stretch gap-1 pt-2">
@@ -150,9 +148,7 @@ export function WorkspaceSettingsTab({
 
         {/* API Key */}
         <div className="space-y-2">
-          <h2 className="text-sm font-medium text-muted-foreground">
-            API Key
-          </h2>
+          <h2 className="text-sm font-medium text-muted-foreground">API Key</h2>
           <AccountApiKeySection
             workspaceId={convexWorkspaceId}
             workspaceName={workspaceName || null}

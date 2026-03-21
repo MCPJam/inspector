@@ -97,7 +97,11 @@ export function SidebarWorkspaceSelector({
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <WorkspaceIconBadge icon={activeWorkspace?.icon} fallback={initial} size={8} />
+              <WorkspaceIconBadge
+                icon={activeWorkspace?.icon}
+                fallback={initial}
+                size={8}
+              />
               <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold">{workspaceName}</span>
                 {displayMembers.length > 0 && (
@@ -149,7 +153,11 @@ export function SidebarWorkspaceSelector({
                 onClick={() => onSwitchWorkspace(workspace.id)}
               >
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <WorkspaceIconBadge icon={workspace.icon} fallback={workspace.name.charAt(0).toUpperCase()} size={6} />
+                  <WorkspaceIconBadge
+                    icon={workspace.icon}
+                    fallback={workspace.name.charAt(0).toUpperCase()}
+                    size={6}
+                  />
                   <div className="min-w-0 flex-1">
                     <span className="truncate block">{workspace.name}</span>
                   </div>
