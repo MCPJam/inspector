@@ -5,7 +5,7 @@ import {
 } from "@/lib/oauth/oauthUtils";
 import { CheckCircle2, XCircle } from "lucide-react";
 
-function buildElectronDebugCallbackUrl(): string {
+export function buildElectronDebugCallbackUrl(): string {
   const callbackUrl = new URL("mcpjam://oauth/callback");
   callbackUrl.searchParams.set("flow", "debug");
 

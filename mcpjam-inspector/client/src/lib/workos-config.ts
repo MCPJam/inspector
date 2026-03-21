@@ -20,12 +20,15 @@ export function getWorkosRedirectUri(): string {
     (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
   if (typeof window === "undefined") return envRedirect ?? "/callback";
 
+  if ((window as any)?.isElectron) {
+    return envRedirect ?? "mcpjam://oauth/callback";
+  }
+
   const isBrowserHttp =
     window.location.protocol === "http:" ||
     window.location.protocol === "https:";
   if (isBrowserHttp) return `${window.location.origin}/callback`;
   if (envRedirect) return envRedirect;
-  if ((window as any)?.isElectron) return "mcpjam://oauth/callback";
   return `${window.location.origin}/callback`;
 }
 

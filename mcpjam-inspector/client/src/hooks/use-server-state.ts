@@ -74,7 +74,7 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
 }
 
-function buildElectronMcpCallbackUrl(): string | null {
+export function buildElectronMcpCallbackUrl(): string | null {
   if (window.isElectron || window.location.pathname !== "/oauth/callback") {
     return null;
   }
@@ -107,7 +107,9 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-function shouldRetryOAuthConnectionFailure(errorMessage?: string): boolean {
+export function shouldRetryOAuthConnectionFailure(
+  errorMessage?: string,
+): boolean {
   if (!errorMessage) {
     return false;
   }
