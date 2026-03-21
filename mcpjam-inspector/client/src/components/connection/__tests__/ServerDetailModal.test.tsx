@@ -27,34 +27,42 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: (...args: unknown[]) => mockListTools(...args),
 }));
 
-vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
-  isMCPApp: (toolsData: { toolsMetadata?: Record<string, unknown> } | null) =>
-    Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
-      Boolean((meta as Record<string, unknown>)?.["ui.resourceUri"]),
-    ),
-  isOpenAIApp: (
-    toolsData: {
-      toolsMetadata?: Record<string, unknown>;
-    } | null,
-  ) =>
-    Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
-      Boolean(
-        (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
-        !(meta as Record<string, unknown>)?.["ui.resourceUri"],
+vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => {
+  const hasUiResourceUri = (meta: Record<string, unknown>) =>
+    Boolean(
+      ((meta["ui"] as { resourceUri?: unknown } | undefined)?.resourceUri ??
+        meta["ui.resourceUri"]) as unknown,
+    );
+
+  return {
+    isMCPApp: (toolsData: { toolsMetadata?: Record<string, unknown> } | null) =>
+      Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+        hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
       ),
-    ),
-  isOpenAIAppAndMCPApp: (
-    toolsData: {
-      toolsMetadata?: Record<string, unknown>;
-    } | null,
-  ) =>
-    Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
-      Boolean(
-        (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
-        (meta as Record<string, unknown>)?.["ui.resourceUri"],
+    isOpenAIApp: (
+      toolsData: {
+        toolsMetadata?: Record<string, unknown>;
+      } | null,
+    ) =>
+      Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+        Boolean(
+          (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
+          !hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
+        ),
       ),
-    ),
-}));
+    isOpenAIAppAndMCPApp: (
+      toolsData: {
+        toolsMetadata?: Record<string, unknown>;
+      } | null,
+    ) =>
+      Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+        Boolean(
+          (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
+          hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
+        ),
+      ),
+  };
+});
 
 import { ServerDetailModal } from "../ServerDetailModal";
 

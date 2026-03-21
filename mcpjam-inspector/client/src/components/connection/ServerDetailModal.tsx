@@ -390,14 +390,20 @@ export function ServerDetailModal({
                     <div className="flex items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground">
                       Connect to view tools metadata
                     </div>
-                  ) : isLoadingTools ? (
+                  ) : isLoadingTools || (!toolsData && !toolsLoadError) ? (
                     <div className="flex items-center justify-center gap-2 h-full min-h-[120px] text-sm text-muted-foreground">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       Loading tools metadata...
                     </div>
                   ) : toolsLoadError ? (
-                    <div className="flex items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground text-center">
-                      Failed to load tools metadata
+                    <div className="flex flex-col items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground text-center gap-1">
+                      <span>Failed to load tools metadata</span>
+                      {toolsLoadError instanceof Error &&
+                        toolsLoadError.message && (
+                          <span className="text-xs max-w-[400px] truncate">
+                            {toolsLoadError.message.slice(0, 200)}
+                          </span>
+                        )}
                     </div>
                   ) : (
                     <ServerInfoToolsMetadataContent toolsData={toolsData} />
