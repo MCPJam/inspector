@@ -11,6 +11,12 @@ import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import { HOSTED_MODE } from "./lib/config";
+import {
+  getWorkosClientId,
+  getWorkosClientOptions,
+  getWorkosDevMode,
+  getWorkosRedirectUri,
+} from "./lib/workos-config";
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -37,32 +43,9 @@ if (isInIframe) {
   );
 } else {
   const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
-  const workosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as string;
-  const workosDevMode = (() => {
-    const explicit = import.meta.env.VITE_WORKOS_DEV_MODE as string | undefined;
-    if (explicit === "true") return true;
-    if (explicit === "false") return false;
-    if (import.meta.env.DEV) return true;
-    // Match SDK default: enable devMode on localhost so refresh tokens
-    // persist in localStorage across hard refreshes for local prod builds.
-    return (
-      location.hostname === "localhost" || location.hostname === "127.0.0.1"
-    );
-  })();
-
-  // Compute redirect URI safely across environments
-  const workosRedirectUri = (() => {
-    const envRedirect =
-      (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined;
-    if (typeof window === "undefined") return envRedirect ?? "/callback";
-    const isBrowserHttp =
-      window.location.protocol === "http:" ||
-      window.location.protocol === "https:";
-    if (isBrowserHttp) return `${window.location.origin}/callback`;
-    if (envRedirect) return envRedirect;
-    if ((window as any)?.isElectron) return "mcpjam://oauth/callback";
-    return `${window.location.origin}/callback`;
-  })();
+  const workosClientId = getWorkosClientId();
+  const workosDevMode = getWorkosDevMode();
+  const workosRedirectUri = getWorkosRedirectUri();
 
   // Warn if critical env vars are missing
   if (!convexUrl) {
@@ -76,29 +59,7 @@ if (isInIframe) {
     );
   }
 
-  const workosClientOptions = (() => {
-    const envApiHostname = import.meta.env.VITE_WORKOS_API_HOSTNAME as
-      | string
-      | undefined;
-    if (envApiHostname) {
-      return { apiHostname: envApiHostname };
-    }
-
-    // Dev mode: proxy through Vite dev server to avoid CORS
-    if (typeof window === "undefined") return {};
-    const disableProxy =
-      (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as
-        | string
-        | undefined) === "true";
-    if (!import.meta.env.DEV || disableProxy) return {};
-    const { protocol, hostname, port } = window.location;
-    const parsedPort = port ? Number(port) : undefined;
-    return {
-      apiHostname: hostname,
-      https: protocol === "https:",
-      ...(parsedPort ? { port: parsedPort } : {}),
-    };
-  })();
+  const workosClientOptions = getWorkosClientOptions();
 
   const convex = new ConvexReactClient(convexUrl);
 

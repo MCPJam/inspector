@@ -17,8 +17,6 @@ export class DebugMCPOAuthClientProvider implements OAuthClientProvider {
   }
 
   get redirectUrl(): string {
-    // For debugging, we can also try using a simpler redirect URL
-    // or fall back to a localhost URL if the current origin has issues
     const origin = window.location.origin;
 
     return `${origin}/oauth/callback/debug`;

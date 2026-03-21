@@ -240,18 +240,26 @@ describe("guest-session module", () => {
     });
 
     it("uses session with exactly 5 min + 1ms remaining (valid)", async () => {
-      const session = {
-        guestId: "edge-guest",
-        token: "edge-token",
-        expiresAt: Date.now() + 5 * 60 * 1000 + 1, // 5 min + 1ms buffer
-      };
+      vi.useFakeTimers();
+      const now = new Date("2026-03-20T22:37:53.000Z");
+      vi.setSystemTime(now);
 
-      vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
+      try {
+        const session = {
+          guestId: "edge-guest",
+          token: "edge-token",
+          expiresAt: now.getTime() + 5 * 60 * 1000 + 1, // 5 min + 1ms buffer
+        };
 
-      const result = await guestSession.getOrCreateGuestSession();
+        vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
 
-      expect(result).toEqual(session);
-      expect(global.fetch).not.toHaveBeenCalled();
+        const result = await guestSession.getOrCreateGuestSession();
+
+        expect(result).toEqual(session);
+        expect(global.fetch).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 

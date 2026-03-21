@@ -1,6 +1,5 @@
 import { FormEvent, useMemo, useState, useEffect, useCallback } from "react";
 import { ArrowDown } from "lucide-react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
@@ -20,6 +19,7 @@ import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
+import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -100,7 +100,7 @@ export function ChatTabV2({
   reasoningDisplayMode = "inline",
   onOAuthRequired,
 }: ChatTabProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useElectronHostedAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
   const appState = useSharedAppState();
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =

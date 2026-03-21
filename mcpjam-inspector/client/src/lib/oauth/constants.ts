@@ -11,24 +11,10 @@ export const MCPJAM_CLIENT_ID =
   "https://www.mcpjam.com/.well-known/oauth/client-metadata.json";
 
 export function getRedirectUri(): string {
-  // Check if running in Electron with custom protocol support
-  if (typeof window !== "undefined" && (window as any).electron) {
-    return "mcpjam://oauth/callback";
-  }
-
-  // In browser, detect current port
   if (typeof window !== "undefined") {
-    const port = window.location.port;
-
-    // Production (no port or port 443)
-    if (!port || port === "443") {
-      return "https://www.mcpjam.com/oauth/callback";
-    }
-
-    // Local development - use detected port
-    return `http://localhost:${port}/oauth/callback`;
+    return `${window.location.origin}/oauth/callback/debug`;
   }
 
   // Default fallback
-  return "http://localhost:6274/oauth/callback";
+  return "http://localhost:6274/oauth/callback/debug";
 }

@@ -21,6 +21,14 @@ interface StoredOAuthDiscoveryState {
   discoveryState: OAuthDiscoveryState;
 }
 
+function getMCPOAuthRedirectUri(): string {
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/oauth/callback`;
+  }
+
+  return "http://localhost:6274/oauth/callback";
+}
+
 function getDiscoveryStorageKey(serverName: string): string {
   return `mcp-discovery-${serverName}`;
 }
@@ -142,7 +150,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   ) {
     this.serverName = serverName;
     this.serverUrl = serverUrl;
-    this.redirectUri = `${window.location.origin}/oauth/callback`;
+    this.redirectUri = getMCPOAuthRedirectUri();
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
   }
@@ -260,6 +268,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     if (window.location.hash) {
       localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
     }
+
+    if (window.isElectron && window.electronAPI?.app?.openExternal) {
+      await window.electronAPI.app.openExternal(authorizationUrl.toString());
+      return;
+    }
+
     window.location.href = authorizationUrl.toString();
   }
 

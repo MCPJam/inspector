@@ -64,6 +64,25 @@ export const OAuthAuthorizationModal = ({
     if (open && !hasOpenedRef.current) {
       hasOpenedRef.current = true;
 
+      if (window.isElectron && window.electronAPI?.app?.openExternal) {
+        let cancelled = false;
+
+        void window.electronAPI.app
+          .openExternal(authorizationUrl)
+          .catch((error) => {
+            console.error("[OAuth Popup] Failed to open system browser:", error);
+          })
+          .finally(() => {
+            if (cancelled) return;
+            onOpenChange(false);
+            hasOpenedRef.current = false;
+          });
+
+        return () => {
+          cancelled = true;
+        };
+      }
+
       const width = 600;
       const height = 700;
       const left = window.screenX + (window.outerWidth - width) / 2;
@@ -71,7 +90,6 @@ export const OAuthAuthorizationModal = ({
 
       // Use unique window name each time to prevent reusing old popup with stale auth code
       const uniqueWindowName = `oauth_authorization_${Date.now()}`;
-      console.log("authorizationUrl", authorizationUrl);
       popupRef.current = window.open(
         authorizationUrl,
         uniqueWindowName,

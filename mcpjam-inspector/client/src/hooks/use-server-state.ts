@@ -74,6 +74,60 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
 }
 
+function buildElectronMcpCallbackUrl(): string | null {
+  if (window.isElectron || window.location.pathname !== "/oauth/callback") {
+    return null;
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  if (!params.get("code") && !params.get("error")) {
+    return null;
+  }
+
+  const pendingServerName = localStorage.getItem("mcp-oauth-pending")?.trim();
+  if (pendingServerName) {
+    return null;
+  }
+
+  const callbackUrl = new URL("mcpjam://oauth/callback");
+  callbackUrl.searchParams.set("flow", "mcp");
+
+  for (const [key, value] of params.entries()) {
+    callbackUrl.searchParams.append(key, value);
+  }
+
+  return callbackUrl.toString();
+}
+
+const OAUTH_CONNECTION_RETRY_DELAY_MS = 1500;
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function shouldRetryOAuthConnectionFailure(errorMessage?: string): boolean {
+  if (!errorMessage) {
+    return false;
+  }
+
+  const normalized = errorMessage.toLowerCase();
+  if (
+    normalized.includes("authentication failed") ||
+    normalized.includes("invalid_client") ||
+    normalized.includes("unauthorized_client")
+  ) {
+    return false;
+  }
+
+  return (
+    normalized.includes("request timed out") ||
+    normalized.includes("streamable http error") ||
+    normalized.includes("sse error: sse error: non-200 status code (404)")
+  );
+}
+
 interface LoggerLike {
   info: (message: string, meta?: Record<string, unknown>) => void;
   warn: (message: string, meta?: Record<string, unknown>) => void;
@@ -410,6 +464,40 @@ export function useServerState({
     [dispatch, fetchAndStoreInitInfo],
   );
 
+  const testConnectionAfterOAuth = useCallback(
+    async (serverConfig: HttpServerConfig, serverName: string) => {
+      try {
+        const firstResult = await testConnection(serverConfig, serverName);
+        if (
+          firstResult.success ||
+          !shouldRetryOAuthConnectionFailure(firstResult.error)
+        ) {
+          return firstResult;
+        }
+
+        logger.warn("Retrying OAuth connection after transient transport error", {
+          serverName,
+          error: firstResult.error,
+        });
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown connection error";
+        if (!shouldRetryOAuthConnectionFailure(errorMessage)) {
+          throw error;
+        }
+
+        logger.warn("Retrying OAuth connection after transport exception", {
+          serverName,
+          error: errorMessage,
+        });
+      }
+
+      await delay(OAUTH_CONNECTION_RETRY_DELAY_MS);
+      return testConnection(serverConfig, serverName);
+    },
+    [logger],
+  );
+
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
@@ -430,7 +518,7 @@ export function useServerState({
           });
 
           try {
-            const connectionResult = await testConnection(
+            const connectionResult = await testConnectionAfterOAuth(
               result.serverConfig,
               serverName,
             );
@@ -504,7 +592,13 @@ export function useServerState({
         }
       }
     },
-    [dispatch, failPendingOAuthConnection, logger, storeInitInfo],
+    [
+      dispatch,
+      failPendingOAuthConnection,
+      logger,
+      storeInitInfo,
+      testConnectionAfterOAuth,
+    ],
   );
 
   useEffect(() => {
@@ -527,9 +621,14 @@ export function useServerState({
     const code = urlParams.get("code");
     const error = urlParams.get("error");
     const errorDescription = urlParams.get("error_description");
+    const electronCallbackUrl = buildElectronMcpCallbackUrl();
     const hostedOAuthCallbackContext = HOSTED_MODE
       ? getHostedOAuthCallbackContext()
       : null;
+    if (electronCallbackUrl) {
+      window.location.replace(electronCallbackUrl);
+      return;
+    }
     if (code) {
       if (hostedOAuthCallbackContext) {
         return; // Handled by App.tsx hosted OAuth interception

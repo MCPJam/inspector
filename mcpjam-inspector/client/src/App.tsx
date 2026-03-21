@@ -1,6 +1,5 @@
 import { useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -30,6 +29,7 @@ import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
+import { useElectronHostedAuth } from "./hooks/useElectronHostedAuth";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
@@ -120,7 +120,7 @@ export default function App() {
     signIn,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useAuth();
+  } = useElectronHostedAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
     HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,

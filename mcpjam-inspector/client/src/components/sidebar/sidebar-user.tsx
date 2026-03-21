@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useQuery } from "convex/react";
 import {
   DropdownMenu,
@@ -32,6 +31,7 @@ import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { HOSTED_MODE } from "@/lib/config";
 import { Button } from "@/components/ui/button";
+import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 
 export function SidebarUser({
   activeOrganizationId,
@@ -39,7 +39,7 @@ export function SidebarUser({
   activeOrganizationId?: string;
 }) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signIn, signOut } = useAuth();
+  const { user, signIn, signOut } = useElectronHostedAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
