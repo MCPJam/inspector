@@ -56,6 +56,7 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  useQuery: () => undefined,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
