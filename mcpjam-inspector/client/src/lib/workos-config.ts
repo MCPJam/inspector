@@ -12,9 +12,7 @@ export function getWorkosDevMode(): boolean {
   if (explicit === "false") return false;
   if (import.meta.env.DEV) return true;
 
-  return (
-    location.hostname === "localhost" || location.hostname === "127.0.0.1"
-  );
+  return location.hostname === "localhost" || location.hostname === "127.0.0.1";
 }
 
 export function getWorkosRedirectUri(): string {
@@ -41,9 +39,8 @@ export function getWorkosClientOptions(): WorkosClientOptions {
 
   if (typeof window === "undefined") return {};
   const disableProxy =
-    (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as
-      | string
-      | undefined) === "true";
+    (import.meta.env.VITE_WORKOS_DISABLE_LOCAL_PROXY as string | undefined) ===
+    "true";
   if (!import.meta.env.DEV || disableProxy) return {};
 
   const { protocol, hostname, port } = window.location;

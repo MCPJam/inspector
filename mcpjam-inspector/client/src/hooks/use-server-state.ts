@@ -475,10 +475,13 @@ export function useServerState({
           return firstResult;
         }
 
-        logger.warn("Retrying OAuth connection after transient transport error", {
-          serverName,
-          error: firstResult.error,
-        });
+        logger.warn(
+          "Retrying OAuth connection after transient transport error",
+          {
+            serverName,
+            error: firstResult.error,
+          },
+        );
       } catch (error) {
         const errorMessage =
           error instanceof Error ? error.message : "Unknown connection error";

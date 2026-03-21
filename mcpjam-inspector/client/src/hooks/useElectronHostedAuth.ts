@@ -65,12 +65,14 @@ export function useElectronHostedAuth() {
   );
 
   const signIn = useCallback(
-    (opts?: Parameters<typeof auth.signIn>[0]) => openHostedAuth("signIn", opts),
+    (opts?: Parameters<typeof auth.signIn>[0]) =>
+      openHostedAuth("signIn", opts),
     [openHostedAuth],
   );
 
   const signUp = useCallback(
-    (opts?: Parameters<typeof auth.signUp>[0]) => openHostedAuth("signUp", opts),
+    (opts?: Parameters<typeof auth.signUp>[0]) =>
+      openHostedAuth("signUp", opts),
     [openHostedAuth],
   );
 

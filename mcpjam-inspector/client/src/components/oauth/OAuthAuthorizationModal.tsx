@@ -70,7 +70,10 @@ export const OAuthAuthorizationModal = ({
         void window.electronAPI.app
           .openExternal(authorizationUrl)
           .catch((error) => {
-            console.error("[OAuth Popup] Failed to open system browser:", error);
+            console.error(
+              "[OAuth Popup] Failed to open system browser:",
+              error,
+            );
           })
           .finally(() => {
             if (cancelled) return;

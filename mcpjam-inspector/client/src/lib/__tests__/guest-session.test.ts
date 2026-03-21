@@ -251,7 +251,9 @@ describe("guest-session module", () => {
           expiresAt: now.getTime() + 5 * 60 * 1000 + 1, // 5 min + 1ms buffer
         };
 
-        vi.mocked(localStorage.getItem).mockReturnValue(JSON.stringify(session));
+        vi.mocked(localStorage.getItem).mockReturnValue(
+          JSON.stringify(session),
+        );
 
         const result = await guestSession.getOrCreateGuestSession();
 
