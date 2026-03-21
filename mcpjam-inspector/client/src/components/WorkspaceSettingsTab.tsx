@@ -1,11 +1,11 @@
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { SettingsSection } from "./setting/SettingsSection";
-import { SettingsRow } from "./setting/SettingsRow";
 import { EditableText } from "./ui/editable-text";
 import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
+import { WorkspaceIconPicker } from "./workspace/WorkspaceEmojiPicker";
+import { WorkspaceStatsRow } from "./workspace/WorkspaceStatsRow";
 import { Button } from "./ui/button";
 import {
   AlertDialog,
@@ -68,48 +68,60 @@ export function WorkspaceSettingsTab({
       ? true
       : currentMember?.role === "owner" || currentMember?.role === "admin";
 
+  const localServerCount = Object.keys(workspaceServers).length;
+
   return (
     <div className="h-full overflow-y-auto">
-      <div className="p-10 space-y-8 max-w-3xl">
-        <h1 className="text-2xl font-semibold">Workspace Settings</h1>
+      <div className="p-8 max-w-4xl space-y-8">
+        {/* Hero — Asana-style header */}
+        <div className="flex items-start gap-6">
+          <WorkspaceIconPicker
+            currentIcon={workspace?.icon}
+            workspaceName={workspaceName}
+            onSelect={(iconName) =>
+              onUpdateWorkspace(activeWorkspaceId, { icon: iconName })
+}
+            onRemove={() =>
+              onUpdateWorkspace(activeWorkspaceId, { icon: "" })
+            }
+            size="lg"
+          />
+          <div className="flex flex-1 flex-col items-stretch gap-1 pt-2">
+            <EditableText
+              value={workspaceName}
+              onSave={(newName) =>
+                onUpdateWorkspace(activeWorkspaceId, { name: newName })
+              }
+              disabled={!canManageWorkspaceSettings}
+              className="w-full text-3xl font-semibold -ml-2"
+              placeholder="Workspace name"
+            />
+            <EditableText
+              value={workspaceDescription}
+              onSave={(newDesc) =>
+                onUpdateWorkspace(activeWorkspaceId, {
+                  description: newDesc,
+                })
+              }
+              disabled={!canManageWorkspaceSettings}
+              className="w-full text-muted-foreground -ml-2"
+              placeholder="Add a description..."
+            />
+          </div>
+        </div>
 
-        {/* General */}
-        <SettingsSection title="General">
-          <SettingsRow
-            label="Name"
-            value={
-              <EditableText
-                value={workspaceName}
-                onSave={(newName) =>
-                  onUpdateWorkspace(activeWorkspaceId, { name: newName })
-                }
-                disabled={!canManageWorkspaceSettings}
-                className="text-sm"
-                placeholder="Workspace name"
-              />
-            }
-          />
-          <SettingsRow
-            label="Description"
-            value={
-              <EditableText
-                value={workspaceDescription}
-                onSave={(newDesc) =>
-                  onUpdateWorkspace(activeWorkspaceId, {
-                    description: newDesc,
-                  })
-                }
-                disabled={!canManageWorkspaceSettings}
-                className="text-sm"
-                placeholder="Add a description..."
-              />
-            }
-          />
-        </SettingsSection>
+        {/* Stats */}
+        <WorkspaceStatsRow
+          convexWorkspaceId={convexWorkspaceId}
+          localServerCount={localServerCount}
+        />
 
         {/* Members & Sharing */}
         {isAuthenticated && (
-          <SettingsSection title="Members & Sharing">
+          <div className="space-y-2">
+            <h2 className="text-sm font-medium text-muted-foreground">
+              Members & Sharing
+            </h2>
             <div className="flex items-center gap-2 px-4 py-3 rounded-md border border-border/40">
               {user && (
                 <WorkspaceMembersFacepile
@@ -133,19 +145,25 @@ export function WorkspaceSettingsTab({
                 onWorkspaceShared={onWorkspaceShared}
               />
             </div>
-          </SettingsSection>
+          </div>
         )}
 
         {/* API Key */}
-        <SettingsSection title="API Key">
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            API Key
+          </h2>
           <AccountApiKeySection
             workspaceId={convexWorkspaceId}
             workspaceName={workspaceName || null}
           />
-        </SettingsSection>
+        </div>
 
         {/* Danger Zone */}
-        <SettingsSection title="Danger Zone">
+        <div className="space-y-2">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            Danger Zone
+          </h2>
           <div className="flex items-center justify-between px-4 py-3 rounded-md border border-destructive/30">
             <div className="flex flex-col">
               <span className="text-sm font-medium">Delete workspace</span>
@@ -193,7 +211,7 @@ export function WorkspaceSettingsTab({
               </AlertDialogContent>
             </AlertDialog>
           </div>
-        </SettingsSection>
+        </div>
       </div>
     </div>
   );

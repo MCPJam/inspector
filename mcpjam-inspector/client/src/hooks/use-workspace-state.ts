@@ -141,6 +141,7 @@ export function useWorkspaceState({
             id: rw._id,
             name: rw.name,
             description: rw.description,
+            icon: rw.icon,
             servers: deserializedServers,
             createdAt: new Date(rw.createdAt),
             updatedAt: new Date(rw.updatedAt),
@@ -334,6 +335,7 @@ export function useWorkspaceState({
           if (updates.description !== undefined) {
             updateData.description = updates.description;
           }
+          if (updates.icon !== undefined) updateData.icon = updates.icon;
           if (updates.visibility !== undefined) {
             updateData.visibility = updates.visibility;
           }
