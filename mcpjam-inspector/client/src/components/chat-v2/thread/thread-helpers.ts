@@ -132,7 +132,9 @@ export function isDataPart(part: AnyPart): boolean {
 }
 
 export function getDataLabel(type: string): string {
-  return type === "data-" ? "Data" : `Data (${type.replace(/^data-/, "")})`;
+  if (type === "data-") return "Data";
+  if (type === "data-result") return "Result";
+  return `Data (${type.replace(/^data-/, "")})`;
 }
 
 export function getToolNameFromType(type: string | undefined): string {

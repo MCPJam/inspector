@@ -16,6 +16,7 @@ import {
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import {
   MCPServerConfig,
   type MCPReadResourceResult,
@@ -59,6 +60,33 @@ function buildUriFromTemplate(
 ): string {
   const template = parseTemplate(uriTemplate);
   return template.expand(params);
+}
+
+function renderResourceTextContent(
+  text: string,
+  preClassName: string,
+  jsonWrapperClassName: string,
+) {
+  const display = extractDisplayFromValue(text);
+
+  if (display?.kind === "json") {
+    return (
+      <div className={jsonWrapperClassName}>
+        <JsonEditor
+          value={display.value}
+          readOnly
+          showToolbar={false}
+          height="100%"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <pre className={preClassName}>
+      {display?.kind === "text" ? display.text : text}
+    </pre>
+  );
 }
 
 export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
@@ -652,9 +680,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           {resourceContent?.contents?.map((content: any, index: number) => (
             <div key={index} className="flex-1 min-h-0">
               {content.type === "text" ? (
-                <pre className="h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto">
-                  {content.text}
-                </pre>
+                renderResourceTextContent(
+                  content.text,
+                  "h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto",
+                  "h-full",
+                )
               ) : (
                 <div className="h-full">
                   <JsonEditor
@@ -710,9 +740,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           {templateContent?.contents?.map((content: any, index: number) => (
             <div key={index} className="flex-1 min-h-0">
               {content.type === "text" ? (
-                <pre className="h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto">
-                  {content.text}
-                </pre>
+                renderResourceTextContent(
+                  content.text,
+                  "h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto",
+                  "h-full",
+                )
               ) : (
                 <div className="h-full">
                   <JsonEditor

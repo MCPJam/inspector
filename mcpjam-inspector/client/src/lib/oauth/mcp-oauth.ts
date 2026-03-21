@@ -11,6 +11,7 @@ import type { HttpServerConfig } from "@mcpjam/sdk";
 import { generateRandomString } from "./state-machines/shared/helpers";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
+import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -252,6 +253,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL) {
+    captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
     // Store current hash to restore after OAuth callback
@@ -514,20 +516,39 @@ export async function handleOAuthCallback(
 /**
  * Gets stored tokens for a server, including client_id from client information
  */
-export function getStoredTokens(serverName: string): any {
+export interface StoredTokensState {
+  tokens: any;
+  isInvalid: boolean;
+}
+
+export function getStoredTokensState(serverName: string): StoredTokensState {
   const tokens = localStorage.getItem(`mcp-tokens-${serverName}`);
   const clientInfo = localStorage.getItem(`mcp-client-${serverName}`);
   // TODO: Maybe we should move clientID away from the token info? Not sure if clientID is bonded to token
-  if (!tokens) return undefined;
+  if (!tokens) return { tokens: undefined, isInvalid: false };
 
-  const tokensJson = JSON.parse(tokens);
-  const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
+  try {
+    const tokensJson = JSON.parse(tokens);
+    const clientJson = clientInfo ? JSON.parse(clientInfo) : {};
 
-  // Merge tokens with client_id from client information
-  return {
-    ...tokensJson,
-    client_id: clientJson.client_id || tokensJson.client_id,
-  };
+    // Merge tokens with client_id from client information
+    return {
+      tokens: {
+        ...tokensJson,
+        client_id: clientJson.client_id || tokensJson.client_id,
+      },
+      isInvalid: false,
+    };
+  } catch {
+    return {
+      tokens: undefined,
+      isInvalid: true,
+    };
+  }
+}
+
+export function getStoredTokens(serverName: string): any {
+  return getStoredTokensState(serverName).tokens;
 }
 
 /**

@@ -3,6 +3,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { PromptsTab } from "../PromptsTab";
 import type { MCPServerConfig } from "@mcpjam/sdk";
 
+const { mockJsonEditor } = vi.hoisted(() => ({
+  mockJsonEditor: vi.fn((props: any) => (
+    <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
+  )),
+}));
+
 // Mock APIs
 const mockListPrompts = vi.fn();
 const mockGetPrompt = vi.fn();
@@ -35,6 +41,10 @@ vi.mock("../ui/scroll-area", () => ({
   ),
 }));
 
+vi.mock("@/components/ui/json-editor", () => ({
+  JsonEditor: (props: any) => mockJsonEditor(props),
+}));
+
 describe("PromptsTab", () => {
   const createServerConfig = (): MCPServerConfig =>
     ({
@@ -45,6 +55,7 @@ describe("PromptsTab", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockJsonEditor.mockClear();
     mockListPrompts.mockResolvedValue([]);
     mockGetPrompt.mockResolvedValue({ content: null });
   });
@@ -254,6 +265,106 @@ describe("PromptsTab", () => {
       await waitFor(() => {
         expect(screen.getByText("Prompt not found")).toBeInTheDocument();
       });
+    });
+
+    it("renders JSON string responses with JsonEditor", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([{ name: "json-prompt" }]);
+      mockGetPrompt.mockResolvedValue({
+        content: '{"users":[{"id":"1"}],"hasNextPage":false}',
+      });
+
+      render(
+        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("json-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("json-prompt"));
+
+      await waitFor(() => {
+        expect(mockJsonEditor).toHaveBeenCalled();
+      });
+
+      expect(mockJsonEditor.mock.calls.at(-1)?.[0]).toMatchObject({
+        value: { users: [{ id: "1" }], hasNextPage: false },
+      });
+    });
+
+    it("keeps plain text prompt responses as text", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([{ name: "text-prompt" }]);
+      mockGetPrompt.mockResolvedValue({ content: "Hello from prompt" });
+
+      render(
+        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("text-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("text-prompt"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Hello from prompt")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
+    });
+
+    it("preserves whitespace-only prompt responses as text", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([{ name: "blank-prompt" }]);
+      mockGetPrompt.mockResolvedValue({ content: "   \n\n" });
+
+      const { container } = render(
+        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("blank-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("blank-prompt"));
+
+      await waitFor(() => {
+        const pre = container.querySelector("pre");
+        expect(pre).not.toBeNull();
+        expect(pre?.textContent).toBe("   \n\n");
+      });
+
+      expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
+    });
+
+    it("preserves empty-string prompt responses as text", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([{ name: "empty-prompt" }]);
+      mockGetPrompt.mockResolvedValue({ content: "" });
+
+      const { container } = render(
+        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("empty-prompt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("empty-prompt"));
+
+      await waitFor(() => {
+        const pre = container.querySelector("pre");
+        expect(pre).not.toBeNull();
+        expect(pre?.textContent).toBe("");
+      });
+
+      expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
     });
   });
 

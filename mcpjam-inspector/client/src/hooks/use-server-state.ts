@@ -95,6 +95,11 @@ interface UseServerStateParams {
   logger: LoggerLike;
 }
 
+export interface ServerUpdateResult {
+  ok: boolean;
+  serverName: string;
+}
+
 export function useServerState({
   appState,
   dispatch,
@@ -1436,11 +1441,11 @@ export function useServerState({
       originalServerName: string,
       formData: ServerFormData,
       skipAutoConnect?: boolean,
-    ) => {
+    ): Promise<ServerUpdateResult> => {
       const nextServerName = formData.name.trim();
       if (!nextServerName) {
         toast.error("Server name is required");
-        return;
+        return { ok: false, serverName: originalServerName };
       }
       const isRename = nextServerName !== originalServerName;
       const activeWorkspaceServers =
@@ -1449,7 +1454,7 @@ export function useServerState({
         toast.error(
           `A server named "${nextServerName}" already exists. Choose a different name.`,
         );
-        return;
+        return { ok: false, serverName: originalServerName };
       }
       const originalServer =
         appState.servers[originalServerName] ??
@@ -1508,7 +1513,7 @@ export function useServerState({
           setSelectedServer(nextServerName);
         }
         toast.success("Server configuration updated");
-        return;
+        return { ok: true, serverName: nextServerName };
       }
 
       const hadOAuthTokens = originalServer?.oauthTokens != null;
@@ -1540,7 +1545,7 @@ export function useServerState({
             });
             await storeInitInfo(originalServerName, result.initInfo);
             toast.success("Server configuration updated successfully!");
-            return;
+            return { ok: true, serverName: originalServerName };
           }
           console.warn(
             "OAuth connection test failed, falling back to full reconnect",
@@ -1572,6 +1577,7 @@ export function useServerState({
       ) {
         setSelectedServer(nextServerName);
       }
+      return { ok: true, serverName: nextServerName };
     },
     [
       appState.servers,

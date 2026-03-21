@@ -7,7 +7,7 @@
 
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
+import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 
 type DeterministicToolState = "output-available" | "output-error";
 
@@ -89,11 +89,17 @@ export function createDeterministicToolMessages(
         text: `Tool error: ${options?.errorText ?? "Unknown error"}`,
       });
     } else {
-      const resultText = extractTextFromToolResult(result);
-      if (resultText) {
+      const display = extractDisplayFromToolResult(result);
+      if (display?.kind === "json") {
+        assistantParts.push({
+          type: "data-result",
+          data: display.value,
+          autoHeight: true,
+        } as any);
+      } else if (display?.kind === "text") {
         assistantParts.push({
           type: "text",
-          text: resultText,
+          text: display.text,
         });
       }
     }
