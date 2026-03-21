@@ -12,7 +12,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { useAppState } from "@/hooks/use-app-state";
 import {
   useAiProviderKeys,
   type ProviderTokens,
@@ -42,9 +41,11 @@ import type {
   ExpectedToolCall,
 } from "./eval-runner/types";
 import { useSharedAppState } from "@/state/app-state-context";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
+  organizationId: string;
   inline?: boolean;
   onSuccess?: (suiteId?: string) => void;
   preselectedServer?: string;
@@ -97,6 +98,7 @@ const validateExpectedToolCalls = (toolCalls: ExpectedToolCall[]): boolean => {
 
 export function EvalRunner({
   availableModels,
+  organizationId,
   inline = false,
   onSuccess,
   preselectedServer,
@@ -437,9 +439,7 @@ export function EvalRunner({
     } catch (error) {
       console.error("Failed to generate tests:", error);
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to generate test cases",
+        getBillingErrorMessage(error, "Failed to generate test cases"),
       );
     } finally {
       setIsGenerating(false);
@@ -514,9 +514,7 @@ export function EvalRunner({
     } catch (error) {
       console.error("Failed to generate negative tests:", error);
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to generate negative test cases",
+        getBillingErrorMessage(error, "Failed to generate negative test cases"),
       );
     } finally {
       setIsGeneratingNegativeTests(false);
@@ -622,6 +620,7 @@ export function EvalRunner({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          organizationId,
           suiteName: suiteName.trim(),
           suiteDescription: suiteDescription.trim() || undefined,
           tests: expandedTests,
@@ -666,9 +665,7 @@ export function EvalRunner({
       setShowNameError(false);
       setCurrentStep(3);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to start evals",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to start evals"));
     } finally {
       setIsSubmitting(false);
     }

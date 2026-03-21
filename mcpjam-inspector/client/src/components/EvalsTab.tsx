@@ -23,12 +23,14 @@ import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface EvalsTabProps {
   selectedServer?: string;
+  organizationId?: string | null;
 }
 
-export function EvalsTab({ selectedServer }: EvalsTabProps) {
+export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
 
@@ -98,6 +100,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     selectedSuiteId: null,
     deletingSuiteId: null,
     workspaceId: null,
+    organizationId: organizationId ?? null,
   });
 
   // Check if selected server is valid and connected
@@ -132,6 +135,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     selectedSuiteId: serverSuiteId,
     deletingSuiteId: handlers.deletingSuiteId,
     workspaceId: null,
+    organizationId: organizationId ?? null,
   });
 
   // Use queries for rendering
@@ -181,8 +185,13 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
 
     // Create suite if it doesn't exist
     if (!suiteId && selectedServer && isServerConnected) {
+      if (!organizationId) {
+        toast.error("Select an organization before creating eval suites.");
+        return;
+      }
       try {
         const newSuite = await mutations.createTestSuiteMutation({
+          organizationId,
           name: selectedServer,
           description: `Test suite for ${selectedServer}`,
           environment: { servers: [selectedServer] },
@@ -190,7 +199,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
         suiteId = newSuite?._id;
       } catch (err) {
         console.error("Failed to create suite:", err);
-        toast.error("Failed to create test case. Please try again.");
+        toast.error(getBillingErrorMessage(err, "Failed to create test case."));
         return;
       }
     }
@@ -224,8 +233,13 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
 
     // Create suite if it doesn't exist
     if (!suiteId) {
+      if (!organizationId) {
+        toast.error("Select an organization before creating eval suites.");
+        return;
+      }
       try {
         const newSuite = await mutations.createTestSuiteMutation({
+          organizationId,
           name: selectedServer,
           description: `Test suite for ${selectedServer}`,
           environment: { servers: [selectedServer] },
@@ -233,7 +247,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
         suiteId = newSuite?._id;
       } catch (err) {
         console.error("Failed to create suite:", err);
-        toast.error("Failed to generate tests. Please try again.");
+        toast.error(getBillingErrorMessage(err, "Failed to generate tests."));
         return;
       }
     }
@@ -277,6 +291,19 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
     );
   }
 
+  if (!organizationId) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={FlaskConical}
+          title="Select an organization"
+          description="Choose an organization before creating or viewing org-bound eval suites."
+          className="h-[calc(100vh-200px)]"
+        />
+      </div>
+    );
+  }
+
   // Loading overview
   if (isOverviewLoading && enableOverviewQuery && route.type !== "create") {
     return (
@@ -299,6 +326,7 @@ export function EvalsTab({ selectedServer }: EvalsTabProps) {
         <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
           <EvalRunner
             availableModels={availableModels}
+            organizationId={organizationId}
             inline={true}
             onSuccess={handleEvalRunSuccess}
             preselectedServer={selectedServer}
