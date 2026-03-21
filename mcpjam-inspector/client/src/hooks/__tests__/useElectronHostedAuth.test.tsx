@@ -37,6 +37,7 @@ import { useElectronHostedAuth } from "../useElectronHostedAuth";
 describe("useElectronHostedAuth", () => {
   const defaultSignIn = vi.fn();
   const defaultSignUp = vi.fn();
+  const defaultSignOut = vi.fn();
   const openExternal = vi.fn();
 
   beforeEach(() => {
@@ -52,7 +53,7 @@ describe("useElectronHostedAuth", () => {
     useAuthMock.mockReturnValue({
       signIn: defaultSignIn,
       signUp: defaultSignUp,
-      signOut: vi.fn(),
+      signOut: defaultSignOut,
       user: null,
       isLoading: false,
     });
@@ -117,5 +118,48 @@ describe("useElectronHostedAuth", () => {
     expect(defaultSignUp).toHaveBeenCalledWith({ screenHint: "sign-up" });
     expect(createClientMock).not.toHaveBeenCalled();
     expect(openExternal).not.toHaveBeenCalled();
+  });
+
+  it("signs out in the background and returns Electron to a safe in-app path", async () => {
+    const dispose = vi.fn();
+    const clientSignOut = vi.fn().mockResolvedValue(undefined);
+    const authResetListener = vi.fn();
+    createClientMock.mockResolvedValue({
+      getSignInUrl: vi.fn(),
+      getSignUpUrl: vi.fn(),
+      signOut: clientSignOut,
+      dispose,
+    });
+    window.isElectron = true;
+    window.history.replaceState({}, "", "/profile?tab=account#settings");
+    window.addEventListener("electron-auth-reset", authResetListener);
+
+    try {
+      const { result } = renderHook(() => useElectronHostedAuth());
+
+      await act(async () => {
+        await result.current.signOut({
+          returnTo: "http://localhost:8080/callback",
+        } as any);
+      });
+
+      expect(createClientMock).toHaveBeenCalledWith("workos-client-id", {
+        redirectUri: "mcpjam://oauth/callback",
+        devMode: true,
+        apiHostname: "api.workos.test",
+      });
+      expect(clientSignOut).toHaveBeenCalledWith({
+        returnTo: window.location.origin,
+        navigate: false,
+      });
+      expect(window.location.pathname).toBe("/");
+      expect(window.location.search).toBe("");
+      expect(window.location.hash).toBe("");
+      expect(authResetListener).toHaveBeenCalledTimes(1);
+      expect(defaultSignOut).not.toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("electron-auth-reset", authResetListener);
+    }
   });
 });

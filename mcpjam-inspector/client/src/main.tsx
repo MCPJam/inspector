@@ -1,4 +1,4 @@
-import { StrictMode } from "react";
+import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App.jsx";
 import "./index.css";
@@ -17,6 +17,53 @@ import {
   getWorkosDevMode,
   getWorkosRedirectUri,
 } from "./lib/workos-config";
+
+interface RootProvidersProps {
+  convex: ConvexReactClient;
+  workosClientId: string;
+  workosRedirectUri: string;
+  workosDevMode: boolean;
+  workosClientOptions: ReturnType<typeof getWorkosClientOptions>;
+}
+
+function RootProviders({
+  convex,
+  workosClientId,
+  workosRedirectUri,
+  workosDevMode,
+  workosClientOptions,
+}: RootProvidersProps) {
+  const [providerEpoch, setProviderEpoch] = useState(0);
+
+  useEffect(() => {
+    const handleAuthReset = () => {
+      setProviderEpoch((current) => current + 1);
+    };
+
+    window.addEventListener("electron-auth-reset", handleAuthReset);
+    return () => {
+      window.removeEventListener("electron-auth-reset", handleAuthReset);
+    };
+  }, []);
+
+  return (
+    <AuthKitProvider
+      key={`authkit-${providerEpoch}`}
+      clientId={workosClientId}
+      redirectUri={workosRedirectUri}
+      devMode={workosDevMode}
+      {...workosClientOptions}
+    >
+      <ConvexProviderWithAuthKit
+        key={`convex-${providerEpoch}`}
+        client={convex}
+        useAuth={useAuth}
+      >
+        <App />
+      </ConvexProviderWithAuthKit>
+    </AuthKitProvider>
+  );
+}
 
 // Initialize Sentry before React mounts
 initSentry();
@@ -62,19 +109,6 @@ if (isInIframe) {
   const workosClientOptions = getWorkosClientOptions();
 
   const convex = new ConvexReactClient(convexUrl);
-
-  const Providers = (
-    <AuthKitProvider
-      clientId={workosClientId}
-      redirectUri={workosRedirectUri}
-      devMode={workosDevMode}
-      {...workosClientOptions}
-    >
-      <ConvexProviderWithAuthKit client={convex} useAuth={useAuth}>
-        <App />
-      </ConvexProviderWithAuthKit>
-    </AuthKitProvider>
-  );
 
   // Async bootstrap to initialize session token before rendering
   async function bootstrap() {
@@ -146,7 +180,13 @@ if (isInIframe) {
     root.render(
       <StrictMode>
         <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
-          {Providers}
+          <RootProviders
+            convex={convex}
+            workosClientId={workosClientId}
+            workosRedirectUri={workosRedirectUri}
+            workosDevMode={workosDevMode}
+            workosClientOptions={workosClientOptions}
+          />
         </PostHogProvider>
       </StrictMode>,
     );
