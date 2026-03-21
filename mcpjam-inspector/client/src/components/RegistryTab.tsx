@@ -85,8 +85,7 @@ export function RegistryTab({
       await connect(server);
     } catch (error) {
       if (
-        localStorage.getItem("registry-pending-redirect") ===
-        server.displayName
+        localStorage.getItem("registry-pending-redirect") === server.displayName
       ) {
         localStorage.removeItem("registry-pending-redirect");
       }
