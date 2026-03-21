@@ -188,9 +188,7 @@ describe("ShareWorkspaceDialog", () => {
     ).not.toBeInTheDocument();
 
     // Invite form should still be present
-    expect(
-      screen.getByRole("button", { name: "Invite" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
   });
 
   it("shows private workspace with pending invites and role dropdowns", () => {
@@ -251,9 +249,7 @@ describe("ShareWorkspaceDialog", () => {
       screen.queryByText(/Only invited organization members/),
     ).not.toBeInTheDocument();
 
-    expect(
-      screen.getByRole("button", { name: "Invite" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeInTheDocument();
     expect(screen.getByText("Has access")).toBeInTheDocument();
     expect(screen.getByText("Invited")).toBeInTheDocument();
 
@@ -318,9 +314,7 @@ describe("ShareWorkspaceDialog", () => {
     fireEvent.change(screen.getByPlaceholderText("Add people, emails..."), {
       target: { value: "invitee@example.com" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Invite" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
 
     await waitFor(() => {
       expect(mockCreateWorkspace).toHaveBeenCalledWith({

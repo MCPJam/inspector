@@ -111,7 +111,11 @@ export function ShareWorkspaceDialog({
     updateWorkspaceInviteRole,
   } = useWorkspaceMutations();
 
-  const { activeMembers, pendingMembers, canManageMembers: membersCanManage } = useWorkspaceMembers({
+  const {
+    activeMembers,
+    pendingMembers,
+    canManageMembers: membersCanManage,
+  } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: sharedWorkspaceId || null,
   });
@@ -302,7 +306,11 @@ export function ShareWorkspaceDialog({
                   />
                   <DropdownMenu>
                     <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="sm" className="shrink-0 gap-1 mr-1 text-muted-foreground">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 gap-1 mr-1 text-muted-foreground"
+                      >
                         {workspaceRoleLabel(inviteRole)}
                         <ChevronDown className="size-3" />
                       </Button>
@@ -373,7 +381,10 @@ export function ShareWorkspaceDialog({
                     value={currentVisibility}
                     onValueChange={handleVisibilityChange}
                   >
-                    <DropdownMenuRadioItem value="public" className="items-start">
+                    <DropdownMenuRadioItem
+                      value="public"
+                      className="items-start"
+                    >
                       <div>
                         <div className="font-medium flex items-center gap-2">
                           <Globe className="size-4" />{" "}
@@ -394,7 +405,8 @@ export function ShareWorkspaceDialog({
                           <Lock className="size-4" /> Private to members
                         </div>
                         <p className="text-xs text-muted-foreground font-normal">
-                          Only invited members can find and access this workspace.
+                          Only invited members can find and access this
+                          workspace.
                         </p>
                       </div>
                     </DropdownMenuRadioItem>
@@ -498,10 +510,7 @@ export function ShareWorkspaceDialog({
                           <DropdownMenuRadioGroup
                             value={member.workspaceRole}
                             onValueChange={(v) =>
-                              void handleRoleChange(
-                                member,
-                                v as WorkspaceRole,
-                              )
+                              void handleRoleChange(member, v as WorkspaceRole)
                             }
                           >
                             <DropdownMenuRadioItem value="editor">
@@ -583,10 +592,7 @@ export function ShareWorkspaceDialog({
                           <DropdownMenuRadioGroup
                             value={member.workspaceRole}
                             onValueChange={(v) =>
-                              void handleRoleChange(
-                                member,
-                                v as WorkspaceRole,
-                              )
+                              void handleRoleChange(member, v as WorkspaceRole)
                             }
                           >
                             <DropdownMenuRadioItem value="editor">

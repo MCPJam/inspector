@@ -27,10 +27,7 @@ interface WorkspaceSettingsTabProps {
   convexWorkspaceId: string | null;
   workspaceServers: Record<string, ServerWithName>;
   organizationName?: string;
-  onUpdateWorkspace: (
-    workspaceId: string,
-    updates: Partial<Workspace>,
-  ) => void;
+  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
   onDeleteWorkspace: (workspaceId: string) => void;
   onWorkspaceShared: (sharedWorkspaceId: string) => void;
   onNavigateAway: () => void;
@@ -141,11 +138,7 @@ export function WorkspaceSettingsTab({
             </div>
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  disabled={isDefault}
-                >
+                <Button variant="destructive" size="sm" disabled={isDefault}>
                   Delete
                 </Button>
               </AlertDialogTrigger>

@@ -712,9 +712,7 @@ export default function App() {
             <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
           )}
           {activeTab === "views" && (
-            <ViewsTab
-              selectedServer={appState.selectedServer}
-            />
+            <ViewsTab selectedServer={appState.selectedServer} />
           )}
           {activeTab === "sandboxes" && (
             <SandboxesTab workspaceId={convexWorkspaceId} />

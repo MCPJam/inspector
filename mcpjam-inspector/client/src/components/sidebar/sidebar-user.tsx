@@ -196,7 +196,9 @@ export function SidebarUser({
                               (window.location.hash = `organizations/${org._id}`)
                           : undefined
                       }
-                      className={isOrgAdmin ? "cursor-pointer" : "cursor-default"}
+                      className={
+                        isOrgAdmin ? "cursor-pointer" : "cursor-default"
+                      }
                     >
                       <Avatar className="size-6 rounded">
                         <AvatarImage src={org.logoUrl} alt={org.name} />
