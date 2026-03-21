@@ -28,7 +28,7 @@ interface WorkspaceSettingsTabProps {
   workspaceServers: Record<string, ServerWithName>;
   organizationName?: string;
   onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
+  onDeleteWorkspace: (workspaceId: string) => Promise<boolean>;
   onWorkspaceShared: (sharedWorkspaceId: string) => void;
   onNavigateAway: () => void;
 }
@@ -153,9 +153,12 @@ export function WorkspaceSettingsTab({
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
                   <AlertDialogAction
-                    onClick={() => {
-                      onDeleteWorkspace(activeWorkspaceId);
-                      onNavigateAway();
+                    onClick={async () => {
+                      const success =
+                        await onDeleteWorkspace(activeWorkspaceId);
+                      if (success) {
+                        onNavigateAway();
+                      }
                     }}
                     className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                   >

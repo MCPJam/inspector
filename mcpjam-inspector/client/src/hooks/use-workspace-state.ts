@@ -356,12 +356,30 @@ export function useWorkspaceState({
   );
 
   const handleDeleteWorkspace = useCallback(
-    async (workspaceId: string) => {
+    async (workspaceId: string): Promise<boolean> => {
+      // If deleting the active workspace, switch to another first
       if (workspaceId === effectiveActiveWorkspaceId) {
-        toast.error(
-          "Cannot delete the active workspace. Switch to another workspace first.",
+        const otherWorkspaceIds = Object.keys(effectiveWorkspaces).filter(
+          (id) => id !== workspaceId,
         );
-        return;
+        const defaultWorkspace = otherWorkspaceIds.find(
+          (id) => effectiveWorkspaces[id].isDefault,
+        );
+        const targetWorkspaceId = defaultWorkspace || otherWorkspaceIds[0];
+
+        if (!targetWorkspaceId) {
+          toast.error("Cannot delete the only workspace");
+          return false;
+        }
+
+        if (isAuthenticated) {
+          setConvexActiveWorkspaceId(targetWorkspaceId);
+        } else {
+          dispatch({
+            type: "SWITCH_WORKSPACE",
+            workspaceId: targetWorkspaceId,
+          });
+        }
       }
 
       if (isAuthenticated) {
@@ -377,18 +395,21 @@ export function useWorkspaceState({
             error: errorMessage,
           });
           toast.error(errorMessage);
-          return;
+          return false;
         }
         toast.success("Workspace deleted");
       } else {
         dispatch({ type: "DELETE_WORKSPACE", workspaceId });
         toast.success("Workspace deleted");
       }
+      return true;
     },
     [
       effectiveActiveWorkspaceId,
+      effectiveWorkspaces,
       isAuthenticated,
       convexDeleteWorkspace,
+      setConvexActiveWorkspaceId,
       logger,
       dispatch,
     ],
