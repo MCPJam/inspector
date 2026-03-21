@@ -69,6 +69,7 @@ describe("OrganizationsTab billing", () => {
           createdBy: "user_1",
           createdAt: 1,
           updatedAt: 1,
+          myRole: "owner",
         },
       ],
       isLoading: false,
@@ -178,15 +179,15 @@ describe("OrganizationsTab billing", () => {
         {
           _id: "member-user",
           organizationId: "org-1",
-          userId: "user-member",
-          email: "member@example.com",
-          role: "member",
+          userId: "user-admin",
+          email: "admin@example.com",
+          role: "admin",
           isOwner: false,
           addedBy: "user-owner",
           addedAt: 1,
           user: {
-            name: "Member",
-            email: "member@example.com",
+            name: "Admin",
+            email: "admin@example.com",
             imageUrl: "",
           },
         },
@@ -195,8 +196,21 @@ describe("OrganizationsTab billing", () => {
       isLoading: false,
     });
     mockUseAuth.mockReturnValue({
-      user: { email: "member@example.com" },
+      user: { email: "admin@example.com" },
       signIn: vi.fn(),
+    });
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [
+        {
+          _id: "org-1",
+          name: "Org One",
+          createdBy: "user_1",
+          createdAt: 1,
+          updatedAt: 1,
+          myRole: "admin",
+        },
+      ],
+      isLoading: false,
     });
 
     mockUseOrganizationBilling.mockReturnValue({

@@ -49,6 +49,7 @@ export interface Workspace {
   id: string;
   name: string;
   description?: string;
+  icon?: string;
   servers: Record<string, ServerWithName>;
   createdAt: Date;
   updatedAt: Date;
