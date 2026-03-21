@@ -4,10 +4,14 @@ import { SettingsTab } from "../SettingsTab";
 
 vi.stubGlobal("__APP_VERSION__", "0.0.0-test");
 
-// Mock hooks used by SettingsTab
+const { mockSetThemeMode, mockUpdateThemeMode } = vi.hoisted(() => ({
+  mockSetThemeMode: vi.fn(),
+  mockUpdateThemeMode: vi.fn(),
+}));
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: (selector: any) =>
-    selector({ themeMode: "light", setThemeMode: vi.fn() }),
+    selector({ themeMode: "light", setThemeMode: mockSetThemeMode }),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
@@ -38,93 +42,46 @@ vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
 
-// Mock AccountApiKeySection since it uses Convex hooks directly
-vi.mock("../setting/AccountApiKeySection", () => ({
-  AccountApiKeySection: ({
-    workspaceName,
-  }: {
-    workspaceId: string | null;
-    workspaceName: string | null;
-  }) => (
-    <div data-testid="account-api-key-section">API Key: {workspaceName}</div>
-  ),
+vi.mock("@/lib/theme-utils", () => ({
+  updateThemeMode: mockUpdateThemeMode,
 }));
 
 describe("SettingsTab", () => {
-  const defaultProps = {
-    convexWorkspaceId: "workspace-123",
-    workspaceName: "My Workspace",
-    activeWorkspaceId: "ws-local-1",
-    onUpdateWorkspace: vi.fn(),
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("renders workspace name in the settings", () => {
-    render(<SettingsTab {...defaultProps} />);
+  it("renders settings heading and version info", () => {
+    render(<SettingsTab />);
 
-    expect(screen.getByText("My Workspace")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("About")).toBeInTheDocument();
+    expect(screen.getByText("Version")).toBeInTheDocument();
+    expect(screen.getByText("v0.0.0-test")).toBeInTheDocument();
   });
 
-  it("renders the Name label in the Workspace section", () => {
-    render(<SettingsTab {...defaultProps} />);
+  it("renders appearance controls in hosted mode", () => {
+    render(<SettingsTab />);
 
-    expect(screen.getByText("Name")).toBeInTheDocument();
+    expect(screen.getByText("Appearance")).toBeInTheDocument();
+    expect(screen.getByText("Theme")).toBeInTheDocument();
+    expect(screen.getByText("Light")).toBeInTheDocument();
+    expect(
+      screen.getByRole("switch", { name: "Toggle dark mode" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("LLM Providers")).not.toBeInTheDocument();
   });
 
-  it("enters edit mode when workspace name is clicked", () => {
-    render(<SettingsTab {...defaultProps} />);
+  it("updates theme when toggled", async () => {
+    render(<SettingsTab />);
 
-    fireEvent.click(screen.getByText("My Workspace"));
-
-    const input = screen.getByDisplayValue("My Workspace");
-    expect(input).toBeInTheDocument();
-    expect(input.tagName).toBe("INPUT");
-  });
-
-  it("calls onUpdateWorkspace with new name on save", async () => {
-    render(<SettingsTab {...defaultProps} />);
-
-    // Click to enter edit mode
-    fireEvent.click(screen.getByText("My Workspace"));
-
-    const input = screen.getByDisplayValue("My Workspace");
-    fireEvent.change(input, { target: { value: "Renamed Workspace" } });
-    fireEvent.keyDown(input, { key: "Enter" });
+    fireEvent.click(screen.getByRole("switch", { name: "Toggle dark mode" }));
 
     await waitFor(() => {
-      expect(defaultProps.onUpdateWorkspace).toHaveBeenCalledWith(
-        "ws-local-1",
-        { name: "Renamed Workspace" },
-      );
+      expect(mockUpdateThemeMode).toHaveBeenCalledWith("dark");
+      expect(mockSetThemeMode).toHaveBeenCalledWith("dark");
     });
-  });
-
-  it("does not call onUpdateWorkspace when name is unchanged", async () => {
-    render(<SettingsTab {...defaultProps} />);
-
-    fireEvent.click(screen.getByText("My Workspace"));
-
-    const input = screen.getByDisplayValue("My Workspace");
-    fireEvent.keyDown(input, { key: "Enter" });
-
-    // Small wait to ensure no call happens
-    await new Promise((r) => setTimeout(r, 50));
-    expect(defaultProps.onUpdateWorkspace).not.toHaveBeenCalled();
-  });
-
-  it("cancels editing on Escape without saving", async () => {
-    render(<SettingsTab {...defaultProps} />);
-
-    fireEvent.click(screen.getByText("My Workspace"));
-
-    const input = screen.getByDisplayValue("My Workspace");
-    fireEvent.change(input, { target: { value: "Changed" } });
-    fireEvent.keyDown(input, { key: "Escape" });
-
-    expect(defaultProps.onUpdateWorkspace).not.toHaveBeenCalled();
-    expect(screen.getByText("My Workspace")).toBeInTheDocument();
   });
 });
