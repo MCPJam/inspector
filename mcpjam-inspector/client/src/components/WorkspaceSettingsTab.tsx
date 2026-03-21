@@ -5,7 +5,7 @@ import { AccountApiKeySection } from "./setting/AccountApiKeySection";
 import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
 import { WorkspaceIconPicker } from "./workspace/WorkspaceEmojiPicker";
-import { WorkspaceStatsRow } from "./workspace/WorkspaceStatsRow";
+
 import { Button } from "./ui/button";
 import {
   AlertDialog,
@@ -68,7 +68,7 @@ export function WorkspaceSettingsTab({
       ? true
       : currentMember?.role === "owner" || currentMember?.role === "admin";
 
-  const localServerCount = Object.keys(workspaceServers).length;
+
 
   return (
     <div className="h-full overflow-y-auto">
@@ -107,12 +107,6 @@ export function WorkspaceSettingsTab({
             />
           </div>
         </div>
-
-        {/* Stats */}
-        <WorkspaceStatsRow
-          convexWorkspaceId={convexWorkspaceId}
-          localServerCount={localServerCount}
-        />
 
         {/* Members & Sharing */}
         {isAuthenticated && (
