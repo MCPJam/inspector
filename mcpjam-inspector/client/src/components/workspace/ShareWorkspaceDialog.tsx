@@ -12,18 +12,20 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { Building2, ChevronDown, Clock, Globe, Lock, X } from "lucide-react";
+import { Building2, ChevronDown, Clock, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   DropdownMenu,
   DropdownMenuContent,
+  DropdownMenuItem,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
   type WorkspaceMember,
-  type WorkspaceMembershipRole,
+  type WorkspaceRole,
   useWorkspaceMutations,
   useWorkspaceMembers,
 } from "@/hooks/useWorkspaces";
@@ -44,13 +46,6 @@ interface ShareWorkspaceDialogProps {
   organizationName?: string;
   currentUser: User;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-}
-
-function resolveWorkspaceRole(
-  member: Pick<WorkspaceMember, "role" | "isOwner">,
-): WorkspaceMembershipRole {
-  if (member.role) return member.role;
-  return member.isOwner ? "owner" : "member";
 }
 
 function buildInviteToastMessage(
@@ -75,32 +70,14 @@ function buildInviteToastMessage(
   }
 }
 
-function getMemberAccessDescription(
-  member: WorkspaceMember,
-  visibility: WorkspaceVisibility,
-): string | null {
-  if (visibility === "public") {
-    if (
-      member.role === "owner" ||
-      member.role === "admin" ||
-      member.role === "guest"
-    ) {
-      return `Organization ${member.role}`;
-    }
-    return null;
-  }
+function workspaceRoleLabel(role: WorkspaceRole): string {
+  return role === "admin" ? "Admin" : "Editor";
+}
 
-  if (member.accessSource === "organization") {
-    return member.role === "owner" || member.role === "admin"
-      ? `Access via organization ${member.role}`
-      : "Access via organization";
-  }
-
-  if (member.accessSource === "workspace") {
-    return "Explicit workspace access";
-  }
-
-  return null;
+function workspaceRoleDescription(role: WorkspaceRole): string {
+  return role === "admin"
+    ? "Can manage members and settings"
+    : "Can edit servers";
 }
 
 export function ShareWorkspaceDialog({
@@ -124,14 +101,18 @@ export function ShareWorkspaceDialog({
 
   const { isAuthenticated } = useConvexAuth();
   const { profilePictureUrl } = useProfilePicture();
+  const [inviteRole, setInviteRole] = useState<WorkspaceRole>("editor");
+
   const {
     createWorkspace,
     updateWorkspace,
     inviteWorkspaceMember,
     removeWorkspaceMember,
+    updateWorkspaceMemberRole,
+    updateWorkspaceInviteRole,
   } = useWorkspaceMutations();
 
-  const { activeMembers, pendingMembers } = useWorkspaceMembers({
+  const { activeMembers, pendingMembers, canManageMembers: membersCanManage } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: sharedWorkspaceId || null,
   });
@@ -142,17 +123,7 @@ export function ShareWorkspaceDialog({
 
   const isPublicWorkspace = currentVisibility === "public";
 
-  const currentMember = activeMembers.find(
-    (member) => member.email.toLowerCase() === currentUser.email?.toLowerCase(),
-  );
-  const currentRole: WorkspaceMembershipRole | null = !sharedWorkspaceId
-    ? "owner"
-    : currentMember
-      ? resolveWorkspaceRole(currentMember)
-      : null;
-  const canManageMembers = !sharedWorkspaceId
-    ? true
-    : currentRole === "owner" || currentRole === "admin";
+  const canManageMembers = !sharedWorkspaceId ? true : membersCanManage;
 
   useEffect(() => {
     if (isOpen) {
@@ -221,6 +192,7 @@ export function ShareWorkspaceDialog({
       const result = await inviteWorkspaceMember({
         workspaceId: currentWorkspaceId!,
         email: email.trim(),
+        role: inviteRole,
       });
 
       toast.success(buildInviteToastMessage(result, email.trim()));
@@ -237,6 +209,33 @@ export function ShareWorkspaceDialog({
       toast.error((error as Error).message || "Failed to invite member");
     } finally {
       setIsInviting(false);
+    }
+  };
+
+  const handleRoleChange = async (
+    member: WorkspaceMember,
+    newRole: WorkspaceRole,
+  ) => {
+    if (!sharedWorkspaceId) return;
+    try {
+      if (member.isPending) {
+        await updateWorkspaceInviteRole({
+          workspaceId: sharedWorkspaceId,
+          email: member.email,
+          role: newRole,
+        });
+      } else {
+        await updateWorkspaceMemberRole({
+          workspaceId: sharedWorkspaceId,
+          userId: member.userId!,
+          role: newRole,
+        });
+      }
+      toast.success(
+        `${member.user?.name || member.email} is now ${newRole === "admin" ? "an Admin" : "an Editor"}`,
+      );
+    } catch (error) {
+      toast.error((error as Error).message || "Failed to update role");
     }
   };
 
@@ -322,22 +321,51 @@ export function ShareWorkspaceDialog({
             <div className="space-y-2">
               <label className="text-sm font-medium">Invite with email</label>
               <div className="flex gap-2">
-                <Input
-                  placeholder="Enter email address"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && void handleInvite()}
-                  className="flex-1"
-                />
+                <div className="flex flex-1 items-center rounded-md border border-input focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
+                  <Input
+                    placeholder="Add people, emails..."
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void handleInvite()}
+                    className="flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                  />
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="ghost" size="sm" className="shrink-0 gap-1 mr-1 text-muted-foreground">
+                        {workspaceRoleLabel(inviteRole)}
+                        <ChevronDown className="size-3" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuRadioGroup
+                        value={inviteRole}
+                        onValueChange={(v) => setInviteRole(v as WorkspaceRole)}
+                      >
+                        <DropdownMenuRadioItem value="editor">
+                          <div>
+                            <div className="font-medium">Editor</div>
+                            <p className="text-xs text-muted-foreground font-normal">
+                              Can edit servers
+                            </p>
+                          </div>
+                        </DropdownMenuRadioItem>
+                        <DropdownMenuRadioItem value="admin">
+                          <div>
+                            <div className="font-medium">Admin</div>
+                            <p className="text-xs text-muted-foreground font-normal">
+                              Can manage members and settings
+                            </p>
+                          </div>
+                        </DropdownMenuRadioItem>
+                      </DropdownMenuRadioGroup>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
                 <Button
                   onClick={() => void handleInvite()}
                   disabled={!email.trim() || isInviting}
                 >
-                  {isInviting
-                    ? "..."
-                    : isPublicWorkspace
-                      ? "Invite to organization"
-                      : "Invite to workspace"}
+                  {isInviting ? "..." : "Invite"}
                 </Button>
               </div>
             </div>
@@ -455,10 +483,6 @@ export function ShareWorkspaceDialog({
                 const isSelf =
                   memberEmail.toLowerCase() ===
                   currentUser.email?.toLowerCase();
-                const memberDescription = getMemberAccessDescription(
-                  member,
-                  currentVisibility,
-                );
 
                 return (
                   <div
@@ -486,22 +510,65 @@ export function ShareWorkspaceDialog({
                       <p className="text-xs text-muted-foreground truncate">
                         {memberEmail}
                       </p>
-                      {memberDescription && (
-                        <p className="text-xs text-muted-foreground truncate">
-                          {memberDescription}
-                        </p>
-                      )}
                     </div>
-                    {member.canRemove && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                        aria-label={`Remove ${memberEmail} from workspace`}
-                        onClick={() => void handleRemoveMember(memberEmail)}
-                      >
-                        <X className="size-4" />
-                      </Button>
+                    {member.canChangeRole ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 gap-1 text-sm"
+                          >
+                            {workspaceRoleLabel(member.workspaceRole)}
+                            <ChevronDown className="size-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuRadioGroup
+                            value={member.workspaceRole}
+                            onValueChange={(v) =>
+                              void handleRoleChange(
+                                member,
+                                v as WorkspaceRole,
+                              )
+                            }
+                          >
+                            <DropdownMenuRadioItem value="editor">
+                              <div>
+                                <div className="font-medium">Editor</div>
+                                <p className="text-xs text-muted-foreground font-normal">
+                                  {workspaceRoleDescription("editor")}
+                                </p>
+                              </div>
+                            </DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="admin">
+                              <div>
+                                <div className="font-medium">Admin</div>
+                                <p className="text-xs text-muted-foreground font-normal">
+                                  {workspaceRoleDescription("admin")}
+                                </p>
+                              </div>
+                            </DropdownMenuRadioItem>
+                          </DropdownMenuRadioGroup>
+                          {member.canRemove && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() =>
+                                  void handleRemoveMember(memberEmail)
+                                }
+                              >
+                                Remove from workspace
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      <span className="text-sm text-muted-foreground shrink-0">
+                        {workspaceRoleLabel(member.workspaceRole)}
+                      </span>
                     )}
                   </div>
                 );
@@ -529,16 +596,64 @@ export function ShareWorkspaceDialog({
                         Invited to the organization and workspace
                       </p>
                     </div>
-                    {member.canRemove && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-8 w-8 p-0 text-muted-foreground hover:text-destructive"
-                        aria-label={`Cancel invite for ${member.email}`}
-                        onClick={() => void handleRemoveMember(member.email)}
-                      >
-                        <X className="size-4" />
-                      </Button>
+                    {member.canChangeRole ? (
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="shrink-0 gap-1 text-sm"
+                          >
+                            {workspaceRoleLabel(member.workspaceRole)}
+                            <ChevronDown className="size-3" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuRadioGroup
+                            value={member.workspaceRole}
+                            onValueChange={(v) =>
+                              void handleRoleChange(
+                                member,
+                                v as WorkspaceRole,
+                              )
+                            }
+                          >
+                            <DropdownMenuRadioItem value="editor">
+                              <div>
+                                <div className="font-medium">Editor</div>
+                                <p className="text-xs text-muted-foreground font-normal">
+                                  {workspaceRoleDescription("editor")}
+                                </p>
+                              </div>
+                            </DropdownMenuRadioItem>
+                            <DropdownMenuRadioItem value="admin">
+                              <div>
+                                <div className="font-medium">Admin</div>
+                                <p className="text-xs text-muted-foreground font-normal">
+                                  {workspaceRoleDescription("admin")}
+                                </p>
+                              </div>
+                            </DropdownMenuRadioItem>
+                          </DropdownMenuRadioGroup>
+                          {member.canRemove && (
+                            <>
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="text-destructive focus:text-destructive"
+                                onClick={() =>
+                                  void handleRemoveMember(member.email)
+                                }
+                              >
+                                Cancel invite
+                              </DropdownMenuItem>
+                            </>
+                          )}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    ) : (
+                      <span className="text-sm text-muted-foreground shrink-0">
+                        {workspaceRoleLabel(member.workspaceRole)}
+                      </span>
                     )}
                   </div>
                 ))}
