@@ -398,12 +398,9 @@ export function ServerDetailModal({
                   ) : toolsLoadError ? (
                     <div className="flex flex-col items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground text-center gap-1">
                       <span>Failed to load tools metadata</span>
-                      {toolsLoadError instanceof Error &&
-                        toolsLoadError.message && (
-                          <span className="text-xs max-w-[400px] truncate">
-                            {toolsLoadError.message.slice(0, 200)}
-                          </span>
-                        )}
+                      <span className="text-xs max-w-[400px] truncate">
+                        {toolsLoadError.slice(0, 200)}
+                      </span>
                     </div>
                   ) : (
                     <ServerInfoToolsMetadataContent toolsData={toolsData} />
