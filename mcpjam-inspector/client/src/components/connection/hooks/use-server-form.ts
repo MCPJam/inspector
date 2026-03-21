@@ -129,9 +129,7 @@ export function useServerForm(
       setName(server.name);
       setType(serverType);
       setUrl(serverUrl);
-      if (fullCommand) {
-        setCommandInput(fullCommand);
-      }
+      setCommandInput(fullCommand);
 
       // Don't set a default scope for existing servers - use what's configured
       // Only set default for new servers
@@ -165,8 +163,8 @@ export function useServerForm(
           key,
           value: String(value),
         }));
-        setEnvVars(envArray);
       }
+      setEnvVars(envArray);
 
       // Initialize custom headers for HTTP servers (excluding Authorization)
       let headersArray: Array<{ key: string; value: string }> = [];
@@ -178,10 +176,10 @@ export function useServerForm(
         headersArray = Object.entries(config.requestInit.headers)
           .filter(([key]) => key !== "Authorization")
           .map(([key, value]) => ({ key, value: String(value) }));
-        setCustomHeaders(headersArray);
       }
+      setCustomHeaders(headersArray);
 
-      // Capture initial values for change detection
+      // Capture initial values for change detection (deep copy arrays to avoid aliasing)
       initialValues.current = {
         name: server.name,
         type: serverType,
@@ -193,8 +191,8 @@ export function useServerForm(
         useCustomClientId: !!clientIdValue,
         clientId: clientIdValue,
         clientSecret: clientSecretValue,
-        envVars: envArray,
-        customHeaders: headersArray,
+        envVars: envArray.map(({ key, value }) => ({ key, value })),
+        customHeaders: headersArray.map(({ key, value }) => ({ key, value })),
         requestTimeout: timeoutValue,
       };
     }
