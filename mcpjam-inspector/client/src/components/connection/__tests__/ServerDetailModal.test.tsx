@@ -29,11 +29,27 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   isMCPApp: (toolsData: { toolsMetadata?: Record<string, unknown> } | null) =>
-    Boolean(
-      toolsData?.toolsMetadata && Object.keys(toolsData.toolsMetadata).length,
+    Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+      Boolean((meta as Record<string, unknown>)?.["ui.resourceUri"]),
     ),
-  isOpenAIApp: () => false,
-  isOpenAIAppAndMCPApp: () => false,
+  isOpenAIApp: (toolsData: {
+    toolsMetadata?: Record<string, unknown>;
+  } | null) =>
+    Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+      Boolean(
+        (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
+          !(meta as Record<string, unknown>)?.["ui.resourceUri"],
+      ),
+    ),
+  isOpenAIAppAndMCPApp: (toolsData: {
+    toolsMetadata?: Record<string, unknown>;
+  } | null) =>
+    Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+      Boolean(
+        (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
+          (meta as Record<string, unknown>)?.["ui.resourceUri"],
+      ),
+    ),
 }));
 
 import { ServerDetailModal } from "../ServerDetailModal";
@@ -126,6 +142,34 @@ describe("ServerDetailModal", () => {
       expect(toolsPanel?.className).toContain("overflow-y-auto");
     });
     expect(screen.getByText("search")).toBeInTheDocument();
+  });
+
+  it("shows tool metadata for connected non-app servers", async () => {
+    mockListTools.mockResolvedValue({
+      tools: [
+        {
+          name: "search",
+          description: "Searches documents",
+          _meta: { title: "Search tool", write: false },
+        },
+      ],
+      toolsMetadata: {
+        search: {
+          title: "Search tool",
+          write: false,
+        },
+      },
+    });
+
+    render(<ServerDetailModal {...defaultProps} defaultTab="tools-metadata" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("search")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText("Connect to view tools metadata"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Search tool")).toBeInTheDocument();
   });
 
   it("submits the configuration form without closing the modal", async () => {
