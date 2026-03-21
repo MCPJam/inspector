@@ -13,6 +13,7 @@ export interface RemoteWorkspace {
   _id: string;
   name: string;
   description?: string;
+  icon?: string;
   servers: Record<string, any>;
   organizationId?: string;
   visibility?: WorkspaceVisibility;
@@ -131,14 +132,20 @@ export function useWorkspaceMembers({
 }) {
   const enableQuery = isAuthenticated && !!workspaceId;
 
-  const response = useQuery(
+  const raw = useQuery(
     "workspaces:getWorkspaceMembers" as any,
     enableQuery ? ({ workspaceId } as any) : "skip",
-  ) as { members: WorkspaceMember[]; canManageMembers: boolean } | undefined;
+  ) as
+    | { members: WorkspaceMember[]; canManageMembers: boolean }
+    | WorkspaceMember[]
+    | undefined;
 
-  const members = response?.members;
-  const canManageMembers = response?.canManageMembers ?? false;
-  const isLoading = enableQuery && response === undefined;
+  // Server returns `{ members, canManageMembers }`. Legacy deployments returned a bare array.
+  const members = Array.isArray(raw) ? raw : raw?.members;
+  const canManageMembers = Array.isArray(raw)
+    ? false
+    : (raw?.canManageMembers ?? false);
+  const isLoading = enableQuery && raw === undefined;
 
   const activeMembers = useMemo(() => {
     if (!members) return [];
