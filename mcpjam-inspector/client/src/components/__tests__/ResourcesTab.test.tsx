@@ -3,6 +3,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { ResourcesTab } from "../ResourcesTab";
 import type { MCPServerConfig } from "@mcpjam/sdk";
 
+const { mockJsonEditor } = vi.hoisted(() => ({
+  mockJsonEditor: vi.fn((props: any) => (
+    <div data-testid="json-editor">{JSON.stringify(props.value)}</div>
+  )),
+}));
+
 // Mock APIs
 const mockListResources = vi.fn();
 const mockReadResource = vi.fn();
@@ -35,6 +41,10 @@ vi.mock("../ui/scroll-area", () => ({
   ),
 }));
 
+vi.mock("@/components/ui/json-editor", () => ({
+  JsonEditor: (props: any) => mockJsonEditor(props),
+}));
+
 describe("ResourcesTab", () => {
   const createServerConfig = (): MCPServerConfig =>
     ({
@@ -45,6 +55,7 @@ describe("ResourcesTab", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockJsonEditor.mockClear();
     mockListResources.mockResolvedValue({ resources: [] });
     mockReadResource.mockResolvedValue({ content: null });
   });
@@ -263,6 +274,73 @@ describe("ResourcesTab", () => {
       await waitFor(() => {
         expect(screen.getByText(/Error reading resource/i)).toBeInTheDocument();
       });
+    });
+
+    it("renders JSON text resources with JsonEditor", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListResources.mockResolvedValue({
+        resources: [{ name: "users.json", uri: "file:///users.json" }],
+      });
+
+      mockReadResource.mockResolvedValue({
+        content: {
+          contents: [
+            {
+              type: "text",
+              text: '{"users":[{"id":"1"}],"hasNextPage":false}',
+            },
+          ],
+        },
+      });
+
+      render(
+        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("users.json")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("users.json"));
+
+      await waitFor(() => {
+        expect(mockJsonEditor).toHaveBeenCalled();
+      });
+
+      expect(mockJsonEditor.mock.calls.at(-1)?.[0]).toMatchObject({
+        value: { users: [{ id: "1" }], hasNextPage: false },
+      });
+    });
+
+    it("keeps plain text resources as text", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListResources.mockResolvedValue({
+        resources: [{ name: "notes.txt", uri: "file:///notes.txt" }],
+      });
+
+      mockReadResource.mockResolvedValue({
+        content: {
+          contents: [{ type: "text", text: "Hello World" }],
+        },
+      });
+
+      render(
+        <ResourcesTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByText("notes.txt")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByText("notes.txt"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Hello World")).toBeInTheDocument();
+      });
+
+      expect(screen.queryByTestId("json-editor")).not.toBeInTheDocument();
     });
   });
 

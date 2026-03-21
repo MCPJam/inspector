@@ -1,11 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Plus, FileText } from "lucide-react";
-import { ServerWithName } from "@/hooks/use-app-state";
+import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
-import { EditServerModal } from "./connection/EditServerModal";
+import {
+  ServerDetailModal,
+  type ServerDetailTab,
+} from "./connection/ServerDetailModal";
+
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { ServerFormData } from "@/shared/types.js";
 import { MCPIcon } from "./ui/mcp-icon";
@@ -14,7 +18,7 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { WorkspaceMembersFacepile } from "./workspace/WorkspaceMembersFacepile";
 import { WorkspaceShareButton } from "./workspace/WorkspaceShareButton";
-import { WorkspaceSelector } from "./connection/WorkspaceSelector";
+
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -31,7 +35,6 @@ import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWor
 import {
   DndContext,
   closestCenter,
-  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
@@ -42,11 +45,16 @@ import {
 import {
   arrayMove,
   SortableContext,
-  sortableKeyboardCoordinates,
   useSortable,
   rectSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import {
+  clearOpenServerDetailModalState,
+  clearServerDetailModalOAuthResume,
+  readServerDetailModalOAuthResume,
+  writeOpenServerDetailModalState,
+} from "@/lib/server-detail-modal-resume";
 
 const ORDER_STORAGE_KEY = "mcp-server-order";
 
@@ -76,10 +84,9 @@ function SortableServerCard({
   server,
   onDisconnect,
   onReconnect,
-  onEdit,
   onRemove,
-  onServerInfoModalOpenChange,
   hostedServerId,
+  onOpenDetailModal,
 }: {
   id: string;
   dndDisabled: boolean;
@@ -89,19 +96,20 @@ function SortableServerCard({
     name: string,
     opts?: { forceOAuthFlow?: boolean },
   ) => Promise<void>;
-  onEdit: (server: ServerWithName) => void;
   onRemove: (name: string) => void;
-  onServerInfoModalOpenChange: (isOpen: boolean) => void;
   hostedServerId?: string;
+  onOpenDetailModal?: (
+    server: ServerWithName,
+    defaultTab: ServerDetailTab,
+  ) => void;
 }) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id, disabled: dndDisabled });
+  const { listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id, disabled: dndDisabled });
+  const dragListeners =
+    listeners == null
+      ? {}
+      : (({ onKeyDown: _ignoredOnKeyDown, ...pointerListeners }) =>
+          pointerListeners)(listeners);
 
   const style = {
     transform: CSS.Translate.toString(transform),
@@ -110,22 +118,21 @@ function SortableServerCard({
   };
 
   return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <div ref={setNodeRef} style={style} {...dragListeners}>
       <ServerConnectionCard
         server={server}
         onDisconnect={onDisconnect}
         onReconnect={onReconnect}
-        onEdit={onEdit}
         onRemove={onRemove}
-        onServerInfoModalOpenChange={onServerInfoModalOpenChange}
         hostedServerId={hostedServerId}
+        onOpenDetailModal={onOpenDetailModal}
       />
     </div>
   );
 }
 
 interface ServersTabProps {
-  connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
+  workspaceServers: Record<string, ServerWithName>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
@@ -136,21 +143,16 @@ interface ServersTabProps {
     originalServerName: string,
     formData: ServerFormData,
     skipAutoConnect?: boolean,
-  ) => void;
+  ) => Promise<ServerUpdateResult>;
   onRemove: (serverName: string) => void;
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
-  onSwitchWorkspace: (workspaceId: string) => void;
-  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
-  onUpdateWorkspace: (workspaceId: string, updates: Partial<Workspace>) => void;
-  onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function ServersTab({
-  connectedOrConnectingServerConfigs,
+  workspaceServers,
   onConnect,
   onDisconnect,
   onReconnect,
@@ -158,13 +160,8 @@ export function ServersTab({
   onRemove,
   workspaces,
   activeWorkspaceId,
-  onSwitchWorkspace,
-  onCreateWorkspace,
-  onUpdateWorkspace,
-  onDeleteWorkspace,
   isLoadingWorkspaces,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
@@ -173,16 +170,26 @@ export function ServersTab({
     useJsonRpcPanelVisibility();
   const [isAddingServer, setIsAddingServer] = useState(false);
   const [isImportingJson, setIsImportingJson] = useState(false);
-  const [isEditingServer, setIsEditingServer] = useState(false);
-  const [serverToEdit, setServerToEdit] = useState<ServerWithName | null>(null);
   const [isActionMenuOpen, setIsActionMenuOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [isServerInfoModalOpen, setIsServerInfoModalOpen] = useState(false);
+  const [detailModalState, setDetailModalState] = useState<{
+    isOpen: boolean;
+    serverName: string | null;
+    defaultTab: ServerDetailTab;
+    sessionKey: number;
+    serverSnapshot: ServerWithName | null;
+  }>({
+    isOpen: false,
+    serverName: null,
+    defaultTab: "configuration",
+    sessionKey: 0,
+    serverSnapshot: null,
+  });
 
   // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
   const allNames = useMemo(
-    () => Object.keys(connectedOrConnectingServerConfigs),
-    [connectedOrConnectingServerConfigs],
+    () => Object.keys(workspaceServers),
+    [workspaceServers],
   );
 
   const [orderedServerNames, setOrderedServerNames] = useState<string[]>(() => {
@@ -209,9 +216,6 @@ export function ServersTab({
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    }),
   );
 
   const handleDragStart = (event: DragStartEvent) => {
@@ -234,38 +238,150 @@ export function ServersTab({
     setActiveId(null);
   };
 
-  const activeServer = activeId
-    ? connectedOrConnectingServerConfigs[activeId]
+  const activeServer = activeId ? workspaceServers[activeId] : null;
+
+  const detailModalLiveServer = detailModalState.serverName
+    ? (workspaceServers[detailModalState.serverName] ?? null)
     : null;
+  const detailModalServer =
+    detailModalLiveServer ?? detailModalState.serverSnapshot;
+
+  useEffect(() => {
+    if (!detailModalState.isOpen || detailModalServer == null) {
+      clearOpenServerDetailModalState();
+      return;
+    }
+
+    writeOpenServerDetailModalState(detailModalServer.name);
+
+    return () => {
+      clearOpenServerDetailModalState();
+    };
+  }, [detailModalServer, detailModalState.isOpen]);
+
+  useEffect(() => {
+    if (detailModalState.isOpen) {
+      return;
+    }
+
+    const resumeMarker = readServerDetailModalOAuthResume();
+    if (!resumeMarker) {
+      return;
+    }
+
+    const resumeServer = workspaceServers[resumeMarker.serverName];
+    if (!resumeServer) {
+      return;
+    }
+
+    setDetailModalState((prev) => ({
+      isOpen: true,
+      serverName: resumeServer.name,
+      defaultTab: "configuration",
+      sessionKey: prev.sessionKey + 1,
+      serverSnapshot: resumeServer,
+    }));
+    clearServerDetailModalOAuthResume();
+  }, [detailModalState.isOpen, workspaceServers]);
 
   useEffect(() => {
     posthog.capture("servers_tab_viewed", {
       location: "servers_tab",
       platform: detectPlatform(),
       environment: detectEnvironment(),
-      num_servers: Object.keys(connectedOrConnectingServerConfigs).length,
+      num_servers: Object.keys(workspaceServers).length,
     });
   }, []);
 
-  const connectedCount = Object.keys(connectedOrConnectingServerConfigs).length;
+  const connectedCount = Object.keys(workspaceServers).length;
   const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "Workspace";
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
+  const organizationId = activeWorkspace?.organizationId;
+  const visibility = activeWorkspace?.visibility;
   const { serversRecord: sharedWorkspaceServersRecord } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
       isAuthenticated,
     });
 
-  const handleEditServer = (server: ServerWithName) => {
-    setServerToEdit(server);
-    setIsEditingServer(true);
-  };
+  const handleOpenDetailModal = useCallback(
+    (server: ServerWithName, defaultTab: ServerDetailTab) => {
+      setDetailModalState((prev) => ({
+        isOpen: true,
+        serverName: server.name,
+        defaultTab,
+        sessionKey: prev.sessionKey + 1,
+        serverSnapshot: server,
+      }));
+    },
+    [],
+  );
 
-  const handleCloseEditModal = () => {
-    setIsEditingServer(false);
-    setServerToEdit(null);
-  };
+  const handleCloseDetailModal = useCallback(() => {
+    setDetailModalState((prev) => ({
+      ...prev,
+      isOpen: false,
+    }));
+  }, []);
+
+  const handleSubmitDetailModal = useCallback(
+    async (formData: ServerFormData, originalServerName: string) => {
+      const optimisticServerName = formData.name.trim() || originalServerName;
+
+      setDetailModalState((prev) => ({
+        ...prev,
+        serverName: optimisticServerName,
+        serverSnapshot: prev.serverSnapshot
+          ? { ...prev.serverSnapshot, name: optimisticServerName }
+          : prev.serverSnapshot,
+      }));
+
+      const result = await onUpdate(originalServerName, formData);
+
+      setDetailModalState((prev) => {
+        const liveServer = workspaceServers[result.serverName];
+
+        return {
+          ...prev,
+          serverName: result.serverName,
+          serverSnapshot: liveServer
+            ? liveServer
+            : prev.serverSnapshot
+              ? { ...prev.serverSnapshot, name: result.serverName }
+              : prev.serverSnapshot,
+        };
+      });
+
+      return result;
+    },
+    [onUpdate, workspaceServers],
+  );
+
+  useEffect(() => {
+    if (!detailModalState.isOpen || detailModalLiveServer == null) {
+      return;
+    }
+
+    setDetailModalState((prev) => {
+      if (
+        !prev.isOpen ||
+        prev.serverName !== detailModalState.serverName ||
+        prev.serverSnapshot === detailModalLiveServer
+      ) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        serverSnapshot: detailModalLiveServer,
+      };
+    });
+  }, [
+    detailModalLiveServer,
+    detailModalState.isOpen,
+    detailModalState.serverName,
+  ]);
 
   const handleJsonImport = (servers: ServerFormData[]) => {
     servers.forEach((server) => {
@@ -344,39 +460,28 @@ export function ServersTab({
       >
         <div className="space-y-6 p-8 h-full overflow-auto">
           {/* Header Section */}
-          <div className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-6">
-                <WorkspaceSelector
-                  activeWorkspaceId={activeWorkspaceId}
-                  workspaces={workspaces}
-                  onSwitchWorkspace={onSwitchWorkspace}
-                  onCreateWorkspace={onCreateWorkspace}
-                  onUpdateWorkspace={onUpdateWorkspace}
-                  onDeleteWorkspace={onDeleteWorkspace}
-                  isLoading={isLoadingWorkspaces}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                {isAuthenticated && user && (
-                  <WorkspaceMembersFacepile
-                    workspaceName={workspaceName}
-                    workspaceServers={connectedOrConnectingServerConfigs}
-                    currentUser={user}
-                    sharedWorkspaceId={sharedWorkspaceId}
-                    onWorkspaceShared={onWorkspaceShared}
-                    onLeaveWorkspace={onLeaveWorkspace}
-                  />
-                )}
-                <WorkspaceShareButton
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <div className="flex items-center gap-2">
+              {isAuthenticated && user && (
+                <WorkspaceMembersFacepile
                   workspaceName={workspaceName}
-                  workspaceServers={connectedOrConnectingServerConfigs}
+                  workspaceServers={workspaceServers}
+                  currentUser={user}
                   sharedWorkspaceId={sharedWorkspaceId}
+                  organizationId={organizationId}
+                  visibility={visibility}
                   onWorkspaceShared={onWorkspaceShared}
-                  onLeaveWorkspace={onLeaveWorkspace}
                 />
-                {renderServerActionsMenu()}
-              </div>
+              )}
+              <WorkspaceShareButton
+                workspaceName={workspaceName}
+                workspaceServers={workspaceServers}
+                sharedWorkspaceId={sharedWorkspaceId}
+                organizationId={organizationId}
+                visibility={visibility}
+                onWorkspaceShared={onWorkspaceShared}
+              />
+              {renderServerActionsMenu()}
             </div>
           </div>
 
@@ -394,20 +499,19 @@ export function ServersTab({
             >
               <div className="grid grid-cols-1 lg:grid-cols-1 xl:grid-cols-2 gap-6">
                 {orderedServerNames.map((name) => {
-                  const server = connectedOrConnectingServerConfigs[name];
+                  const server = workspaceServers[name];
                   if (!server) return null;
                   return (
                     <SortableServerCard
                       key={name}
                       id={name}
-                      dndDisabled={isServerInfoModalOpen}
+                      dndDisabled={false}
                       server={server}
                       onDisconnect={onDisconnect}
                       onReconnect={onReconnect}
-                      onEdit={handleEditServer}
                       onRemove={onRemove}
-                      onServerInfoModalOpenChange={setIsServerInfoModalOpen}
                       hostedServerId={sharedWorkspaceServersRecord[name]?._id}
+                      onOpenDetailModal={handleOpenDetailModal}
                     />
                   );
                 })}
@@ -420,7 +524,6 @@ export function ServersTab({
                     server={activeServer}
                     onDisconnect={onDisconnect}
                     onReconnect={onReconnect}
-                    onEdit={handleEditServer}
                     onRemove={onRemove}
                     hostedServerId={
                       sharedWorkspaceServersRecord[activeId!]?._id
@@ -459,35 +562,26 @@ export function ServersTab({
   const renderEmptyContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
       {/* Header Section */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <WorkspaceSelector
-            activeWorkspaceId={activeWorkspaceId}
-            workspaces={workspaces}
-            onSwitchWorkspace={onSwitchWorkspace}
-            onCreateWorkspace={onCreateWorkspace}
-            onUpdateWorkspace={onUpdateWorkspace}
-            onDeleteWorkspace={onDeleteWorkspace}
-            isLoading={isLoadingWorkspaces}
-          />
-        </div>
+      <div className="flex items-center justify-end">
         <div className="flex items-center gap-2">
           {isAuthenticated && user && (
             <WorkspaceMembersFacepile
               workspaceName={workspaceName}
-              workspaceServers={connectedOrConnectingServerConfigs}
+              workspaceServers={workspaceServers}
               currentUser={user}
               sharedWorkspaceId={sharedWorkspaceId}
+              organizationId={organizationId}
+              visibility={visibility}
               onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
           <WorkspaceShareButton
             workspaceName={workspaceName}
-            workspaceServers={connectedOrConnectingServerConfigs}
+            workspaceServers={workspaceServers}
             sharedWorkspaceId={sharedWorkspaceId}
+            organizationId={organizationId}
+            visibility={visibility}
             onWorkspaceShared={onWorkspaceShared}
-            onLeaveWorkspace={onLeaveWorkspace}
           />
           {renderServerActionsMenu()}
         </div>
@@ -546,25 +640,26 @@ export function ServersTab({
         }}
       />
 
-      {/* Edit Server Modal */}
-      {serverToEdit && (
-        <EditServerModal
-          isOpen={isEditingServer}
-          onClose={handleCloseEditModal}
-          onSubmit={(formData, originalName) =>
-            onUpdate(originalName, formData)
-          }
-          server={serverToEdit}
-          existingServerNames={Object.keys(connectedOrConnectingServerConfigs)}
-        />
-      )}
-
       {/* JSON Import Modal */}
       <JsonImportModal
         isOpen={isImportingJson}
         onClose={() => setIsImportingJson(false)}
         onImport={handleJsonImport}
       />
+
+      {detailModalServer && (
+        <ServerDetailModal
+          key={detailModalState.sessionKey}
+          isOpen={detailModalState.isOpen}
+          onClose={handleCloseDetailModal}
+          server={detailModalServer}
+          defaultTab={detailModalState.defaultTab}
+          onSubmit={handleSubmitDetailModal}
+          onDisconnect={onDisconnect}
+          onReconnect={onReconnect}
+          existingServerNames={Object.keys(workspaceServers)}
+        />
+      )}
     </div>
   );
 }

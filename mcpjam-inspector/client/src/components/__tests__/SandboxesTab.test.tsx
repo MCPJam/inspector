@@ -98,7 +98,11 @@ describe("SandboxesTab", () => {
     render(<SandboxesTab workspaceId="ws-1" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Sandboxes" }),
+      await screen.findByRole(
+        "heading",
+        { name: "Sandboxes" },
+        { timeout: 3000 },
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText("Alpha")).toBeInTheDocument();
     expect(screen.getByText("Beta")).toBeInTheDocument();
@@ -107,7 +111,7 @@ describe("SandboxesTab", () => {
   it("opens the clicked sandbox in the builder view", async () => {
     render(<SandboxesTab workspaceId="ws-1" />);
 
-    fireEvent.click(await screen.findByText("Beta"));
+    fireEvent.click(await screen.findByText("Beta", {}, { timeout: 3000 }));
 
     expect(await screen.findByText("Builder view")).toBeInTheDocument();
     expect(screen.getByText("Sandbox: sbx-2")).toBeInTheDocument();

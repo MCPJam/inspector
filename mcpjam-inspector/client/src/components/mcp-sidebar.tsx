@@ -30,6 +30,7 @@ import { useConvexAuth } from "convex/react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
+import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@/components/ui/button";
 import { HOSTED_MODE } from "@/lib/config";
@@ -47,6 +48,7 @@ import {
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import type { Workspace } from "@/state/app-types";
 
 interface NavItem {
   title: string;
@@ -220,6 +222,14 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   activeTab?: string;
   /** Servers to check for app capabilities */
   servers?: Record<string, ServerWithName>;
+  /** Workspace state for the sidebar workspace picker */
+  workspaces: Record<string, Workspace>;
+  activeWorkspaceId: string;
+  onSwitchWorkspace: (workspaceId: string) => void;
+  onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
+  onDeleteWorkspace: (workspaceId: string) => void;
+  isLoadingWorkspaces?: boolean;
+  activeOrganizationId?: string;
 }
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
@@ -228,6 +238,13 @@ export function MCPSidebar({
   onNavigate,
   activeTab,
   servers = {},
+  workspaces,
+  activeWorkspaceId,
+  onSwitchWorkspace,
+  onCreateWorkspace,
+  onDeleteWorkspace,
+  isLoadingWorkspaces,
+  activeOrganizationId,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -364,6 +381,14 @@ export function MCPSidebar({
             </Button>
           </div>
         )}
+        <SidebarWorkspaceSelector
+          activeWorkspaceId={activeWorkspaceId}
+          workspaces={workspaces}
+          onSwitchWorkspace={onSwitchWorkspace}
+          onCreateWorkspace={onCreateWorkspace}
+          onDeleteWorkspace={onDeleteWorkspace}
+          isLoading={isLoadingWorkspaces}
+        />
       </SidebarHeader>
       <SidebarContent>
         {visibleNavigationSections.map((section, sectionIndex) => (
@@ -386,7 +411,7 @@ export function MCPSidebar({
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <SidebarUser />
+        <SidebarUser activeOrganizationId={activeOrganizationId} />
       </SidebarFooter>
     </Sidebar>
   );

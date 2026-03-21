@@ -84,7 +84,10 @@ export function createMockUseAppState(
     handleConnect: vi.fn().mockResolvedValue(undefined),
     handleDisconnect: vi.fn().mockResolvedValue(undefined),
     handleReconnect: vi.fn().mockResolvedValue(undefined),
-    handleUpdate: vi.fn().mockResolvedValue(undefined),
+    handleUpdate: vi.fn().mockResolvedValue({
+      ok: true,
+      serverName: "test-server",
+    }),
     handleRemoveServer: vi.fn().mockResolvedValue(undefined),
     setSelectedServer: vi.fn(),
     setSelectedMCPConfigs: vi.fn(),

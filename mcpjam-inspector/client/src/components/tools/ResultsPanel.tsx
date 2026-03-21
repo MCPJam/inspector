@@ -4,6 +4,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 
 interface ResultsPanelProps {
   error: string;
@@ -21,6 +22,11 @@ export function ResultsPanel({
   responseDurationMs,
 }: ResultsPanelProps) {
   const rawResult = result as unknown as Record<string, unknown> | null;
+  const extractedDisplay = rawResult
+    ? extractDisplayFromToolResult(rawResult)
+    : null;
+  const displayValue =
+    extractedDisplay?.kind === "json" ? extractedDisplay.value : rawResult;
   const uiType = detectUIType(toolMeta, rawResult);
   const hasOpenAIComponent = uiType === UIType.OPENAI_SDK;
   const hasMCPAppsComponent = uiType === UIType.MCP_APPS;
@@ -93,7 +99,7 @@ export function ResultsPanel({
           {/* JSON Editor - fills ALL remaining space */}
           <div className="flex-1 min-h-0 overflow-hidden">
             <JsonEditor
-              value={rawResult}
+              value={displayValue}
               readOnly
               showToolbar={false}
               height="100%"

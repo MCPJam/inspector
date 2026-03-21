@@ -39,7 +39,10 @@ import {
   useOrganizationMembers,
   useOrganizationMutations,
 } from "@/hooks/useOrganizations";
-import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import {
+  useOrganizationBilling,
+  isPaidPlan,
+} from "@/hooks/useOrganizationBilling";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 
 interface OrganizationsTabProps {
@@ -393,10 +396,9 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
 
     try {
       const returnUrl = `${window.location.origin}${window.location.pathname}#organizations/${organization._id}`;
-      const billingUrl =
-        billingStatus.plan === "pro"
-          ? await openPortal(returnUrl)
-          : await startCheckout(returnUrl);
+      const billingUrl = isPaidPlan(billingStatus.plan)
+        ? await openPortal(returnUrl)
+        : await startCheckout(returnUrl);
       window.open(billingUrl, "_blank", "noopener,noreferrer");
     } catch (error) {
       toast.error(
@@ -408,9 +410,9 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const initial = organization.name.charAt(0).toUpperCase();
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;
   const billingActionLabel =
-    billingStatus?.plan === "pro"
+    billingStatus && isPaidPlan(billingStatus.plan)
       ? "Manage subscription"
-      : "Upgrade to MCPJam Pro";
+      : "Upgrade plan";
   const formattedPeriodEnd =
     billingStatus?.stripeCurrentPeriodEnd != null
       ? new Intl.DateTimeFormat(undefined, {
@@ -600,6 +602,10 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
               <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
                 Loading billing details...
               </div>
+            ) : billingStatus && !billingStatus.billingConfigured ? (
+              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                Billing is not configured in this environment.
+              </div>
             ) : billingStatus ? (
               <>
                 <div className="grid gap-3 rounded-md border border-border/70 p-3.5 sm:grid-cols-2">
@@ -609,7 +615,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                     </p>
                     <Badge
                       variant={
-                        billingStatus.plan === "pro" ? "default" : "secondary"
+                        isPaidPlan(billingStatus.plan) ? "default" : "secondary"
                       }
                     >
                       {billingStatus.plan.toUpperCase()}
@@ -641,7 +647,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                     size="default"
                     className="h-10 px-5"
                     variant={
-                      billingStatus.plan === "pro" ? "outline" : "default"
+                      isPaidPlan(billingStatus.plan) ? "outline" : "default"
                     }
                     onClick={handleBillingAction}
                     disabled={

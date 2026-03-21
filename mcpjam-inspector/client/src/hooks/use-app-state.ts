@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useConvexAuth } from "convex/react";
 import { useLogger } from "./use-logger";
@@ -9,6 +9,7 @@ import { useWorkspaceState } from "./use-workspace-state";
 import { useServerState } from "./use-server-state";
 
 export type { ServerWithName } from "@/state/app-types";
+export type { ServerUpdateResult } from "./use-server-state";
 
 export function useAppState() {
   const logger = useLogger("Connections");
@@ -16,6 +17,23 @@ export function useAppState() {
   const [isLoading, setIsLoading] = useState(true);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+
+  const [activeOrganizationId, setActiveOrganizationId] = useState<
+    string | undefined
+  >(() => localStorage.getItem("active-organization-id") ?? undefined);
+
+  const isFirstOrgRender = useRef(true);
+  useEffect(() => {
+    if (isFirstOrgRender.current) {
+      isFirstOrgRender.current = false;
+      return;
+    }
+    if (activeOrganizationId) {
+      localStorage.setItem("active-organization-id", activeOrganizationId);
+    } else {
+      localStorage.removeItem("active-organization-id");
+    }
+  }, [activeOrganizationId]);
 
   useEffect(() => {
     try {
@@ -39,6 +57,7 @@ export function useAppState() {
     dispatch,
     isAuthenticated,
     isAuthLoading,
+    activeOrganizationId,
     logger,
   });
 
@@ -162,6 +181,8 @@ export function useAppState() {
     isLoading,
     isLoadingRemoteWorkspaces,
     isCloudSyncActive,
+    activeOrganizationId,
+    setActiveOrganizationId,
 
     workspaceServers: serverState.workspaceServers,
     connectedOrConnectingServerConfigs:

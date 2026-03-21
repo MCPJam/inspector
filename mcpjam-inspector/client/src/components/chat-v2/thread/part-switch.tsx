@@ -397,7 +397,11 @@ export function PartSwitch({
 
   if (isDataPart(part)) {
     return (
-      <JsonPart label={getDataLabel(part.type)} value={(part as any).data} />
+      <JsonPart
+        label={getDataLabel(part.type)}
+        value={(part as any).data}
+        autoHeight={Boolean((part as any).autoHeight)}
+      />
     );
   }
 
