@@ -145,9 +145,7 @@ export function buildMCPOAuthState(): string {
 export function isElectronMcpCallbackState(
   state: string | null | undefined,
 ): boolean {
-  return Boolean(
-    state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX),
-  );
+  return Boolean(state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX));
 }
 
 /**

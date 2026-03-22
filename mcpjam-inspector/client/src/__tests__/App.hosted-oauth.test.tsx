@@ -342,9 +342,7 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
-    expect(
-      screen.getByText("Continue in MCPJam Desktop"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Continue in MCPJam Desktop")).toBeInTheDocument();
     expect(
       screen.getByText(
         /please close this page and continue in MCPJam Desktop/i,
