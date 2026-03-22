@@ -434,7 +434,9 @@ export default function App() {
   ) as OrganizationEntitlements | undefined;
   const billingRolloutState = useQuery(
     "billing:getBillingRolloutState" as any,
-    {} as any,
+    billingOrganizationId
+      ? ({ organizationId: billingOrganizationId } as any)
+      : "skip",
   ) as BillingRolloutState | undefined;
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);

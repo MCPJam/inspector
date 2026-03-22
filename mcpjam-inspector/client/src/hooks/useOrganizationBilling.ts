@@ -55,7 +55,7 @@ export function useOrganizationBilling(organizationId: string | null) {
   ) as OrganizationEntitlements | undefined;
   const rolloutState = useQuery(
     "billing:getBillingRolloutState" as any,
-    {} as any,
+    organizationId ? ({ organizationId } as any) : "skip",
   ) as BillingRolloutState | undefined;
 
   const createCheckout = useAction(
@@ -127,7 +127,7 @@ export function useOrganizationBilling(organizationId: string | null) {
     rolloutState,
     isLoadingBilling: !!organizationId && billingStatus === undefined,
     isLoadingEntitlements: !!organizationId && entitlements === undefined,
-    isLoadingRollout: rolloutState === undefined,
+    isLoadingRollout: !!organizationId && rolloutState === undefined,
     isStartingCheckout,
     isOpeningPortal,
     error,

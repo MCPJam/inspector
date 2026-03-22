@@ -106,8 +106,10 @@ type BillingErrorPayload = {
   message?: string;
   feature?: BillingFeatureName;
   plan?: OrganizationPlan;
+  limit?: string;
   limitName?: string;
-  limit?: number | null;
+  allowedValue?: number | null;
+  currentValue?: number | null;
   current?: number | null;
 };
 
@@ -180,17 +182,25 @@ export function getBillingErrorMessage(
   }
 
   if (payload.code === "billing_limit_reached") {
+    const limitName = payload.limitName ?? payload.limit;
+    const allowedValue =
+      typeof payload.allowedValue === "number"
+        ? payload.allowedValue
+        : typeof payload.current === "number"
+          ? payload.current
+          : null;
+
     if (
-      payload.limitName === "maxEvalRunsPerMonth" &&
-      typeof payload.limit === "number"
+      limitName === "maxEvalRunsPerMonth" &&
+      typeof allowedValue === "number"
     ) {
-      return `This organization has reached its monthly eval run limit (${payload.limit}). Upgrade to continue.`;
+      return `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`;
     }
     if (
-      payload.limitName === "maxSandboxesPerWorkspace" &&
-      typeof payload.limit === "number"
+      limitName === "maxSandboxesPerWorkspace" &&
+      typeof allowedValue === "number"
     ) {
-      return `This workspace has reached its sandbox limit (${payload.limit}). Upgrade to continue.`;
+      return `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`;
     }
   }
 
