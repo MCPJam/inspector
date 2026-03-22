@@ -270,11 +270,18 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     }
 
     if (window.isElectron && window.electronAPI?.app?.openExternal) {
-      await window.electronAPI.app.openExternal(authorizationUrl.toString());
-      return;
+      try {
+        await window.electronAPI.app.openExternal(authorizationUrl.toString());
+        return;
+      } catch (error) {
+        console.error(
+          "Failed to open system browser for MCP OAuth, falling back to in-app navigation:",
+          error,
+        );
+      }
     }
 
-    window.location.href = authorizationUrl.toString();
+    window.location.assign(authorizationUrl.toString());
   }
 
   async saveCodeVerifier(codeVerifier: string) {

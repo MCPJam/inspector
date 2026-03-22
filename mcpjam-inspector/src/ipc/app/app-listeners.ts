@@ -1,7 +1,7 @@
 import { ipcMain, app, BrowserWindow, shell } from "electron";
 import log from "electron-log";
 
-export function registerAppListeners(_mainWindow: BrowserWindow): void {
+export function registerAppListeners(mainWindow: BrowserWindow): void {
   // Get app version
   ipcMain.handle("app:version", () => {
     return app.getVersion();
@@ -12,7 +12,14 @@ export function registerAppListeners(_mainWindow: BrowserWindow): void {
     return process.platform;
   });
 
-  ipcMain.handle("app:open-external", async (_event, url: string) => {
+  ipcMain.handle("app:open-external", async (event, url: string) => {
+    if (event.sender.id !== mainWindow.webContents.id) {
+      log.warn(
+        `Ignoring open-external from untrusted sender (id: ${event.sender.id})`,
+      );
+      throw new Error("Refusing external open from untrusted renderer");
+    }
+
     let parsedUrl: URL;
 
     try {
