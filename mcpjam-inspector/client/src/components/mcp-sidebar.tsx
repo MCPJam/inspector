@@ -47,6 +47,7 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
+import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
 
@@ -58,6 +59,8 @@ interface NavItem {
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
   hiddenByFlag?: string;
+  /** Hide this item when billing enforcement is active and the org lacks this feature */
+  billingFeature?: BillingFeatureName;
 }
 
 interface NavSection {
@@ -86,6 +89,26 @@ export function filterByFeatureFlags(
     .filter((section) => section.items.length > 0);
 }
 
+export function filterByBillingEntitlements(
+  sections: NavSection[],
+  billingFeatureAvailability: Partial<Record<BillingFeatureName, boolean>>,
+  enforcementActive: boolean,
+): NavSection[] {
+  if (!enforcementActive) {
+    return sections;
+  }
+
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => {
+        if (!item.billingFeature) return true;
+        return billingFeatureAvailability[item.billingFeature] !== false;
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+}
+
 // Define sections with their respective items
 const navigationSections: NavSection[] = [
   {
@@ -106,6 +129,7 @@ const navigationSections: NavSection[] = [
         url: "#sandboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
+        billingFeature: "sandboxes",
       },
     ],
   },
@@ -127,12 +151,14 @@ const navigationSections: NavSection[] = [
         url: "#evals",
         icon: FlaskConical,
         hiddenByFlag: "ci-evals-enabled",
+        billingFeature: "evals",
       },
       {
         title: "Evals CI/CD",
         url: "#ci-evals",
         icon: GitBranch,
         featureFlag: "ci-evals-enabled",
+        billingFeature: "cicd",
       },
     ],
   },
@@ -230,6 +256,8 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   activeOrganizationId?: string;
+  billingFeatureAvailability?: Partial<Record<BillingFeatureName, boolean>>;
+  billingEnforcementActive?: boolean;
 }
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
@@ -245,6 +273,8 @@ export function MCPSidebar({
   onDeleteWorkspace,
   isLoadingWorkspaces,
   activeOrganizationId,
+  billingFeatureAvailability = {},
+  billingEnforcementActive = false,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -350,9 +380,13 @@ export function MCPSidebar({
     }),
     [ciEvalsEnabled, learningEnabled, sandboxesEnabled, isAuthenticated],
   );
-  const visibleNavigationSections = filterByFeatureFlags(
-    HOSTED_MODE ? hostedNavigationSections : navigationSections,
-    featureFlags,
+  const visibleNavigationSections = filterByBillingEntitlements(
+    filterByFeatureFlags(
+      HOSTED_MODE ? hostedNavigationSections : navigationSections,
+      featureFlags,
+    ),
+    billingFeatureAvailability,
+    billingEnforcementActive,
   );
 
   return (

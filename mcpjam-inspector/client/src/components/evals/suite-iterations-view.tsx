@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 export function SuiteIterationsView({
   suite,
@@ -98,7 +99,7 @@ export function SuiteIterationsView({
   const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
 
   // Use custom hooks for data calculations
-  const { runTrendData, modelStats, caseGroups, templateGroups } = useSuiteData(
+  const { runTrendData, modelStats } = useSuiteData(
     suite,
     cases,
     iterations,
@@ -200,7 +201,9 @@ export function SuiteIterationsView({
         });
         toast.success("Suite description updated");
       } catch (error) {
-        toast.error("Failed to update suite description");
+        toast.error(
+          getBillingErrorMessage(error, "Failed to update suite description"),
+        );
         console.error("Failed to update suite description:", error);
         setEditedDescription(suite.description || "");
       }
@@ -230,7 +233,7 @@ export function SuiteIterationsView({
       });
       toast.success("Models updated successfully");
     } catch (error) {
-      toast.error("Failed to update models");
+      toast.error(getBillingErrorMessage(error, "Failed to update models"));
       console.error("Failed to update models:", error);
       throw error;
     }
@@ -476,7 +479,9 @@ export function SuiteIterationsView({
                     });
                     toast.success("Suite updated successfully");
                   } catch (error) {
-                    toast.error("Failed to update suite");
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite"),
+                    );
                     console.error("Failed to update suite:", error);
                     setDefaultMinimumPassRate(
                       suite.defaultPassCriteria?.minimumPassRate ?? 100,

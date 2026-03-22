@@ -3,6 +3,28 @@ import { useCallback, useState } from "react";
 
 export type OrganizationPlan = "free" | "starter" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
+export type BillingFeatureName =
+  | "evals"
+  | "sandboxes"
+  | "cicd"
+  | "customDomains"
+  | "auditLog"
+  | "sso"
+  | "prioritySupport";
+
+export interface OrganizationEntitlements {
+  plan: OrganizationPlan;
+  billingInterval: BillingInterval | null;
+  source: "persisted" | "simulation";
+  features: Record<BillingFeatureName, boolean>;
+  limits: Record<string, number | null>;
+}
+
+export interface BillingRolloutState {
+  enforcementConfigured: boolean;
+  gracePeriodEndsAt: string | null;
+  enforcementActive: boolean;
+}
 
 export interface OrganizationBillingStatus {
   organizationId: string;
@@ -27,6 +49,14 @@ export function useOrganizationBilling(organizationId: string | null) {
     "billing:getOrganizationBillingStatus" as any,
     organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationBillingStatus | undefined;
+  const entitlements = useQuery(
+    "billing:getOrganizationEntitlements" as any,
+    organizationId ? ({ organizationId } as any) : "skip",
+  ) as OrganizationEntitlements | undefined;
+  const rolloutState = useQuery(
+    "billing:getBillingRolloutState" as any,
+    organizationId ? ({ organizationId } as any) : "skip",
+  ) as BillingRolloutState | undefined;
 
   const createCheckout = useAction(
     "billing:createOrganizationCheckoutSession" as any,
@@ -93,7 +123,11 @@ export function useOrganizationBilling(organizationId: string | null) {
 
   return {
     billingStatus,
+    entitlements,
+    rolloutState,
     isLoadingBilling: !!organizationId && billingStatus === undefined,
+    isLoadingEntitlements: !!organizationId && entitlements === undefined,
+    isLoadingRollout: !!organizationId && rolloutState === undefined,
     isStartingCheckout,
     isOpeningPortal,
     error,

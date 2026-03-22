@@ -1,6 +1,7 @@
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useQuery } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -27,6 +28,7 @@ import { SupportTab } from "./components/SupportTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
@@ -67,6 +69,14 @@ import { HOSTED_MODE } from "./lib/config";
 import { resolveHostedNavigation } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
+  formatBillingFeatureName,
+  formatGracePeriodEndsAt,
+  formatPlanName,
+  getRequiredBillingFeatureForTab,
+  isBillingFeatureLocked,
+  isBillingGracePeriodActive,
+} from "./lib/billing-entitlements";
+import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
   resolveHostedOAuthReturnHash,
@@ -91,6 +101,10 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import type {
+  BillingRolloutState,
+  OrganizationEntitlements,
+} from "./hooks/useOrganizationBilling";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -114,6 +128,9 @@ export default function App() {
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
+  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
+    "billing-entitlements-ui",
+  );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const {
     getAccessToken,
@@ -331,7 +348,6 @@ export default function App() {
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleDeleteWorkspace,
-    handleLeaveWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -408,6 +424,37 @@ export default function App() {
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const billingOrganizationId =
+    activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
+  const billingEntitlements = useQuery(
+    "billing:getOrganizationEntitlements" as any,
+    billingOrganizationId
+      ? ({ organizationId: billingOrganizationId } as any)
+      : "skip",
+  ) as OrganizationEntitlements | undefined;
+  const billingRolloutState = useQuery(
+    "billing:getBillingRolloutState" as any,
+    billingOrganizationId
+      ? ({ organizationId: billingOrganizationId } as any)
+      : "skip",
+  ) as BillingRolloutState | undefined;
+  const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
+  const activeTabBillingLocked = isBillingFeatureLocked({
+    billingUiEnabled,
+    entitlements: billingEntitlements,
+    rolloutState: billingRolloutState,
+    feature: activeTabBillingFeature,
+  });
+  const activeTabGracePeriodBanner =
+    billingUiEnabled &&
+    !!activeTabBillingFeature &&
+    !!billingEntitlements &&
+    billingEntitlements.features[activeTabBillingFeature] === false &&
+    isBillingGracePeriodActive(billingRolloutState);
+  const billingGracePeriodEndsAt = formatGracePeriodEndsAt(
+    billingRolloutState?.gracePeriodEndsAt,
+  );
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
@@ -571,6 +618,13 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTabBillingLocked && activeTabBillingFeature) {
+      toast.error(
+        `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
+          billingEntitlements?.plan,
+        )} plan. Upgrade the organization to continue.`,
+      );
+      applyNavigation("servers", { updateHash: true });
     } else if (
       activeTab === "learning" &&
       (learningEnabled !== true || !isAuthenticated)
@@ -579,10 +633,13 @@ export default function App() {
     }
   }, [
     ciEvalsEnabled,
+    activeTabBillingFeature,
+    activeTabBillingLocked,
     learningEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
+    billingEntitlements?.plan,
   ]);
 
   const handleNavigate = (section: string) => {
@@ -699,10 +756,39 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
         activeOrganizationId={activeOrganizationId}
+        billingFeatureAvailability={billingEntitlements?.features ?? {}}
+        billingEnforcementActive={
+          billingUiEnabled && billingRolloutState?.enforcementActive === true
+        }
       />
       <SidebarInset className="flex flex-col min-h-0">
         <Header activeServerSelectorProps={activeServerSelectorProps} />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
+          {activeTabGracePeriodBanner && activeTabBillingFeature ? (
+            <div className="border-b border-border/60 px-4 py-3">
+              <Alert className="border-amber-500/30 bg-amber-500/5">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <AlertTitle>
+                  {formatBillingFeatureName(activeTabBillingFeature)} trial
+                  access
+                </AlertTitle>
+                <AlertDescription>
+                  <p>
+                    {formatBillingFeatureName(activeTabBillingFeature)} is not
+                    included in the {formatPlanName(billingEntitlements?.plan)}{" "}
+                    plan.
+                  </p>
+                  <p>
+                    Access remains available until{" "}
+                    {billingGracePeriodEndsAt ??
+                      "the rollout grace period ends"}
+                    . Upgrade from Organization settings before then to avoid a
+                    lockout.
+                  </p>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
@@ -726,7 +812,10 @@ export default function App() {
             </div>
           )}
           {activeTab === "evals" && (
-            <EvalsTab selectedServer={appState.selectedServer} />
+            <EvalsTab
+              selectedServer={appState.selectedServer}
+              workspaceId={convexWorkspaceId}
+            />
           )}
           {activeTab === "ci-evals" && (
             <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />

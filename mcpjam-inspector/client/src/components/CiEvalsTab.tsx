@@ -83,6 +83,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     selectedSuiteId,
     deletingSuiteId,
     workspaceId: convexWorkspaceId,
+    organizationId: null,
   });
 
   const sdkSuites = useMemo(

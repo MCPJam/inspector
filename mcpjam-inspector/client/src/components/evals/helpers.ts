@@ -11,6 +11,7 @@ import {
 import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
@@ -170,7 +171,7 @@ export function aggregateSuite(
  */
 export function handleMutationError(error: unknown, action: string) {
   console.error(`Failed to ${action}:`, error);
-  toast.error(error instanceof Error ? error.message : `Failed to ${action}`);
+  toast.error(getBillingErrorMessage(error, `Failed to ${action}`));
 }
 
 /**

@@ -14,6 +14,7 @@ import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { API_ENDPOINTS } from "./constants";
 import { authFetch } from "@/lib/session-token";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -210,9 +211,7 @@ export function useEvalHandlers({
         toast.success("Eval run completed!");
       } catch (error) {
         console.error("Failed to rerun evals:", error);
-        toast.error(
-          error instanceof Error ? error.message : "Failed to start eval run",
-        );
+        toast.error(getBillingErrorMessage(error, "Failed to start eval run"));
       } finally {
         setRerunningSuiteId(null);
       }
@@ -254,9 +253,7 @@ export function useEvalHandlers({
       setSuiteToDelete(null);
     } catch (error) {
       console.error("Failed to delete suite:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete test suite",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete test suite"));
     } finally {
       setDeletingSuiteId(null);
     }
@@ -301,9 +298,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to duplicate test suite",
+          getBillingErrorMessage(error, "Failed to duplicate test suite"),
         );
       } finally {
         setDuplicatingSuiteId(null);
@@ -324,9 +319,7 @@ export function useEvalHandlers({
         toast.success("Run cancelled successfully");
       } catch (error) {
         console.error("Failed to cancel run:", error);
-        toast.error(
-          error instanceof Error ? error.message : "Failed to cancel run",
-        );
+        toast.error(getBillingErrorMessage(error, "Failed to cancel run"));
       } finally {
         setCancellingRunId(null);
       }
@@ -368,9 +361,7 @@ export function useEvalHandlers({
       setRunToDelete(null);
     } catch (error) {
       console.error("Failed to delete run:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete run",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete run"));
     } finally {
       setDeletingRunId(null);
     }
@@ -454,7 +445,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to create test case:", error);
         toast.error(
-          error instanceof Error ? error.message : "Failed to create test case",
+          getBillingErrorMessage(error, "Failed to create test case"),
         );
         return null;
       } finally {
@@ -496,9 +487,7 @@ export function useEvalHandlers({
       setTestCaseToDelete(null);
     } catch (error) {
       console.error("Failed to delete test case:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete test case",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete test case"));
     } finally {
       setDeletingTestCaseId(null);
     }
@@ -548,9 +537,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate test case:", error);
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to duplicate test case",
+          getBillingErrorMessage(error, "Failed to duplicate test case"),
         );
         return null;
       } finally {
@@ -673,9 +660,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to generate tests:", error);
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to generate test cases",
+          getBillingErrorMessage(error, "Failed to generate test cases"),
         );
       } finally {
         setIsGeneratingTests(false);
