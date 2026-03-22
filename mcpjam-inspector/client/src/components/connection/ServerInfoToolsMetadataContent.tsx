@@ -16,7 +16,7 @@ export function ServerInfoToolsMetadataContent({
   if (!hasToolMetadata) {
     return (
       <div className="text-sm text-muted-foreground text-center py-8">
-        No widget metadata available
+        No tool metadata available
       </div>
     );
   }
