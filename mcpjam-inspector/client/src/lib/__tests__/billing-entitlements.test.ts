@@ -60,13 +60,10 @@ describe("getBillingErrorMessage", () => {
       code: "rate_limited",
       retryAfter: 5,
     });
-    error.message =
-      'ConvexError: {"code":"rate_limited","retryAfter":5}';
+    error.message = 'ConvexError: {"code":"rate_limited","retryAfter":5}';
 
     const message = getBillingErrorMessage(error, "fallback");
 
-    expect(message).toBe(
-      'ConvexError: {"code":"rate_limited","retryAfter":5}',
-    );
+    expect(message).toBe('ConvexError: {"code":"rate_limited","retryAfter":5}');
   });
 });
