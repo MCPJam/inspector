@@ -42,12 +42,16 @@ vi.mock("@/state/oauth-orchestrator", () => ({
   ensureAuthorizedForReconnect: vi.fn(),
 }));
 
-vi.mock("@/lib/oauth/mcp-oauth", () => ({
-  handleOAuthCallback: handleOAuthCallbackMock,
-  getStoredTokens: getStoredTokensMock,
-  clearOAuthData: vi.fn(),
-  initiateOAuth: vi.fn(),
-}));
+vi.mock("@/lib/oauth/mcp-oauth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/oauth/mcp-oauth")>();
+  return {
+    ...actual,
+    handleOAuthCallback: handleOAuthCallbackMock,
+    getStoredTokens: getStoredTokensMock,
+    clearOAuthData: vi.fn(),
+    initiateOAuth: vi.fn(),
+  };
+});
 
 vi.mock("@/lib/apis/web/context", () => ({
   injectHostedServerMapping: vi.fn(),

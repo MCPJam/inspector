@@ -118,9 +118,13 @@ vi.mock("../lib/theme-utils", () => ({
   updateThemePreset: vi.fn(),
 }));
 
-vi.mock("../lib/oauth/mcp-oauth", () => ({
-  handleOAuthCallback: mockHandleOAuthCallback,
-}));
+vi.mock("../lib/oauth/mcp-oauth", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/oauth/mcp-oauth")>();
+  return {
+    ...actual,
+    handleOAuthCallback: mockHandleOAuthCallback,
+  };
+});
 
 vi.mock("../components/ServersTab", () => ({
   ServersTab: () => <div>Servers Tab</div>,
