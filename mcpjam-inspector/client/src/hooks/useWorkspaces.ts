@@ -105,8 +105,7 @@ export function useWorkspaceQueries({
   const isLoading = isAuthenticated && queriedWorkspaces === undefined;
 
   const workspaces = useMemo(
-    () =>
-      filterWorkspacesForOrganization(queriedWorkspaces, organizationId) ?? [],
+    () => filterWorkspacesForOrganization(queriedWorkspaces, organizationId),
     [queriedWorkspaces, organizationId],
   );
 

@@ -1,8 +1,20 @@
-import { describe, expect, it } from "vitest";
+import { renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   filterWorkspacesForOrganization,
   type RemoteWorkspace,
+  useWorkspaceQueries,
 } from "../useWorkspaces";
+
+const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
+  mockUseMutation: vi.fn(),
+  mockUseQuery: vi.fn(),
+}));
+
+vi.mock("convex/react", () => ({
+  useMutation: mockUseMutation,
+  useQuery: mockUseQuery,
+}));
 
 function createWorkspace(
   id: string,
@@ -51,5 +63,29 @@ describe("filterWorkspacesForOrganization", () => {
       workspaces[0],
       workspaces[2],
     ]);
+  });
+});
+
+describe("useWorkspaceQueries", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseMutation.mockReturnValue(vi.fn());
+  });
+
+  it("preserves undefined workspaces while the authenticated query is loading", () => {
+    mockUseQuery.mockReturnValue(undefined);
+
+    const { result } = renderHook(() =>
+      useWorkspaceQueries({
+        isAuthenticated: true,
+        organizationId: "org-1",
+      }),
+    );
+
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.workspaces).toBeUndefined();
+    expect(result.current.sortedWorkspaces).toEqual([]);
+    expect(result.current.hasWorkspaces).toBe(false);
+    expect(mockUseQuery).toHaveBeenCalledWith("workspaces:getMyWorkspaces", {});
   });
 });
