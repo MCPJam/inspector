@@ -212,7 +212,20 @@ describe("useServerState OAuth callback failures", () => {
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
   });
 
-  it("bounces browser OAuth callbacks back into Electron when no pending browser state exists", async () => {
+  it("bounces browser OAuth callbacks back into Electron when the OAuth state is tagged for desktop", async () => {
+    window.isElectron = false;
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=test-code&state=electron_mcp:test-state",
+    );
+
+    expect(buildElectronMcpCallbackUrl()).toBe(
+      "mcpjam://oauth/callback?flow=mcp&code=test-code&state=electron_mcp%3Atest-state",
+    );
+  });
+
+  it("ignores regular browser OAuth callbacks that are not tagged for Electron", () => {
     window.isElectron = false;
     window.history.replaceState(
       {},
@@ -220,9 +233,7 @@ describe("useServerState OAuth callback failures", () => {
       "/oauth/callback?code=test-code&state=test-state",
     );
 
-    expect(buildElectronMcpCallbackUrl()).toBe(
-      "mcpjam://oauth/callback?flow=mcp&code=test-code&state=test-state",
-    );
+    expect(buildElectronMcpCallbackUrl()).toBeNull();
   });
 
   it("detects retryable transport errors after OAuth", () => {

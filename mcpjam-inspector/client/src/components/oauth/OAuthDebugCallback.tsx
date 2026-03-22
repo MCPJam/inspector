@@ -160,13 +160,19 @@ export default function OAuthDebugCallback() {
           </>
         )}
         {!window.isElectron && returnToElectronUrl && (
-          <p className="mt-4 text-xs text-muted-foreground">
-            Returning to MCPJam Inspector. If nothing happens,{" "}
-            <a className="underline" href={returnToElectronUrl}>
-              click here
-            </a>
-            .
-          </p>
+          <div className="mt-4 space-y-2 text-xs text-muted-foreground">
+            <p>
+              MCPJam Desktop should open automatically. If you are back in the
+              browser, please close this page and continue in MCPJam Desktop.
+            </p>
+            <p>
+              If nothing happened,{" "}
+              <a className="underline" href={returnToElectronUrl}>
+                click here
+              </a>
+              .
+            </p>
+          </div>
         )}
       </div>
     </div>

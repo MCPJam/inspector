@@ -25,6 +25,7 @@ import {
   getStoredTokens,
   clearOAuthData,
   initiateOAuth,
+  isElectronMcpCallbackState,
 } from "@/lib/oauth/mcp-oauth";
 import { getHostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
@@ -84,8 +85,10 @@ export function buildElectronMcpCallbackUrl(): string | null {
     return null;
   }
 
-  const pendingServerName = localStorage.getItem("mcp-oauth-pending")?.trim();
-  if (pendingServerName) {
+  // Electron-started MCP OAuth explicitly tags the state parameter so the
+  // browser callback can hand control back to the desktop app without relying
+  // on browser-local storage heuristics.
+  if (!isElectronMcpCallbackState(params.get("state"))) {
     return null;
   }
 

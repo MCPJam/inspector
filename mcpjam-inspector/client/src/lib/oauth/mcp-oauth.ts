@@ -21,6 +21,8 @@ interface StoredOAuthDiscoveryState {
   discoveryState: OAuthDiscoveryState;
 }
 
+const ELECTRON_MCP_CALLBACK_STATE_PREFIX = "electron_mcp:";
+
 function getMCPOAuthRedirectUri(): string {
   if (typeof window !== "undefined") {
     return `${window.location.origin}/oauth/callback`;
@@ -132,6 +134,22 @@ export interface OAuthResult {
   error?: string;
 }
 
+export function buildMCPOAuthState(): string {
+  const state = generateRandomString(32);
+  if (window.isElectron) {
+    return `${ELECTRON_MCP_CALLBACK_STATE_PREFIX}${state}`;
+  }
+  return state;
+}
+
+export function isElectronMcpCallbackState(
+  state: string | null | undefined,
+): boolean {
+  return Boolean(
+    state && state.startsWith(ELECTRON_MCP_CALLBACK_STATE_PREFIX),
+  );
+}
+
 /**
  * Simple localStorage-based OAuth provider for MCP
  */
@@ -156,7 +174,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   }
 
   state(): string {
-    return generateRandomString(32);
+    return buildMCPOAuthState();
   }
 
   get redirectUrl(): string {

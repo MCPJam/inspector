@@ -163,6 +163,30 @@ describe("mcp-oauth", () => {
   });
 
   describe("persisted discovery state", () => {
+    it("tags Electron-started OAuth state for desktop callback recovery", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      window.isElectron = true;
+
+      expect(provider.state()).toMatch(/^electron_mcp:mock-random-string$/);
+    });
+
+    it("keeps browser OAuth state untagged", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      window.isElectron = false;
+
+      expect(provider.state()).toBe("mock-random-string");
+    });
+
     it("falls back to in-app navigation when Electron browser open fails", async () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const provider = new MCPOAuthProvider(
