@@ -119,7 +119,8 @@ vi.mock("../lib/theme-utils", () => ({
 }));
 
 vi.mock("../lib/oauth/mcp-oauth", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../lib/oauth/mcp-oauth")>();
+  const actual =
+    await importOriginal<typeof import("../lib/oauth/mcp-oauth")>();
   return {
     ...actual,
     handleOAuthCallback: mockHandleOAuthCallback,
