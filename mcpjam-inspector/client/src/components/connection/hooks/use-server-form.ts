@@ -102,7 +102,9 @@ export function useServerForm(
       }
 
       // Derive local values used for both state initialization and snapshot
-      const serverType: "stdio" | "http" = server.config.command ? "stdio" : "http";
+      const serverType: "stdio" | "http" = server.config.command
+        ? "stdio"
+        : "http";
       const serverUrl = isHttpServer && config.url ? config.url.toString() : "";
       const fullCommand = server.config.command
         ? [server.config.command, ...(server.config.args || [])]
@@ -117,7 +119,9 @@ export function useServerForm(
         typeof config.requestInit.headers.Authorization === "string" &&
         config.requestInit.headers.Authorization.startsWith("Bearer ");
       const bearerTokenValue = hasBearer
-        ? (config.requestInit!.headers as Record<string, string>).Authorization.replace("Bearer ", "")
+        ? (
+            config.requestInit!.headers as Record<string, string>
+          ).Authorization.replace("Bearer ", "")
         : "";
       const resolvedAuthType: "oauth" | "bearer" | "none" = hasOAuth
         ? "oauth"
