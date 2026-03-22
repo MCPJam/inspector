@@ -1,9 +1,76 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JsonEditor } from "../json-editor";
 import { buildLineLayouts } from "../json-editor-edit";
 
+class MockResizeObserver {
+  observe = vi.fn();
+  unobserve = vi.fn();
+  disconnect = vi.fn();
+
+  constructor(public readonly callback: ResizeObserverCallback) {
+    mockResizeObservers.push(this);
+  }
+}
+
+let mockResizeObservers: MockResizeObserver[] = [];
+const originalResizeObserver = global.ResizeObserver;
+const originalRequestAnimationFrame = window.requestAnimationFrame;
+const originalCancelAnimationFrame = window.cancelAnimationFrame;
+
+function triggerResizeObservers() {
+  act(() => {
+    for (const observer of mockResizeObservers) {
+      observer.callback([], observer as unknown as ResizeObserver);
+    }
+  });
+}
+
+function setElementDimensions(
+  element: Element,
+  dimensions: Partial<
+    Record<"clientHeight" | "scrollHeight" | "clientWidth" | "scrollWidth", number>
+  >,
+) {
+  for (const [property, value] of Object.entries(dimensions)) {
+    Object.defineProperty(element, property, {
+      configurable: true,
+      value,
+    });
+  }
+}
+
+function getReadOnlyViewport(container: HTMLElement): HTMLDivElement | null {
+  return container.querySelector(
+    "div.relative.z-10.flex.min-w-0.items-start",
+  ) as HTMLDivElement | null;
+}
+
+function getReadOnlyContentViewport(
+  container: HTMLElement,
+): HTMLDivElement | null {
+  const pre = container.querySelector("pre");
+  return (pre?.parentElement as HTMLDivElement | null) ?? null;
+}
+
 describe("JsonEditor", () => {
+  beforeEach(() => {
+    mockResizeObservers = [];
+    global.ResizeObserver =
+      MockResizeObserver as unknown as typeof ResizeObserver;
+    window.requestAnimationFrame = ((callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    }) as typeof window.requestAnimationFrame;
+    window.cancelAnimationFrame = (() => {}) as typeof window.cancelAnimationFrame;
+  });
+
+  afterEach(() => {
+    global.ResizeObserver = originalResizeObserver;
+    window.requestAnimationFrame = originalRequestAnimationFrame;
+    window.cancelAnimationFrame = originalCancelAnimationFrame;
+  });
+
   describe("autoFormatOnEdit", () => {
     it("formats valid raw content when entering edit mode", async () => {
       const onRawChange = vi.fn();
@@ -165,7 +232,7 @@ describe("JsonEditor", () => {
       );
 
       const viewport = container.querySelector(
-        ".overflow-y-auto.overscroll-none",
+        ".relative.z-10.flex.min-w-0.items-start",
       );
       expect(viewport).toBeTruthy();
       expect(viewport?.className).toContain("items-start");
@@ -215,6 +282,163 @@ describe("JsonEditor", () => {
       expect(layouts[2]?.top).toBe(
         (layouts[0]?.height ?? 0) + (layouts[1]?.height ?? 0),
       );
+    });
+  });
+
+  describe("overflow detection", () => {
+    it("hides vertical overflow in flat read-only view when content fits", () => {
+      const { container } = render(
+        <JsonEditor value={{ readOnlyHint: true }} viewOnly showLineNumbers={false} />,
+      );
+
+      const viewport = getReadOnlyViewport(container);
+      const contentViewport = getReadOnlyContentViewport(container);
+      expect(viewport).toBeTruthy();
+      expect(contentViewport).toBeTruthy();
+
+      setElementDimensions(viewport!, {
+        clientHeight: 100,
+        scrollHeight: 100,
+      });
+      setElementDimensions(contentViewport!, {
+        clientWidth: 200,
+        scrollWidth: 200,
+      });
+
+      triggerResizeObservers();
+
+      expect(viewport).toHaveClass("overflow-y-hidden");
+      expect(viewport).toHaveClass("overflow-x-hidden");
+      expect(contentViewport).toHaveClass("overflow-x-hidden");
+      expect(contentViewport).toHaveClass("overflow-y-hidden");
+    });
+
+    it("enables vertical overflow in flat read-only view when content exceeds the container", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ nested: { readOnlyHint: true, details: "overflow" } }}
+          viewOnly
+          showLineNumbers={false}
+        />,
+      );
+
+      const viewport = getReadOnlyViewport(container);
+      expect(viewport).toBeTruthy();
+
+      setElementDimensions(viewport!, {
+        clientHeight: 100,
+        scrollHeight: 220,
+      });
+
+      triggerResizeObservers();
+
+      expect(viewport).toHaveClass("overflow-y-auto");
+      expect(viewport).toHaveClass("overflow-x-hidden");
+    });
+
+    it("remeasures flat read-only view on rerender without a resize event", async () => {
+      const { container, rerender } = render(
+        <JsonEditor value={{ readOnlyHint: true }} viewOnly showLineNumbers={false} />,
+      );
+
+      const viewport = getReadOnlyViewport(container);
+      expect(viewport).toBeTruthy();
+
+      setElementDimensions(viewport!, {
+        clientHeight: 100,
+        scrollHeight: 100,
+      });
+
+      triggerResizeObservers();
+      expect(viewport).toHaveClass("overflow-y-hidden");
+
+      setElementDimensions(viewport!, {
+        clientHeight: 100,
+        scrollHeight: 220,
+      });
+
+      rerender(
+        <JsonEditor
+          value={{ readOnlyHint: true, details: { nested: "overflow" } }}
+          viewOnly
+          showLineNumbers={false}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(viewport).toHaveClass("overflow-y-auto");
+      });
+    });
+
+    it("enables horizontal overflow in flat read-only view when wrapping is disabled", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ avatarUrl: `https://${"a".repeat(120)}` }}
+          viewOnly
+          showLineNumbers={false}
+          wrapLongLinesInView={false}
+        />,
+      );
+
+      const contentViewport = getReadOnlyContentViewport(container);
+      expect(contentViewport).toBeTruthy();
+
+      setElementDimensions(contentViewport!, {
+        clientWidth: 120,
+        scrollWidth: 280,
+      });
+
+      triggerResizeObservers();
+
+      expect(contentViewport).toHaveClass("overflow-x-auto");
+      expect(contentViewport).toHaveClass("overflow-y-hidden");
+    });
+
+    it("preserves horizontal scrolling in tree view when only width overflows", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ long: "x".repeat(256) }}
+          viewOnly
+          collapsible
+          collapseStringsAfterLength={undefined}
+        />,
+      );
+
+      const treeRoot = container.querySelector('div[style*="var(--font-code)"]');
+      expect(treeRoot).toBeTruthy();
+
+      setElementDimensions(treeRoot!, {
+        clientHeight: 100,
+        scrollHeight: 100,
+        clientWidth: 120,
+        scrollWidth: 280,
+      });
+
+      triggerResizeObservers();
+
+      expect(treeRoot).toHaveClass("overflow-x-auto");
+      expect(treeRoot).toHaveClass("overflow-y-hidden");
+    });
+
+    it("hides both axes in tree view when content fits", () => {
+      const { container } = render(
+        <JsonEditor value={{ readOnlyHint: true }} viewOnly collapsible />,
+      );
+
+      const treeRoot = container.querySelector('div[style*="var(--font-code)"]');
+      expect(treeRoot).toBeTruthy();
+
+      setElementDimensions(treeRoot!, {
+        clientHeight: 100,
+        scrollHeight: 100,
+        clientWidth: 200,
+        scrollWidth: 200,
+      });
+
+      triggerResizeObservers();
+
+      expect(treeRoot).toHaveClass("overflow-x-hidden");
+      expect(treeRoot).toHaveClass("overflow-y-hidden");
     });
   });
 });
