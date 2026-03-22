@@ -74,6 +74,7 @@ export async function ensureAuthorizedForReconnect(
       clientSecret:
         server.oauthTokens?.client_secret || clientInfo?.client_secret,
       scopes: oauthConfig.scopes,
+      registryServerId: oauthConfig.registryServerId,
     } as MCPOAuthOptions;
     const init = await initiateOAuth(opts);
     if (init.success && init.serverConfig) {

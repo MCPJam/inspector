@@ -1,4 +1,4 @@
-import { useMemo, useCallback } from "react";
+import { useMemo, useCallback, useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import type { ServerFormData } from "@/shared/types.js";
 
@@ -200,6 +200,7 @@ export interface RegistryServer {
     useOAuth?: boolean;
     oauthScopes?: string[];
     oauthCredentialKey?: string;
+    clientId?: string;
     timeout?: number;
   };
   // Curation
@@ -239,6 +240,56 @@ export type RegistryConnectionStatus =
 
 export interface EnrichedRegistryServer extends RegistryServer {
   connectionStatus: RegistryConnectionStatus;
+}
+
+/**
+ * Registry servers grouped by displayName, with variants ordered app-first.
+ */
+export interface ConsolidatedRegistryServer {
+  /** All variants ordered: app before text. */
+  variants: EnrichedRegistryServer[];
+  /** True when both "text" and "app" variants exist. */
+  hasDualType: boolean;
+}
+
+/**
+ * Groups registry servers by displayName. Variants are ordered app before text.
+ */
+export function consolidateServers(
+  servers: EnrichedRegistryServer[],
+): ConsolidatedRegistryServer[] {
+  const groups = new Map<string, EnrichedRegistryServer[]>();
+
+  for (const server of servers) {
+    const key = server.displayName;
+    const group = groups.get(key);
+    if (group) {
+      group.push(server);
+    } else {
+      groups.set(key, [server]);
+    }
+  }
+
+  const result: ConsolidatedRegistryServer[] = [];
+
+  for (const variants of groups.values()) {
+    // App before text
+    const ordered = [...variants].sort((a) =>
+      a.clientType === "app" ? -1 : 1,
+    );
+    result.push({ variants: ordered, hasDualType: variants.length > 1 });
+  }
+
+  return result;
+}
+
+/**
+ * Returns the server name that matches what Convex creates (with (App)/(Text) suffix).
+ */
+function getRegistryServerName(server: RegistryServer): string {
+  if (server.clientType === "app") return `${server.displayName} (App)`;
+  if (server.clientType === "text") return `${server.displayName} (Text)`;
+  return server.displayName;
 }
 
 /**
@@ -296,7 +347,7 @@ export function useRegistryServers({
 
     return registryServers.map((server) => {
       const isAddedToWorkspace = connectedRegistryIds.has(server._id);
-      const liveServer = liveServers?.[server.displayName];
+      const liveServer = liveServers?.[getRegistryServerName(server)];
       let connectionStatus: RegistryConnectionStatus = "not_connected";
 
       if (liveServer?.connectionStatus === "connected") {
@@ -320,6 +371,36 @@ export function useRegistryServers({
     return Array.from(cats).sort();
   }, [enrichedServers]);
 
+  // Track registry server IDs that are pending connection (waiting for OAuth / handshake)
+  const [pendingServerIds, setPendingServerIds] = useState<
+    Map<string, string>
+  >(new Map()); // registryServerId → suffixed server name
+
+  // Record the Convex connection only after the server actually connects
+  useEffect(() => {
+    if (!isAuthenticated || !workspaceId || DEV_MOCK_REGISTRY) return;
+    for (const [registryServerId, serverName] of pendingServerIds) {
+      const liveServer = liveServers?.[serverName];
+      if (liveServer?.connectionStatus === "connected") {
+        setPendingServerIds((prev) => {
+          const next = new Map(prev);
+          next.delete(registryServerId);
+          return next;
+        });
+        connectMutation({
+          registryServerId,
+          workspaceId,
+        } as any);
+      }
+    }
+  }, [
+    liveServers,
+    pendingServerIds,
+    isAuthenticated,
+    workspaceId,
+    connectMutation,
+  ]);
+
   const connectionsAreLoading =
     !DEV_MOCK_REGISTRY &&
     isAuthenticated &&
@@ -331,22 +412,19 @@ export function useRegistryServers({
     (registryServers === undefined || connectionsAreLoading);
 
   async function connect(server: RegistryServer) {
-    // 1. Record the connection in Convex (only when authenticated with a workspace)
-    if (!DEV_MOCK_REGISTRY && isAuthenticated && workspaceId) {
-      await connectMutation({
-        registryServerId: server._id,
-        workspaceId,
-      } as any);
-    }
+    const serverName = getRegistryServerName(server);
+    // Track this server as pending — Convex record will be created when it actually connects
+    setPendingServerIds((prev) => new Map(prev).set(server._id, serverName));
 
-    // 2. Trigger the local MCP connection
+    // Trigger the local MCP connection
     onConnect({
-      name: server.displayName,
+      name: serverName,
       type: server.transport.transportType,
       url: server.transport.url,
       useOAuth: server.transport.useOAuth,
       oauthScopes: server.transport.oauthScopes,
       oauthCredentialKey: server.transport.oauthCredentialKey,
+      clientId: server.transport.clientId,
       registryServerId: server._id,
     });
   }

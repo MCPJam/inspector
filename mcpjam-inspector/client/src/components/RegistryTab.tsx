@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import {
   Package,
   KeyRound,
@@ -7,6 +7,9 @@ import {
   Loader2,
   MoreVertical,
   Unplug,
+  MonitorSmartphone,
+  MessageSquareText,
+  ChevronDown,
 } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
@@ -17,11 +20,14 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
 import {
   useRegistryServers,
+  consolidateServers,
   type EnrichedRegistryServer,
+  type ConsolidatedRegistryServer,
   type RegistryConnectionStatus,
 } from "@/hooks/useRegistryServers";
 import type { ServerFormData } from "@/shared/types.js";
@@ -70,7 +76,10 @@ export function RegistryTab({
     }
   }, [servers, onNavigate]);
 
-  const filteredServers = registryServers;
+  const consolidatedServers = useMemo(
+    () => consolidateServers(registryServers),
+    [registryServers],
+  );
 
   const handleConnect = async (server: EnrichedRegistryServer) => {
     setConnectingIds((prev) => new Set(prev).add(server._id));
@@ -128,13 +137,13 @@ export function RegistryTab({
 
         {/* Server cards grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {filteredServers.map((server: EnrichedRegistryServer) => (
+          {consolidatedServers.map((consolidated) => (
             <RegistryServerCard
-              key={server._id}
-              server={server}
-              isConnecting={connectingIds.has(server._id)}
-              onConnect={() => handleConnect(server)}
-              onDisconnect={() => handleDisconnect(server)}
+              key={consolidated.variants[0]._id}
+              consolidated={consolidated}
+              connectingIds={connectingIds}
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
             />
           ))}
         </div>
@@ -144,30 +153,32 @@ export function RegistryTab({
 }
 
 function RegistryServerCard({
-  server,
-  isConnecting,
+  consolidated,
+  connectingIds,
   onConnect,
   onDisconnect,
 }: {
-  server: EnrichedRegistryServer;
-  isConnecting: boolean;
-  onConnect: () => void;
-  onDisconnect: () => void;
+  consolidated: ConsolidatedRegistryServer;
+  connectingIds: Set<string>;
+  onConnect: (server: EnrichedRegistryServer) => void;
+  onDisconnect: (server: EnrichedRegistryServer) => void;
 }) {
+  const { variants, hasDualType } = consolidated;
+  const first = variants[0];
+
+  const isConnecting = variants.some((v) => connectingIds.has(v._id));
   const effectiveStatus: RegistryConnectionStatus = isConnecting
     ? "connecting"
-    : server.connectionStatus;
-  const isConnectedOrAdded =
-    effectiveStatus === "connected" || effectiveStatus === "added";
+    : first.connectionStatus;
 
   return (
     <Card className="px-4 py-3 flex flex-col gap-2">
-      {/* Top row: icon + name + auth pill + action (top-right) */}
+      {/* Top row: icon + name + action (top-right) */}
       <div className="flex items-center gap-3">
-        {server.iconUrl ? (
+        {first.iconUrl ? (
           <img
-            src={server.iconUrl}
-            alt={server.displayName}
+            src={first.iconUrl}
+            alt={first.displayName}
             className="h-8 w-8 rounded-md object-contain flex-shrink-0"
           />
         ) : (
@@ -176,20 +187,14 @@ function RegistryServerCard({
           </div>
         )}
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <h3 className="text-sm font-semibold truncate">
-              {server.displayName}
-            </h3>
-            <AuthBadge useOAuth={server.transport.useOAuth} />
-            <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-              {server.category}
-            </Badge>
-          </div>
+          <h3 className="text-sm font-semibold truncate">
+            {first.displayName}
+          </h3>
           <div className="flex items-center gap-1 mt-0.5">
             <span className="text-xs text-muted-foreground">
-              {server.publisher}
+              {first.publisher}
             </span>
-            {server.publisher === "MCPJam" && (
+            {first.publisher === "MCPJam" && (
               <svg
                 className="h-4 w-4 flex-shrink-0"
                 viewBox="0 0 24 24"
@@ -210,19 +215,175 @@ function RegistryServerCard({
         </div>
         {/* Top-right action */}
         <div className="flex-shrink-0">
-          <TopRightAction
-            status={effectiveStatus}
-            onConnect={onConnect}
-            onDisconnect={onDisconnect}
-          />
+          {hasDualType ? (
+            <DualTypeAction
+              variants={variants}
+              connectingIds={connectingIds}
+              onConnect={onConnect}
+              onDisconnect={onDisconnect}
+            />
+          ) : (
+            <TopRightAction
+              status={effectiveStatus}
+              onConnect={() => onConnect(first)}
+              onDisconnect={() => onDisconnect(first)}
+            />
+          )}
         </div>
+      </div>
+
+      {/* Tags row — show badges for all variants */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {variants.map((v) => (
+          <ClientTypeBadge key={v._id} clientType={v.clientType} />
+        ))}
+        <AuthBadge useOAuth={first.transport.useOAuth} />
       </div>
 
       {/* Description */}
       <p className="text-xs text-muted-foreground line-clamp-2">
-        {server.description}
+        {first.description}
       </p>
     </Card>
+  );
+}
+
+function DualTypeAction({
+  variants,
+  connectingIds,
+  onConnect,
+  onDisconnect,
+}: {
+  variants: EnrichedRegistryServer[];
+  connectingIds: Set<string>;
+  onConnect: (server: EnrichedRegistryServer) => void;
+  onDisconnect: (server: EnrichedRegistryServer) => void;
+}) {
+  // Check if any variant is connecting
+  const connectingVariant = variants.find((v) => connectingIds.has(v._id));
+  if (connectingVariant) {
+    return (
+      <Button variant="outline" size="sm" className="h-7 text-xs" disabled>
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+        Connecting
+      </Button>
+    );
+  }
+
+  // Check if any variant is connected/added
+  const connectedVariant = variants.find(
+    (v) => v.connectionStatus === "connected",
+  );
+  const addedVariant = variants.find((v) => v.connectionStatus === "added");
+  const activeVariant = connectedVariant ?? addedVariant;
+
+  if (activeVariant) {
+    const label =
+      activeVariant.connectionStatus === "connected" ? "Connected" : "Added";
+    const disconnectLabel =
+      activeVariant.connectionStatus === "connected" ? "Disconnect" : "Remove";
+
+    // Show connected state + dropdown for remaining variants
+    const remainingVariants = variants.filter((v) => v !== activeVariant);
+
+    return (
+      <div className="flex items-center gap-1.5">
+        {activeVariant.connectionStatus === "connected" ? (
+          <Button
+            size="sm"
+            className="h-7 text-xs bg-green-600 hover:bg-green-600 text-white cursor-default"
+            tabIndex={-1}
+          >
+            <CheckCircle2 className="h-3.5 w-3.5" />
+            {label}
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs cursor-default"
+            tabIndex={-1}
+          >
+            {label}
+          </Button>
+        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+              <MoreVertical className="h-3.5 w-3.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {remainingVariants.map((v) => (
+              <DropdownMenuItem key={v._id} onClick={() => onConnect(v)}>
+                {v.clientType === "app" ? (
+                  <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-blue-400" />
+                ) : (
+                  <MessageSquareText className="h-3.5 w-3.5 mr-2 text-violet-400" />
+                )}
+                Connect as {v.clientType === "app" ? "App" : "Text"}
+              </DropdownMenuItem>
+            ))}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onDisconnect(activeVariant)}>
+              <Unplug className="h-3.5 w-3.5 mr-2" />
+              {disconnectLabel} {activeVariant.clientType === "app" ? "App" : "Text"}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
+  }
+
+  // Neither variant connected — show split Connect button with dropdown
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="sm"
+          className="h-7 text-xs gap-1"
+          data-testid="connect-dropdown-trigger"
+        >
+          Connect
+          <ChevronDown className="h-3 w-3" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {variants.map((v) => (
+          <DropdownMenuItem key={v._id} onClick={() => onConnect(v)}>
+            {v.clientType === "app" ? (
+              <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-blue-400" />
+            ) : (
+              <MessageSquareText className="h-3.5 w-3.5 mr-2 text-violet-400" />
+            )}
+            Connect as {v.clientType === "app" ? "App" : "Text"}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function ClientTypeBadge({ clientType }: { clientType?: "text" | "app" }) {
+  if (clientType === "app") {
+    return (
+      <Badge
+        variant="outline"
+        className="text-[11px] px-1.5 py-0.5 gap-1 border-blue-500/40 text-blue-400"
+      >
+        <MonitorSmartphone className="h-3 w-3" />
+        App
+      </Badge>
+    );
+  }
+  return (
+    <Badge
+      variant="outline"
+      className="text-[11px] px-1.5 py-0.5 gap-1 border-violet-500/40 text-violet-400"
+    >
+      <MessageSquareText className="h-3 w-3" />
+      Text
+    </Badge>
   );
 }
 
@@ -231,9 +392,9 @@ function AuthBadge({ useOAuth }: { useOAuth?: boolean }) {
     return (
       <Badge
         variant="outline"
-        className="text-[10px] px-1.5 py-0 gap-0.5 text-muted-foreground"
+        className="text-[11px] px-1.5 py-0.5 gap-1 border-emerald-500/40 text-emerald-400"
       >
-        <KeyRound className="h-2.5 w-2.5" />
+        <KeyRound className="h-3 w-3" />
         OAuth
       </Badge>
     );
@@ -241,9 +402,9 @@ function AuthBadge({ useOAuth }: { useOAuth?: boolean }) {
   return (
     <Badge
       variant="outline"
-      className="text-[10px] px-1.5 py-0 gap-0.5 text-muted-foreground"
+      className="text-[11px] px-1.5 py-0.5 gap-1 border-amber-500/40 text-amber-400"
     >
-      <ShieldOff className="h-2.5 w-2.5" />
+      <ShieldOff className="h-3 w-3" />
       No auth
     </Badge>
   );

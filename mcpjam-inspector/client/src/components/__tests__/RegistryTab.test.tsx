@@ -14,9 +14,14 @@ let mockHookReturn: {
   disconnect: typeof mockDisconnect;
 };
 
-vi.mock("@/hooks/useRegistryServers", () => ({
-  useRegistryServers: () => mockHookReturn,
-}));
+vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/useRegistryServers")>();
+  return {
+    ...actual,
+    useRegistryServers: () => mockHookReturn,
+  };
+});
 
 // Mock dropdown menu to simplify testing
 vi.mock("../ui/dropdown-menu", () => ({
@@ -29,6 +34,7 @@ vi.mock("../ui/dropdown-menu", () => ({
   DropdownMenuContent: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="dropdown-content">{children}</div>
   ),
+  DropdownMenuSeparator: () => <hr data-testid="dropdown-separator" />,
   DropdownMenuItem: ({
     children,
     onClick,
@@ -215,7 +221,6 @@ describe("RegistryTab", () => {
         screen.getByText("Manage Linear issues and projects."),
       ).toBeInTheDocument();
       expect(screen.getByText("MCPJam")).toBeInTheDocument();
-      expect(screen.getByText("Project Management")).toBeInTheDocument();
     });
 
     it("does not show raw URL by default", () => {
@@ -452,6 +457,126 @@ describe("RegistryTab", () => {
         expect(onNavigate).toHaveBeenCalledWith("app-builder");
       });
       expect(localStorage.getItem("registry-pending-redirect")).toBeNull();
+    });
+  });
+
+  describe("consolidated cards — dual-type servers", () => {
+    function createFullServer(
+      overrides: Partial<EnrichedRegistryServer> & { _id: string; displayName: string },
+    ): EnrichedRegistryServer {
+      return {
+        name: `com.test.${overrides.displayName.toLowerCase()}`,
+        description: `${overrides.displayName} description`,
+        scope: "global" as const,
+        transport: {
+          transportType: "http" as const,
+          url: `https://${overrides.displayName.toLowerCase()}.example.com`,
+          useOAuth: true,
+        },
+        category: "Productivity",
+        publisher: overrides.displayName,
+        status: "approved" as const,
+        createdBy: "test",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        connectionStatus: "not_connected",
+        clientType: "text",
+        ...overrides,
+      };
+    }
+
+    it("renders one card per consolidated server (dual-type = 1 card)", () => {
+      mockHookReturn = {
+        registryServers: [
+          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
+          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+          createFullServer({ _id: "linear-1", displayName: "Linear", clientType: "text" }),
+        ],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      const headings = screen.getAllByRole("heading", { level: 3 });
+      const names = headings.map((h) => h.textContent);
+      expect(names.filter((n) => n === "Asana")).toHaveLength(1);
+      expect(names.filter((n) => n === "Linear")).toHaveLength(1);
+      expect(headings).toHaveLength(2);
+    });
+
+    it("shows both Text and App badges on dual-type card", () => {
+      mockHookReturn = {
+        registryServers: [
+          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
+          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+        ],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Text")).toBeInTheDocument();
+      expect(screen.getByText("App")).toBeInTheDocument();
+    });
+
+    it("shows dropdown trigger for dual-type card", () => {
+      mockHookReturn = {
+        registryServers: [
+          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
+          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+        ],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByTestId("connect-dropdown-trigger")).toBeInTheDocument();
+    });
+
+    it("does not show dropdown trigger for single-type card", () => {
+      mockHookReturn = {
+        registryServers: [
+          createFullServer({ _id: "linear-1", displayName: "Linear", clientType: "text" }),
+        ],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.queryByTestId("connect-dropdown-trigger")).toBeNull();
+    });
+
+    it("dropdown contains Connect as Text and Connect as App options", async () => {
+      mockHookReturn = {
+        registryServers: [
+          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
+          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+        ],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      // With the mocked dropdown, items are always visible
+      const items = screen.getAllByTestId("dropdown-item");
+      const itemTexts = items.map((el) => el.textContent);
+      expect(itemTexts.some((t) => t?.includes("Text"))).toBe(true);
+      expect(itemTexts.some((t) => t?.includes("App"))).toBe(true);
     });
   });
 });

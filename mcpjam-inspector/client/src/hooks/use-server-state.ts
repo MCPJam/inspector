@@ -136,6 +136,7 @@ export function useServerState({
   const failPendingOAuthConnection = useCallback(
     (errorMessage: string) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      console.log("[OAuthDebug] failPendingOAuthConnection:", pendingServerName, "error:", errorMessage); // ##TODOClean
       if (pendingServerName) {
         dispatch({
           type: "CONNECT_FAILURE",
@@ -145,6 +146,7 @@ export function useServerState({
       }
 
       localStorage.removeItem("mcp-oauth-return-hash");
+      console.log("[OAuthDebug] REMOVE mcp-oauth-pending (failPendingOAuthConnection)"); // ##TODOClean
       localStorage.removeItem("mcp-oauth-pending");
 
       return pendingServerName;
@@ -475,6 +477,7 @@ export function useServerState({
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      console.log("[OAuthDebug] handleOAuthCallbackComplete: mcp-oauth-pending =", pendingServerName); // ##TODOClean
 
       try {
         const result = await handleOAuthCallback(code);
@@ -787,6 +790,7 @@ export function useServerState({
             serverUrl: formData.url,
             clientId: formData.clientId,
             clientSecret: formData.clientSecret,
+            registryServerId: formData.registryServerId,
           };
           if (formData.oauthScopes && formData.oauthScopes.length > 0) {
             oauthOptions.scopes = formData.oauthScopes;

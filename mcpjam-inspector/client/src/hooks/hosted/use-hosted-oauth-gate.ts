@@ -373,6 +373,7 @@ export function useHostedOAuthGate({
 
       if (!result.success) {
         clearHostedOAuthPendingState();
+        console.log("[OAuthDebug] REMOVE mcp-oauth-pending (use-hosted-oauth-gate failure)"); // ##TODOClean
         localStorage.removeItem("mcp-oauth-pending");
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem(pendingKey);
@@ -398,6 +399,7 @@ export function useHostedOAuthGate({
 
       if (accessToken) {
         clearHostedOAuthPendingState();
+        console.log("[OAuthDebug] REMOVE mcp-oauth-pending (use-hosted-oauth-gate success)"); // ##TODOClean
         localStorage.removeItem("mcp-oauth-pending");
         localStorage.removeItem("mcp-oauth-return-hash");
         localStorage.removeItem(pendingKey);
