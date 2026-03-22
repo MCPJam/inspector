@@ -281,7 +281,11 @@ export class MCPOAuthProvider implements OAuthClientProvider {
       }
     }
 
-    window.location.assign(authorizationUrl.toString());
+    this.navigateToUrl(authorizationUrl.toString());
+  }
+
+  navigateToUrl(url: string) {
+    window.location.assign(url);
   }
 
   async saveCodeVerifier(codeVerifier: string) {

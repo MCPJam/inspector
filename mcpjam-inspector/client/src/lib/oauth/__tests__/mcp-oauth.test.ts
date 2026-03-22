@@ -169,8 +169,8 @@ describe("mcp-oauth", () => {
         "asana",
         "https://mcp.asana.com/sse",
       );
-      const assignSpy = vi
-        .spyOn(window.location, "assign")
+      const navigateSpy = vi
+        .spyOn(provider, "navigateToUrl")
         .mockImplementation(() => {});
       const consoleErrorSpy = vi
         .spyOn(console, "error")
@@ -193,7 +193,7 @@ describe("mcp-oauth", () => {
       expect(openExternal).toHaveBeenCalledWith(
         "https://auth.example.com/authorize",
       );
-      expect(assignSpy).toHaveBeenCalledWith(
+      expect(navigateSpy).toHaveBeenCalledWith(
         "https://auth.example.com/authorize",
       );
       expect(consoleErrorSpy).toHaveBeenCalled();
