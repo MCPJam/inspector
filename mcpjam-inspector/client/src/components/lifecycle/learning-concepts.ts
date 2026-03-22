@@ -1,4 +1,4 @@
-import { GitBranch, type LucideIcon } from "lucide-react";
+import { BookOpen, GitBranch, type LucideIcon } from "lucide-react";
 
 export interface LearningConcept {
   id: string;
@@ -10,6 +10,15 @@ export interface LearningConcept {
 }
 
 export const LEARNING_CONCEPTS: LearningConcept[] = [
+  {
+    id: "mcp-101",
+    title: "MCP 101",
+    description:
+      "What is MCP and why does it matter? Learn how this open protocol standardizes the way AI agents connect to tools and data — securely.",
+    icon: BookOpen,
+    totalSteps: 5,
+    category: "Fundamentals",
+  },
   {
     id: "mcp-lifecycle",
     title: "MCP Lifecycle",

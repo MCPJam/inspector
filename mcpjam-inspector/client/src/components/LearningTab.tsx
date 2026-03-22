@@ -11,6 +11,10 @@ import { McpLifecycleDiagram } from "@/components/lifecycle/McpLifecycleDiagram"
 import { McpLifecycleGuide } from "@/components/lifecycle/McpLifecycleGuide";
 import { buildMcpLifecycleScenario20250326 } from "@/components/lifecycle/mcp-lifecycle-data";
 import { HTTP_STEP_ORDER } from "@/components/lifecycle/mcp-lifecycle-guide-data";
+import { Mcp101Guide } from "@/components/mcp101/Mcp101Guide";
+import { Mcp101Diagram } from "@/components/mcp101/Mcp101Diagram";
+import { MCP101_STEP_ORDER } from "@/components/mcp101/mcp101-guide-data";
+import type { Mcp101Step } from "@/components/mcp101/mcp101-guide-data";
 import { LearningLandingPage } from "@/components/LearningLandingPage";
 
 /**
@@ -119,8 +123,88 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
   );
 }
 
+function Mcp101Walkthrough({ onBack }: { onBack: () => void }) {
+  const [activeStepId, setActiveStepId] = useState<string | undefined>(
+    undefined,
+  );
+  const [scrollTargetStepId, setScrollTargetStepId] = useState<
+    string | undefined
+  >(undefined);
+  const isProgrammaticScrollRef = useRef(false);
+
+  // Scroll → Diagram: IntersectionObserver detected a new section in view
+  const handleScrollStepChange = useCallback((stepId: string) => {
+    if (isProgrammaticScrollRef.current) return;
+    setActiveStepId(stepId);
+  }, []);
+
+  // Diagram → Scroll: user clicked a node or edge
+  const handleDiagramStepClick = useCallback((stepId: string) => {
+    // Validate that the stepId is a real section before scrolling
+    if (!MCP101_STEP_ORDER.includes(stepId as Mcp101Step)) return;
+    isProgrammaticScrollRef.current = true;
+    setActiveStepId(stepId);
+    setScrollTargetStepId(stepId);
+  }, []);
+
+  // Called after programmatic scroll animation completes
+  const handleScrollComplete = useCallback(() => {
+    isProgrammaticScrollRef.current = false;
+    setScrollTargetStepId(undefined);
+  }, []);
+
+  return (
+    <div className="flex h-full flex-col">
+      {/* Minimal header bar */}
+      <div className="flex items-center justify-between border-b px-4 py-3">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onBack}
+            title="Back to Learning"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+          </Button>
+          <h2 className="text-sm font-semibold">MCP 101</h2>
+          <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+            Fundamentals
+          </Badge>
+        </div>
+      </div>
+
+      {/* Split view: Guide (left) + Architecture Diagram (right) */}
+      <div className="flex-1 min-h-0">
+        <ResizablePanelGroup direction="horizontal" className="h-full">
+          <ResizablePanel defaultSize={50} minSize={30}>
+            <Mcp101Guide
+              activeStepId={activeStepId}
+              onActiveStepChange={handleScrollStepChange}
+              scrollToStepId={scrollTargetStepId}
+              onScrollComplete={handleScrollComplete}
+            />
+          </ResizablePanel>
+
+          <ResizableHandle withHandle />
+
+          <ResizablePanel defaultSize={50} minSize={20} maxSize={70}>
+            <Mcp101Diagram
+              activeStep={activeStepId as Mcp101Step | undefined}
+              onStepClick={handleDiagramStepClick}
+            />
+          </ResizablePanel>
+        </ResizablePanelGroup>
+      </div>
+    </div>
+  );
+}
+
 export function LearningTab() {
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
+
+  if (selectedConcept === "mcp-101") {
+    return <Mcp101Walkthrough onBack={() => setSelectedConcept(null)} />;
+  }
 
   if (selectedConcept === "mcp-lifecycle") {
     return <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />;
