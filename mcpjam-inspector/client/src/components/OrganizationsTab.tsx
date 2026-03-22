@@ -1,6 +1,5 @@
 import { useState, useRef } from "react";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableText } from "@/components/ui/editable-text";
@@ -30,6 +29,7 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import {
   Organization,
   OrganizationMember,
@@ -50,7 +50,7 @@ interface OrganizationsTabProps {
 }
 
 export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
-  const { user, signIn } = useAuth();
+  const { user, signIn } = useElectronHostedAuth();
   const { isAuthenticated } = useConvexAuth();
 
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
@@ -136,7 +136,7 @@ interface OrganizationPageProps {
 
 function OrganizationPage({ organization }: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { user } = useAuth();
+  const { user } = useElectronHostedAuth();
   const currentUserEmail = user?.email;
   const fileInputRef = useRef<HTMLInputElement>(null);
 

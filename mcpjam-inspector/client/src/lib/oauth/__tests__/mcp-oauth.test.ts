@@ -48,6 +48,8 @@ describe("mcp-oauth", () => {
     localStorage.clear();
     sessionStorage.clear();
     mockSdkAuth.mockReset();
+    window.isElectron = false;
+    delete window.electronAPI;
 
     const sessionToken = await import("@/lib/session-token");
     authFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
@@ -58,6 +60,8 @@ describe("mcp-oauth", () => {
     vi.restoreAllMocks();
     localStorage.clear();
     sessionStorage.clear();
+    window.isElectron = false;
+    delete window.electronAPI;
   });
 
   describe("proxy endpoint auth failures", () => {
@@ -159,6 +163,66 @@ describe("mcp-oauth", () => {
   });
 
   describe("persisted discovery state", () => {
+    it("tags Electron-started OAuth state for desktop callback recovery", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      window.isElectron = true;
+
+      expect(provider.state()).toMatch(/^electron_mcp:mock-random-string$/);
+    });
+
+    it("keeps browser OAuth state untagged", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      window.isElectron = false;
+
+      expect(provider.state()).toBe("mock-random-string");
+    });
+
+    it("falls back to in-app navigation when Electron browser open fails", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      const navigateSpy = vi
+        .spyOn(provider, "navigateToUrl")
+        .mockImplementation(() => {});
+      const consoleErrorSpy = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      const openExternal = vi
+        .fn()
+        .mockRejectedValue(new Error("system browser unavailable"));
+
+      window.isElectron = true;
+      window.electronAPI = {
+        app: {
+          openExternal,
+        },
+      } as any;
+
+      await provider.redirectToAuthorization(
+        new URL("https://auth.example.com/authorize"),
+      );
+
+      expect(openExternal).toHaveBeenCalledWith(
+        "https://auth.example.com/authorize",
+      );
+      expect(navigateSpy).toHaveBeenCalledWith(
+        "https://auth.example.com/authorize",
+      );
+      expect(consoleErrorSpy).toHaveBeenCalled();
+    });
+
     it("round-trips discovery state for the matching server URL", async () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const discoveryState = createDiscoveryState();

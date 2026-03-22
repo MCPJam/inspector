@@ -12,6 +12,7 @@ interface ElectronAPI {
   app: {
     getVersion: () => Promise<string>;
     getPlatform: () => Promise<string>;
+    openExternal: (url: string) => Promise<void>;
   };
 
   // File operations
@@ -56,6 +57,7 @@ const electronAPI: ElectronAPI = {
   app: {
     getVersion: () => ipcRenderer.invoke("app:version"),
     getPlatform: () => ipcRenderer.invoke("app:platform"),
+    openExternal: (url) => ipcRenderer.invoke("app:open-external", url),
   },
 
   files: {

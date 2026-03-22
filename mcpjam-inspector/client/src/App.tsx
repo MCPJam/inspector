@@ -1,6 +1,5 @@
 import { useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -25,11 +24,13 @@ import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
+import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
+import { useElectronHostedAuth } from "./hooks/useElectronHostedAuth";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
@@ -91,6 +92,7 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import { buildElectronMcpCallbackUrl } from "./hooks/use-server-state";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -120,7 +122,7 @@ export default function App() {
     signIn,
     user: workOsUser,
     isLoading: isWorkOsLoading,
-  } = useAuth();
+  } = useElectronHostedAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
     HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,
@@ -279,6 +281,7 @@ export default function App() {
     "/oauth/callback/debug",
   );
   const isOAuthCallback = window.location.pathname === "/callback";
+  const electronMcpCallbackUrl = buildElectronMcpCallbackUrl();
 
   useEffect(() => {
     if (!isOAuthCallback) {
@@ -591,6 +594,12 @@ export default function App() {
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
+  }
+
+  if (electronMcpCallbackUrl) {
+    return (
+      <OAuthDesktopReturnNotice returnToElectronUrl={electronMcpCallbackUrl} />
+    );
   }
 
   if (hostedOAuthHandling) {

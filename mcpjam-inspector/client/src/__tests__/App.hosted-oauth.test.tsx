@@ -118,9 +118,14 @@ vi.mock("../lib/theme-utils", () => ({
   updateThemePreset: vi.fn(),
 }));
 
-vi.mock("../lib/oauth/mcp-oauth", () => ({
-  handleOAuthCallback: mockHandleOAuthCallback,
-}));
+vi.mock("../lib/oauth/mcp-oauth", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../lib/oauth/mcp-oauth")>();
+  return {
+    ...actual,
+    handleOAuthCallback: mockHandleOAuthCallback,
+  };
+});
 
 vi.mock("../components/ServersTab", () => ({
   ServersTab: () => <div>Servers Tab</div>,
@@ -327,5 +332,30 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByText("Sandboxes Tab")).toBeInTheDocument();
     });
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+  });
+
+  it("shows a desktop return notice for Electron server OAuth browser callbacks", () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    localStorage.clear();
+    sessionStorage.clear();
+    window.history.replaceState(
+      {},
+      "",
+      "/oauth/callback?code=oauth-code&state=electron_mcp:test-state",
+    );
+
+    render(<App />);
+
+    expect(screen.getByText("Continue in MCPJam Desktop")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /please close this page and continue in MCPJam Desktop/i,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /click here/i })).toHaveAttribute(
+      "href",
+      "mcpjam://oauth/callback?flow=mcp&code=oauth-code&state=electron_mcp%3Atest-state",
+    );
   });
 });

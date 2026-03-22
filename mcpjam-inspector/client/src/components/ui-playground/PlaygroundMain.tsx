@@ -13,7 +13,6 @@
 
 import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
 import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
-import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
@@ -30,6 +29,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
 import { createDeterministicToolMessages } from "./playground-helpers";
 import type { MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
@@ -175,7 +175,7 @@ export function PlaygroundMain({
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
 }: PlaygroundMainProps) {
-  const { signUp } = useAuth();
+  const { signUp } = useElectronHostedAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
   const [input, setInput] = useState("");
