@@ -7,6 +7,7 @@ const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
 const mockUseOrganizationQueries = vi.fn();
 const mockUseOrganizationMembers = vi.fn();
+const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
 
 function createBillingHookState(overrides: Record<string, unknown>) {
@@ -35,7 +36,8 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => true,
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -77,6 +79,7 @@ describe("OrganizationsTab billing", () => {
     vi.clearAllMocks();
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseAuth.mockReturnValue({
       user: { email: "owner@example.com" },
       signIn: vi.fn(),
@@ -308,7 +311,37 @@ describe("OrganizationsTab billing", () => {
       screen.queryByTestId("organization-audit-log"),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Upgrade to Enterprise" }),
+      screen.getByRole("button", { name: "View billing options" }),
     ).toBeInTheDocument();
+  });
+
+  it("skips the audit-log loading placeholder when the billing UI flag is off", () => {
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "team",
+          billingInterval: "monthly",
+          billingConfigured: true,
+          subscriptionStatus: "active",
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: "price_123",
+        },
+        isLoadingEntitlements: true,
+        isLoadingRollout: true,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(
+      screen.queryByText("Loading audit log access..."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
   });
 });

@@ -743,7 +743,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
             </p>
           </CardHeader>
           <CardContent className="space-y-3 pt-0">
-            {isLoadingEntitlements || isLoadingRollout ? (
+            {billingUiEnabled && (isLoadingEntitlements || isLoadingRollout) ? (
               <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
                 Loading audit log access...
               </div>
@@ -794,7 +794,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                   >
                     {isBillingActionPending
                       ? "Loading..."
-                      : "Upgrade to Enterprise"}
+                      : "View billing options"}
                   </Button>
                 ) : null}
               </div>

@@ -106,6 +106,7 @@ type BillingErrorPayload = {
   message?: string;
   feature?: BillingFeatureName;
   plan?: OrganizationPlan;
+  canManageBilling?: boolean;
   limit?: string;
   limitName?: string;
   allowedValue?: number | null;
@@ -189,18 +190,23 @@ export function getBillingErrorMessage(
         : typeof payload.current === "number"
           ? payload.current
           : null;
+    const canManage = payload.canManageBilling ?? canManageBilling;
 
     if (
       limitName === "maxEvalRunsPerMonth" &&
       typeof allowedValue === "number"
     ) {
-      return `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`;
+      return canManage
+        ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
+        : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
     }
     if (
       limitName === "maxSandboxesPerWorkspace" &&
       typeof allowedValue === "number"
     ) {
-      return `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`;
+      return canManage
+        ? `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`
+        : `This workspace has reached its sandbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
     }
   }
 
@@ -211,5 +217,9 @@ export function getBillingErrorMessage(
     );
   }
 
-  return payload.message ?? fallback;
+  if (payload.message) {
+    return payload.message;
+  }
+
+  return error instanceof Error ? error.message : fallback;
 }
