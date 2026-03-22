@@ -45,7 +45,7 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
-  organizationId: string;
+  workspaceId: string;
   inline?: boolean;
   onSuccess?: (suiteId?: string) => void;
   preselectedServer?: string;
@@ -98,7 +98,7 @@ const validateExpectedToolCalls = (toolCalls: ExpectedToolCall[]): boolean => {
 
 export function EvalRunner({
   availableModels,
-  organizationId,
+  workspaceId,
   inline = false,
   onSuccess,
   preselectedServer,
@@ -620,7 +620,7 @@ export function EvalRunner({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          organizationId,
+          workspaceId,
           suiteName: suiteName.trim(),
           suiteDescription: suiteDescription.trim() || undefined,
           tests: expandedTests,

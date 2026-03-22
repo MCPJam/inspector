@@ -95,7 +95,7 @@ async function collectToolsForServers(
 const evals = new Hono();
 
 const RunEvalsRequestSchema = z.object({
-  organizationId: z.string().optional(),
+  workspaceId: z.string().optional(),
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
@@ -155,7 +155,7 @@ evals.post("/run", async (c) => {
 
     const {
       suiteId,
-      organizationId,
+      workspaceId,
       suiteName,
       suiteDescription,
       tests,
@@ -174,10 +174,10 @@ evals.post("/run", async (c) => {
         400,
       );
     }
-    if (!suiteId && !organizationId) {
+    if (!suiteId && !workspaceId) {
       return c.json(
         {
-          error: "organizationId is required when creating a new eval suite",
+          error: "workspaceId is required when creating a new eval suite",
         },
         400,
       );
@@ -351,7 +351,7 @@ evals.post("/run", async (c) => {
       const createdSuite = await convexClient.mutation(
         "testSuites:createTestSuite" as any,
         {
-          organizationId,
+          workspaceId,
           name: suiteName!,
           description: suiteDescription,
           environment: { servers: resolvedServerIds },

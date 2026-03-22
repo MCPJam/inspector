@@ -812,7 +812,7 @@ export default function App() {
           {activeTab === "evals" && (
             <EvalsTab
               selectedServer={appState.selectedServer}
-              organizationId={activeOrganizationId ?? null}
+              workspaceId={convexWorkspaceId}
             />
           )}
           {activeTab === "ci-evals" && (

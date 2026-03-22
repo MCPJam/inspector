@@ -27,10 +27,10 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface EvalsTabProps {
   selectedServer?: string;
-  organizationId?: string | null;
+  workspaceId?: string | null;
 }
 
-export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
+export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
 
@@ -68,12 +68,9 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
   );
 
   // Get workspace members for the "Run by" column
-  const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
-  const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-
   const { members } = useWorkspaceMembers({
     isAuthenticated,
-    workspaceId: convexWorkspaceId,
+    workspaceId: workspaceId ?? null,
   });
 
   const userMap = useMemo(() => {
@@ -95,13 +92,21 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
 
   // First query to get overview (sortedSuites) - doesn't need specific suite selected
   const overviewQueries = useEvalQueries({
-    isAuthenticated,
-    user,
+    isAuthenticated: isAuthenticated && Boolean(workspaceId),
+    user: workspaceId ? user : null,
     selectedSuiteId: null,
     deletingSuiteId: null,
-    workspaceId: null,
-    organizationId: organizationId ?? null,
+    workspaceId: workspaceId ?? null,
+    organizationId: null,
   });
+
+  const manualSuiteEntries = useMemo(
+    () =>
+      overviewQueries.sortedSuites.filter(
+        (entry) => entry.suite.source !== "sdk",
+      ),
+    [overviewQueries.sortedSuites],
+  );
 
   // Check if selected server is valid and connected
   const isServerConnected =
@@ -112,10 +117,10 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
   // Find suite for selected server from overview
   const serverSuiteEntry = useMemo(() => {
     if (!isServerConnected) return null;
-    return overviewQueries.sortedSuites.find(
+    return manualSuiteEntries.find(
       (entry) => entry.suite.environment?.servers?.[0] === selectedServer,
     );
-  }, [overviewQueries.sortedSuites, selectedServer, isServerConnected]);
+  }, [manualSuiteEntries, selectedServer, isServerConnected]);
 
   const serverSuite = serverSuiteEntry?.suite ?? null;
   const serverSuiteId = serverSuite?._id ?? null;
@@ -130,12 +135,12 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
 
   // Main queries with serverSuiteId for details
   const queriesWithDeleteState = useEvalQueries({
-    isAuthenticated,
-    user,
+    isAuthenticated: isAuthenticated && Boolean(workspaceId),
+    user: workspaceId ? user : null,
     selectedSuiteId: serverSuiteId,
     deletingSuiteId: handlers.deletingSuiteId,
-    workspaceId: null,
-    organizationId: organizationId ?? null,
+    workspaceId: workspaceId ?? null,
+    organizationId: null,
   });
 
   // Use queries for rendering
@@ -185,13 +190,13 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
 
     // Create suite if it doesn't exist
     if (!suiteId && selectedServer && isServerConnected) {
-      if (!organizationId) {
-        toast.error("Select an organization before creating eval suites.");
+      if (!workspaceId) {
+        toast.error("Select a workspace before creating eval suites.");
         return;
       }
       try {
         const newSuite = await mutations.createTestSuiteMutation({
-          organizationId,
+          workspaceId,
           name: selectedServer,
           description: `Test suite for ${selectedServer}`,
           environment: { servers: [selectedServer] },
@@ -211,7 +216,7 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
     serverSuiteId,
     selectedServer,
     isServerConnected,
-    organizationId,
+    workspaceId,
     mutations.createTestSuiteMutation,
     handlers.handleCreateTestCase,
   ]);
@@ -234,13 +239,13 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
 
     // Create suite if it doesn't exist
     if (!suiteId) {
-      if (!organizationId) {
-        toast.error("Select an organization before creating eval suites.");
+      if (!workspaceId) {
+        toast.error("Select a workspace before creating eval suites.");
         return;
       }
       try {
         const newSuite = await mutations.createTestSuiteMutation({
-          organizationId,
+          workspaceId,
           name: selectedServer,
           description: `Test suite for ${selectedServer}`,
           environment: { servers: [selectedServer] },
@@ -260,7 +265,7 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
     serverSuiteId,
     selectedServer,
     isServerConnected,
-    organizationId,
+    workspaceId,
     mutations.createTestSuiteMutation,
     handlers.handleGenerateTests,
   ]);
@@ -293,13 +298,13 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
     );
   }
 
-  if (!organizationId) {
+  if (!workspaceId) {
     return (
       <div className="p-6">
         <EmptyState
           icon={FlaskConical}
-          title="Select an organization"
-          description="Choose an organization before creating or viewing org-bound eval suites."
+          title="Select a workspace"
+          description="Choose a workspace before creating or viewing workspace-bound eval suites."
           className="h-[calc(100vh-200px)]"
         />
       </div>
@@ -328,7 +333,7 @@ export function EvalsTab({ selectedServer, organizationId }: EvalsTabProps) {
         <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
           <EvalRunner
             availableModels={availableModels}
-            organizationId={organizationId}
+            workspaceId={workspaceId}
             inline={true}
             onSuccess={handleEvalRunSuccess}
             preselectedServer={selectedServer}
