@@ -14,6 +14,46 @@ import { createDeterministicToolMessages } from "../playground-helpers";
 describe("createDeterministicToolMessages", () => {
   // ── Text extraction from various result shapes ──
 
+  it("adds object results as a sibling json result part for non-UI tools", () => {
+    const result = { users: [{ id: "1", name: "Ada" }] };
+    const { messages } = createDeterministicToolMessages(
+      "list_users",
+      {},
+      result,
+      undefined,
+    );
+
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "data-result",
+      data: result,
+      autoHeight: true,
+    });
+  });
+
+  it("adds json text-block output as a sibling json result part for non-UI tools", () => {
+    const { messages } = createDeterministicToolMessages(
+      "list_users",
+      {},
+      {
+        content: [
+          {
+            type: "text",
+            text: '{"users":[{"id":"1","name":"Ada"}]}',
+          },
+        ],
+      },
+      undefined,
+    );
+
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "data-result",
+      data: { users: [{ id: "1", name: "Ada" }] },
+      autoHeight: true,
+    });
+  });
+
   it("injects text output for non-UI tools (content array)", () => {
     const { messages } = createDeterministicToolMessages(
       "read_me",
@@ -48,6 +88,21 @@ describe("createDeterministicToolMessages", () => {
     expect(messages[1].parts[2]).toMatchObject({
       type: "text",
       text: "hello world",
+    });
+  });
+
+  it("keeps json primitive strings as text output", () => {
+    const { messages } = createDeterministicToolMessages(
+      "echo",
+      {},
+      "123",
+      undefined,
+    );
+
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "text",
+      text: "123",
     });
   });
 
@@ -100,7 +155,7 @@ describe("createDeterministicToolMessages", () => {
     expect(messages[1].parts).toHaveLength(2);
   });
 
-  it("does not inject text part for empty string result", () => {
+  it("preserves empty string results as text output", () => {
     const { messages } = createDeterministicToolMessages(
       "empty",
       {},
@@ -108,10 +163,14 @@ describe("createDeterministicToolMessages", () => {
       undefined,
     );
 
-    expect(messages[1].parts).toHaveLength(2);
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "text",
+      text: "",
+    });
   });
 
-  it("does not inject text part for whitespace-only string result", () => {
+  it("preserves whitespace-only string results as text output", () => {
     const { messages } = createDeterministicToolMessages(
       "empty",
       {},
@@ -119,7 +178,11 @@ describe("createDeterministicToolMessages", () => {
       undefined,
     );
 
-    expect(messages[1].parts).toHaveLength(2);
+    expect(messages[1].parts).toHaveLength(3);
+    expect(messages[1].parts[2]).toMatchObject({
+      type: "text",
+      text: "   ",
+    });
   });
 
   it("skips non-text content blocks in the content array", () => {

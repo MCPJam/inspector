@@ -18,6 +18,7 @@ interface WorkspaceMembersFacepileProps {
   sharedWorkspaceId?: string | null;
   organizationId?: string;
   visibility?: WorkspaceVisibility;
+  organizationName?: string;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
 }
 
@@ -28,6 +29,7 @@ export function WorkspaceMembersFacepile({
   sharedWorkspaceId,
   organizationId,
   visibility,
+  organizationName,
   onWorkspaceShared,
 }: WorkspaceMembersFacepileProps) {
   const { profilePictureUrl } = useProfilePicture();
@@ -76,6 +78,7 @@ export function WorkspaceMembersFacepile({
           sharedWorkspaceId={sharedWorkspaceId}
           organizationId={organizationId}
           visibility={visibility}
+          organizationName={organizationName}
           currentUser={currentUser}
           onWorkspaceShared={onWorkspaceShared}
         />

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, Fragment } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -15,6 +15,16 @@ interface CopyableValueProps {
   children: React.ReactNode;
   value: string;
   onCopy?: (value: string) => void;
+}
+
+function renderUntokenizedSegment(key: string, segment: string) {
+  if (!segment) return null;
+
+  return (
+    <span key={key} className="json-punctuation">
+      {segment}
+    </span>
+  );
 }
 
 function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
@@ -35,7 +45,7 @@ function CopyableValue({ children, value, onCopy }: CopyableValueProps) {
 
   return (
     <span
-      className="relative inline-flex items-center group/copy"
+      className="relative group/copy"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
@@ -124,9 +134,10 @@ export function JsonHighlighter({
       // Add any whitespace between tokens
       if (token.start > lastIndex) {
         result.push(
-          <Fragment key={`ws-${lastIndex}`}>
-            {content.slice(lastIndex, token.start)}
-          </Fragment>,
+          renderUntokenizedSegment(
+            `ws-${lastIndex}`,
+            content.slice(lastIndex, token.start),
+          ),
         );
       }
 
@@ -255,13 +266,8 @@ export function JsonHighlighter({
 
     // Add any remaining content
     if (lastIndex < content.length) {
-      result.push(
-        <Fragment key={`ws-end`}>{content.slice(lastIndex)}</Fragment>,
-      );
+      result.push(renderUntokenizedSegment(`ws-end`, content.slice(lastIndex)));
     }
-
-    // Add trailing newline like the HTML version
-    result.push(<Fragment key="trailing-newline">{"\n"}</Fragment>);
 
     return result;
   }, [content, onCopy, collapseStringsAfterLength]);

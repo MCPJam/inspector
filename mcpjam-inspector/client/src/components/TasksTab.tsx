@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { MCPServerConfig } from "@mcpjam/sdk";
 import {
   Task,
@@ -120,6 +121,8 @@ export function TasksTab({
   const selectedTask = useMemo(() => {
     return tasks.find((t) => t.taskId === selectedTaskId) ?? null;
   }, [tasks, selectedTaskId]);
+  const pendingRequestDisplay = extractDisplayFromToolResult(pendingRequest);
+  const taskResultDisplay = extractDisplayFromToolResult(taskResult);
 
   // Check if any task is in a non-terminal state (working, input_required, pending)
   const hasActiveTasks = useMemo(() => {
@@ -785,17 +788,27 @@ export function TasksTab({
                   </p>
                 </div>
               ) : selectedTask.status === "input_required" ? (
-                pendingRequest ? (
+                pendingRequest !== null && pendingRequest !== undefined ? (
                   <div className="flex-1 min-h-0 border border-border rounded-md overflow-hidden">
-                    <JsonEditor
-                      value={pendingRequest as object}
-                      readOnly
-                      showToolbar={false}
-                      collapsible
-                      defaultExpandDepth={2}
-                      collapseStringsAfterLength={100}
-                      height="100%"
-                    />
+                    {pendingRequestDisplay?.kind === "text" ? (
+                      <pre className="h-full overflow-auto whitespace-pre-wrap p-4 text-xs font-mono bg-muted/30">
+                        {pendingRequestDisplay.text}
+                      </pre>
+                    ) : (
+                      <JsonEditor
+                        value={
+                          pendingRequestDisplay?.kind === "json"
+                            ? pendingRequestDisplay.value
+                            : (pendingRequest as object)
+                        }
+                        readOnly
+                        showToolbar={false}
+                        collapsible
+                        defaultExpandDepth={2}
+                        collapseStringsAfterLength={100}
+                        height="100%"
+                      />
+                    )}
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-center">
@@ -809,15 +822,25 @@ export function TasksTab({
                 selectedTask.status === "failed" ? (
                 taskResult !== null ? (
                   <div className="flex-1 min-h-0 border border-border rounded-md overflow-hidden">
-                    <JsonEditor
-                      value={taskResult as object}
-                      readOnly
-                      showToolbar={false}
-                      collapsible
-                      defaultExpandDepth={2}
-                      collapseStringsAfterLength={100}
-                      height="100%"
-                    />
+                    {taskResultDisplay?.kind === "text" ? (
+                      <pre className="h-full overflow-auto whitespace-pre-wrap p-4 text-xs font-mono bg-muted/30">
+                        {taskResultDisplay.text}
+                      </pre>
+                    ) : (
+                      <JsonEditor
+                        value={
+                          taskResultDisplay?.kind === "json"
+                            ? taskResultDisplay.value
+                            : (taskResult as object)
+                        }
+                        readOnly
+                        showToolbar={false}
+                        collapsible
+                        defaultExpandDepth={2}
+                        collapseStringsAfterLength={100}
+                        height="100%"
+                      />
+                    )}
                   </div>
                 ) : (
                   <div className="h-full flex flex-col items-center justify-center text-center">

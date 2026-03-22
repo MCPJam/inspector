@@ -388,6 +388,7 @@ export function MCPSidebar({
           onCreateWorkspace={onCreateWorkspace}
           onDeleteWorkspace={onDeleteWorkspace}
           isLoading={isLoadingWorkspaces}
+          onNavigateToSettings={() => handleNavClick("#workspace-settings")}
         />
       </SidebarHeader>
       <SidebarContent>

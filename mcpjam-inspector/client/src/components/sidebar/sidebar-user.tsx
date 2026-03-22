@@ -184,30 +184,41 @@ export function SidebarUser({
                 Organizations
               </DropdownMenuLabel>
               {sortedOrganizations.length > 0 ? (
-                sortedOrganizations.map((org) => (
-                  <DropdownMenuItem
-                    key={org._id}
-                    onClick={() =>
-                      (window.location.hash = `organizations/${org._id}`)
-                    }
-                    className="cursor-pointer"
-                  >
-                    <Avatar className="size-6 rounded">
-                      <AvatarImage src={org.logoUrl} alt={org.name} />
-                      <AvatarFallback className="rounded bg-primary/10 text-primary text-xs font-semibold">
-                        {org.name.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="flex-1 truncate">{org.name}</span>
-                    <Settings
-                      className="size-4 text-muted-foreground hover:text-foreground"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.location.hash = `organizations/${org._id}`;
-                      }}
-                    />
-                  </DropdownMenuItem>
-                ))
+                sortedOrganizations.map((org) => {
+                  const isOrgAdmin =
+                    org.myRole === "owner" || org.myRole === "admin";
+                  return (
+                    <DropdownMenuItem
+                      key={org._id}
+                      onClick={
+                        isOrgAdmin
+                          ? () =>
+                              (window.location.hash = `organizations/${org._id}`)
+                          : undefined
+                      }
+                      className={
+                        isOrgAdmin ? "cursor-pointer" : "cursor-default"
+                      }
+                    >
+                      <Avatar className="size-6 rounded">
+                        <AvatarImage src={org.logoUrl} alt={org.name} />
+                        <AvatarFallback className="rounded bg-primary/10 text-primary text-xs font-semibold">
+                          {org.name.charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="flex-1 truncate">{org.name}</span>
+                      {isOrgAdmin ? (
+                        <Settings
+                          className="size-4 text-muted-foreground hover:text-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            window.location.hash = `organizations/${org._id}`;
+                          }}
+                        />
+                      ) : null}
+                    </DropdownMenuItem>
+                  );
+                })
               ) : (
                 <DropdownMenuItem
                   onClick={() => setShowCreateOrgDialog(true)}

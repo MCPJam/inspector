@@ -1,4 +1,4 @@
-import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
+import { ChevronsUpDown, Plus, Settings, Trash2 } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,8 +13,13 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { cn } from "@/lib/utils";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { cn, getInitials } from "@/lib/utils";
+import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { useConvexAuth } from "convex/react";
+import { useProfilePicture } from "@/hooks/useProfilePicture";
 import type { Workspace } from "@/state/app-types";
+import { resolveWorkspaceIcon } from "@/components/workspace/WorkspaceEmojiPicker";
 
 interface SidebarWorkspaceSelectorProps {
   activeWorkspaceId: string;
@@ -23,6 +28,7 @@ interface SidebarWorkspaceSelectorProps {
   onCreateWorkspace: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoading?: boolean;
+  onNavigateToSettings?: () => void;
 }
 
 export function SidebarWorkspaceSelector({
@@ -32,8 +38,19 @@ export function SidebarWorkspaceSelector({
   onCreateWorkspace,
   onDeleteWorkspace,
   isLoading,
+  onNavigateToSettings,
 }: SidebarWorkspaceSelectorProps) {
   const { isMobile } = useSidebar();
+  const { isAuthenticated } = useConvexAuth();
+  const { profilePictureUrl } = useProfilePicture();
+
+  const activeWorkspace = workspaces[activeWorkspaceId];
+  const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+
+  const { activeMembers } = useWorkspaceMembers({
+    isAuthenticated,
+    workspaceId: sharedWorkspaceId,
+  });
 
   if (isLoading) {
     return (
@@ -48,9 +65,9 @@ export function SidebarWorkspaceSelector({
     );
   }
 
-  const activeWorkspace = workspaces[activeWorkspaceId];
   const workspaceName = activeWorkspace?.name || "No Workspace";
   const initial = workspaceName.charAt(0).toUpperCase();
+  const displayMembers = activeMembers.slice(0, 3);
   const workspaceList = Object.values(workspaces).sort((a, b) => {
     if (a.isDefault) return -1;
     if (b.isDefault) return 1;
@@ -80,11 +97,42 @@ export function SidebarWorkspaceSelector({
               size="lg"
               className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
             >
-              <div className="flex items-center justify-center size-8 rounded-lg bg-primary/10 text-primary text-sm font-semibold shrink-0">
-                {initial}
-              </div>
+              <WorkspaceIconBadge
+                icon={activeWorkspace?.icon}
+                fallback={initial}
+                size={8}
+              />
               <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                 <span className="truncate font-semibold">{workspaceName}</span>
+                {displayMembers.length > 0 && (
+                  <div className="flex -space-x-1.5 mt-0.5">
+                    {displayMembers.map((member) => {
+                      const name = member.user?.name || member.email;
+                      const initials = getInitials(name);
+                      return (
+                        <Avatar
+                          key={member._id}
+                          className="size-5 border border-sidebar-background"
+                        >
+                          <AvatarImage
+                            src={member.user?.imageUrl || undefined}
+                            alt={name}
+                          />
+                          <AvatarFallback className="text-[8px] bg-muted">
+                            {initials}
+                          </AvatarFallback>
+                        </Avatar>
+                      );
+                    })}
+                    {activeMembers.length > 3 && (
+                      <div className="size-5 rounded-full border border-sidebar-background bg-muted flex items-center justify-center">
+                        <span className="text-[8px] text-muted-foreground font-medium">
+                          +{activeMembers.length - 3}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
               <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
             </SidebarMenuButton>
@@ -105,9 +153,11 @@ export function SidebarWorkspaceSelector({
                 onClick={() => onSwitchWorkspace(workspace.id)}
               >
                 <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <div className="flex items-center justify-center size-6 rounded bg-primary/10 text-primary text-xs font-semibold shrink-0">
-                    {workspace.name.charAt(0).toUpperCase()}
-                  </div>
+                  <WorkspaceIconBadge
+                    icon={workspace.icon}
+                    fallback={workspace.name.charAt(0).toUpperCase()}
+                    size={6}
+                  />
                   <div className="min-w-0 flex-1">
                     <span className="truncate block">{workspace.name}</span>
                   </div>
@@ -132,9 +182,43 @@ export function SidebarWorkspaceSelector({
               <Plus className="size-4" />
               Add Workspace
             </DropdownMenuItem>
+            {onNavigateToSettings && (
+              <DropdownMenuItem
+                onClick={onNavigateToSettings}
+                className="cursor-pointer"
+              >
+                <Settings className="size-4" />
+                Workspace Settings
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
+  );
+}
+
+function WorkspaceIconBadge({
+  icon,
+  fallback,
+  size,
+}: {
+  icon?: string;
+  fallback: string;
+  size: 6 | 8;
+}) {
+  const IconComponent = icon ? resolveWorkspaceIcon(icon) : null;
+  const sizeClass = size === 8 ? "size-8 rounded-lg" : "size-6 rounded";
+  const iconSize = size === 8 ? "h-4 w-4" : "h-3.5 w-3.5";
+  return (
+    <div
+      className={`flex items-center justify-center ${sizeClass} bg-primary/10 text-primary text-${size === 8 ? "sm" : "xs"} font-semibold shrink-0`}
+    >
+      {IconComponent ? (
+        <IconComponent className={iconSize} strokeWidth={1.5} />
+      ) : (
+        fallback
+      )}
+    </div>
   );
 }

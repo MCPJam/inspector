@@ -3,6 +3,7 @@ import { useQuery, useMutation } from "convex/react";
 import type { WorkspaceVisibility } from "@/state/app-types";
 
 export type WorkspaceMembershipRole = "owner" | "admin" | "member" | "guest";
+export type WorkspaceRole = "admin" | "editor";
 export type WorkspaceMemberAccessSource =
   | "organization"
   | "workspace"
@@ -12,6 +13,7 @@ export interface RemoteWorkspace {
   _id: string;
   name: string;
   description?: string;
+  icon?: string;
   servers: Record<string, any>;
   organizationId?: string;
   visibility?: WorkspaceVisibility;
@@ -51,6 +53,8 @@ export interface WorkspaceMember {
   userId?: string;
   email: string;
   role?: WorkspaceMembershipRole;
+  workspaceRole: WorkspaceRole;
+  canChangeRole: boolean;
   addedBy: string;
   addedAt: number;
   revokedAt?: number;
@@ -128,12 +132,20 @@ export function useWorkspaceMembers({
 }) {
   const enableQuery = isAuthenticated && !!workspaceId;
 
-  const members = useQuery(
+  const raw = useQuery(
     "workspaces:getWorkspaceMembers" as any,
     enableQuery ? ({ workspaceId } as any) : "skip",
-  ) as WorkspaceMember[] | undefined;
+  ) as
+    | { members: WorkspaceMember[]; canManageMembers: boolean }
+    | WorkspaceMember[]
+    | undefined;
 
-  const isLoading = enableQuery && members === undefined;
+  // Server returns `{ members, canManageMembers }`. Legacy deployments returned a bare array.
+  const members = Array.isArray(raw) ? raw : raw?.members;
+  const canManageMembers = Array.isArray(raw)
+    ? false
+    : (raw?.canManageMembers ?? false);
+  const isLoading = enableQuery && raw === undefined;
 
   const activeMembers = useMemo(() => {
     if (!members) return [];
@@ -149,6 +161,7 @@ export function useWorkspaceMembers({
     members,
     activeMembers,
     pendingMembers,
+    canManageMembers,
     isLoading,
     hasPendingMembers: pendingMembers.length > 0,
   };
@@ -164,6 +177,12 @@ export function useWorkspaceMutations() {
   const removeWorkspaceMember = useMutation(
     "workspaces:removeWorkspaceMember" as any,
   );
+  const updateWorkspaceMemberRole = useMutation(
+    "workspaces:updateWorkspaceMemberRole" as any,
+  );
+  const updateWorkspaceInviteRole = useMutation(
+    "workspaces:updateWorkspaceInviteRole" as any,
+  );
 
   return {
     createWorkspace,
@@ -171,6 +190,8 @@ export function useWorkspaceMutations() {
     deleteWorkspace,
     inviteWorkspaceMember,
     removeWorkspaceMember,
+    updateWorkspaceMemberRole,
+    updateWorkspaceInviteRole,
   };
 }
 
