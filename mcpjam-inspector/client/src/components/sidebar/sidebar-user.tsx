@@ -190,15 +190,10 @@ export function SidebarUser({
                   return (
                     <DropdownMenuItem
                       key={org._id}
-                      onClick={
-                        isOrgAdmin
-                          ? () =>
-                              (window.location.hash = `organizations/${org._id}`)
-                          : undefined
+                      onClick={() =>
+                        (window.location.hash = `organizations/${org._id}`)
                       }
-                      className={
-                        isOrgAdmin ? "cursor-pointer" : "cursor-default"
-                      }
+                      className="cursor-pointer"
                     >
                       <Avatar className="size-6 rounded">
                         <AvatarImage src={org.logoUrl} alt={org.name} />

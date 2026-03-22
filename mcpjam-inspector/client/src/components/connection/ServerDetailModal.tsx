@@ -64,6 +64,8 @@ export function ServerDetailModal({
   const [activeTab, setActiveTab] = useState<ServerDetailTab>(defaultTab);
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoadingTools, setIsLoadingTools] = useState(false);
+  const [toolsLoadError, setToolsLoadError] = useState<string | null>(null);
   const [toolsData, setToolsData] =
     useState<ListToolsResultWithMetadata | null>(null);
 
@@ -91,19 +93,33 @@ export function ServerDetailModal({
 
     const loadTools = async () => {
       if (!isOpen || server.connectionStatus !== "connected") {
+        setIsLoadingTools(false);
+        setToolsLoadError(null);
         setToolsData(null);
         return;
       }
 
+      setIsLoadingTools(true);
+      setToolsLoadError(null);
       try {
         const result = await listTools({ serverId: server.name });
         if (!isCancelled) {
           setToolsData(result);
+          setToolsLoadError(null);
         }
       } catch (error) {
         if (!isCancelled) {
           console.error("Failed to load tools metadata:", error);
+          setToolsLoadError(
+            error instanceof Error
+              ? error.message
+              : "Failed to load tools metadata",
+          );
           setToolsData(null);
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsLoadingTools(false);
         }
       }
     };
@@ -372,12 +388,24 @@ export function ServerDetailModal({
                 className="mt-0 flex-none absolute inset-0 overflow-y-auto bg-background"
               >
                 <div className="pl-1 pr-6">
-                  {hasWidgetMetadata ? (
-                    <ServerInfoToolsMetadataContent toolsData={toolsData} />
-                  ) : (
+                  {!isConnected ? (
                     <div className="flex items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground">
                       Connect to view tools metadata
                     </div>
+                  ) : isLoadingTools || (!toolsData && !toolsLoadError) ? (
+                    <div className="flex items-center justify-center gap-2 h-full min-h-[120px] text-sm text-muted-foreground">
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                      Loading tools metadata...
+                    </div>
+                  ) : toolsLoadError ? (
+                    <div className="flex flex-col items-center justify-center h-full min-h-[120px] text-sm text-muted-foreground text-center gap-1">
+                      <span>Failed to load tools metadata</span>
+                      <span className="text-xs max-w-[400px] truncate">
+                        {toolsLoadError.slice(0, 200)}
+                      </span>
+                    </div>
+                  ) : (
+                    <ServerInfoToolsMetadataContent toolsData={toolsData} />
                   )}
                 </div>
               </TabsContent>

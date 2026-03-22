@@ -27,14 +27,42 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: (...args: unknown[]) => mockListTools(...args),
 }));
 
-vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
-  isMCPApp: (toolsData: { toolsMetadata?: Record<string, unknown> } | null) =>
+vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => {
+  const hasUiResourceUri = (meta: Record<string, unknown>) =>
     Boolean(
-      toolsData?.toolsMetadata && Object.keys(toolsData.toolsMetadata).length,
-    ),
-  isOpenAIApp: () => false,
-  isOpenAIAppAndMCPApp: () => false,
-}));
+      ((meta["ui"] as { resourceUri?: unknown } | undefined)?.resourceUri ??
+        meta["ui.resourceUri"]) as unknown,
+    );
+
+  return {
+    isMCPApp: (toolsData: { toolsMetadata?: Record<string, unknown> } | null) =>
+      Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+        hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
+      ),
+    isOpenAIApp: (
+      toolsData: {
+        toolsMetadata?: Record<string, unknown>;
+      } | null,
+    ) =>
+      Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+        Boolean(
+          (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
+          !hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
+        ),
+      ),
+    isOpenAIAppAndMCPApp: (
+      toolsData: {
+        toolsMetadata?: Record<string, unknown>;
+      } | null,
+    ) =>
+      Object.values(toolsData?.toolsMetadata ?? {}).some((meta) =>
+        Boolean(
+          (meta as Record<string, unknown>)?.["openai/outputTemplate"] &&
+          hasUiResourceUri((meta ?? {}) as Record<string, unknown>),
+        ),
+      ),
+  };
+});
 
 import { ServerDetailModal } from "../ServerDetailModal";
 
@@ -126,6 +154,34 @@ describe("ServerDetailModal", () => {
       expect(toolsPanel?.className).toContain("overflow-y-auto");
     });
     expect(screen.getByText("search")).toBeInTheDocument();
+  });
+
+  it("shows tool metadata for connected non-app servers", async () => {
+    mockListTools.mockResolvedValue({
+      tools: [
+        {
+          name: "search",
+          description: "Searches documents",
+          _meta: { title: "Search tool", write: false },
+        },
+      ],
+      toolsMetadata: {
+        search: {
+          title: "Search tool",
+          write: false,
+        },
+      },
+    });
+
+    render(<ServerDetailModal {...defaultProps} defaultTab="tools-metadata" />);
+
+    await waitFor(() => {
+      expect(screen.getByText("search")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText("Connect to view tools metadata"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Search tool")).toBeInTheDocument();
   });
 
   it("submits the configuration form without closing the modal", async () => {
