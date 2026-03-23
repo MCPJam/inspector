@@ -359,7 +359,9 @@ export default function App() {
     handleRefreshTokensFromOAuthFlow,
     activeOrganizationId,
     setActiveOrganizationId,
-  } = useAppState();
+  } = useAppState({
+    currentUserId: workOsUser?.id ?? null,
+  });
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
@@ -429,8 +431,14 @@ export default function App() {
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  const billingOrganizationId =
+  const rawBillingOrganizationId =
     activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
+  const billingOrganizationId =
+    !isLoadingOrganizations &&
+    rawBillingOrganizationId &&
+    sortedOrganizations.some((org) => org._id === rawBillingOrganizationId)
+      ? rawBillingOrganizationId
+      : null;
   const billingEntitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,
     isAuthenticated && billingOrganizationId
@@ -619,7 +627,7 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isHostedChatRoute]);
+  }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
 
   // Redirect away from tabs hidden by the ci-evals feature flag.
   // Use strict equality to avoid redirecting while the flag is still loading (undefined).

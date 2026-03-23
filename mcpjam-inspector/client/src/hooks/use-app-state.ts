@@ -7,33 +7,75 @@ import { appReducer } from "@/state/app-reducer";
 import { loadAppState, saveAppState } from "@/state/storage";
 import { useWorkspaceState } from "./use-workspace-state";
 import { useServerState } from "./use-server-state";
+import {
+  clearLegacyActiveOrganizationStorage,
+  readStoredActiveOrganizationId,
+  writeStoredActiveOrganizationId,
+} from "@/lib/active-organization-storage";
 
 export type { ServerWithName } from "@/state/app-types";
 export type { ServerUpdateResult } from "./use-server-state";
 
-export function useAppState() {
+interface ActiveOrganizationSelection {
+  organizationId?: string;
+  userId: string | null;
+}
+
+export function useAppState({
+  currentUserId,
+}: {
+  currentUserId: string | null;
+}) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
   const [isLoading, setIsLoading] = useState(true);
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
-  const [activeOrganizationId, setActiveOrganizationId] = useState<
-    string | undefined
-  >(() => localStorage.getItem("active-organization-id") ?? undefined);
+  const [activeOrganizationSelection, setActiveOrganizationSelection] =
+    useState<ActiveOrganizationSelection>({
+      organizationId: undefined,
+      userId: currentUserId,
+    });
+  const activeOrganizationId =
+    activeOrganizationSelection.userId === currentUserId
+      ? activeOrganizationSelection.organizationId
+      : undefined;
+  const setActiveOrganizationId = useCallback(
+    (organizationId: string | undefined) => {
+      setActiveOrganizationSelection({
+        organizationId,
+        userId: currentUserId,
+      });
+    },
+    [currentUserId],
+  );
 
-  const isFirstOrgRender = useRef(true);
   useEffect(() => {
-    if (isFirstOrgRender.current) {
-      isFirstOrgRender.current = false;
+    clearLegacyActiveOrganizationStorage();
+    setActiveOrganizationSelection({
+      organizationId: readStoredActiveOrganizationId(currentUserId),
+      userId: currentUserId,
+    });
+  }, [currentUserId]);
+
+  const isFirstScopedOrgRender = useRef(true);
+  useEffect(() => {
+    if (activeOrganizationSelection.userId !== currentUserId) {
       return;
     }
-    if (activeOrganizationId) {
-      localStorage.setItem("active-organization-id", activeOrganizationId);
-    } else {
-      localStorage.removeItem("active-organization-id");
+
+    clearLegacyActiveOrganizationStorage();
+    if (isFirstScopedOrgRender.current) {
+      isFirstScopedOrgRender.current = false;
+      return;
     }
-  }, [activeOrganizationId]);
+
+    writeStoredActiveOrganizationId(
+      currentUserId,
+      activeOrganizationSelection.organizationId,
+    );
+  }, [activeOrganizationSelection, currentUserId]);
 
   useEffect(() => {
     try {
