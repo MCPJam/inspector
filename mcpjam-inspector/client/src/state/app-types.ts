@@ -53,6 +53,7 @@ export interface Workspace {
   servers: Record<string, ServerWithName>;
   createdAt: Date;
   updatedAt: Date;
+  canDeleteWorkspace?: boolean;
   isDefault?: boolean;
   sharedWorkspaceId?: string;
   organizationId?: string;

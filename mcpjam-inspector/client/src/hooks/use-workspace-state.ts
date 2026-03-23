@@ -145,6 +145,7 @@ export function useWorkspaceState({
             servers: deserializedServers,
             createdAt: new Date(rw.createdAt),
             updatedAt: new Date(rw.updatedAt),
+            canDeleteWorkspace: rw.canDeleteWorkspace,
             sharedWorkspaceId: rw._id,
             organizationId: rw.organizationId,
             visibility: rw.visibility,
@@ -393,7 +394,14 @@ export function useWorkspaceState({
           await convexDeleteWorkspace({ workspaceId });
         } catch (error) {
           let errorMessage = "Failed to delete workspace";
-          if (error instanceof Error) {
+          if (
+            error &&
+            typeof error === "object" &&
+            "data" in error &&
+            typeof (error as { data: unknown }).data === "string"
+          ) {
+            errorMessage = (error as { data: string }).data;
+          } else if (error instanceof Error) {
             const match = error.message.match(/Uncaught Error: (.+?)(?:\n|$)/);
             errorMessage = match ? match[1] : error.message;
           }

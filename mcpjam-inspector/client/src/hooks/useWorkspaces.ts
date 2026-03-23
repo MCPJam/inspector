@@ -15,6 +15,7 @@ export interface RemoteWorkspace {
   description?: string;
   icon?: string;
   servers: Record<string, any>;
+  canDeleteWorkspace?: boolean;
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   ownerId: string;
