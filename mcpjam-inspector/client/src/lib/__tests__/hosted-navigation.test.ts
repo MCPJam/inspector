@@ -25,6 +25,7 @@ describe("hosted-navigation", () => {
   it("extracts organization route params and chat-v2 flags", () => {
     const orgResolved = resolveHostedNavigation("#organizations/org_123", true);
     expect(orgResolved.organizationId).toBe("org_123");
+    expect(orgResolved.organizationSection).toBe("overview");
     expect(orgResolved.shouldSelectAllServers).toBe(false);
     expect(orgResolved.shouldClearChatMessages).toBe(true);
 
@@ -38,6 +39,26 @@ describe("hosted-navigation", () => {
     const resolved = resolveHostedNavigation("#/registry", true);
     expect(resolved.rawSection).toBe("registry");
     expect(resolved.normalizedSection).toBe("servers");
+  });
+
+  it("normalizes organization billing subroutes", () => {
+    const billingResolved = resolveHostedNavigation(
+      "#organizations/org_123/billing",
+      true,
+    );
+    expect(billingResolved.organizationId).toBe("org_123");
+    expect(billingResolved.organizationSection).toBe("billing");
+    expect(billingResolved.normalizedSection).toBe(
+      "organizations/org_123/billing",
+    );
+
+    const unknownResolved = resolveHostedNavigation(
+      "#organizations/org_123/unknown",
+      true,
+    );
+    expect(unknownResolved.organizationId).toBe("org_123");
+    expect(unknownResolved.organizationSection).toBe("overview");
+    expect(unknownResolved.normalizedSection).toBe("organizations/org_123");
   });
 
   it("allows ci-evals in hosted mode", () => {
