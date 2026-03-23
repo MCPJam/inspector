@@ -17,6 +17,52 @@ export interface HostedNavigationResolution {
   shouldClearChatMessages: boolean;
 }
 
+export function getWorkspaceSwitchNavigationTarget({
+  activeTab,
+  activeOrganizationId,
+  nextWorkspaceOrganizationId,
+}: {
+  activeTab: string;
+  activeOrganizationId?: string;
+  nextWorkspaceOrganizationId?: string;
+}): string | null {
+  if (activeTab !== "organizations") {
+    return null;
+  }
+
+  if (
+    !activeOrganizationId ||
+    !nextWorkspaceOrganizationId ||
+    nextWorkspaceOrganizationId !== activeOrganizationId
+  ) {
+    return "servers";
+  }
+
+  return null;
+}
+
+export function getInvalidOrganizationRouteNavigationTarget({
+  routeTab,
+  routeOrganizationId,
+  isLoadingOrganizations,
+  hasRouteOrganization,
+}: {
+  routeTab: string;
+  routeOrganizationId?: string;
+  isLoadingOrganizations: boolean;
+  hasRouteOrganization: boolean;
+}): string | null {
+  if (routeTab !== "organizations" || isLoadingOrganizations) {
+    return null;
+  }
+
+  if (!routeOrganizationId || !hasRouteOrganization) {
+    return "servers";
+  }
+
+  return null;
+}
+
 function normalizeOrganizationSection(
   section: string | undefined,
 ): OrganizationRouteSection {

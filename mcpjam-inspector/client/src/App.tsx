@@ -67,6 +67,8 @@ import {
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import {
+  getInvalidOrganizationRouteNavigationTarget,
+  getWorkspaceSwitchNavigationTarget,
   resolveHostedNavigation,
   type OrganizationRouteSection,
 } from "./lib/hosted-navigation";
@@ -365,28 +367,19 @@ export default function App() {
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  const currentHash = window.location.hash || "#servers";
+  const currentHashRoute = useMemo(
+    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
+    [currentHash],
+  );
   const activeOrganizationName = sortedOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
-
-  useEffect(() => {
-    if (!isAuthenticated || !activeOrganizationId || isLoadingOrganizations) {
-      return;
-    }
-
-    const activeOrganizationExists = sortedOrganizations.some(
-      (org) => org._id === activeOrganizationId,
-    );
-    if (!activeOrganizationExists) {
-      setActiveOrganizationId(undefined);
-    }
-  }, [
-    activeOrganizationId,
-    isAuthenticated,
-    isLoadingOrganizations,
-    setActiveOrganizationId,
-    sortedOrganizations,
-  ]);
+  const hasRouteOrganization = !!currentHashRoute.organizationId
+    ? sortedOrganizations.some(
+        (org) => org._id === currentHashRoute.organizationId,
+      )
+    : false;
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -664,6 +657,57 @@ export default function App() {
     applyNavigation(section, { updateHash: true });
   };
 
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
+      routeTab: currentHashRoute.normalizedTab,
+      routeOrganizationId: currentHashRoute.organizationId,
+      isLoadingOrganizations,
+      hasRouteOrganization,
+    });
+    if (!navigationTarget) {
+      return;
+    }
+
+    setActiveOrganizationId(undefined);
+    setActiveOrganizationSection("overview");
+    applyNavigation(navigationTarget, { updateHash: true });
+  }, [
+    applyNavigation,
+    currentHashRoute.normalizedTab,
+    currentHashRoute.organizationId,
+    hasRouteOrganization,
+    isAuthenticated,
+    isLoadingOrganizations,
+    setActiveOrganizationId,
+  ]);
+
+  const handleSidebarSwitchWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const nextWorkspace = workspaces[workspaceId];
+      await handleSwitchWorkspace(workspaceId);
+
+      const navigationTarget = getWorkspaceSwitchNavigationTarget({
+        activeTab,
+        activeOrganizationId,
+        nextWorkspaceOrganizationId: nextWorkspace?.organizationId,
+      });
+      if (navigationTarget) {
+        applyNavigation(navigationTarget, { updateHash: true });
+      }
+    },
+    [
+      activeOrganizationId,
+      activeTab,
+      applyNavigation,
+      handleSwitchWorkspace,
+      workspaces,
+    ],
+  );
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
@@ -769,7 +813,7 @@ export default function App() {
         servers={workspaceServers}
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
-        onSwitchWorkspace={handleSwitchWorkspace}
+        onSwitchWorkspace={handleSidebarSwitchWorkspace}
         onCreateWorkspace={handleCreateWorkspace}
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
@@ -939,8 +983,11 @@ export default function App() {
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
             <OrganizationsTab
-              organizationId={activeOrganizationId}
-              section={activeOrganizationSection}
+              organizationId={currentHashRoute.organizationId}
+              section={
+                currentHashRoute.organizationSection ??
+                activeOrganizationSection
+              }
             />
           )}
         </div>

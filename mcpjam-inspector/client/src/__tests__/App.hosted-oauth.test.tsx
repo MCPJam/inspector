@@ -14,6 +14,7 @@ import {
 const {
   createAppStateMock,
   mockHandleOAuthCallback,
+  mockOrganizationsTab,
   mockPosthogCapture,
   mockUseAppState,
   mockUseQuery,
@@ -58,6 +59,7 @@ const {
   return {
     createAppStateMock,
     mockHandleOAuthCallback: vi.fn(),
+    mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
     mockUseAppState: vi.fn(createAppStateMock),
     mockUseQuery: vi.fn(() => undefined),
@@ -190,7 +192,7 @@ vi.mock("../components/ProfileTab", () => ({
   ProfileTab: () => <div />,
 }));
 vi.mock("../components/OrganizationsTab", () => ({
-  OrganizationsTab: () => <div />,
+  OrganizationsTab: (props: unknown) => mockOrganizationsTab(props),
 }));
 vi.mock("../components/SupportTab", () => ({
   SupportTab: () => <div />,
@@ -261,6 +263,8 @@ describe("App hosted OAuth callback handling", () => {
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation(() => undefined);
     mockHandleOAuthCallback.mockReset();
+    mockOrganizationsTab.mockReset();
+    mockOrganizationsTab.mockImplementation(() => <div />);
     mockPosthogCapture.mockReset();
     mockHandleOAuthCallback.mockImplementation(
       () => new Promise<never>(() => {}),
@@ -402,6 +406,47 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(setActiveOrganizationId).not.toHaveBeenCalled();
+  });
+
+  it("renders the organization route from the hash even before active org state catches up", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-1");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: undefined,
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockOrganizationsTab).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockOrganizationsTab.mock.calls[
+        mockOrganizationsTab.mock.calls.length - 1
+      ];
+    expect(lastCall?.[0]).toMatchObject({
+      organizationId: "org-1",
+      section: "overview",
+    });
   });
 
   it("navigates back to the sandboxes tab after callback completion", async () => {
