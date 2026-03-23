@@ -398,6 +398,7 @@ describe("OrganizationsTab billing", () => {
     for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
       expect(button).toBeDisabled();
     }
+    expect(screen.getByRole("button", { name: "Contact us" })).toBeEnabled();
   });
 
   it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
@@ -566,6 +567,7 @@ describe("OrganizationsTab billing", () => {
     for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
       expect(button).toBeDisabled();
     }
+    expect(screen.getByRole("button", { name: "Contact us" })).toBeEnabled();
   });
 
   it("locks audit log behind enterprise after enforcement becomes active", () => {

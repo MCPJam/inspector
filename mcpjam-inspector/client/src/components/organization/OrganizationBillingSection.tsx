@@ -385,8 +385,9 @@ export function OrganizationBillingSection({
                   getPlanRank(plan) > getPlanRank(currentPlan);
                 const isDowngrade =
                   getPlanRank(plan) < getPlanRank(currentPlan);
+                const isEnterprisePlan = plan === "enterprise";
                 const priceLabel =
-                  plan === "enterprise"
+                  isEnterprisePlan
                     ? "Custom"
                     : plan === "free"
                       ? "$0"
@@ -396,7 +397,7 @@ export function OrganizationBillingSection({
                           billingInterval,
                         );
                 const priceDetail =
-                  plan === "enterprise"
+                  isEnterprisePlan
                     ? "Contact us"
                     : plan === "free"
                       ? "No credit card required"
@@ -413,7 +414,7 @@ export function OrganizationBillingSection({
 
                 if (isCurrentPlan) {
                   ctaLabel = "Current plan";
-                } else if (plan === "enterprise") {
+                } else if (isEnterprisePlan) {
                   ctaLabel = "Contact us";
                   ctaDisabled = false;
                   ctaVariant = "secondary";
@@ -432,7 +433,7 @@ export function OrganizationBillingSection({
                   };
                 }
 
-                if (!billingConfigured || !canManageBilling) {
+                if (!isEnterprisePlan && (!billingConfigured || !canManageBilling)) {
                   ctaDisabled = true;
                 }
 
