@@ -1,8 +1,7 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useJsonTreeState } from "./use-json-tree-state";
 import { JsonTreeNode } from "./json-tree-node";
-import { useOverflowDetection } from "./use-overflow-detection";
 
 interface JsonTreeViewProps {
   value: unknown;
@@ -23,7 +22,6 @@ export function JsonTreeView({
   collapseStringsAfterLength,
   onCopy,
 }: JsonTreeViewProps) {
-  const treeViewRef = useRef<HTMLDivElement>(null);
   const { isCollapsed, toggleCollapse, initializeFromValue } = useJsonTreeState(
     {
       defaultExpandDepth,
@@ -36,17 +34,12 @@ export function JsonTreeView({
   useEffect(() => {
     initializeFromValue(value);
   }, [value, initializeFromValue]);
-  const { hasVerticalOverflow, hasHorizontalOverflow } =
-    useOverflowDetection(treeViewRef);
 
   return (
     <div
-      ref={treeViewRef}
       className={cn(
-        "p-3 text-xs select-text cursor-text",
+        "p-3 text-xs overflow-auto select-text cursor-text",
         className,
-        hasVerticalOverflow ? "overflow-y-auto" : "overflow-y-hidden",
-        hasHorizontalOverflow ? "overflow-x-auto" : "overflow-x-hidden",
         // pl-7 must come after className to ensure space for collapse toggles
         "pl-7",
       )}

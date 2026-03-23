@@ -4,7 +4,6 @@ import { cn } from "@/lib/utils";
 import type { CursorPosition } from "./types";
 import { highlightJson } from "./json-syntax-highlighter";
 import { JsonHighlighter } from "./json-highlighter";
-import { useOverflowDetection } from "./use-overflow-detection";
 
 // Constants for virtualization and viewport highlighting
 const LINE_HEIGHT = 20; // 20px per line (leading-5)
@@ -197,7 +196,6 @@ export function JsonEditorEdit({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lineNumbersRef = useRef<HTMLDivElement>(null);
   const readOnlyViewportRef = useRef<HTMLDivElement>(null);
-  const readOnlyContentViewportRef = useRef<HTMLDivElement>(null);
   const highlightRef = useRef<HTMLPreElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -214,13 +212,6 @@ export function JsonEditorEdit({
   );
   const lineWrapEnabled = readOnly ? wrapLongLinesInView : wrapLongLinesInEdit;
   const readOnlyAutoHeight = readOnly && height === "auto";
-  const { hasVerticalOverflow: hasReadOnlyVerticalOverflow } =
-    useOverflowDetection(readOnlyViewportRef, readOnly && !readOnlyAutoHeight);
-  const { hasHorizontalOverflow: hasReadOnlyHorizontalOverflow } =
-    useOverflowDetection(
-      readOnlyContentViewportRef,
-      readOnly && !readOnlyAutoHeight && !lineWrapEnabled,
-    );
   const lines = useMemo(() => content.split("\n"), [content]);
   const lineLayouts = useMemo(
     () => buildLineLayouts(lines, lineWrapEnabled, charsPerVisualLine),
@@ -575,9 +566,7 @@ export function JsonEditorEdit({
               "relative z-10 flex min-w-0 items-start",
               readOnlyAutoHeight
                 ? "h-auto overflow-visible"
-                : hasReadOnlyVerticalOverflow
-                  ? "h-full min-h-0 overflow-x-hidden overflow-y-auto"
-                  : "h-full min-h-0 overflow-x-hidden overflow-y-hidden",
+                : "h-full min-h-0 overflow-x-hidden overflow-y-auto overscroll-none",
             )}
           >
             {showLineNumbers && (
@@ -618,14 +607,11 @@ export function JsonEditorEdit({
             )}
 
             <div
-              ref={readOnlyContentViewportRef}
               className={cn(
                 "relative self-start flex-1 min-w-0",
                 readOnlyAutoHeight
                   ? "overflow-visible"
-                  : !lineWrapEnabled && hasReadOnlyHorizontalOverflow
-                    ? "overflow-x-auto overflow-y-hidden"
-                    : "overflow-x-hidden overflow-y-hidden",
+                  : "overflow-x-auto overflow-y-hidden",
               )}
             >
               {/* Read-only mode: Use JsonHighlighter with per-value copy */}
