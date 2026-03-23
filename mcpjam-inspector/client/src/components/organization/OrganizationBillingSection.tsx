@@ -386,26 +386,24 @@ export function OrganizationBillingSection({
                 const isDowngrade =
                   getPlanRank(plan) < getPlanRank(currentPlan);
                 const isEnterprisePlan = plan === "enterprise";
-                const priceLabel =
-                  isEnterprisePlan
-                    ? "Custom"
-                    : plan === "free"
-                      ? "$0"
-                      : formatPrice(
-                          entry.prices[billingInterval],
-                          planCatalog.currency,
-                          billingInterval,
-                        );
-                const priceDetail =
-                  isEnterprisePlan
-                    ? "Contact us"
-                    : plan === "free"
-                      ? "No credit card required"
-                      : formatPriceDetail(
-                          entry.prices[billingInterval],
-                          planCatalog.currency,
-                          billingInterval,
-                        );
+                const priceLabel = isEnterprisePlan
+                  ? "Custom"
+                  : plan === "free"
+                    ? "$0"
+                    : formatPrice(
+                        entry.prices[billingInterval],
+                        planCatalog.currency,
+                        billingInterval,
+                      );
+                const priceDetail = isEnterprisePlan
+                  ? "Contact us"
+                  : plan === "free"
+                    ? "No credit card required"
+                    : formatPriceDetail(
+                        entry.prices[billingInterval],
+                        planCatalog.currency,
+                        billingInterval,
+                      );
 
                 let ctaLabel = "Current plan";
                 let ctaDisabled = true;
@@ -433,7 +431,10 @@ export function OrganizationBillingSection({
                   };
                 }
 
-                if (!isEnterprisePlan && (!billingConfigured || !canManageBilling)) {
+                if (
+                  !isEnterprisePlan &&
+                  (!billingConfigured || !canManageBilling)
+                ) {
                   ctaDisabled = true;
                 }
 
