@@ -24,6 +24,18 @@ interface LoggerLike {
   error: (message: string, meta?: Record<string, unknown>) => void;
 }
 
+function isSyntheticDefaultWorkspace(workspace: Workspace) {
+  return (
+    workspace.id === "default" &&
+    workspace.isDefault === true &&
+    workspace.sharedWorkspaceId === undefined &&
+    workspace.organizationId === undefined &&
+    workspace.name === "Default" &&
+    workspace.description === "Default workspace" &&
+    Object.keys(workspace.servers).length === 0
+  );
+}
+
 export interface UseWorkspaceStateParams {
   appState: AppState;
   dispatch: Dispatch<AppAction>;
@@ -41,13 +53,17 @@ export function useWorkspaceState({
   activeOrganizationId,
   logger,
 }: UseWorkspaceStateParams) {
-  const { workspaces: remoteWorkspaces, isLoading: isLoadingWorkspaces } =
-    useWorkspaceQueries({
-      isAuthenticated,
-      organizationId: activeOrganizationId,
-    });
+  const {
+    allWorkspaces: allRemoteWorkspaces,
+    workspaces: remoteWorkspaces,
+    isLoading: isLoadingWorkspaces,
+  } = useWorkspaceQueries({
+    isAuthenticated,
+    organizationId: activeOrganizationId,
+  });
   const {
     createWorkspace: convexCreateWorkspace,
+    ensureDefaultWorkspace: convexEnsureDefaultWorkspace,
     updateWorkspace: convexUpdateWorkspace,
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
@@ -67,7 +83,8 @@ export function useWorkspaceState({
       isAuthenticated,
     });
 
-  const hasMigratedRef = useRef(false);
+  const migrationInFlightRef = useRef(new Set<string>());
+  const ensureDefaultInFlightRef = useRef(new Set<string>());
   const [useLocalFallback, setUseLocalFallback] = useState(false);
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const CONVEX_TIMEOUT_MS = 10000;
@@ -203,6 +220,19 @@ export function useWorkspaceState({
     effectiveWorkspaces,
   ]);
 
+  const migratableLocalWorkspaces = useMemo(
+    () =>
+      Object.values(appState.workspaces).filter(
+        (workspace) =>
+          !workspace.sharedWorkspaceId &&
+          !isSyntheticDefaultWorkspace(workspace),
+      ),
+    [appState.workspaces],
+  );
+  const migratableLocalWorkspaceCount = migratableLocalWorkspaces.length;
+  const hasAnyRemoteWorkspaces = (allRemoteWorkspaces?.length ?? 0) > 0;
+  const hasCurrentOrganizationWorkspaces = (remoteWorkspaces?.length ?? 0) > 0;
+
   useEffect(() => {
     if (isAuthenticated && remoteWorkspaces && remoteWorkspaces.length > 0) {
       if (
@@ -236,37 +266,55 @@ export function useWorkspaceState({
   }, [convexActiveWorkspaceId]);
 
   useEffect(() => {
+    if (!isAuthenticated || useLocalFallback) {
+      migrationInFlightRef.current.clear();
+      ensureDefaultInFlightRef.current.clear();
+    }
+  }, [isAuthenticated, useLocalFallback]);
+
+  useEffect(() => {
     if (!isAuthenticated) {
-      hasMigratedRef.current = false;
       return;
     }
     if (useLocalFallback) return;
-    if (hasMigratedRef.current) return;
-    if (remoteWorkspaces === undefined) return;
-
-    hasMigratedRef.current = true;
-
-    const localWorkspaces = Object.values(appState.workspaces).filter(
-      (w) => !w.sharedWorkspaceId,
-    );
-
-    if (localWorkspaces.length === 0) return;
-    if (remoteWorkspaces.length > 0) return;
+    if (allRemoteWorkspaces === undefined) return;
+    if (allRemoteWorkspaces.length > 0) return;
+    if (migratableLocalWorkspaceCount === 0) return;
 
     logger.info("Migrating local workspaces to Convex", {
-      count: localWorkspaces.length,
+      count: migratableLocalWorkspaceCount,
     });
 
     const migrateWorkspace = async (workspace: Workspace) => {
+      if (migrationInFlightRef.current.has(workspace.id)) {
+        return;
+      }
+
+      migrationInFlightRef.current.add(workspace.id);
+
       try {
         const serializedServers = serializeServersForSharing(workspace.servers);
-        await convexCreateWorkspace({
+        const workspaceId = await convexCreateWorkspace({
           name: workspace.name,
           description: workspace.description,
           servers: serializedServers,
+          ...(activeOrganizationId
+            ? { organizationId: activeOrganizationId }
+            : {}),
+        });
+        dispatch({
+          type: "UPDATE_WORKSPACE",
+          workspaceId: workspace.id,
+          updates: {
+            sharedWorkspaceId: workspaceId as string,
+            ...(activeOrganizationId
+              ? { organizationId: activeOrganizationId }
+              : {}),
+          },
         });
         logger.info("Migrated workspace to Convex", { name: workspace.name });
       } catch (error) {
+        migrationInFlightRef.current.delete(workspace.id);
         logger.error("Failed to migrate workspace", {
           name: workspace.name,
           error: error instanceof Error ? error.message : "Unknown error",
@@ -274,13 +322,53 @@ export function useWorkspaceState({
       }
     };
 
-    Promise.all(localWorkspaces.map(migrateWorkspace));
+    Promise.all(migratableLocalWorkspaces.map(migrateWorkspace));
+  }, [
+    isAuthenticated,
+    useLocalFallback,
+    allRemoteWorkspaces,
+    migratableLocalWorkspaces,
+    migratableLocalWorkspaceCount,
+    convexCreateWorkspace,
+    dispatch,
+    logger,
+    activeOrganizationId,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    if (useLocalFallback) return;
+    if (remoteWorkspaces === undefined) return;
+    if (hasCurrentOrganizationWorkspaces) return;
+    if (!hasAnyRemoteWorkspaces && migratableLocalWorkspaceCount > 0) return;
+
+    const requestKey = activeOrganizationId ?? "fallback";
+    if (ensureDefaultInFlightRef.current.has(requestKey)) {
+      return;
+    }
+
+    ensureDefaultInFlightRef.current.add(requestKey);
+
+    convexEnsureDefaultWorkspace(
+      activeOrganizationId ? { organizationId: activeOrganizationId } : {},
+    ).catch((error) => {
+      ensureDefaultInFlightRef.current.delete(requestKey);
+      logger.error("Failed to ensure default workspace", {
+        organizationId: activeOrganizationId,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    });
   }, [
     isAuthenticated,
     useLocalFallback,
     remoteWorkspaces,
-    appState.workspaces,
-    convexCreateWorkspace,
+    hasCurrentOrganizationWorkspaces,
+    hasAnyRemoteWorkspaces,
+    migratableLocalWorkspaceCount,
+    convexEnsureDefaultWorkspace,
+    activeOrganizationId,
     logger,
   ]);
 
