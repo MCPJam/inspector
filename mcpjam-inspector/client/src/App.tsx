@@ -66,7 +66,10 @@ import {
 } from "./components/hosted/SandboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
-import { resolveHostedNavigation } from "./lib/hosted-navigation";
+import {
+  resolveHostedNavigation,
+  type OrganizationRouteSection,
+} from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
   formatBillingFeatureName,
@@ -123,6 +126,8 @@ function getHostedOAuthCallbackErrorMessage(): string {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [activeOrganizationSection, setActiveOrganizationSection] =
+    useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
@@ -578,6 +583,11 @@ export default function App() {
       if (resolved.organizationId) {
         setActiveOrganizationId(resolved.organizationId);
       }
+      if (resolved.organizationSection) {
+        setActiveOrganizationSection(resolved.organizationSection);
+      } else if (resolved.normalizedTab !== "organizations") {
+        setActiveOrganizationSection("overview");
+      }
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
@@ -920,7 +930,10 @@ export default function App() {
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
-            <OrganizationsTab organizationId={activeOrganizationId} />
+            <OrganizationsTab
+              organizationId={activeOrganizationId}
+              section={activeOrganizationSection}
+            />
           )}
         </div>
       </SidebarInset>

@@ -32,6 +32,7 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Organization,
   OrganizationMember,
@@ -43,7 +44,6 @@ import {
 } from "@/hooks/useOrganizations";
 import {
   useOrganizationBilling,
-  isPaidPlan,
 } from "@/hooks/useOrganizationBilling";
 import {
   formatBillingFeatureName,
@@ -52,14 +52,29 @@ import {
   isBillingGracePeriodActive,
   isBillingFeatureLocked,
 } from "@/lib/billing-entitlements";
+import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
+import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 
 interface OrganizationsTabProps {
   organizationId?: string;
+  section?: OrganizationRouteSection;
 }
 
-export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
+function getOrganizationRouteHash(
+  organizationId: string,
+  section: OrganizationRouteSection,
+): string {
+  return section === "billing"
+    ? `organizations/${organizationId}/billing`
+    : `organizations/${organizationId}`;
+}
+
+export function OrganizationsTab({
+  organizationId,
+  section = "overview",
+}: OrganizationsTabProps) {
   const { user, signIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
 
@@ -137,14 +152,15 @@ export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
     );
   }
 
-  return <OrganizationPage organization={organization} />;
+  return <OrganizationPage organization={organization} section={section} />;
 }
 
 interface OrganizationPageProps {
   organization: Organization;
+  section: OrganizationRouteSection;
 }
 
-function OrganizationPage({ organization }: OrganizationPageProps) {
+function OrganizationPage({ organization, section }: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const currentUserEmail = user?.email;
@@ -183,8 +199,10 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     billingStatus,
     entitlements,
     rolloutState,
+    planCatalog,
     isLoadingBilling,
     isLoadingEntitlements,
+    isLoadingPlanCatalog,
     isLoadingRollout,
     isStartingCheckout,
     isOpeningPortal,
@@ -195,6 +213,9 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
+  const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const activeSection =
+    billingUiEnabled && section === "billing" ? "billing" : "overview";
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
     if (!currentRole) return false;
@@ -429,28 +450,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     }
   };
 
-  const handleBillingAction = async () => {
-    if (!billingStatus) return;
-
-    try {
-      const returnUrl = `${window.location.origin}${window.location.pathname}#organizations/${organization._id}`;
-      const billingUrl = isPaidPlan(billingStatus.plan)
-        ? await openPortal(returnUrl)
-        : await startCheckout(returnUrl);
-      window.open(billingUrl, "_blank", "noopener,noreferrer");
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to start billing flow",
-      );
-    }
-  };
-
   const initial = organization.name.charAt(0).toUpperCase();
-  const isBillingActionPending = isStartingCheckout || isOpeningPortal;
-  const billingActionLabel =
-    billingStatus && isPaidPlan(billingStatus.plan)
-      ? "Manage subscription"
-      : "Upgrade plan";
   const formattedPeriodEnd =
     billingStatus?.stripeCurrentPeriodEnd != null
       ? new Intl.DateTimeFormat(undefined, {
@@ -465,7 +465,6 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const billingAccountLabel = billingStatus?.hasCustomer
     ? "Connected"
     : "Not connected";
-  const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const auditLogLocked = isBillingFeatureLocked({
     billingUiEnabled,
     entitlements,
@@ -480,6 +479,56 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const auditLogGraceEndsAt = formatGracePeriodEndsAt(
     rolloutState?.gracePeriodEndsAt,
   );
+  const navigateToSection = (nextSection: OrganizationRouteSection) => {
+    window.location.hash = getOrganizationRouteHash(
+      organization._id,
+      nextSection,
+    );
+  };
+  const handleViewBilling = () => navigateToSection("billing");
+
+  const openBillingUrl = (url: string) => {
+    window.open(url, "_blank", "noopener,noreferrer");
+  };
+
+  const getBillingReturnUrl = () =>
+    `${window.location.origin}${window.location.pathname}#${getOrganizationRouteHash(
+      organization._id,
+      "billing",
+    )}`;
+
+  const handleManageBilling = async () => {
+    try {
+      const billingUrl = await openPortal(getBillingReturnUrl());
+      openBillingUrl(billingUrl);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to open billing portal",
+      );
+    }
+  };
+
+  const handlePlanCheckout = async (
+    tier: "starter" | "team",
+    billingInterval: "monthly" | "annual",
+  ) => {
+    try {
+      const billingUrl = await startCheckout(
+        getBillingReturnUrl(),
+        tier,
+        billingInterval,
+      );
+      openBillingUrl(billingUrl);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to start checkout flow",
+      );
+    }
+  };
 
   return (
     <div className="h-full overflow-y-auto">
@@ -538,309 +587,338 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                 )}
               </div>
             </div>
+          </CardContent>
+        </Card>
 
-            <div className="h-px bg-border/70" />
+        {billingUiEnabled ? (
+          <Tabs
+            value={activeSection}
+            onValueChange={(value) =>
+              navigateToSection(value as OrganizationRouteSection)
+            }
+          >
+            <TabsList>
+              <TabsTrigger value="overview">General</TabsTrigger>
+              <TabsTrigger value="billing">Billing</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        ) : null}
 
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <h2 className="flex items-center gap-2 text-xl font-semibold">
+        {activeSection === "billing" ? (
+          <>
+            <OrganizationBillingSection
+              billingStatus={billingStatus}
+              organizationName={organization.name}
+              planCatalog={planCatalog}
+              isLoadingBilling={isLoadingBilling}
+              isLoadingPlanCatalog={isLoadingPlanCatalog}
+              isStartingCheckout={isStartingCheckout}
+              isOpeningPortal={isOpeningPortal}
+              onManageBilling={handleManageBilling}
+              onStartCheckout={handlePlanCheckout}
+            />
+            {billingError ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                {billingError}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Card className="border-border/60">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-xl">
                   <Users className="size-4 text-muted-foreground" />
                   Members
-                </h2>
+                </CardTitle>
                 <p className="text-sm text-muted-foreground">
                   Active members ({activeMembers.length})
                   {pendingMembers.length > 0
                     ? ` • Pending invites (${pendingMembers.length})`
                     : ""}
                 </p>
-              </div>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-0">
+                {canInvite ? (
+                  <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+                    <Input
+                      placeholder="Email address"
+                      value={inviteEmail}
+                      onChange={(e) => setInviteEmail(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleInvite()}
+                      className="h-9 w-full sm:w-80"
+                    />
+                    <Button
+                      size="sm"
+                      className="h-9"
+                      onClick={handleInvite}
+                      disabled={!inviteEmail.trim() || isInviting}
+                    >
+                      <UserPlus className="mr-2 size-4" />
+                      {isInviting ? "Inviting..." : "Add member"}
+                    </Button>
+                  </div>
+                ) : null}
 
-              {canInvite ? (
-                <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
-                  <Input
-                    placeholder="Email address"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleInvite()}
-                    className="h-9 w-full sm:w-80"
-                  />
-                  <Button
-                    size="sm"
-                    className="h-9"
-                    onClick={handleInvite}
-                    disabled={!inviteEmail.trim() || isInviting}
-                  >
-                    <UserPlus className="mr-2 size-4" />
-                    {isInviting ? "Inviting..." : "Add member"}
-                  </Button>
-                </div>
-              ) : null}
+                {membersLoading ? (
+                  <div className="flex items-center gap-2 py-3 text-muted-foreground">
+                    <RefreshCw className="size-4 animate-spin" />
+                    Loading members...
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {activeMembers.map((member) => {
+                      const memberRole = resolveOrganizationRole(member);
+                      return (
+                        <OrganizationMemberRow
+                          key={member._id}
+                          member={member}
+                          role={memberRole}
+                          currentUserEmail={currentUserEmail}
+                          canEditRole={isOwner && memberRole !== "owner"}
+                          isRoleUpdating={roleUpdatingEmail === member.email}
+                          onRoleChange={
+                            isOwner && memberRole !== "owner"
+                              ? (role) =>
+                                  void handleChangeMemberRole(member, role)
+                              : undefined
+                          }
+                          onTransferOwnership={
+                            isOwner && memberRole !== "owner"
+                              ? () => setTransferTargetMember(member)
+                              : undefined
+                          }
+                          isTransferringOwnership={
+                            isTransferringOwnership &&
+                            transferTargetMember?.email === member.email
+                          }
+                          onRemove={
+                            canRemoveMember(member)
+                              ? () => handleRemoveMember(member.email)
+                              : undefined
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                )}
 
-              {membersLoading ? (
-                <div className="flex items-center gap-2 py-3 text-muted-foreground">
-                  <RefreshCw className="size-4 animate-spin" />
-                  Loading members...
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {activeMembers.map((member) => {
-                    const memberRole = resolveOrganizationRole(member);
-                    return (
+                {pendingMembers.length > 0 ? (
+                  <div className="space-y-1 pt-2">
+                    {pendingMembers.map((member) => (
                       <OrganizationMemberRow
                         key={member._id}
                         member={member}
-                        role={memberRole}
                         currentUserEmail={currentUserEmail}
-                        canEditRole={isOwner && memberRole !== "owner"}
-                        isRoleUpdating={roleUpdatingEmail === member.email}
-                        onRoleChange={
-                          isOwner && memberRole !== "owner"
-                            ? (role) =>
-                                void handleChangeMemberRole(member, role)
-                            : undefined
-                        }
-                        onTransferOwnership={
-                          isOwner && memberRole !== "owner"
-                            ? () => setTransferTargetMember(member)
-                            : undefined
-                        }
-                        isTransferringOwnership={
-                          isTransferringOwnership &&
-                          transferTargetMember?.email === member.email
-                        }
+                        isPending
                         onRemove={
-                          canRemoveMember(member)
+                          canRemovePendingMember()
                             ? () => handleRemoveMember(member.email)
                             : undefined
                         }
                       />
-                    );
-                  })}
-                </div>
-              )}
-
-              {pendingMembers.length > 0 ? (
-                <div className="space-y-1 pt-2">
-                  {pendingMembers.map((member) => (
-                    <OrganizationMemberRow
-                      key={member._id}
-                      member={member}
-                      currentUserEmail={currentUserEmail}
-                      isPending
-                      onRemove={
-                        canRemovePendingMember()
-                          ? () => handleRemoveMember(member.email)
-                          : undefined
-                      }
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/60">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <CreditCard className="size-4 text-muted-foreground" />
-              Billing
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              View your plan details and manage your subscription settings.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {isLoadingBilling ? (
-              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                Loading billing details...
-              </div>
-            ) : billingStatus && !billingStatus.billingConfigured ? (
-              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                Billing is not configured in this environment.
-              </div>
-            ) : billingStatus ? (
-              <>
-                <div className="grid gap-3 rounded-md border border-border/70 p-3.5 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Current plan
-                    </p>
-                    <Badge
-                      variant={
-                        isPaidPlan(billingStatus.plan) ? "default" : "secondary"
-                      }
-                    >
-                      {billingStatus.plan.toUpperCase()}
-                    </Badge>
+                    ))}
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Subscription status
-                    </p>
-                    <p className="text-sm font-medium capitalize">
-                      {subscriptionStatusLabel}
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Current period ends
-                    </p>
-                    <p className="text-sm font-medium">{formattedPeriodEnd}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Billing account
-                    </p>
-                    <p className="text-sm font-medium">{billingAccountLabel}</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <Button
-                    size="default"
-                    className="h-10 px-5"
-                    variant={
-                      isPaidPlan(billingStatus.plan) ? "outline" : "default"
-                    }
-                    onClick={handleBillingAction}
-                    disabled={
-                      !billingStatus.canManageBilling || isBillingActionPending
-                    }
-                  >
-                    {isBillingActionPending ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      billingActionLabel
-                    )}
-                  </Button>
-                </div>
-                {!billingStatus.canManageBilling ? (
-                  <p className="text-xs text-muted-foreground">
-                    Only organization owners can manage billing.
-                  </p>
                 ) : null}
-              </>
-            ) : null}
-            {billingError ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-                {billingError}
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card className="border-border/60">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <Building2 className="size-4 text-muted-foreground" />
-              Audit Log
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              Review organization activity and export it as CSV.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {billingUiEnabled && (isLoadingEntitlements || isLoadingRollout) ? (
-              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                Loading audit log access...
-              </div>
-            ) : auditLogGraceBanner ? (
-              <>
-                <Alert className="border-amber-500/30 bg-amber-500/5">
-                  <AlertTriangle className="size-4 text-amber-600" />
-                  <AlertTitle>
-                    {formatBillingFeatureName("auditLog")} trial access
-                  </AlertTitle>
-                  <AlertDescription>
-                    <p>
-                      Audit Log is not included in the{" "}
-                      {formatPlanName(entitlements?.plan)} plan.
-                    </p>
-                    <p>
-                      Access remains available until{" "}
-                      {auditLogGraceEndsAt ?? "the rollout grace period ends"}.
-                      Upgrade to Enterprise before then to keep access.
-                    </p>
-                  </AlertDescription>
-                </Alert>
-                <OrganizationAuditLog
-                  organizationId={organization._id}
-                  organizationName={organization.name}
-                  isAuthenticated={isAuthenticated}
-                />
-              </>
-            ) : auditLogLocked ? (
-              <div className="rounded-md border border-border/70 p-4">
-                <div className="space-y-1.5">
-                  <h3 className="text-sm font-medium">
-                    Audit Log requires Enterprise
-                  </h3>
+            {billingUiEnabled ? (
+              <Card className="border-border/60">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-xl">
+                    <CreditCard className="size-4 text-muted-foreground" />
+                    Billing
+                  </CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Audit Log is not included in the{" "}
-                    {formatPlanName(entitlements?.plan)} plan.
-                    {billingStatus?.canManageBilling
-                      ? " Upgrade this organization to Enterprise to restore access."
-                      : " Ask an organization owner to upgrade to Enterprise."}
+                    Review your current plan and open the billing subview for
+                    plan comparison and checkout flows.
                   </p>
-                </div>
-                {billingStatus?.canManageBilling ? (
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0">
+                  {isLoadingBilling ? (
+                    <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                      Loading billing details...
+                    </div>
+                  ) : billingStatus && !billingStatus.billingConfigured ? (
+                    <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                      Billing is not configured in this environment.
+                    </div>
+                  ) : billingStatus ? (
+                    <>
+                      <div className="grid gap-3 rounded-md border border-border/70 p-3.5 sm:grid-cols-2">
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                            Current plan
+                          </p>
+                          <Badge
+                            variant={
+                              billingStatus.plan !== "free"
+                                ? "default"
+                                : "secondary"
+                            }
+                          >
+                            {billingStatus.plan.toUpperCase()}
+                          </Badge>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                            Subscription status
+                          </p>
+                          <p className="text-sm font-medium capitalize">
+                            {subscriptionStatusLabel}
+                          </p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                            Current period ends
+                          </p>
+                          <p className="text-sm font-medium">
+                            {formattedPeriodEnd}
+                          </p>
+                        </div>
+                        <div className="space-y-1">
+                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                            Billing account
+                          </p>
+                          <p className="text-sm font-medium">
+                            {billingAccountLabel}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Button
+                          size="default"
+                          className="h-10 px-5"
+                          variant="outline"
+                          onClick={handleViewBilling}
+                        >
+                          View plans
+                        </Button>
+                      </div>
+                      {!billingStatus.canManageBilling ? (
+                        <p className="text-xs text-muted-foreground">
+                          Only organization owners can manage billing.
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
+                  {billingError ? (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                      {billingError}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
+            ) : null}
+
+            <Card className="border-border/60">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <Building2 className="size-4 text-muted-foreground" />
+                  Audit Log
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Review organization activity and export it as CSV.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {billingUiEnabled &&
+                (isLoadingEntitlements || isLoadingRollout) ? (
+                  <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                    Loading audit log access...
+                  </div>
+                ) : auditLogGraceBanner ? (
+                  <>
+                    <Alert className="border-amber-500/30 bg-amber-500/5">
+                      <AlertTriangle className="size-4 text-amber-600" />
+                      <AlertTitle>
+                        {formatBillingFeatureName("auditLog")} trial access
+                      </AlertTitle>
+                      <AlertDescription>
+                        <p>
+                          Audit Log is not included in the{" "}
+                          {formatPlanName(entitlements?.plan)} plan.
+                        </p>
+                        <p>
+                          Access remains available until{" "}
+                          {auditLogGraceEndsAt ??
+                            "the rollout grace period ends"}
+                          . Upgrade to Enterprise before then to keep access.
+                        </p>
+                      </AlertDescription>
+                    </Alert>
+                    <OrganizationAuditLog
+                      organizationId={organization._id}
+                      organizationName={organization.name}
+                      isAuthenticated={isAuthenticated}
+                    />
+                  </>
+                ) : auditLogLocked ? (
+                  <div className="rounded-md border border-border/70 p-4">
+                    <div className="space-y-1.5">
+                      <h3 className="text-sm font-medium">
+                        Audit Log requires Enterprise
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        Audit Log is not included in the{" "}
+                        {formatPlanName(entitlements?.plan)} plan.
+                        {billingStatus?.canManageBilling
+                          ? " Upgrade this organization to Enterprise to restore access."
+                          : " Ask an organization owner to upgrade to Enterprise."}
+                      </p>
+                    </div>
+                    {billingUiEnabled ? (
+                      <Button className="mt-3" onClick={handleViewBilling}>
+                        View billing options
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <OrganizationAuditLog
+                    organizationId={organization._id}
+                    organizationName={organization.name}
+                    isAuthenticated={isAuthenticated}
+                  />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-destructive/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-xl text-destructive">
+                  <AlertTriangle className="size-4" />
+                  Danger Zone
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  These actions are permanent and may remove access for members.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-2.5 pt-0">
+                {!membersLoading && !isOwner ? (
                   <Button
-                    className="mt-3"
-                    onClick={handleBillingAction}
-                    disabled={isBillingActionPending}
+                    variant="outline"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setLeaveConfirmOpen(true)}
                   >
-                    {isBillingActionPending
-                      ? "Loading..."
-                      : "View billing options"}
+                    <LogOut className="mr-2 size-4" />
+                    Leave Organization
                   </Button>
                 ) : null}
-              </div>
-            ) : (
-              <OrganizationAuditLog
-                organizationId={organization._id}
-                organizationName={organization.name}
-                isAuthenticated={isAuthenticated}
-              />
-            )}
-          </CardContent>
-        </Card>
-
-        <Card className="border-destructive/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-xl text-destructive">
-              <AlertTriangle className="size-4" />
-              Danger Zone
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              These actions are permanent and may remove access for members.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-2.5 pt-0">
-            {!membersLoading && !isOwner ? (
-              <Button
-                variant="outline"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => setLeaveConfirmOpen(true)}
-              >
-                <LogOut className="mr-2 size-4" />
-                Leave Organization
-              </Button>
-            ) : null}
-            {!membersLoading && isOwner ? (
-              <Button
-                variant="outline"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => setDeleteConfirmOpen(true)}
-              >
-                <Trash2 className="mr-2 size-4" />
-                Delete Organization
-              </Button>
-            ) : null}
-          </CardContent>
-        </Card>
+                {!membersLoading && isOwner ? (
+                  <Button
+                    variant="outline"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setDeleteConfirmOpen(true)}
+                  >
+                    <Trash2 className="mr-2 size-4" />
+                    Delete Organization
+                  </Button>
+                ) : null}
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
 
       {/* Ownership Transfer Confirmation */}

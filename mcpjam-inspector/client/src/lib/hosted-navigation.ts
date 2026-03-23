@@ -3,6 +3,8 @@ import {
   normalizeHostedHashTab,
 } from "./hosted-tab-policy";
 
+export type OrganizationRouteSection = "overview" | "billing";
+
 export interface HostedNavigationResolution {
   normalizedParts: string[];
   normalizedSection: string;
@@ -10,8 +12,15 @@ export interface HostedNavigationResolution {
   rawSection: string;
   isBlocked: boolean;
   organizationId?: string;
+  organizationSection?: OrganizationRouteSection;
   shouldSelectAllServers: boolean;
   shouldClearChatMessages: boolean;
+}
+
+function normalizeOrganizationSection(
+  section: string | undefined,
+): OrganizationRouteSection {
+  return section === "billing" ? "billing" : "overview";
 }
 
 export function getNormalizedHashParts(hashValue: string): string[] {
@@ -19,6 +28,14 @@ export function getNormalizedHashParts(hashValue: string): string[] {
   const trimmedHash = rawHash.startsWith("/") ? rawHash.slice(1) : rawHash;
   const hashParts = (trimmedHash || "servers").split("/");
   hashParts[0] = normalizeHostedHashTab(hashParts[0] || "servers");
+
+  if (hashParts[0] === "organizations" && hashParts[1]) {
+    const section = normalizeOrganizationSection(hashParts[2]);
+    return section === "billing"
+      ? ["organizations", hashParts[1], "billing"]
+      : ["organizations", hashParts[1]];
+  }
+
   return hashParts;
 }
 
@@ -35,6 +52,10 @@ export function resolveHostedNavigation(
     normalizedTab === "organizations" && normalizedParts[1]
       ? normalizedParts[1]
       : undefined;
+  const organizationSection =
+    normalizedTab === "organizations" && organizationId
+      ? normalizeOrganizationSection(normalizedParts[2])
+      : undefined;
 
   return {
     normalizedParts,
@@ -43,6 +64,7 @@ export function resolveHostedNavigation(
     rawSection,
     isBlocked: hostedMode && !isHostedHashTabAllowed(normalizedTab),
     organizationId,
+    organizationSection,
     shouldSelectAllServers: normalizedTab === "chat-v2",
     shouldClearChatMessages: normalizedTab !== "chat-v2",
   };
