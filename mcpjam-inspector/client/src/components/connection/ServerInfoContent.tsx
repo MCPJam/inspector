@@ -9,7 +9,7 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
-import { JsonEditor } from "@/components/ui/json-editor";
+import { ScrollableJsonView } from "@/components/ui/json-editor";
 
 interface ServerInfoContentProps {
   server: ServerWithName;
@@ -118,15 +118,11 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
               View Decoded JWT
             </button>
             {expandedTokens.has(`${tokenKey}Decoded`) && (
-              <div className="mt-1">
-                <JsonEditor
-                  showLineNumbers={false}
-                  height="100%"
-                  value={decoded}
-                  readOnly
-                  showToolbar={false}
-                />
-              </div>
+              <ScrollableJsonView
+                value={decoded}
+                showLineNumbers={false}
+                containerClassName="mt-1 max-h-96 rounded-lg"
+              />
             )}
           </div>
         )}
@@ -260,13 +256,10 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
           <div className="text-sm font-medium text-muted-foreground mb-2">
             Server Capabilities
           </div>
-          <JsonEditor
-            showLineNumbers={false}
-            height="100%"
+          <ScrollableJsonView
             value={serverCapabilities}
-            readOnly
-            showToolbar={false}
-            maxHeight="384px"
+            showLineNumbers={false}
+            containerClassName="max-h-96 rounded-lg"
           />
         </div>
       )}
@@ -276,13 +269,10 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
           <div className="text-sm font-medium text-muted-foreground mb-2">
             Client Capabilities
           </div>
-          <JsonEditor
-            showLineNumbers={false}
-            height="100%"
+          <ScrollableJsonView
             value={clientCapabilities}
-            readOnly
-            showToolbar={false}
-            maxHeight="384px"
+            showLineNumbers={false}
+            containerClassName="max-h-96 rounded-lg"
           />
         </div>
       )}
