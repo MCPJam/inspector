@@ -42,9 +42,7 @@ import {
   useOrganizationMembers,
   useOrganizationMutations,
 } from "@/hooks/useOrganizations";
-import {
-  useOrganizationBilling,
-} from "@/hooks/useOrganizationBilling";
+import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import {
   formatBillingFeatureName,
   formatGracePeriodEndsAt,

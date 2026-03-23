@@ -241,9 +241,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(
-      screen.getByRole("tab", { name: "Billing" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Billing" })).toBeInTheDocument();
     expect(screen.getByText("Subscription status")).toBeInTheDocument();
     expect(screen.getByText("Not subscribed")).toBeInTheDocument();
     expect(screen.getByText("Current period ends")).toBeInTheDocument();
