@@ -428,13 +428,13 @@ export default function App() {
     activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
   const billingEntitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,
-    billingOrganizationId
+    isAuthenticated && billingOrganizationId
       ? ({ organizationId: billingOrganizationId } as any)
       : "skip",
   ) as OrganizationEntitlements | undefined;
   const billingRolloutState = useQuery(
     "billing:getBillingRolloutState" as any,
-    billingOrganizationId
+    isAuthenticated && billingOrganizationId
       ? ({ organizationId: billingOrganizationId } as any)
       : "skip",
   ) as BillingRolloutState | undefined;
