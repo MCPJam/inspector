@@ -7,7 +7,25 @@ const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
 const mockUseOrganizationQueries = vi.fn();
 const mockUseOrganizationMembers = vi.fn();
+const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
+
+function createBillingHookState(overrides: Record<string, unknown>) {
+  return {
+    billingStatus: undefined,
+    entitlements: undefined,
+    rolloutState: undefined,
+    isLoadingBilling: false,
+    isLoadingEntitlements: false,
+    isLoadingRollout: false,
+    isStartingCheckout: false,
+    isOpeningPortal: false,
+    error: null,
+    startCheckout: vi.fn(),
+    openPortal: vi.fn(),
+    ...overrides,
+  };
+}
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: (...args: unknown[]) => mockUseAuth(...args),
@@ -15,6 +33,11 @@ vi.mock("@workos-inc/authkit-react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
@@ -56,6 +79,7 @@ describe("OrganizationsTab billing", () => {
     vi.clearAllMocks();
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
     mockUseAuth.mockReturnValue({
       user: { email: "owner@example.com" },
       signIn: vi.fn(),
@@ -95,27 +119,23 @@ describe("OrganizationsTab billing", () => {
   });
 
   it("shows Upgrade CTA for free plan", () => {
-    mockUseOrganizationBilling.mockReturnValue({
-      billingStatus: {
-        organizationId: "org-1",
-        organizationName: "Org One",
-        plan: "free",
-        billingInterval: null,
-        billingConfigured: true,
-        subscriptionStatus: null,
-        canManageBilling: true,
-        isOwner: true,
-        hasCustomer: false,
-        stripeCurrentPeriodEnd: null,
-        stripePriceId: null,
-      },
-      isLoadingBilling: false,
-      isStartingCheckout: false,
-      isOpeningPortal: false,
-      error: null,
-      startCheckout: vi.fn(),
-      openPortal: vi.fn(),
-    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "free",
+          billingInterval: null,
+          billingConfigured: true,
+          subscriptionStatus: null,
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: false,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: null,
+        },
+      }),
+    );
 
     render(<OrganizationsTab organizationId="org-1" />);
 
@@ -139,27 +159,23 @@ describe("OrganizationsTab billing", () => {
       year: "numeric",
     }).format(new Date(periodEnd));
 
-    mockUseOrganizationBilling.mockReturnValue({
-      billingStatus: {
-        organizationId: "org-1",
-        organizationName: "Org One",
-        plan: "starter",
-        billingInterval: "monthly",
-        billingConfigured: true,
-        subscriptionStatus: "active",
-        canManageBilling: true,
-        isOwner: true,
-        hasCustomer: true,
-        stripeCurrentPeriodEnd: periodEnd,
-        stripePriceId: "price_123",
-      },
-      isLoadingBilling: false,
-      isStartingCheckout: false,
-      isOpeningPortal: false,
-      error: null,
-      startCheckout: vi.fn(),
-      openPortal: vi.fn(),
-    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "starter",
+          billingInterval: "monthly",
+          billingConfigured: true,
+          subscriptionStatus: "active",
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: periodEnd,
+          stripePriceId: "price_123",
+        },
+      }),
+    );
 
     render(<OrganizationsTab organizationId="org-1" />);
 
@@ -213,27 +229,23 @@ describe("OrganizationsTab billing", () => {
       isLoading: false,
     });
 
-    mockUseOrganizationBilling.mockReturnValue({
-      billingStatus: {
-        organizationId: "org-1",
-        organizationName: "Org One",
-        plan: "free",
-        billingInterval: null,
-        billingConfigured: true,
-        subscriptionStatus: null,
-        canManageBilling: false,
-        isOwner: false,
-        hasCustomer: false,
-        stripeCurrentPeriodEnd: null,
-        stripePriceId: null,
-      },
-      isLoadingBilling: false,
-      isStartingCheckout: false,
-      isOpeningPortal: false,
-      error: null,
-      startCheckout: vi.fn(),
-      openPortal: vi.fn(),
-    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "free",
+          billingInterval: null,
+          billingConfigured: true,
+          subscriptionStatus: null,
+          canManageBilling: false,
+          isOwner: false,
+          hasCustomer: false,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: null,
+        },
+      }),
+    );
 
     render(<OrganizationsTab organizationId="org-1" />);
 
@@ -241,5 +253,95 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.getByText("Only organization owners can manage billing."),
     ).toBeInTheDocument();
+  });
+
+  it("locks audit log behind enterprise after enforcement becomes active", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "team",
+          billingInterval: "monthly",
+          billingConfigured: true,
+          subscriptionStatus: "active",
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: "price_123",
+        },
+        entitlements: {
+          plan: "team",
+          billingInterval: "monthly",
+          source: "persisted",
+          features: {
+            evals: true,
+            sandboxes: true,
+            cicd: true,
+            customDomains: true,
+            auditLog: false,
+            sso: false,
+            prioritySupport: true,
+          },
+          limits: {},
+        },
+        rolloutState: {
+          enforcementConfigured: true,
+          gracePeriodEndsAt: "2026-04-04T00:00:00.000Z",
+          enforcementActive: true,
+        },
+        isLoadingBilling: false,
+        isLoadingEntitlements: false,
+        isLoadingRollout: false,
+        isStartingCheckout: false,
+        isOpeningPortal: false,
+        error: null,
+        startCheckout: vi.fn(),
+        openPortal: vi.fn(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(
+      screen.getByText("Audit Log requires Enterprise"),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("organization-audit-log"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "View billing options" }),
+    ).toBeInTheDocument();
+  });
+
+  it("skips the audit-log loading placeholder when the billing UI flag is off", () => {
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "team",
+          billingInterval: "monthly",
+          billingConfigured: true,
+          subscriptionStatus: "active",
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: "price_123",
+        },
+        isLoadingEntitlements: true,
+        isLoadingRollout: true,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(
+      screen.queryByText("Loading audit log access..."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("organization-audit-log")).toBeInTheDocument();
   });
 });

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { filterByFeatureFlags } from "../mcp-sidebar";
+import {
+  filterByBillingEntitlements,
+  filterByFeatureFlags,
+} from "../mcp-sidebar";
 
 const FakeIcon = () => null;
 
@@ -81,5 +84,60 @@ describe("filterByFeatureFlags", () => {
     const result = filterByFeatureFlags(sections, {});
     expect(result[0].items).toHaveLength(1);
     expect(result[0].items[0].title).toBe("Plain");
+  });
+});
+
+describe("filterByBillingEntitlements", () => {
+  it("keeps billed items visible before enforcement is active", () => {
+    const result = filterByBillingEntitlements(
+      [
+        {
+          id: "main",
+          items: [
+            {
+              title: "Generate Evals",
+              url: "#evals",
+              icon: FakeIcon,
+              billingFeature: "evals",
+            },
+          ],
+        },
+      ],
+      { evals: false },
+      false,
+    );
+
+    expect(result[0].items.map((item) => item.title)).toContain(
+      "Generate Evals",
+    );
+  });
+
+  it("hides billed items when enforcement is active and the org lacks access", () => {
+    const result = filterByBillingEntitlements(
+      [
+        {
+          id: "main",
+          items: [
+            {
+              title: "Generate Evals",
+              url: "#evals",
+              icon: FakeIcon,
+              billingFeature: "evals",
+            },
+            {
+              title: "Servers",
+              url: "#servers",
+              icon: FakeIcon,
+            },
+          ],
+        },
+      ],
+      { evals: false },
+      true,
+    );
+
+    const titles = result[0].items.map((item) => item.title);
+    expect(titles).toContain("Servers");
+    expect(titles).not.toContain("Generate Evals");
   });
 });

@@ -15,7 +15,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { BarChart3, Loader2, Plus, RotateCw, Trash2, X } from "lucide-react";
+import { Loader2, RotateCw, X } from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -32,6 +32,7 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { TagEditor, TagBadges } from "./tag-editor";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface ModelInfo {
   model: string;
@@ -66,32 +67,25 @@ interface SuiteHeaderProps {
   readOnlyConfig?: boolean;
 }
 
-export function SuiteHeader({
-  suite,
-  viewMode,
-  selectedRunDetails,
-  isEditMode,
-  onRerun,
-  onDelete,
-  onCancelRun,
-  onDeleteRun,
-  onViewModeChange,
-  connectedServerNames,
-  rerunningSuiteId,
-  cancellingRunId,
-  deletingSuiteId,
-  deletingRunId,
-  showRunSummarySidebar,
-  setShowRunSummarySidebar,
-  runsViewMode = "runs",
-  runs = [],
-  allIterations = [],
-  aggregate = null,
-  testCases = [],
-  availableModels = [],
-  onUpdateModels,
-  readOnlyConfig = false,
-}: SuiteHeaderProps) {
+export function SuiteHeader(props: SuiteHeaderProps) {
+  const {
+    suite,
+    viewMode,
+    selectedRunDetails,
+    isEditMode,
+    onRerun,
+    onCancelRun,
+    onViewModeChange,
+    connectedServerNames,
+    rerunningSuiteId,
+    cancellingRunId,
+    runs = [],
+    testCases = [],
+    availableModels = [],
+    onUpdateModels,
+    readOnlyConfig = false,
+  } = props;
+
   const [isEditingName, setIsEditingName] = useState(false);
   const [editedName, setEditedName] = useState(suite.name);
   const [isModelDropdownOpen, setIsModelDropdownOpen] = useState(false);
@@ -211,7 +205,9 @@ export function SuiteHeader({
         });
         toast.success("Suite name updated");
       } catch (error) {
-        toast.error("Failed to update suite name");
+        toast.error(
+          getBillingErrorMessage(error, "Failed to update suite name"),
+        );
         console.error("Failed to update suite name:", error);
         setEditedName(suite.name);
       }
@@ -240,7 +236,6 @@ export function SuiteHeader({
   const hasServersConfigured = suiteServers.length > 0;
   const canRerun = hasServersConfigured && missingServers.length === 0;
   const isRerunning = rerunningSuiteId === suite._id;
-  const isDeleting = deletingSuiteId === suite._id;
 
   if (isEditMode) {
     return (
@@ -405,7 +400,9 @@ export function SuiteHeader({
                   tags: newTags,
                 });
               } catch (error) {
-                toast.error("Failed to update tags");
+                toast.error(
+                  getBillingErrorMessage(error, "Failed to update tags"),
+                );
                 console.error("Failed to update tags:", error);
               }
             }}

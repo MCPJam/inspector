@@ -1,6 +1,7 @@
 import { useState, useRef } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableText } from "@/components/ui/editable-text";
@@ -30,6 +31,7 @@ import {
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Organization,
   OrganizationMember,
@@ -43,6 +45,14 @@ import {
   useOrganizationBilling,
   isPaidPlan,
 } from "@/hooks/useOrganizationBilling";
+import {
+  formatBillingFeatureName,
+  formatGracePeriodEndsAt,
+  formatPlanName,
+  isBillingGracePeriodActive,
+  isBillingFeatureLocked,
+} from "@/lib/billing-entitlements";
+import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 
 interface OrganizationsTabProps {
@@ -171,13 +181,20 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const canInvite = canEdit;
   const {
     billingStatus,
+    entitlements,
+    rolloutState,
     isLoadingBilling,
+    isLoadingEntitlements,
+    isLoadingRollout,
     isStartingCheckout,
     isOpeningPortal,
     error: billingError,
     startCheckout,
     openPortal,
   } = useOrganizationBilling(organization._id);
+  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
+    "billing-entitlements-ui",
+  );
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
     if (!currentRole) return false;
@@ -448,6 +465,21 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const billingAccountLabel = billingStatus?.hasCustomer
     ? "Connected"
     : "Not connected";
+  const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const auditLogLocked = isBillingFeatureLocked({
+    billingUiEnabled,
+    entitlements,
+    rolloutState,
+    feature: "auditLog",
+  });
+  const auditLogGraceBanner =
+    billingUiEnabled &&
+    !!entitlements &&
+    entitlements.features.auditLog === false &&
+    isBillingGracePeriodActive(rolloutState);
+  const auditLogGraceEndsAt = formatGracePeriodEndsAt(
+    rolloutState?.gracePeriodEndsAt,
+  );
 
   return (
     <div className="h-full overflow-y-auto">
@@ -697,6 +729,82 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                 {billingError}
               </div>
             ) : null}
+          </CardContent>
+        </Card>
+
+        <Card className="border-border/60">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-xl">
+              <Building2 className="size-4 text-muted-foreground" />
+              Audit Log
+            </CardTitle>
+            <p className="text-sm text-muted-foreground">
+              Review organization activity and export it as CSV.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-3 pt-0">
+            {billingUiEnabled && (isLoadingEntitlements || isLoadingRollout) ? (
+              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                Loading audit log access...
+              </div>
+            ) : auditLogGraceBanner ? (
+              <>
+                <Alert className="border-amber-500/30 bg-amber-500/5">
+                  <AlertTriangle className="size-4 text-amber-600" />
+                  <AlertTitle>
+                    {formatBillingFeatureName("auditLog")} trial access
+                  </AlertTitle>
+                  <AlertDescription>
+                    <p>
+                      Audit Log is not included in the{" "}
+                      {formatPlanName(entitlements?.plan)} plan.
+                    </p>
+                    <p>
+                      Access remains available until{" "}
+                      {auditLogGraceEndsAt ?? "the rollout grace period ends"}.
+                      Upgrade to Enterprise before then to keep access.
+                    </p>
+                  </AlertDescription>
+                </Alert>
+                <OrganizationAuditLog
+                  organizationId={organization._id}
+                  organizationName={organization.name}
+                  isAuthenticated={isAuthenticated}
+                />
+              </>
+            ) : auditLogLocked ? (
+              <div className="rounded-md border border-border/70 p-4">
+                <div className="space-y-1.5">
+                  <h3 className="text-sm font-medium">
+                    Audit Log requires Enterprise
+                  </h3>
+                  <p className="text-sm text-muted-foreground">
+                    Audit Log is not included in the{" "}
+                    {formatPlanName(entitlements?.plan)} plan.
+                    {billingStatus?.canManageBilling
+                      ? " Upgrade this organization to Enterprise to restore access."
+                      : " Ask an organization owner to upgrade to Enterprise."}
+                  </p>
+                </div>
+                {billingStatus?.canManageBilling ? (
+                  <Button
+                    className="mt-3"
+                    onClick={handleBillingAction}
+                    disabled={isBillingActionPending}
+                  >
+                    {isBillingActionPending
+                      ? "Loading..."
+                      : "View billing options"}
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <OrganizationAuditLog
+                organizationId={organization._id}
+                organizationName={organization.name}
+                isAuthenticated={isAuthenticated}
+              />
+            )}
           </CardContent>
         </Card>
 

@@ -25,6 +25,10 @@ vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
+}));
+
 vi.mock("@/hooks/useOrganizations", async () => {
   const actual = await vi.importActual<
     typeof import("@/hooks/useOrganizations")
