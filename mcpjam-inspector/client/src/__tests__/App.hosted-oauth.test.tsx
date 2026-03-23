@@ -366,6 +366,44 @@ describe("App hosted OAuth callback handling", () => {
     expect(rolloutCall?.[1]).toBe("skip");
   });
 
+  it("does not auto-select the first organization without an explicit org route", async () => {
+    const setActiveOrganizationId = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      setActiveOrganizationId,
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-recent",
+            name: "Recent Org",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-1",
+          },
+          {
+            _id: "org-older",
+            name: "Older Org",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).toHaveBeenCalledWith("oauth-code");
+    });
+
+    expect(setActiveOrganizationId).not.toHaveBeenCalled();
+  });
+
   it("navigates back to the sandboxes tab after callback completion", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
