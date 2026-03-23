@@ -180,7 +180,6 @@ describe("OrganizationsTab billing", () => {
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) => {
       if (flag === "billing-entitlements-ui") return true;
-      if (flag === "team-plan-enabled") return false;
       return true;
     });
     mockUseAuth.mockReturnValue({
@@ -398,40 +397,34 @@ describe("OrganizationsTab billing", () => {
         "Only organization owners can manage billing changes. Admins can review plan details here.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Upgrade" })).toBeDisabled();
+    for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
+      expect(button).toBeDisabled();
+    }
   });
 
-  it("shows Team as coming soon until the feature flag is enabled", () => {
-    mockUseFeatureFlagEnabled.mockImplementation((flag: string) => {
-      if (flag === "billing-entitlements-ui") return true;
-      if (flag === "team-plan-enabled") return false;
-      return true;
-    });
+  it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: {
           organizationId: "org-1",
           organizationName: "Org One",
-          plan: "free",
-          billingInterval: null,
+          plan: "starter",
+          billingInterval: "monthly",
           billingConfigured: true,
-          subscriptionStatus: null,
+          subscriptionStatus: "active",
           canManageBilling: true,
           isOwner: true,
-          hasCustomer: false,
+          hasCustomer: true,
           stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
+          stripePriceId: "price_123",
         },
       }),
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    const comingSoonButtons = screen.getAllByRole("button", {
-      name: "Coming soon",
-    });
-    expect(comingSoonButtons).toHaveLength(1);
-    expect(comingSoonButtons[0]).toBeDisabled();
+    expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Upgrade" })).toHaveLength(1);
   });
 
   it("updates pricing when the billing interval toggle changes", () => {
@@ -455,9 +448,9 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByText("$29/seat/mo")).toBeInTheDocument();
+    expect(screen.getByText("$29")).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(screen.getByText("$24.17/seat/mo")).toBeInTheDocument();
+    expect(screen.getByText("$24.17")).toBeInTheDocument();
   });
 
   it("starts checkout for Starter from the billing subview", async () => {
@@ -487,7 +480,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]);
 
     await waitFor(() => {
       expect(startCheckout).toHaveBeenCalledWith(
@@ -572,7 +565,9 @@ describe("OrganizationsTab billing", () => {
         "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Upgrade" })).toBeDisabled();
+    for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
+      expect(button).toBeDisabled();
+    }
   });
 
   it("locks audit log behind enterprise after enforcement becomes active", () => {

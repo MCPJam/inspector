@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Check, CreditCard, Loader2, Minus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -133,6 +132,30 @@ function formatLimitValue(value: number | null): string {
   return value.toLocaleString();
 }
 
+const PER_SEAT_MO_SUFFIX = "/seat/mo";
+
+function PlanPriceDisplay({ label }: { label: string }) {
+  if (label.endsWith(PER_SEAT_MO_SUFFIX)) {
+    const amount = label.slice(0, -PER_SEAT_MO_SUFFIX.length);
+    return (
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
+        <span className="text-3xl font-semibold tabular-nums tracking-tight">
+          {amount}
+        </span>
+        <span className="text-sm font-semibold text-muted-foreground">
+          {PER_SEAT_MO_SUFFIX}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <p className="min-w-0 text-3xl font-semibold tabular-nums tracking-tight">
+      {label}
+    </p>
+  );
+}
+
 function getAnnualSavingsLabel(planCatalog: PlanCatalog | undefined): string {
   if (!planCatalog) {
     return "Save annually";
@@ -193,7 +216,6 @@ export function OrganizationBillingSection({
   onManageBilling,
   onStartCheckout,
 }: OrganizationBillingSectionProps) {
-  const teamPlanEnabled = useFeatureFlagEnabled("team-plan-enabled") === true;
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
 
@@ -363,7 +385,6 @@ export function OrganizationBillingSection({
                   getPlanRank(plan) > getPlanRank(currentPlan);
                 const isDowngrade =
                   getPlanRank(plan) < getPlanRank(currentPlan);
-                const isTeamComingSoon = plan === "team" && !teamPlanEnabled;
                 const priceLabel =
                   plan === "enterprise"
                     ? "Custom"
@@ -392,8 +413,6 @@ export function OrganizationBillingSection({
 
                 if (isCurrentPlan) {
                   ctaLabel = "Current plan";
-                } else if (isTeamComingSoon) {
-                  ctaLabel = "Coming soon";
                 } else if (plan === "enterprise") {
                   ctaLabel = "Contact us";
                   ctaDisabled = false;
@@ -421,19 +440,16 @@ export function OrganizationBillingSection({
                   <Card
                     key={plan}
                     className={cn(
-                      "relative gap-4 border-border/60 py-5",
+                      "relative h-full min-h-0 min-w-0 gap-4 border-border/60 py-5",
                       isCurrentPlan && "border-primary/50 shadow-md",
                     )}
                   >
-                    {isTeamComingSoon ? (
-                      <div className="absolute right-4 top-4">
-                        <Badge variant="secondary">Coming soon</Badge>
-                      </div>
-                    ) : null}
-                    <CardHeader className="space-y-3">
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <CardTitle>{entry.displayName}</CardTitle>
+                    <CardHeader className="min-w-0 shrink-0 space-y-3">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <CardTitle className="min-w-0 break-words">
+                            {entry.displayName}
+                          </CardTitle>
                           {isCurrentPlan ? (
                             <Badge variant="outline">Current</Badge>
                           ) : null}
@@ -442,27 +458,27 @@ export function OrganizationBillingSection({
                           {PLAN_HIGHLIGHTS[plan][0]}
                         </CardDescription>
                       </div>
-                      <div className="space-y-1">
-                        <p className="text-3xl font-semibold">{priceLabel}</p>
+                      <div className="min-w-0 space-y-1">
+                        <PlanPriceDisplay label={priceLabel} />
                         <p className="text-sm text-muted-foreground">
                           {priceDetail}
                         </p>
                       </div>
                     </CardHeader>
-                    <CardContent className="space-y-4">
+                    <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
                       <ul className="space-y-2 text-sm text-muted-foreground">
                         {PLAN_HIGHLIGHTS[plan].slice(1).map((highlight) => (
                           <li
                             key={highlight}
                             className="flex items-start gap-2"
                           >
-                            <Check className="mt-0.5 size-4 text-emerald-600" />
+                            <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
                             <span>{highlight}</span>
                           </li>
                         ))}
                       </ul>
                       <Button
-                        className="w-full"
+                        className="mt-auto w-full"
                         variant={ctaVariant}
                         disabled={ctaDisabled || isBillingActionPending}
                         onClick={ctaAction}
