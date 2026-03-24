@@ -2,10 +2,7 @@ import { useRef, useEffect, useCallback } from "react";
 import { Lightbulb, Info, Zap } from "lucide-react";
 import { motion } from "framer-motion";
 import { useScrollSpy } from "@/hooks/use-scroll-spy";
-import {
-  WHAT_IS_MCP_STEP_ORDER,
-  type WhatIsMcpStep,
-} from "./what-is-mcp-data";
+import { WHAT_IS_MCP_STEP_ORDER, type WhatIsMcpStep } from "./what-is-mcp-data";
 import {
   WHAT_IS_MCP_GUIDE_METADATA,
   type WhatIsMcpStepGuide,

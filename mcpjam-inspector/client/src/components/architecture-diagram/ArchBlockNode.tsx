@@ -56,17 +56,32 @@ export const ArchBlockNode = memo(
           height: h,
           borderColor,
           boxShadow:
-            data.status === "current"
-              ? `0 0 16px ${ringColor}`
-              : undefined,
+            data.status === "current" ? `0 0 16px ${ringColor}` : undefined,
         }}
       >
         {data.icon && (
-          <data.icon className={cn("mb-1 text-muted-foreground", isLarge ? "h-6 w-6" : "h-4 w-4")} />
+          <data.icon
+            className={cn(
+              "mb-1 text-muted-foreground",
+              isLarge ? "h-6 w-6" : "h-4 w-4",
+            )}
+          />
         )}
-        <div className={cn("font-semibold leading-tight", isLarge ? "text-base" : "text-xs")}>{data.label}</div>
+        <div
+          className={cn(
+            "font-semibold leading-tight",
+            isLarge ? "text-base" : "text-xs",
+          )}
+        >
+          {data.label}
+        </div>
         {data.subtitle && (
-          <div className={cn("text-muted-foreground leading-tight mt-0.5", isLarge ? "text-xs" : "text-[10px]")}>
+          <div
+            className={cn(
+              "text-muted-foreground leading-tight mt-0.5",
+              isLarge ? "text-xs" : "text-[10px]",
+            )}
+          >
             {data.subtitle}
           </div>
         )}

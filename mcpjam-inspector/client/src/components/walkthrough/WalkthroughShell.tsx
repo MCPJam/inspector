@@ -78,7 +78,11 @@ export function WalkthroughShell({
 
           <ResizableHandle withHandle />
 
-          <ResizablePanel defaultSize={100 - defaultGuideSize} minSize={20} maxSize={70}>
+          <ResizablePanel
+            defaultSize={100 - defaultGuideSize}
+            minSize={20}
+            maxSize={70}
+          >
             {diagramPanel}
           </ResizablePanel>
         </ResizablePanelGroup>

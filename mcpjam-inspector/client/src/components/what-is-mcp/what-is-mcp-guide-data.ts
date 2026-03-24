@@ -1,7 +1,4 @@
-import {
-  WHAT_IS_MCP_STEP_ORDER,
-  type WhatIsMcpStep,
-} from "./what-is-mcp-data";
+import { WHAT_IS_MCP_STEP_ORDER, type WhatIsMcpStep } from "./what-is-mcp-data";
 
 export interface WhatIsMcpStepGuide {
   title: string;
@@ -128,7 +125,7 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
   prompts: {
     title: "Prompts — Reusable Templates",
     summary:
-      "Prompts are pre-built templates that MCP servers can offer to standardize common AI interactions. They provide structured workflows — like a \"summarize this document\" template or a \"review this PR\" workflow — that combine instructions with dynamic arguments.",
+      'Prompts are pre-built templates that MCP servers can offer to standardize common AI interactions. They provide structured workflows — like a "summarize this document" template or a "review this PR" workflow — that combine instructions with dynamic arguments.',
     category: "capabilities",
     teachableMoments: [
       "Prompts are user-controlled: the user (or host application) selects which prompt to use, rather than the AI choosing automatically.",
@@ -136,7 +133,7 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
       "Prompts can return multi-turn message sequences, including both user and assistant messages, to set up complex interactions.",
     ],
     tips: [
-      "Think of prompts as reusable \"recipes\" for AI interactions — they encode best practices for common tasks.",
+      'Think of prompts as reusable "recipes" for AI interactions — they encode best practices for common tasks.',
       "Prompts can embed resources, making it easy to provide relevant context alongside instructions.",
     ],
     examples: [

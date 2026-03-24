@@ -10,9 +10,7 @@ import {
 import { LearningLandingPage } from "@/components/LearningLandingPage";
 import { WhatIsMcpDiagram } from "@/components/what-is-mcp/WhatIsMcpDiagram";
 import { WhatIsMcpGuide } from "@/components/what-is-mcp/WhatIsMcpGuide";
-import {
-  WHAT_IS_MCP_STEP_ORDER,
-} from "@/components/what-is-mcp/what-is-mcp-data";
+import { WHAT_IS_MCP_STEP_ORDER } from "@/components/what-is-mcp/what-is-mcp-data";
 import {
   isLastWhatIsMcpStep,
   nextWhatIsMcpStepId,

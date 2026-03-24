@@ -38,8 +38,7 @@ export function useWalkthrough({
   const isProgrammaticScrollRef = useRef(false);
 
   const currentStep = useMemo(
-    () =>
-      mapToDiagramStep ? mapToDiagramStep(activeStepId) : activeStepId,
+    () => (mapToDiagramStep ? mapToDiagramStep(activeStepId) : activeStepId),
     [activeStepId, mapToDiagramStep],
   );
 

@@ -34,10 +34,8 @@ export function autoLayoutNodes(
 
   // Add all nodes to the graph
   for (const node of nodes) {
-    const w =
-      node.type === "group" ? (node.width ?? 400) : ARCH_BLOCK_WIDTH;
-    const h =
-      node.type === "group" ? (node.height ?? 200) : ARCH_BLOCK_HEIGHT;
+    const w = node.type === "group" ? (node.width ?? 400) : ARCH_BLOCK_WIDTH;
+    const h = node.type === "group" ? (node.height ?? 200) : ARCH_BLOCK_HEIGHT;
     g.setNode(node.id, { width: w, height: h });
 
     if (node.parentId) {
