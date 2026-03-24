@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@dagrejs/dagre": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/dagre": "^0.7.54"
+  }
+}

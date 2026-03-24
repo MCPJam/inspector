@@ -12,6 +12,21 @@ const statusStyles: Record<string, string> = {
   neutral: "border opacity-100",
 };
 
+const SIDES = [
+  { side: "top", position: Position.Top },
+  { side: "right", position: Position.Right },
+  { side: "bottom", position: Position.Bottom },
+  { side: "left", position: Position.Left },
+] as const;
+
+const hiddenHandleStyle = {
+  width: 1,
+  height: 1,
+  opacity: 0,
+  border: "none",
+  background: "transparent",
+};
+
 export const ArchBlockNode = memo(
   (props: NodeProps<Node<ArchBlockNodeData>>) => {
     const { data } = props;
@@ -26,6 +41,10 @@ export const ArchBlockNode = memo(
     const ringColor =
       data.status === "current" ? `${data.color}33` : "transparent";
 
+    const w = data.width ?? ARCH_BLOCK_WIDTH;
+    const h = data.height ?? ARCH_BLOCK_HEIGHT;
+    const isLarge = w > ARCH_BLOCK_WIDTH || h > ARCH_BLOCK_HEIGHT;
+
     return (
       <div
         className={cn(
@@ -33,8 +52,8 @@ export const ArchBlockNode = memo(
           statusStyles[data.status],
         )}
         style={{
-          width: ARCH_BLOCK_WIDTH,
-          height: ARCH_BLOCK_HEIGHT,
+          width: w,
+          height: h,
           borderColor,
           boxShadow:
             data.status === "current"
@@ -43,35 +62,33 @@ export const ArchBlockNode = memo(
         }}
       >
         {data.icon && (
-          <span className="text-base leading-none mb-1">{data.icon}</span>
+          <span className={cn("leading-none mb-1", isLarge ? "text-xl" : "text-base")}>{data.icon}</span>
         )}
-        <div className="font-semibold text-xs leading-tight">{data.label}</div>
+        <div className={cn("font-semibold leading-tight", isLarge ? "text-base" : "text-xs")}>{data.label}</div>
         {data.subtitle && (
-          <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+          <div className={cn("text-muted-foreground leading-tight mt-0.5", isLarge ? "text-xs" : "text-[10px]")}>
             {data.subtitle}
           </div>
         )}
 
-        <Handle
-          type="target"
-          position={Position.Left}
-          style={{
-            background: borderColor,
-            width: 6,
-            height: 6,
-            border: "1.5px solid white",
-          }}
-        />
-        <Handle
-          type="source"
-          position={Position.Right}
-          style={{
-            background: borderColor,
-            width: 6,
-            height: 6,
-            border: "1.5px solid white",
-          }}
-        />
+        {SIDES.map(({ side, position }) => (
+          <Handle
+            key={`${side}-source`}
+            id={`${side}-source`}
+            type="source"
+            position={position}
+            style={hiddenHandleStyle}
+          />
+        ))}
+        {SIDES.map(({ side, position }) => (
+          <Handle
+            key={`${side}-target`}
+            id={`${side}-target`}
+            type="target"
+            position={position}
+            style={hiddenHandleStyle}
+          />
+        ))}
       </div>
     );
   },

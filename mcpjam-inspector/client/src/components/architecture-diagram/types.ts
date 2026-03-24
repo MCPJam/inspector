@@ -1,5 +1,7 @@
 export type ArchNodeStatus = "complete" | "current" | "pending" | "neutral";
 
+export type HandlePosition = "top" | "right" | "bottom" | "left";
+
 /** Data for a block node (individual component in the architecture) */
 export interface ArchBlockNodeData extends Record<string, unknown> {
   label: string;
@@ -7,6 +9,8 @@ export interface ArchBlockNodeData extends Record<string, unknown> {
   icon?: string;
   color: string;
   status: ArchNodeStatus;
+  width?: number;
+  height?: number;
 }
 
 /** Data for a group/container node */
@@ -24,6 +28,7 @@ export interface ArchEdgeData extends Record<string, unknown> {
   stepId?: string;
   label?: string;
   status: ArchNodeStatus;
+  pathType?: "smoothstep" | "bezier" | "straight";
 }
 
 /** Data-driven architecture node definition */
@@ -34,7 +39,8 @@ export interface ArchNodeDef {
   icon?: string;
   color: string;
   type: "block" | "group";
-  position: { x: number; y: number };
+  /** When omitted, auto-layout computes the position */
+  position?: { x: number; y: number };
   parentId?: string;
   width?: number;
   height?: number;
@@ -46,6 +52,14 @@ export interface ArchEdgeDef {
   source: string;
   target: string;
   label?: string;
+  /** Which side of the source node the edge leaves from */
+  sourceHandle?: HandlePosition;
+  /** Which side of the target node the edge enters */
+  targetHandle?: HandlePosition;
+  /** Edge path algorithm (default: "smoothstep") */
+  pathType?: "smoothstep" | "bezier" | "straight";
+  /** Render arrows on both ends */
+  bidirectional?: boolean;
 }
 
 /** Complete architecture diagram scenario */

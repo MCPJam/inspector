@@ -1,7 +1,7 @@
 import { useMemo, memo } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { ArchDiagramLayout } from "./ArchDiagramLayout";
-import { buildArchNodesAndEdges } from "./archDiagramBuilder";
+import { buildArchNodesAndEdges, type LayoutOptions } from "./archDiagramBuilder";
 import type { ArchNodeDef, ArchEdgeDef, StepHighlightMap } from "./types";
 
 interface ArchDiagramContentProps {
@@ -13,6 +13,7 @@ interface ArchDiagramContentProps {
   stepHighlights?: Record<string, StepHighlightMap>;
   onNodeStepClick?: (stepId: string) => void;
   onEdgeStepClick?: (stepId: string) => void;
+  layoutOptions?: LayoutOptions;
 }
 
 const DiagramContent = memo(
@@ -24,6 +25,7 @@ const DiagramContent = memo(
     stepHighlights,
     onNodeStepClick,
     onEdgeStepClick,
+    layoutOptions,
   }: ArchDiagramContentProps) => {
     const { nodes, edges } = useMemo(
       () =>
@@ -33,8 +35,9 @@ const DiagramContent = memo(
           currentStep,
           stepOrder,
           stepHighlights,
+          layoutOptions,
         }),
-      [nodeDefs, edgeDefs, currentStep, stepOrder, stepHighlights],
+      [nodeDefs, edgeDefs, currentStep, stepOrder, stepHighlights, layoutOptions],
     );
 
     return (

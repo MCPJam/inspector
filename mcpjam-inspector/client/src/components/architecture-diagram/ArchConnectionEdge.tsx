@@ -3,6 +3,8 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getSmoothStepPath,
+  getBezierPath,
+  getStraightPath,
   type Edge,
   type EdgeProps,
 } from "@xyflow/react";
@@ -26,27 +28,50 @@ const labelStyles: Record<string, string> = {
     "border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/30 text-foreground/70",
 };
 
+const pathFunctions = {
+  smoothstep: getSmoothStepPath,
+  bezier: getBezierPath,
+  straight: getStraightPath,
+} as const;
+
 export const ArchConnectionEdge = memo(
   (props: EdgeProps<Edge<ArchEdgeData>>) => {
-    const { sourceX, sourceY, targetX, targetY, data, markerEnd } = props;
-
-    if (!data) return null;
-
-    const stroke = statusColor[data.status] ?? statusColor.neutral;
-
-    const [edgePath, labelX, labelY] = getSmoothStepPath({
+    const {
       sourceX,
       sourceY,
       targetX,
       targetY,
-      borderRadius: 8,
-    });
+      sourcePosition,
+      targetPosition,
+      data,
+      markerEnd,
+      markerStart,
+    } = props;
+
+    if (!data) return null;
+
+    const stroke = statusColor[data.status] ?? statusColor.neutral;
+    const pathType = data.pathType ?? "smoothstep";
+    const getPath = pathFunctions[pathType] ?? getSmoothStepPath;
+
+    const pathParams = {
+      sourceX,
+      sourceY,
+      targetX,
+      targetY,
+      sourcePosition,
+      targetPosition,
+      ...(pathType === "smoothstep" ? { borderRadius: 8 } : {}),
+    };
+
+    const [edgePath, labelX, labelY] = getPath(pathParams);
 
     return (
       <>
         <BaseEdge
           path={edgePath}
           markerEnd={markerEnd}
+          markerStart={markerStart}
           style={{
             stroke,
             strokeWidth: data.status === "current" ? 2.5 : 1.5,
