@@ -83,6 +83,7 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(validateHostedServerMock).toHaveBeenCalledWith(
       "server-4",
       "access-token",
+      undefined,
     );
     expect(result).toEqual({ success: true, status: "ok" });
   });
