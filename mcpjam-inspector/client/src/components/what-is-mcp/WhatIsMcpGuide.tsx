@@ -1,24 +1,21 @@
 import { useRef, useEffect, useCallback } from "react";
-import { ArrowRight, Lightbulb, Info } from "lucide-react";
+import { Lightbulb, Info, Zap } from "lucide-react";
 import { motion } from "framer-motion";
 import { useScrollSpy } from "@/hooks/use-scroll-spy";
+import { WHAT_IS_MCP_STEP_ORDER, type WhatIsMcpStep } from "./what-is-mcp-data";
 import {
-  HTTP_STEP_ORDER,
-  LIFECYCLE_GUIDE_METADATA,
-  PHASE_ACCENT,
-  type McpLifecycleStepGuide,
-} from "./mcp-lifecycle-guide-data";
-import type { McpLifecycleStep20250326 } from "./mcp-lifecycle-data";
+  WHAT_IS_MCP_GUIDE_METADATA,
+  type WhatIsMcpStepGuide,
+} from "./what-is-mcp-guide-data";
 
 // ---------------------------------------------------------------------------
 // Props
 // ---------------------------------------------------------------------------
 
-interface McpLifecycleGuideProps {
+interface WhatIsMcpGuideProps {
   activeStepId: string | undefined;
   onActiveStepChange: (stepId: string) => void;
   scrollToStepId: string | undefined;
-  /** Incremented when scrolling to the same step again (e.g. Reset on step 1). */
   scrollToStepToken?: number;
   onScrollComplete: () => void;
 }
@@ -43,32 +40,19 @@ function sectionChild(order: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Sub-components
+// Category accents
 // ---------------------------------------------------------------------------
 
-function DirectionIndicator({
-  direction,
-  order,
-}: {
-  direction: "client-to-server" | "server-to-client";
-  order: number;
-}) {
-  const isToServer = direction === "client-to-server";
-  return (
-    <motion.div
-      className="flex items-center gap-2 text-muted-foreground/60"
-      {...sectionChild(order)}
-    >
-      <span className="text-[11px] font-medium">
-        {isToServer ? "Client" : "Server"}
-      </span>
-      <ArrowRight className="h-3 w-3" />
-      <span className="text-[11px] font-medium">
-        {isToServer ? "Server" : "Client"}
-      </span>
-    </motion.div>
-  );
-}
+const CATEGORY_ACCENT = {
+  overview: "#6366f1", // indigo
+  architecture: "#3b82f6", // blue
+  capabilities: "#10b981", // green
+  ecosystem: "#f59e0b", // amber
+} as const;
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
 
 function StepSection({
   stepId,
@@ -76,22 +60,19 @@ function StepSection({
   isActive,
   registerRef,
 }: {
-  stepId: McpLifecycleStep20250326;
+  stepId: WhatIsMcpStep;
   index: number;
   isActive: boolean;
   registerRef: (id: string, el: HTMLElement | null) => void;
 }) {
-  const guide = LIFECYCLE_GUIDE_METADATA[stepId] as
-    | McpLifecycleStepGuide
+  const guide = WHAT_IS_MCP_GUIDE_METADATA[stepId] as
+    | WhatIsMcpStepGuide
     | undefined;
   if (!guide) return null;
 
-  const phaseColor =
-    PHASE_ACCENT[guide.phase as keyof typeof PHASE_ACCENT] ?? "#94a3b8";
-  const direction =
-    stepId === "initialize_result" || stepId === "operation_response"
-      ? "server-to-client"
-      : "client-to-server";
+  const categoryColor =
+    CATEGORY_ACCENT[guide.category as keyof typeof CATEGORY_ACCENT] ??
+    "#94a3b8";
 
   return (
     <motion.section
@@ -104,11 +85,11 @@ function StepSection({
       viewport={{ once: true, amount: 0.15 }}
       transition={{ duration: 0.5, ease: EASE }}
     >
-      {/* Active indicator — phase-colored left border */}
+      {/* Active indicator — category-colored left border */}
       <motion.div
         className="absolute left-0 top-4 bottom-4 w-[3px] rounded-full"
         animate={{
-          backgroundColor: isActive ? phaseColor : "transparent",
+          backgroundColor: isActive ? categoryColor : "transparent",
           scaleY: isActive ? 1 : 0.3,
           opacity: isActive ? 1 : 0,
         }}
@@ -116,17 +97,17 @@ function StepSection({
       />
 
       <div className="pl-5 space-y-5">
-        {/* Phase badge + step number */}
+        {/* Category badge + step number */}
         <motion.div className="flex items-center gap-2" {...sectionChild(0)}>
           <span
             className="block h-2 w-2 rounded-full"
-            style={{ backgroundColor: phaseColor }}
+            style={{ backgroundColor: categoryColor }}
           />
           <span
             className="text-[11px] font-semibold uppercase tracking-wider"
-            style={{ color: phaseColor }}
+            style={{ color: categoryColor }}
           >
-            {guide.phase}
+            {guide.category}
           </span>
           <span className="text-[10px] text-muted-foreground/50 font-mono">
             Step {index + 1}
@@ -149,18 +130,21 @@ function StepSection({
           {guide.summary}
         </motion.p>
 
-        {/* Direction */}
-        <DirectionIndicator direction={direction} order={3} />
-
-        {/* Code example */}
-        {guide.codeExample && (
-          <motion.div {...sectionChild(4)}>
-            <pre
-              className="rounded-lg border border-border bg-muted/30 p-4 text-[11px] leading-relaxed font-mono text-foreground/70 overflow-x-auto"
-              style={{ borderLeftWidth: 3, borderLeftColor: phaseColor }}
-            >
-              {guide.codeExample}
-            </pre>
+        {/* Analogy callout */}
+        {guide.analogy && (
+          <motion.div
+            className="rounded-lg border border-indigo-200/50 dark:border-indigo-800/30 bg-indigo-50/40 dark:bg-indigo-950/10 p-4"
+            {...sectionChild(3)}
+          >
+            <div className="flex items-center gap-2 mb-2">
+              <Zap className="h-3.5 w-3.5 text-indigo-500/70" />
+              <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
+                Analogy
+              </span>
+            </div>
+            <p className="text-[13px] text-foreground/80 leading-relaxed">
+              {guide.analogy}
+            </p>
           </motion.div>
         )}
 
@@ -168,7 +152,7 @@ function StepSection({
         {guide.teachableMoments.length > 0 && (
           <motion.div
             className="rounded-lg border border-blue-200/50 dark:border-blue-800/30 bg-blue-50/40 dark:bg-blue-950/10 p-4"
-            {...sectionChild(5)}
+            {...sectionChild(4)}
           >
             <div className="flex items-center gap-2 mb-2.5">
               <Info className="h-3.5 w-3.5 text-blue-500/70" />
@@ -190,46 +174,23 @@ function StepSection({
           </motion.div>
         )}
 
-        {/* Table */}
-        {guide.table && (
-          <motion.div {...sectionChild(6)}>
-            <div className="rounded-lg border border-border overflow-hidden">
-              <div className="bg-muted/40 px-4 py-2">
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
-                  {guide.table.caption}
-                </span>
+        {/* Examples */}
+        {guide.examples && guide.examples.length > 0 && (
+          <motion.div {...sectionChild(5)}>
+            <div className="rounded-lg border border-border bg-muted/30 p-4">
+              <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">
+                Examples
               </div>
-              <table className="w-full text-[13px]">
-                <thead>
-                  <tr className="border-b border-border bg-muted/20">
-                    {guide.table.headers.map((h, i) => (
-                      <th
-                        key={i}
-                        className="text-left px-4 py-2 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider"
-                      >
-                        {h}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {guide.table.rows.map((row, i) => (
-                    <tr
-                      key={i}
-                      className="border-b border-border/50 last:border-b-0"
-                    >
-                      {row.map((cell, j) => (
-                        <td
-                          key={j}
-                          className={`px-4 py-2 ${j === 0 ? "font-mono text-[12px] text-foreground/80" : "text-muted-foreground"}`}
-                        >
-                          {cell}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <ul className="space-y-1.5">
+                {guide.examples.map((example, i) => (
+                  <li
+                    key={i}
+                    className="text-[12px] font-mono text-foreground/70 leading-relaxed"
+                  >
+                    {example}
+                  </li>
+                ))}
+              </ul>
             </div>
           </motion.div>
         )}
@@ -238,7 +199,7 @@ function StepSection({
         {guide.tips.length > 0 && (
           <motion.div
             className="rounded-lg border border-amber-200/50 dark:border-amber-800/30 bg-amber-50/40 dark:bg-amber-950/10 p-4"
-            {...sectionChild(7)}
+            {...sectionChild(6)}
           >
             <div className="flex items-center gap-2 mb-2.5">
               <Lightbulb className="h-3.5 w-3.5 text-amber-500/70" />
@@ -271,17 +232,16 @@ function StepSection({
 // Main component
 // ---------------------------------------------------------------------------
 
-export function McpLifecycleGuide({
+export function WhatIsMcpGuide({
   activeStepId,
   onActiveStepChange,
   scrollToStepId,
   scrollToStepToken = 0,
   onScrollComplete,
-}: McpLifecycleGuideProps) {
+}: WhatIsMcpGuideProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isProgrammaticScroll = useRef(false);
 
-  // Scroll spy — tracks which section is in the viewport
   const handleActiveChange = useCallback(
     (id: string) => {
       if (isProgrammaticScroll.current) return;
@@ -291,7 +251,7 @@ export function McpLifecycleGuide({
   );
 
   const { registerSection } = useScrollSpy(
-    HTTP_STEP_ORDER,
+    WHAT_IS_MCP_STEP_ORDER,
     scrollContainerRef,
     handleActiveChange,
     true,
@@ -326,12 +286,13 @@ export function McpLifecycleGuide({
           className="space-y-3"
         >
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            HTTP Connection Lifecycle
+            What is MCP?
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
-            Walk through the five steps of an HTTP-based MCP connection — from
-            the initial handshake to normal operations and shutdown. Scroll to
-            move through the guide and sync the diagram, or use{" "}
+            Explore the Model Context Protocol architecture — how host
+            applications, clients, servers, and resources connect to give AI
+            access to the world. Scroll to move through the guide and sync the
+            diagram, or use{" "}
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to jump to the next step.
           </p>
@@ -340,7 +301,7 @@ export function McpLifecycleGuide({
 
       {/* Step sections */}
       <div className="px-8 pb-16">
-        {HTTP_STEP_ORDER.map((stepId, index) => (
+        {WHAT_IS_MCP_STEP_ORDER.map((stepId, index) => (
           <StepSection
             key={stepId}
             stepId={stepId}
@@ -359,9 +320,9 @@ export function McpLifecycleGuide({
           transition={{ duration: 0.5 }}
         >
           <p className="text-sm text-muted-foreground/60">
-            That&apos;s the complete HTTP MCP lifecycle. Use{" "}
+            That&apos;s the MCP architecture overview. Use{" "}
             <span className="font-medium text-foreground/70">Start over</span>{" "}
-            in the header or click any step in the diagram to jump back.
+            in the header or click any node in the diagram to jump back.
           </p>
         </motion.div>
       </div>
