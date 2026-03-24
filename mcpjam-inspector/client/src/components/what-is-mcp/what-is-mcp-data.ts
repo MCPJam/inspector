@@ -1,3 +1,4 @@
+import { Brain, Plug, Server, Wrench, Database, FileText } from "lucide-react";
 import type {
   ArchNodeDef,
   ArchEdgeDef,
@@ -107,7 +108,8 @@ const NODES: ArchNodeDef[] = [
     subtitle: "Claude Desktop, Cursor, VS Code, etc.",
     type: "group",
     color: "#6366f1", // indigo
-    position: { x: 0, y: 0 },
+    // Align group vertical center with the three MCP server blocks (72px tall @ y 0/110/220).
+    position: { x: 0, y: 66 },
     width: 420,
     height: 160,
   },
@@ -117,7 +119,7 @@ const NODES: ArchNodeDef[] = [
     id: "llm-app",
     label: "LLM / AI Engine",
     subtitle: "Language model",
-    icon: "🧠",
+    icon: Brain,
     type: "block",
     color: "#8b5cf6", // purple
     position: { x: 30, y: 55 },
@@ -127,7 +129,7 @@ const NODES: ArchNodeDef[] = [
     id: "mcp-client",
     label: "MCP Client",
     subtitle: "Protocol bridge",
-    icon: "🔌",
+    icon: Plug,
     type: "block",
     color: "#3b82f6", // blue
     position: { x: 230, y: 55 },
@@ -139,7 +141,7 @@ const NODES: ArchNodeDef[] = [
     id: "server-tools",
     label: "MCP Server",
     subtitle: "Tool provider",
-    icon: "⚙️",
+    icon: Server,
     type: "block",
     color: "#f59e0b", // amber
     position: { x: 530, y: 0 },
@@ -148,7 +150,7 @@ const NODES: ArchNodeDef[] = [
     id: "server-resources",
     label: "MCP Server",
     subtitle: "Data provider",
-    icon: "⚙️",
+    icon: Server,
     type: "block",
     color: "#f59e0b",
     position: { x: 530, y: 110 },
@@ -157,7 +159,7 @@ const NODES: ArchNodeDef[] = [
     id: "server-prompts",
     label: "MCP Server",
     subtitle: "Prompt provider",
-    icon: "⚙️",
+    icon: Server,
     type: "block",
     color: "#f59e0b",
     position: { x: 530, y: 220 },
@@ -168,7 +170,7 @@ const NODES: ArchNodeDef[] = [
     id: "tools",
     label: "Tools",
     subtitle: "APIs, functions, actions",
-    icon: "🔧",
+    icon: Wrench,
     type: "block",
     color: "#10b981", // green
     position: { x: 780, y: 0 },
@@ -177,7 +179,7 @@ const NODES: ArchNodeDef[] = [
     id: "resources",
     label: "Resources",
     subtitle: "Files, databases, data",
-    icon: "📦",
+    icon: Database,
     type: "block",
     color: "#10b981",
     position: { x: 780, y: 110 },
@@ -186,7 +188,7 @@ const NODES: ArchNodeDef[] = [
     id: "prompts",
     label: "Prompts",
     subtitle: "Templates, workflows",
-    icon: "📝",
+    icon: FileText,
     type: "block",
     color: "#10b981",
     position: { x: 780, y: 220 },
@@ -201,12 +203,11 @@ const EDGES: ArchEdgeDef[] = [
     target: "mcp-client",
   },
 
-  // MCP Client → Servers (via MCP Protocol)
+  // MCP Client → Servers
   {
     id: "e-client-server-tools",
     source: "mcp-client",
     target: "server-tools",
-    label: "MCP Protocol",
   },
   {
     id: "e-client-server-resources",

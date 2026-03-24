@@ -1,3 +1,5 @@
+import type { LucideIcon } from "lucide-react";
+
 export type ArchNodeStatus = "complete" | "current" | "pending" | "neutral";
 
 export type HandlePosition = "top" | "right" | "bottom" | "left";
@@ -6,7 +8,7 @@ export type HandlePosition = "top" | "right" | "bottom" | "left";
 export interface ArchBlockNodeData extends Record<string, unknown> {
   label: string;
   subtitle?: string;
-  icon?: string;
+  icon?: LucideIcon;
   color: string;
   status: ArchNodeStatus;
   width?: number;
@@ -36,7 +38,7 @@ export interface ArchNodeDef {
   id: string;
   label: string;
   subtitle?: string;
-  icon?: string;
+  icon?: LucideIcon;
   color: string;
   type: "block" | "group";
   /** When omitted, auto-layout computes the position */

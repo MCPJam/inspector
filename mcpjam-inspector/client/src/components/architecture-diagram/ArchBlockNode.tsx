@@ -62,7 +62,7 @@ export const ArchBlockNode = memo(
         }}
       >
         {data.icon && (
-          <span className={cn("leading-none mb-1", isLarge ? "text-xl" : "text-base")}>{data.icon}</span>
+          <data.icon className={cn("mb-1 text-muted-foreground", isLarge ? "h-6 w-6" : "h-4 w-4")} />
         )}
         <div className={cn("font-semibold leading-tight", isLarge ? "text-base" : "text-xs")}>{data.label}</div>
         {data.subtitle && (
