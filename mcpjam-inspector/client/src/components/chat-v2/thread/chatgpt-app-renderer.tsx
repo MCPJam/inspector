@@ -768,7 +768,9 @@ export function ChatGPTAppRenderer({
     () =>
       extractHostSafeAreaInsets(
         draftHostContext,
-        isPlaygroundActive ? playgroundSafeAreaInsets : DEFAULT_SAFE_AREA_INSETS,
+        isPlaygroundActive
+          ? playgroundSafeAreaInsets
+          : DEFAULT_SAFE_AREA_INSETS,
       ),
     [draftHostContext, isPlaygroundActive, playgroundSafeAreaInsets],
   );
