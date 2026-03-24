@@ -286,10 +286,17 @@ export function consolidateServers(
 /**
  * Returns the server name that matches what Convex creates (with (App)/(Text) suffix).
  */
-function getRegistryServerName(server: RegistryServer): string {
+export function getRegistryServerName(server: RegistryServer): string {
   if (server.clientType === "app") return `${server.displayName} (App)`;
   if (server.clientType === "text") return `${server.displayName} (Text)`;
   return server.displayName;
+}
+
+function isMissingWorkspaceConnectionError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message.includes("Registry server is not connected to this workspace")
+  );
 }
 
 /**
@@ -430,16 +437,29 @@ export function useRegistryServers({
   }
 
   async function disconnect(server: RegistryServer) {
+    const serverName = getRegistryServerName(server);
+    let disconnectError: unknown;
+
     // 1. Remove the connection from Convex (only when authenticated with a workspace)
     if (!DEV_MOCK_REGISTRY && isAuthenticated && workspaceId) {
-      await disconnectMutation({
-        registryServerId: server._id,
-        workspaceId,
-      } as any);
+      try {
+        await disconnectMutation({
+          registryServerId: server._id,
+          workspaceId,
+        } as any);
+      } catch (error) {
+        if (!isMissingWorkspaceConnectionError(error)) {
+          disconnectError = error;
+        }
+      }
     }
 
     // 2. Trigger the local MCP disconnection
-    onDisconnect?.(server.displayName);
+    onDisconnect?.(serverName);
+
+    if (disconnectError) {
+      throw disconnectError;
+    }
   }
 
   return {

@@ -458,6 +458,45 @@ describe("RegistryTab", () => {
       });
       expect(localStorage.getItem("registry-pending-redirect")).toBeNull();
     });
+
+    it("redirects when a legacy pending display name matches a suffixed connected variant", async () => {
+      localStorage.setItem("registry-pending-redirect", "Asana");
+
+      const server = createMockServer({
+        displayName: "Asana",
+        clientType: "app" as any,
+      });
+      mockHookReturn = {
+        registryServers: [server],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      const onNavigate = vi.fn();
+
+      render(
+        <RegistryTab
+          {...defaultProps}
+          onNavigate={onNavigate}
+          servers={{
+            "Asana (App)": {
+              name: "Asana (App)",
+              connectionStatus: "connected",
+              config: {} as any,
+              lastConnectionTime: new Date(),
+              retryCount: 0,
+            },
+          }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(onNavigate).toHaveBeenCalledWith("app-builder");
+      });
+      expect(localStorage.getItem("registry-pending-redirect")).toBeNull();
+    });
   });
 
   describe("consolidated cards — dual-type servers", () => {
@@ -577,6 +616,30 @@ describe("RegistryTab", () => {
       const itemTexts = items.map((el) => el.textContent);
       expect(itemTexts.some((t) => t?.includes("Text"))).toBe(true);
       expect(itemTexts.some((t) => t?.includes("App"))).toBe(true);
+    });
+
+    it("stores the suffixed runtime name when connecting a dual-type variant", async () => {
+      mockHookReturn = {
+        registryServers: [
+          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
+          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+        ],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      fireEvent.click(screen.getByText("Connect as App"));
+
+      await waitFor(() => {
+        expect(mockConnect).toHaveBeenCalled();
+      });
+      expect(localStorage.getItem("registry-pending-redirect")).toBe(
+        "Asana (App)",
+      );
     });
   });
 });

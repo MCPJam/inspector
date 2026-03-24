@@ -26,6 +26,7 @@ import {
 import {
   useRegistryServers,
   consolidateServers,
+  getRegistryServerName,
   type EnrichedRegistryServer,
   type ConsolidatedRegistryServer,
   type RegistryConnectionStatus,
@@ -69,7 +70,13 @@ export function RegistryTab({
     if (!onNavigate) return;
     const pending = localStorage.getItem("registry-pending-redirect");
     if (!pending) return;
-    const liveServer = servers?.[pending];
+    const liveServer =
+      servers?.[pending] ??
+      Object.entries(servers ?? {}).find(
+        ([name, server]) =>
+          server.connectionStatus === "connected" &&
+          name.startsWith(`${pending} (`),
+      )?.[1];
     if (liveServer?.connectionStatus === "connected") {
       localStorage.removeItem("registry-pending-redirect");
       onNavigate("app-builder");
@@ -83,13 +90,13 @@ export function RegistryTab({
 
   const handleConnect = async (server: EnrichedRegistryServer) => {
     setConnectingIds((prev) => new Set(prev).add(server._id));
-    localStorage.setItem("registry-pending-redirect", server.displayName);
+    const serverName = getRegistryServerName(server);
+    localStorage.setItem("registry-pending-redirect", serverName);
     try {
       await connect(server);
     } catch (error) {
-      if (
-        localStorage.getItem("registry-pending-redirect") === server.displayName
-      ) {
+      const pending = localStorage.getItem("registry-pending-redirect");
+      if (pending === serverName || pending === server.displayName) {
         localStorage.removeItem("registry-pending-redirect");
       }
       throw error;
@@ -103,8 +110,9 @@ export function RegistryTab({
   };
 
   const handleDisconnect = async (server: EnrichedRegistryServer) => {
+    const serverName = getRegistryServerName(server);
     const pending = localStorage.getItem("registry-pending-redirect");
-    if (pending === server.displayName) {
+    if (pending === serverName || pending === server.displayName) {
       localStorage.removeItem("registry-pending-redirect");
     }
     await disconnect(server);
