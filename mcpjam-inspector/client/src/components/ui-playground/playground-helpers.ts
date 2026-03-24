@@ -7,6 +7,7 @@
 
 import { generateId, type UIMessage, type DynamicToolUIPart } from "ai";
 import { detectUIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 
 type DeterministicToolState = "output-available" | "output-error";
 
@@ -17,38 +18,6 @@ interface DeterministicToolOptions {
   errorText?: string;
   /** Optional fixed toolCallId for in-place updates */
   toolCallId?: string;
-}
-
-function extractTextFromToolResult(result: unknown): string | null {
-  if (!result) return null;
-
-  if (typeof result === "string") {
-    const trimmed = result.trim();
-    return trimmed || null;
-  }
-
-  if (typeof result !== "object") return null;
-
-  const record = result as Record<string, unknown>;
-
-  if (typeof record.text === "string" && record.text.trim()) {
-    return record.text.trim();
-  }
-
-  const content = record.content;
-  if (!Array.isArray(content)) return null;
-
-  const textParts = content
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const block = item as Record<string, unknown>;
-      if (block.type !== "text" || typeof block.text !== "string") return null;
-      const text = block.text.trim();
-      return text || null;
-    })
-    .filter((text): text is string => Boolean(text));
-
-  return textParts.length > 0 ? textParts.join("\n\n") : null;
 }
 
 /**
@@ -120,11 +89,17 @@ export function createDeterministicToolMessages(
         text: `Tool error: ${options?.errorText ?? "Unknown error"}`,
       });
     } else {
-      const resultText = extractTextFromToolResult(result);
-      if (resultText) {
+      const display = extractDisplayFromToolResult(result);
+      if (display?.kind === "json") {
+        assistantParts.push({
+          type: "data-result",
+          data: display.value,
+          autoHeight: true,
+        } as any);
+      } else if (display?.kind === "text") {
         assistantParts.push({
           type: "text",
-          text: resultText,
+          text: display.text,
         });
       }
     }

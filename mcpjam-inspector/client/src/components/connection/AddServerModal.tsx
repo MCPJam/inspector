@@ -25,6 +25,7 @@ interface AddServerModalProps {
   onClose: () => void;
   onSubmit: (formData: ServerFormData) => void;
   initialData?: Partial<ServerFormData>;
+  requireHttps?: boolean;
 }
 
 export function AddServerModal({
@@ -32,9 +33,10 @@ export function AddServerModal({
   onClose,
   onSubmit,
   initialData,
+  requireHttps,
 }: AddServerModalProps) {
   const posthog = usePostHog();
-  const formState = useServerForm();
+  const formState = useServerForm(undefined, { requireHttps });
 
   // Initialize form with initial data if provided
   useEffect(() => {

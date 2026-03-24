@@ -15,6 +15,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
+
 import type { CustomProvider } from "@mcpjam/sdk";
 
 interface ProviderConfig {

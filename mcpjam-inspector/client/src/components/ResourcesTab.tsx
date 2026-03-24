@@ -16,6 +16,7 @@ import {
 import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
 import {
   MCPServerConfig,
   type MCPReadResourceResult,
@@ -59,6 +60,33 @@ function buildUriFromTemplate(
 ): string {
   const template = parseTemplate(uriTemplate);
   return template.expand(params);
+}
+
+function renderResourceTextContent(
+  text: string,
+  preClassName: string,
+  jsonWrapperClassName: string,
+) {
+  const display = extractDisplayFromValue(text);
+
+  if (display?.kind === "json") {
+    return (
+      <div className={jsonWrapperClassName}>
+        <JsonEditor
+          value={display.value}
+          readOnly
+          showToolbar={false}
+          height="100%"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <pre className={preClassName}>
+      {display?.kind === "text" ? display.text : text}
+    </pre>
+  );
 }
 
 export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
@@ -369,7 +397,7 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           </div>
 
           {/* Action buttons */}
-          <div className="ml-auto flex items-center gap-0.5">
+          <div className="ml-auto flex items-center gap-0.5 text-muted-foreground/80">
             <Button
               onClick={() => {
                 if (activeTab === "resources") {
@@ -402,6 +430,24 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               <PanelLeftClose className="h-3.5 w-3.5" />
             </Button>
           </div>
+
+          {activeTab === "templates" && (
+            <Button
+              onClick={readTemplateResource}
+              disabled={templateLoading || !selectedTemplate}
+              size="sm"
+              className="h-8 px-3 text-xs"
+            >
+              {templateLoading ? (
+                <RefreshCw className="h-3 w-3 animate-spin" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              <span className="ml-1">
+                {templateLoading ? "Reading" : "Read Resource"}
+              </span>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -486,28 +532,6 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
               )}
             </div>
           </ScrollArea>
-
-          {/* Read button */}
-          <div className="p-3 border-t border-border">
-            <Button
-              onClick={readTemplateResource}
-              disabled={templateLoading || !selectedTemplate}
-              className="w-full"
-              size="sm"
-            >
-              {templateLoading ? (
-                <>
-                  <RefreshCw className="h-3 w-3 animate-spin mr-2" />
-                  Loading
-                </>
-              ) : (
-                <>
-                  <Play className="h-3 w-3 mr-2" />
-                  Read Resource
-                </>
-              )}
-            </Button>
-          </div>
         </div>
       ) : (
         /* Resources or Templates List */
@@ -656,9 +680,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           {resourceContent?.contents?.map((content: any, index: number) => (
             <div key={index} className="flex-1 min-h-0">
               {content.type === "text" ? (
-                <pre className="h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto">
-                  {content.text}
-                </pre>
+                renderResourceTextContent(
+                  content.text,
+                  "h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto",
+                  "h-full",
+                )
               ) : (
                 <div className="h-full">
                   <JsonEditor
@@ -714,9 +740,11 @@ export function ResourcesTab({ serverConfig, serverName }: ResourcesTabProps) {
           {templateContent?.contents?.map((content: any, index: number) => (
             <div key={index} className="flex-1 min-h-0">
               {content.type === "text" ? (
-                <pre className="h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto">
-                  {content.text}
-                </pre>
+                renderResourceTextContent(
+                  content.text,
+                  "h-full text-xs font-mono whitespace-pre-wrap p-4 bg-muted/30 border border-border rounded-md overflow-auto",
+                  "h-full",
+                )
               ) : (
                 <div className="h-full">
                   <JsonEditor

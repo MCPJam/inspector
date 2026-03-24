@@ -1,0 +1,325 @@
+---
+title: "Saving Eval Results"
+description: "API reference for saving eval results to MCPJam"
+icon: "book"
+---
+
+The SDK provides APIs to save eval results to MCPJam for visualization in the CI Evals dashboard. Results can be saved automatically via `EvalTest`/`EvalSuite`, or manually using the APIs below.
+
+## Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `MCPJAM_API_KEY` | Yes | - | Your MCPJam workspace API key |
+| `MCPJAM_BASE_URL` | No | `https://sdk.mcpjam.com` | MCPJam API base URL override |
+
+Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
+
+---
+
+## reportEvalResults()
+
+One-shot reporting. Sends all results in a single call. Throws on failure.
+
+```typescript
+import { reportEvalResults } from "@mcpjam/sdk";
+```
+
+### Signature
+
+```typescript
+reportEvalResults(input: ReportEvalResultsInput): Promise<ReportEvalResultsOutput>
+```
+
+### Example
+
+```typescript
+const output = await reportEvalResults({
+  suiteName: "Nightly",
+  results: [
+    { caseTitle: "healthcheck", passed: true },
+    { caseTitle: "tool-selection", passed: true, durationMs: 1200 },
+    { caseTitle: "edge-case", passed: false, error: "Wrong tool called" },
+  ],
+  passCriteria: { minimumPassRate: 90 },
+  ci: {
+    branch: "main",
+    commitSha: "abc123",
+  },
+});
+
+console.log(`Run ${output.runId}: ${output.result}`);
+// "Run abc123: passed"
+console.log(`${output.summary.passed}/${output.summary.total} passed`);
+```
+
+---
+
+## reportEvalResultsSafely()
+
+Same as `reportEvalResults()`, but returns `null` instead of throwing on failure. Warnings are logged to the console.
+
+```typescript
+import { reportEvalResultsSafely } from "@mcpjam/sdk";
+```
+
+### Signature
+
+```typescript
+reportEvalResultsSafely(input: ReportEvalResultsInput): Promise<ReportEvalResultsOutput | null>
+```
+
+### Example
+
+```typescript
+const output = await reportEvalResultsSafely({
+  suiteName: "Nightly",
+  results: [{ caseTitle: "healthcheck", passed: true }],
+});
+
+if (output) {
+  console.log(`Reported: ${output.summary.passRate * 100}% pass rate`);
+} else {
+  console.log("Reporting failed (non-blocking)");
+}
+```
+
+<Note>
+Use `reportEvalResultsSafely()` when you don't want eval reporting failures to break your CI pipeline. Use `reportEvalResults()` (strict) when reporting is critical.
+</Note>
+
+---
+
+## createEvalRunReporter()
+
+Creates an incremental reporter for long-running processes. Results are buffered and flushed in batches (up to 200 results or 1MB per batch).
+
+```typescript
+import { createEvalRunReporter } from "@mcpjam/sdk";
+```
+
+### Signature
+
+```typescript
+createEvalRunReporter(input: CreateEvalRunReporterInput): EvalRunReporter
+```
+
+### EvalRunReporter Methods
+
+| Method | Description |
+|--------|-------------|
+| `add(result)` | Buffer a result (no network call) |
+| `record(result)` | Buffer a result and auto-flush when buffer is large |
+| `flush()` | Upload all buffered results |
+| `finalize()` | Flush remaining results and finalize the run |
+| `getBufferedCount()` | Number of results in the buffer |
+| `getAddedCount()` | Total results added (including flushed) |
+| `setExpectedIterations(count)` | Set expected iteration count for progress tracking |
+
+#### PromptResult Helpers
+
+| Method | Description |
+|--------|-------------|
+| `addFromPrompt(promptResult, overrides?)` | Convert a `PromptResult` and buffer it |
+| `recordFromPrompt(promptResult, overrides?)` | Convert a `PromptResult`, buffer it, and auto-flush |
+
+#### EvalTest/EvalSuite Run Helpers
+
+| Method | Description |
+|--------|-------------|
+| `addFromRun(run, options)` | Convert all iterations from an `EvalTest` run |
+| `recordFromRun(run, options)` | Convert and auto-flush from an `EvalTest` run |
+| `addFromSuiteRun(suiteRun, options)` | Convert all iterations from an `EvalSuite` run |
+| `recordFromSuiteRun(suiteRun, options)` | Convert and auto-flush from an `EvalSuite` run |
+
+### Example
+
+```typescript
+const reporter = createEvalRunReporter({
+  suiteName: "Integration Tests",
+  passCriteria: { minimumPassRate: 85 },
+  ci: {
+    branch: process.env.GITHUB_REF_NAME,
+    commitSha: process.env.GITHUB_SHA,
+  },
+});
+
+// Add results as tests complete
+await reporter.record({ caseTitle: "test-1", passed: true, durationMs: 500 });
+await reporter.record({ caseTitle: "test-2", passed: false, error: "timeout" });
+await reporter.record({ caseTitle: "test-3", passed: true });
+
+// Finalize the run
+const output = await reporter.finalize();
+console.log(`${output.summary.passed}/${output.summary.total} passed`);
+```
+
+### Using with PromptResult
+
+```typescript
+const reporter = createEvalRunReporter({ suiteName: "Prompt Tests" });
+
+const result = await agent.prompt("Add 2 and 3");
+reporter.addFromPrompt(result, {
+  caseTitle: "addition",
+  passed: result.hasToolCall("add"),
+});
+
+const output = await reporter.finalize();
+```
+
+### Using with EvalTest Runs
+
+```typescript
+const reporter = createEvalRunReporter({ suiteName: "Full Suite" });
+
+const test = new EvalTest({
+  name: "addition",
+  test: async (agent) => (await agent.prompt("Add 2+3")).hasToolCall("add"),
+});
+
+const run = await test.run(agent, { iterations: 10 });
+await reporter.recordFromRun(run, { casePrefix: "addition" });
+
+const output = await reporter.finalize();
+```
+
+---
+
+## uploadEvalArtifact()
+
+Parses test artifacts (JUnit XML, Jest JSON, Vitest JSON) and reports the results to MCPJam.
+
+```typescript
+import { uploadEvalArtifact } from "@mcpjam/sdk";
+```
+
+### Signature
+
+```typescript
+uploadEvalArtifact(input: UploadEvalArtifactInput): Promise<ReportEvalResultsOutput>
+```
+
+### Supported Formats
+
+| Format | Description |
+|--------|-------------|
+| `"junit-xml"` | JUnit XML test reports |
+| `"jest-json"` | Jest JSON output (`--json` flag) |
+| `"vitest-json"` | Vitest JSON reporter output |
+| `"custom"` | Custom parser via `customParser` option |
+
+### Example
+
+```typescript
+import { readFileSync } from "fs";
+
+// Upload JUnit XML
+await uploadEvalArtifact({
+  suiteName: "CI Results",
+  format: "junit-xml",
+  artifact: readFileSync("test-results.xml", "utf-8"),
+});
+
+// Upload Jest JSON
+await uploadEvalArtifact({
+  suiteName: "Jest Results",
+  format: "jest-json",
+  artifact: readFileSync("jest-results.json", "utf-8"),
+});
+
+// Custom parser
+await uploadEvalArtifact({
+  suiteName: "Custom",
+  format: "custom",
+  artifact: myData,
+  customParser: (data) => [
+    { caseTitle: "test-1", passed: true },
+    { caseTitle: "test-2", passed: false, error: "failed" },
+  ],
+});
+```
+
+---
+
+## Types
+
+### ReportEvalResultsInput
+
+```typescript
+type ReportEvalResultsInput = MCPJamReportingConfig & {
+  suiteName: string;
+  results: EvalResultInput[];
+};
+```
+
+### MCPJamReportingConfig
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `enabled` | `boolean` | No | Enable/disable reporting (default: `true`) |
+| `apiKey` | `string` | No | MCPJam API key (falls back to `MCPJAM_API_KEY` env var) |
+| `baseUrl` | `string` | No | MCPJam API base URL override (useful for internal development or tests) |
+| `suiteName` | `string` | No | Suite name for the run |
+| `suiteDescription` | `string` | No | Description of the suite |
+| `serverNames` | `string[]` | No | MCP server names being tested |
+| `notes` | `string` | No | Free-form notes |
+| `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
+| `strict` | `boolean` | No | Throw on upload errors (`false` = warn only) |
+| `externalRunId` | `string` | No | Custom run ID (auto-generated if omitted) |
+| `framework` | `string` | No | Test framework name (e.g., `"jest"`, `"vitest"`) |
+| `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
+| `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
+
+### EvalCiMetadata
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `provider` | `string` | CI provider (e.g., `"github"`, `"gitlab"`) |
+| `pipelineId` | `string` | Pipeline/workflow identifier |
+| `jobId` | `string` | Job identifier |
+| `runUrl` | `string` | URL to the CI run |
+| `branch` | `string` | Git branch name |
+| `commitSha` | `string` | Git commit SHA |
+
+### EvalResultInput
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `caseTitle` | `string` | Yes | Test case title |
+| `passed` | `boolean` | Yes | Whether the test passed |
+| `query` | `string` | No | The prompt/query sent |
+| `durationMs` | `number` | No | Test duration in ms |
+| `provider` | `string` | No | LLM provider name |
+| `model` | `string` | No | Model identifier |
+| `expectedToolCalls` | `EvalExpectedToolCall[]` | No | Expected tool calls |
+| `actualToolCalls` | `EvalExpectedToolCall[]` | No | Actual tool calls made |
+| `tokens` | `{ input?, output?, total? }` | No | Token usage |
+| `error` | `string` | No | Error message |
+| `errorDetails` | `string` | No | Detailed error info |
+| `trace` | `EvalTraceInput` | No | Conversation trace |
+| `externalIterationId` | `string` | No | Custom iteration ID |
+| `externalCaseId` | `string` | No | Custom case ID |
+| `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata |
+| `isNegativeTest` | `boolean` | No | Whether this is a negative test |
+
+### ReportEvalResultsOutput
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `suiteId` | `string` | Created/matched suite ID |
+| `runId` | `string` | Created run ID |
+| `status` | `"completed" \| "failed"` | Run status |
+| `result` | `"passed" \| "failed"` | Pass/fail based on criteria |
+| `summary.total` | `number` | Total iterations |
+| `summary.passed` | `number` | Passed iterations |
+| `summary.failed` | `number` | Failed iterations |
+| `summary.passRate` | `number` | Pass rate (0.0 - 1.0) |
+
+---
+
+## Related
+
+- [Running Evals](/sdk/concepts/running-evals) - Conceptual guide
+- [EvalTest Reference](/sdk/reference/eval-test) - EvalTest API
+- [EvalSuite Reference](/sdk/reference/eval-suite) - EvalSuite API

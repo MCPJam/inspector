@@ -1,20 +1,26 @@
 import { useConvexAuth, useQuery } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
 import { ResourcesTab } from "./components/ResourcesTab";
 import { PromptsTab } from "./components/PromptsTab";
 import { SkillsTab } from "./components/SkillsTab";
+import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
 import { EvalsTab } from "./components/EvalsTab";
+import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
+import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
+import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
+import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -22,14 +28,16 @@ import { SupportTab } from "./components/SupportTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
+import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
 import { useElectronOAuth } from "./hooks/useElectronOAuth";
 import { useEnsureDbUser } from "./hooks/useEnsureDbUser";
-import { usePostHog } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
+import { useOrganizationQueries } from "./hooks/useOrganizations";
 
 // Import global styles
 import "./index.css";
@@ -46,40 +54,91 @@ import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
 import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
-import { useOrganizationQueries } from "./hooks/useOrganizations";
-import { CreateOrganizationDialog } from "./components/organization/CreateOrganizationDialog";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
   SharedServerChatPage,
   getSharedPathTokenFromLocation,
 } from "./components/hosted/SharedServerChatPage";
+import {
+  SandboxChatPage,
+  getSandboxPathTokenFromLocation,
+} from "./components/hosted/SandboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
-import { resolveHostedNavigation } from "./lib/hosted-navigation";
+import {
+  getInvalidOrganizationRouteNavigationTarget,
+  getWorkspaceSwitchNavigationTarget,
+  resolveHostedNavigation,
+  type OrganizationRouteSection,
+} from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
+  formatBillingFeatureName,
+  formatGracePeriodEndsAt,
+  formatPlanName,
+  getRequiredBillingFeatureForTab,
+  isBillingFeatureLocked,
+  isBillingGracePeriodActive,
+} from "./lib/billing-entitlements";
+import {
+  clearHostedOAuthPendingState,
+  getHostedOAuthCallbackContext,
+  resolveHostedOAuthReturnHash,
+} from "./lib/hosted-oauth-callback";
+import {
+  clearSandboxSignInReturnPath,
+  readSandboxSession,
+  readSandboxSignInReturnPath,
+  writeSandboxSignInReturnPath,
+} from "./lib/sandbox-session";
+import {
   clearSharedSignInReturnPath,
-  hasActiveSharedSession,
   readSharedServerSession,
   readSharedSignInReturnPath,
   slugify,
-  SHARED_OAUTH_PENDING_KEY,
   writeSharedSignInReturnPath,
   readPendingServerAdd,
   clearPendingServerAdd,
 } from "./lib/shared-server-session";
+import {
+  sanitizeHostedOAuthErrorMessage,
+  writeHostedOAuthResumeMarker,
+} from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import type {
+  BillingRolloutState,
+  OrganizationEntitlements,
+} from "./hooks/useOrganizationBilling";
+
+function getHostedOAuthCallbackErrorMessage(): string {
+  const params = new URLSearchParams(window.location.search);
+  const error = params.get("error");
+  const description = params.get("error_description");
+
+  if (error === "access_denied" && !description) {
+    return "Authorization was cancelled. Try again.";
+  }
+
+  return sanitizeHostedOAuthErrorMessage(
+    description || error,
+    "Authorization could not be completed. Try again.",
+  );
+}
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
-  const [activeOrganizationId, setActiveOrganizationId] = useState<
-    string | undefined
-  >(undefined);
+  const [activeOrganizationSection, setActiveOrganizationSection] =
+    useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
+  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
+  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
+    "billing-entitlements-ui",
+  );
+  const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const {
     getAccessToken,
     signIn,
@@ -87,59 +146,132 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const convexUser = useQuery(
-    "users:getCurrentUser" as any,
-    isAuthenticated ? ({} as any) : "skip",
+  const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
+    HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,
   );
-  const { sortedOrganizations, isLoading: isOrganizationsLoading } =
-    useOrganizationQueries({ isAuthenticated });
-  const [sharedOAuthHandling, setSharedOAuthHandling] = useState(false);
   const [exitedSharedChat, setExitedSharedChat] = useState(false);
+  const [exitedSandboxChat, setExitedSandboxChat] = useState(false);
   const sharedPathToken = HOSTED_MODE ? getSharedPathTokenFromLocation() : null;
-  const isSharedChatRoute =
-    HOSTED_MODE &&
-    !exitedSharedChat &&
-    (!!sharedPathToken || hasActiveSharedSession());
+  const sandboxPathToken = HOSTED_MODE
+    ? getSandboxPathTokenFromLocation()
+    : null;
+  const sharedSession = HOSTED_MODE ? readSharedServerSession() : null;
+  const sandboxSession = HOSTED_MODE ? readSandboxSession() : null;
+  const currentHashSlug = window.location.hash
+    .replace(/^#/, "")
+    .replace(/^\/+/, "")
+    .split("/")[0];
+  const hostedRouteKind = useMemo(() => {
+    if (!HOSTED_MODE) {
+      return null;
+    }
 
-  // Handle shared OAuth callback: detect code + pending flag before normal rendering
+    if (sharedPathToken) {
+      return "shared" as const;
+    }
+    if (sandboxPathToken) {
+      return "sandbox" as const;
+    }
+
+    if (sharedSession && sandboxSession) {
+      if (currentHashSlug === slugify(sharedSession.payload.serverName)) {
+        return "shared" as const;
+      }
+      if (currentHashSlug === slugify(sandboxSession.payload.name)) {
+        return "sandbox" as const;
+      }
+      return null;
+    }
+
+    if (sharedSession) {
+      return "shared" as const;
+    }
+    if (sandboxSession) {
+      return "sandbox" as const;
+    }
+
+    return null;
+  }, [
+    currentHashSlug,
+    sandboxPathToken,
+    sandboxSession,
+    sharedPathToken,
+    sharedSession,
+  ]);
+  const isSharedChatRoute =
+    HOSTED_MODE && !exitedSharedChat && hostedRouteKind === "shared";
+  const isSandboxChatRoute =
+    HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
+  const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
+
+  // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
+    const callbackContext = getHostedOAuthCallbackContext();
+    if (!callbackContext) return;
+
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
-    if (!code || !localStorage.getItem(SHARED_OAUTH_PENDING_KEY)) return;
+    const error = urlParams.get("error");
 
     let cancelled = false;
-    setSharedOAuthHandling(true);
+    setHostedOAuthHandling(true);
 
-    const cleanupOAuth = () => {
+    const finalizeHostedOAuth = (errorMessage?: string | null) => {
       if (cancelled) return;
-      localStorage.removeItem(SHARED_OAUTH_PENDING_KEY);
-      const storedSession = readSharedServerSession();
-      const sharedHash = storedSession
-        ? slugify(storedSession.payload.serverName)
-        : "shared";
-      window.history.replaceState({}, "", `/#${sharedHash}`);
+      if (callbackContext.serverName) {
+        writeHostedOAuthResumeMarker({
+          surface: callbackContext.surface,
+          serverName: callbackContext.serverName,
+          serverUrl: callbackContext.serverUrl,
+          errorMessage:
+            errorMessage && errorMessage.trim() ? errorMessage : null,
+        });
+      }
+
+      clearHostedOAuthPendingState();
+      localStorage.removeItem("mcp-oauth-pending");
+      localStorage.removeItem("mcp-oauth-return-hash");
+      const returnHash = resolveHostedOAuthReturnHash(callbackContext);
+      window.history.replaceState({}, "", `/${returnHash}`);
+      window.dispatchEvent(new Event("hashchange"));
     };
 
+    if (error || !code) {
+      finalizeHostedOAuth(getHostedOAuthCallbackErrorMessage());
+      setHostedOAuthHandling(false);
+      return;
+    }
+
     handleOAuthCallback(code)
-      .then(cleanupOAuth)
-      .catch(cleanupOAuth)
+      .then((result) => {
+        if (result.success) {
+          finalizeHostedOAuth(null);
+          return;
+        }
+
+        finalizeHostedOAuth(
+          sanitizeHostedOAuthErrorMessage(
+            result.error,
+            "Authorization could not be completed. Try again.",
+          ),
+        );
+      })
+      .catch((callbackError) => {
+        finalizeHostedOAuth(
+          sanitizeHostedOAuthErrorMessage(
+            callbackError,
+            "Authorization could not be completed. Try again.",
+          ),
+        );
+      })
       .finally(() => {
-        if (!cancelled) setSharedOAuthHandling(false);
+        if (!cancelled) setHostedOAuthHandling(false);
       });
 
     return () => {
       cancelled = true;
     };
   }, []);
-
-  const shouldRequireOrganization =
-    !isSharedChatRoute &&
-    isAuthenticated &&
-    !isAuthLoading &&
-    convexUser !== undefined &&
-    convexUser !== null &&
-    !isOrganizationsLoading &&
-    sortedOrganizations.length === 0;
 
   usePostHogIdentify();
 
@@ -181,9 +313,15 @@ export default function App() {
 
     // Let AuthKit + Convex auth settle before leaving /callback.
     if (!isAuthLoading && isAuthenticated) {
+      const sandboxReturnPath = readSandboxSignInReturnPath();
       const sharedReturnPath = readSharedSignInReturnPath();
+      clearSandboxSignInReturnPath();
       clearSharedSignInReturnPath();
-      window.history.replaceState({}, "", sharedReturnPath ?? "/");
+      window.history.replaceState(
+        {},
+        "",
+        sandboxReturnPath ?? sharedReturnPath ?? "/",
+      );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
       return;
@@ -217,16 +355,35 @@ export default function App() {
     handleCreateWorkspace,
     handleUpdateWorkspace,
     handleDeleteWorkspace,
-    handleLeaveWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
-  } = useAppState();
+    activeOrganizationId,
+    setActiveOrganizationId,
+  } = useAppState({
+    currentUserId: workOsUser?.id ?? null,
+  });
+
+  const { sortedOrganizations, isLoading: isLoadingOrganizations } =
+    useOrganizationQueries({ isAuthenticated });
+  const currentHash = window.location.hash || "#servers";
+  const currentHashRoute = useMemo(
+    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
+    [currentHash],
+  );
+  const activeOrganizationName = sortedOrganizations.find(
+    (org) => org._id === activeOrganizationId,
+  )?.name;
+  const hasRouteOrganization = !!currentHashRoute.organizationId
+    ? sortedOrganizations.some(
+        (org) => org._id === currentHashRoute.organizationId,
+      )
+    : false;
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
-    if (isSharedChatRoute) return;
+    if (isHostedChatRoute) return;
     if (isLoadingRemoteWorkspaces) return;
     if (isAuthLoading) return;
 
@@ -247,7 +404,7 @@ export default function App() {
       oauthScopes: pending.oauthScopes ?? undefined,
     });
   }, [
-    isSharedChatRoute,
+    isHostedChatRoute,
     isLoadingRemoteWorkspaces,
     isAuthLoading,
     workspaceServers,
@@ -267,6 +424,43 @@ export default function App() {
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const rawBillingOrganizationId =
+    activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
+  const billingOrganizationId =
+    !isLoadingOrganizations &&
+    rawBillingOrganizationId &&
+    sortedOrganizations.some((org) => org._id === rawBillingOrganizationId)
+      ? rawBillingOrganizationId
+      : null;
+  const billingEntitlements = useQuery(
+    "billing:getOrganizationEntitlements" as any,
+    isAuthenticated && billingOrganizationId
+      ? ({ organizationId: billingOrganizationId } as any)
+      : "skip",
+  ) as OrganizationEntitlements | undefined;
+  const billingRolloutState = useQuery(
+    "billing:getBillingRolloutState" as any,
+    isAuthenticated && billingOrganizationId
+      ? ({ organizationId: billingOrganizationId } as any)
+      : "skip",
+  ) as BillingRolloutState | undefined;
+  const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
+  const activeTabBillingLocked = isBillingFeatureLocked({
+    billingUiEnabled,
+    entitlements: billingEntitlements,
+    rolloutState: billingRolloutState,
+    feature: activeTabBillingFeature,
+  });
+  const activeTabGracePeriodBanner =
+    billingUiEnabled &&
+    !!activeTabBillingFeature &&
+    !!billingEntitlements &&
+    billingEntitlements.features[activeTabBillingFeature] === false &&
+    isBillingGracePeriodActive(billingRolloutState);
+  const billingGracePeriodEndsAt = formatGracePeriodEndsAt(
+    billingRolloutState?.gracePeriodEndsAt,
+  );
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
@@ -295,12 +489,32 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers],
   );
+  // Extract MCPServerConfig objects for guest mode (keyed by server name)
+  const guestServerConfigs = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(appState.servers).map(([name, s]) => [name, s.config]),
+      ),
+    [appState.servers],
+  );
+  const guestOauthTokensByServerName = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(appState.servers)
+          .filter(([, server]) => !!server.oauthTokens?.access_token)
+          .map(([name, server]) => [name, server.oauthTokens!.access_token]),
+      ),
+    [appState.servers],
+  );
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
     getAccessToken,
     oauthTokensByServerId,
-    enabled: !isSharedChatRoute,
+    guestOauthTokensByServerName,
+    isAuthenticated,
+    serverConfigs: guestServerConfigs,
+    enabled: !isHostedChatRoute,
   });
 
   // Compute the set of server names that have saved views
@@ -324,6 +538,17 @@ export default function App() {
         const storedSession = readSharedServerSession();
         if (storedSession) {
           const expectedHash = slugify(storedSession.payload.serverName);
+          if (window.location.hash !== `#${expectedHash}`) {
+            window.location.hash = expectedHash;
+          }
+        }
+        return;
+      }
+
+      if (isSandboxChatRoute) {
+        const storedSession = readSandboxSession();
+        if (storedSession) {
+          const expectedHash = slugify(storedSession.payload.name);
           if (window.location.hash !== `#${expectedHash}`) {
             window.location.hash = expectedHash;
           }
@@ -356,7 +581,14 @@ export default function App() {
         return;
       }
 
-      setActiveOrganizationId(resolved.organizationId);
+      if (resolved.organizationId) {
+        setActiveOrganizationId(resolved.organizationId);
+      }
+      if (resolved.organizationSection) {
+        setActiveOrganizationSection(resolved.organizationSection);
+      } else if (resolved.normalizedTab !== "organizations") {
+        setActiveOrganizationSection("overview");
+      }
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
@@ -368,12 +600,16 @@ export default function App() {
       }
       setActiveTab(resolved.normalizedTab);
     },
-    [isSharedChatRoute, setSelectedMultipleServersToAllServers],
+    [
+      isSandboxChatRoute,
+      isSharedChatRoute,
+      setSelectedMultipleServersToAllServers,
+    ],
   );
 
   // Sync tab with hash on mount and when hash changes
   useEffect(() => {
-    if (isSharedChatRoute) {
+    if (isHostedChatRoute) {
       return;
     }
 
@@ -384,17 +620,99 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isSharedChatRoute]);
+  }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
+
+  // Redirect away from tabs hidden by the ci-evals feature flag.
+  // Use strict equality to avoid redirecting while the flag is still loading (undefined).
+  useEffect(() => {
+    if (ciEvalsEnabled === true && activeTab === "evals") {
+      applyNavigation("servers", { updateHash: true });
+    } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
+      applyNavigation("servers", { updateHash: true });
+    } else if (activeTabBillingLocked && activeTabBillingFeature) {
+      toast.error(
+        `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
+          billingEntitlements?.plan,
+        )} plan. Upgrade the organization to continue.`,
+      );
+      applyNavigation("servers", { updateHash: true });
+    } else if (
+      activeTab === "learning" &&
+      (learningEnabled !== true || !isAuthenticated)
+    ) {
+      applyNavigation("servers", { updateHash: true });
+    }
+  }, [
+    ciEvalsEnabled,
+    activeTabBillingFeature,
+    activeTabBillingLocked,
+    learningEnabled,
+    isAuthenticated,
+    activeTab,
+    applyNavigation,
+    billingEntitlements?.plan,
+  ]);
 
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });
   };
 
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
+      routeTab: currentHashRoute.normalizedTab,
+      routeOrganizationId: currentHashRoute.organizationId,
+      isLoadingOrganizations,
+      hasRouteOrganization,
+    });
+    if (!navigationTarget) {
+      return;
+    }
+
+    setActiveOrganizationId(undefined);
+    setActiveOrganizationSection("overview");
+    applyNavigation(navigationTarget, { updateHash: true });
+  }, [
+    applyNavigation,
+    currentHashRoute.normalizedTab,
+    currentHashRoute.organizationId,
+    hasRouteOrganization,
+    isAuthenticated,
+    isLoadingOrganizations,
+    setActiveOrganizationId,
+  ]);
+
+  const handleSidebarSwitchWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const nextWorkspace = workspaces[workspaceId];
+      await handleSwitchWorkspace(workspaceId);
+
+      const navigationTarget = getWorkspaceSwitchNavigationTarget({
+        activeTab,
+        activeOrganizationId,
+        nextWorkspaceOrganizationId: nextWorkspace?.organizationId,
+      });
+      if (navigationTarget) {
+        applyNavigation(navigationTarget, { updateHash: true });
+      }
+    },
+    [
+      activeOrganizationId,
+      activeTab,
+      applyNavigation,
+      handleSwitchWorkspace,
+      workspaces,
+    ],
+  );
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
 
-  if (sharedOAuthHandling) {
+  if (hostedOAuthHandling) {
     return <LoadingScreen />;
   }
 
@@ -431,7 +749,7 @@ export default function App() {
     return <CompletingSignInLoading />;
   }
 
-  if (isLoading && !isSharedChatRoute) {
+  if (isLoading && !isHostedChatRoute) {
     return <LoadingScreen />;
   }
 
@@ -443,7 +761,7 @@ export default function App() {
     hasWorkOsUser: !!workOsUser,
     isLoadingRemoteWorkspaces,
   });
-  const sharedHostedShellGateState = resolveHostedShellGateState({
+  const hostedChatShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
@@ -480,7 +798,7 @@ export default function App() {
           isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
-          showOnlyOAuthServers: activeTab === "oauth-flow",
+          showOnlyOAuthServers: false,
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
@@ -493,14 +811,50 @@ export default function App() {
         onNavigate={handleNavigate}
         activeTab={activeTab}
         servers={workspaceServers}
+        workspaces={workspaces}
+        activeWorkspaceId={activeWorkspaceId}
+        onSwitchWorkspace={handleSidebarSwitchWorkspace}
+        onCreateWorkspace={handleCreateWorkspace}
+        onDeleteWorkspace={handleDeleteWorkspace}
+        isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+        activeOrganizationId={activeOrganizationId}
+        billingFeatureAvailability={billingEntitlements?.features ?? {}}
+        billingEnforcementActive={
+          billingUiEnabled && billingRolloutState?.enforcementActive === true
+        }
       />
       <SidebarInset className="flex flex-col min-h-0">
         <Header activeServerSelectorProps={activeServerSelectorProps} />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
+          {activeTabGracePeriodBanner && activeTabBillingFeature ? (
+            <div className="border-b border-border/60 px-4 py-3">
+              <Alert className="border-amber-500/30 bg-amber-500/5">
+                <AlertTriangle className="h-4 w-4 text-amber-600" />
+                <AlertTitle>
+                  {formatBillingFeatureName(activeTabBillingFeature)} trial
+                  access
+                </AlertTitle>
+                <AlertDescription>
+                  <p>
+                    {formatBillingFeatureName(activeTabBillingFeature)} is not
+                    included in the {formatPlanName(billingEntitlements?.plan)}{" "}
+                    plan.
+                  </p>
+                  <p>
+                    Access remains available until{" "}
+                    {billingGracePeriodEndsAt ??
+                      "the rollout grace period ends"}
+                    . Upgrade from Organization settings before then to avoid a
+                    lockout.
+                  </p>
+                </AlertDescription>
+              </Alert>
+            </div>
+          ) : null}
           {/* Content Areas */}
           {activeTab === "servers" && (
             <ServersTab
-              connectedOrConnectingServerConfigs={workspaceServers}
+              workspaceServers={workspaceServers}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
               onReconnect={handleReconnect}
@@ -508,13 +862,7 @@ export default function App() {
               onRemove={handleRemoveServer}
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
-              onSwitchWorkspace={handleSwitchWorkspace}
-              onCreateWorkspace={handleCreateWorkspace}
-              onUpdateWorkspace={handleUpdateWorkspace}
-              onDeleteWorkspace={handleDeleteWorkspace}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
-              onWorkspaceShared={handleWorkspaceShared}
-              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
             />
           )}
           {activeTab === "tools" && (
@@ -526,14 +874,19 @@ export default function App() {
             </div>
           )}
           {activeTab === "evals" && (
-            <EvalsTab selectedServer={appState.selectedServer} />
+            <EvalsTab
+              selectedServer={appState.selectedServer}
+              workspaceId={convexWorkspaceId}
+            />
+          )}
+          {activeTab === "ci-evals" && (
+            <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
           )}
           {activeTab === "views" && (
-            <ViewsTab
-              selectedServer={appState.selectedServer}
-              onWorkspaceShared={handleWorkspaceShared}
-              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
-            />
+            <ViewsTab selectedServer={appState.selectedServer} />
+          )}
+          {activeTab === "sandboxes" && (
+            <SandboxesTab workspaceId={convexWorkspaceId} />
           )}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">
@@ -554,6 +907,8 @@ export default function App() {
           )}
 
           {activeTab === "skills" && <SkillsTab />}
+
+          {activeTab === "learning" && <LearningTab />}
 
           <div
             className={
@@ -576,14 +931,23 @@ export default function App() {
           )}
 
           {activeTab === "oauth-flow" && (
-            <OAuthFlowTab
-              serverConfigs={appState.servers}
-              selectedServerName={appState.selectedServer}
-              onSelectServer={setSelectedServer}
-              onSaveServerConfig={saveServerConfigWithoutConnecting}
-              onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
-              onRefreshTokens={handleRefreshTokensFromOAuthFlow}
-            />
+            <ErrorBoundary
+              fallback={
+                <div className="flex items-center justify-center h-full text-muted-foreground">
+                  Something went wrong in the OAuth Debugger. Try refreshing the
+                  page.
+                </div>
+              }
+            >
+              <OAuthFlowTab
+                serverConfigs={appState.servers}
+                selectedServerName={appState.selectedServer}
+                onSelectServer={setSelectedServer}
+                onSaveServerConfig={saveServerConfigWithoutConnecting}
+                onConnectWithTokens={handleConnectWithTokensFromOAuthFlow}
+                onRefreshTokens={handleRefreshTokensFromOAuthFlow}
+              />
+            </ErrorBoundary>
           )}
           {activeTab === "chat-v2" && (
             <ChatTabV2
@@ -601,11 +965,30 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
+          {activeTab === "workspace-settings" && (
+            <WorkspaceSettingsTab
+              activeWorkspaceId={activeWorkspaceId}
+              workspace={activeWorkspace}
+              convexWorkspaceId={convexWorkspaceId}
+              workspaceServers={workspaceServers}
+              organizationName={activeOrganizationName}
+              onUpdateWorkspace={handleUpdateWorkspace}
+              onDeleteWorkspace={handleDeleteWorkspace}
+              onWorkspaceShared={handleWorkspaceShared}
+              onNavigateAway={() => handleNavigate("servers")}
+            />
+          )}
           {activeTab === "settings" && <SettingsTab />}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
-            <OrganizationsTab organizationId={activeOrganizationId} />
+            <OrganizationsTab
+              organizationId={currentHashRoute.organizationId}
+              section={
+                currentHashRoute.organizationSection ??
+                activeOrganizationSection
+              }
+            />
           )}
         </div>
       </SidebarInset>
@@ -619,22 +1002,16 @@ export default function App() {
     >
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
-        <CreateOrganizationDialog
-          open={!isSharedChatRoute && shouldRequireOrganization}
-          onOpenChange={(open) => {
-            void open;
-          }}
-          required
-        />
         <HostedShellGate
           state={
-            isSharedChatRoute
-              ? sharedHostedShellGateState
-              : hostedShellGateState
+            isHostedChatRoute ? hostedChatShellGateState : hostedShellGateState
           }
           onSignIn={() => {
             if (sharedPathToken) {
               writeSharedSignInReturnPath(window.location.pathname);
+            }
+            if (sandboxPathToken) {
+              writeSandboxSignInReturnPath(window.location.pathname);
             }
             signIn();
           }}
@@ -643,6 +1020,11 @@ export default function App() {
             <SharedServerChatPage
               pathToken={sharedPathToken}
               onExitSharedChat={() => setExitedSharedChat(true)}
+            />
+          ) : isSandboxChatRoute ? (
+            <SandboxChatPage
+              pathToken={sandboxPathToken}
+              onExitSandboxChat={() => setExitedSandboxChat(true)}
             />
           ) : (
             appContent

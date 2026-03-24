@@ -1,8 +1,11 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.0.3",
+  "version": "2.0.17",
   "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "description": "MCPJam Inspector",
   "license": "Apache-2.0",
   "author": "MCPJam (https://mcpjam.com)",
@@ -79,7 +82,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "ship": "bash scripts/ship.sh"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.36",
@@ -90,6 +94,7 @@
     "@ai-sdk/openai": "^3.0.25",
     "@ai-sdk/react": "^3.0.71",
     "@ai-sdk/xai": "^3.0.46",
+    "@axiomhq/js": "^1.4.0",
     "@convex-dev/auth": "^0.0.88",
     "@convex-dev/workos": "^0.0.1",
     "@dnd-kit/core": "^6.3.1",
@@ -175,7 +180,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^14.6.1",
-    "@types/node": "^20",
+    "@types/node": "^24",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4.3.4",

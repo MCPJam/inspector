@@ -21,7 +21,7 @@ import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
 import { LoggerView } from "../logger-view";
-import { JsonEditor } from "@/components/ui/json-editor";
+import { SchemaViewer } from "@/components/ui/schema-viewer";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -158,7 +158,7 @@ export function PlaygroundLeft({
           onDuplicateRequest={onDuplicateRequest}
           onDeleteRequest={onDeleteRequest}
         />
-      ) : isListExpanded ? (
+      ) : isListExpanded || !selectedToolName ? (
         <ToolList
           tools={tools}
           toolNames={toolNames}
@@ -347,20 +347,23 @@ function ToolParametersView({
               </AccordionContent>
             </AccordionItem>
           )}
+          {selectedTool?.inputSchema && (
+            <AccordionItem value="input-schema">
+              <AccordionTrigger className="text-xs">
+                Input Schema
+              </AccordionTrigger>
+              <AccordionContent>
+                <SchemaViewer schema={selectedTool.inputSchema} />
+              </AccordionContent>
+            </AccordionItem>
+          )}
           {selectedTool?.outputSchema && (
             <AccordionItem value="output-schema">
               <AccordionTrigger className="text-xs">
                 Output Schema
               </AccordionTrigger>
               <AccordionContent>
-                <div className="overflow-hidden rounded-md [&_.h-full]:h-auto">
-                  <JsonEditor
-                    value={selectedTool.outputSchema}
-                    readOnly
-                    showToolbar={false}
-                    height="auto"
-                  />
-                </div>
+                <SchemaViewer schema={selectedTool.outputSchema} />
               </AccordionContent>
             </AccordionItem>
           )}

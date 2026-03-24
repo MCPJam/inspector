@@ -25,6 +25,10 @@ vi.mock("convex/react", () => ({
   useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
+}));
+
 vi.mock("@/hooks/useOrganizations", async () => {
   const actual = await vi.importActual<
     typeof import("@/hooks/useOrganizations")
@@ -102,6 +106,7 @@ vi.mock("sonner", () => ({
 vi.mock("@/hooks/useOrganizationBilling", () => ({
   useOrganizationBilling: (...args: unknown[]) =>
     mockUseOrganizationBilling(...args),
+  isPaidPlan: (plan: string) => plan !== "free",
 }));
 
 const organization = {
@@ -110,6 +115,7 @@ const organization = {
   createdBy: "user-owner",
   createdAt: 1,
   updatedAt: 1,
+  myRole: "owner" as const,
 };
 
 function createMember({
@@ -179,7 +185,9 @@ describe("OrganizationsTab member management", () => {
       billingStatus: {
         organizationId: "org-1",
         organizationName: "Acme Org",
-        plan: "oss",
+        plan: "free",
+        billingInterval: null,
+        billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: true,
         isOwner: true,
@@ -242,6 +250,10 @@ describe("OrganizationsTab member management", () => {
 
   it("shows members section for admins with read-only membership controls", () => {
     currentUserEmail = "admin@example.com";
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [{ ...organization, myRole: "admin" }],
+      isLoading: false,
+    });
 
     render(<OrganizationsTab organizationId="org-1" />);
 
@@ -256,11 +268,17 @@ describe("OrganizationsTab member management", () => {
 
   it("shows members section for non-admin members without admin controls", () => {
     currentUserEmail = "member@example.com";
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [{ ...organization, myRole: "member" }],
+      isLoading: false,
+    });
     mockUseOrganizationBilling.mockReturnValue({
       billingStatus: {
         organizationId: "org-1",
         organizationName: "Acme Org",
-        plan: "oss",
+        plan: "free",
+        billingInterval: null,
+        billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: false,
         isOwner: false,
@@ -278,19 +296,14 @@ describe("OrganizationsTab member management", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.queryByText("Admin Console")).not.toBeInTheDocument();
+    expect(screen.getByText("Access restricted")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("organization-audit-log"),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Members")).toBeInTheDocument();
-    expect(
-      screen.getByText("Only organization owners can manage billing."),
+      screen.getByText(
+        "You don't have permission to view organization settings. Contact an admin or owner for access.",
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Upgrade to MCPJam Pro" }),
-    ).toBeDisabled();
-    expect(
-      screen.queryByText("change-role-member@example.com"),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Go to Servers" }),
+    ).toBeInTheDocument();
   });
 });

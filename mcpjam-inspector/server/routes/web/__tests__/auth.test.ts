@@ -56,6 +56,16 @@ describe("web routes — auth enforcement", () => {
     expect(data.code).toBe("UNAUTHORIZED");
   });
 
+  it("returns 401 for export/server without bearer token", async () => {
+    const res = await postJson(app, "/api/web/export/server", {
+      workspaceId: "ws-1",
+      serverId: "srv-1",
+    });
+    const { status, data } = await expectJson<{ code: string }>(res);
+    expect(status).toBe(401);
+    expect(data.code).toBe("UNAUTHORIZED");
+  });
+
   it("returns 401 for chat-v2 without bearer token", async () => {
     const res = await postJson(app, "/api/web/chat-v2", {
       workspaceId: "ws-1",
@@ -71,6 +81,18 @@ describe("web routes — auth enforcement", () => {
     const res = await postJson(
       app,
       "/api/web/tools/list",
+      { workspaceId: "ws-1" }, // missing serverId
+      token,
+    );
+    const { status, data } = await expectJson<{ code: string }>(res);
+    expect(status).toBe(400);
+    expect(data.code).toBe("VALIDATION_ERROR");
+  });
+
+  it("returns 400 for export/server with missing required fields", async () => {
+    const res = await postJson(
+      app,
+      "/api/web/export/server",
       { workspaceId: "ws-1" }, // missing serverId
       token,
     );

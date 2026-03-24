@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
 import { JsonEditor } from "../json-editor";
+import { buildLineLayouts } from "../json-editor-edit";
 
 describe("JsonEditor", () => {
   describe("autoFormatOnEdit", () => {
@@ -121,6 +122,99 @@ describe("JsonEditor", () => {
 
       const textarea = screen.getByRole("textbox");
       expect(textarea.getAttribute("wrap")).toBe("off");
+    });
+  });
+
+  describe("expandJsonStrings", () => {
+    it("expands stringified JSON in viewOnly mode", () => {
+      render(
+        <JsonEditor
+          value={{ toolInput: { elements: '[{"type":"ellipse","x":10}]' } }}
+          viewOnly
+          collapsible
+          expandJsonStrings
+        />,
+      );
+
+      expect(screen.getByText('"elements"')).toBeDefined();
+      expect(screen.getByText('"type"')).toBeDefined();
+      expect(screen.getByText("10")).toBeDefined();
+    });
+  });
+
+  describe("readOnly line wrapping", () => {
+    it("wraps long lines by default in view-only mode", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ avatarUrl: `https://${"a".repeat(120)}` }}
+          viewOnly
+        />,
+      );
+
+      const pre = container.querySelector("pre");
+      expect(pre?.className).toContain("whitespace-pre-wrap");
+      expect(pre?.className).toContain("break-words");
+    });
+
+    it("uses a shared vertical scroll container in view-only mode", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ avatarUrl: `https://${"a".repeat(120)}` }}
+          viewOnly
+        />,
+      );
+
+      const viewport = container.querySelector(
+        ".overflow-y-auto.overscroll-none",
+      );
+      expect(viewport).toBeTruthy();
+      expect(viewport?.className).toContain("items-start");
+      expect(viewport?.className).toContain("z-10");
+
+      const gutter = container.querySelector(
+        ".self-stretch.flex-shrink-0.text-right.select-none",
+      );
+      expect(gutter?.className).toContain("self-stretch");
+
+      const fixedGutterBackground = container.querySelector(
+        ".absolute.inset-y-0.left-0.w-12.bg-muted\\/50.border-r.border-border\\/50",
+      );
+      expect(fixedGutterBackground).toBeTruthy();
+
+      const pre = container.querySelector("pre");
+      expect(pre?.className).not.toContain("overflow-auto");
+    });
+
+    it("can disable wrapping in view-only mode", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ avatarUrl: `https://${"a".repeat(120)}` }}
+          viewOnly
+          wrapLongLinesInView={false}
+        />,
+      );
+
+      const pre = container.querySelector("pre");
+      expect(pre?.className).toContain("whitespace-pre");
+      expect(pre?.className).not.toContain("whitespace-pre-wrap");
+    });
+
+    it("accounts for wrapped lines when calculating line number heights", () => {
+      const layouts = buildLineLayouts(
+        [
+          "{",
+          `  "avatarUrl": "${"a".repeat(120)}",`,
+          '  "status": "Offline"',
+          "}",
+        ],
+        true,
+        40,
+      );
+
+      expect(layouts[1]?.height).toBeGreaterThan(20);
+      expect(layouts[2]?.top).toBe(
+        (layouts[0]?.height ?? 0) + (layouts[1]?.height ?? 0),
+      );
     });
   });
 });

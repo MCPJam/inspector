@@ -6,25 +6,29 @@ const HASH_TAB_ALIASES = {
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "servers",
   "chat-v2",
+  "sandboxes",
   "app-builder",
   "views",
+  "ci-evals",
   "tools",
   "resources",
   "prompts",
   "support",
   "settings",
+  "oauth-flow",
+  "learning",
 ] as const;
 
 export const HOSTED_HASH_ALLOWED_TABS = [
   ...HOSTED_SIDEBAR_ALLOWED_TABS,
   "profile",
   "organizations",
+  "workspace-settings",
 ] as const;
 
 export const HOSTED_HASH_BLOCKED_TABS = [
   "evals",
   "skills",
-  "oauth-flow",
   "tasks",
   "tracing",
   "auth",

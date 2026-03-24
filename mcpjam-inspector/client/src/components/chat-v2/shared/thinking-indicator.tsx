@@ -2,11 +2,17 @@ import { MessageCircle } from "lucide-react";
 
 import { ModelDefinition } from "@/shared/types";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getProviderLogoFromModel } from "./chat-helpers";
+import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import { getAssistantAvatarDescriptor } from "./assistant-avatar";
 
 export function ThinkingIndicator({ model }: { model: ModelDefinition }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const logoSrc = getProviderLogoFromModel(model, themeMode);
+  const sandboxHostStyle = useSandboxHostStyle();
+  const assistantAvatar = getAssistantAvatarDescriptor({
+    model,
+    themeMode,
+    sandboxHostStyle,
+  });
 
   return (
     <article
@@ -14,15 +20,21 @@ export function ThinkingIndicator({ model }: { model: ModelDefinition }) {
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-border/40 bg-muted/40">
-        {logoSrc ? (
+      <div
+        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
+        aria-label={assistantAvatar.ariaLabel}
+      >
+        {assistantAvatar.logoSrc ? (
           <img
-            src={logoSrc}
-            alt={`${model.id} logo`}
+            src={assistantAvatar.logoSrc}
+            alt={assistantAvatar.logoAlt ?? ""}
             className="h-4 w-4 object-contain"
           />
         ) : (
-          <MessageCircle className="h-4 w-4 text-muted-foreground" />
+          <MessageCircle
+            className="h-4 w-4 text-muted-foreground"
+            aria-hidden
+          />
         )}
       </div>
 

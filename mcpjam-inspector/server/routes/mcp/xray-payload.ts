@@ -7,25 +7,12 @@
 
 import { Hono } from "hono";
 import type { UIMessage } from "ai";
-import { z } from "zod";
-import { getSkillToolsAndPrompt } from "../../utils/skill-tools";
+import { buildXRayPayload } from "../../utils/xray-helpers";
 
 interface XRayPayloadRequest {
   messages: UIMessage[];
   systemPrompt?: string;
   selectedServers?: string[];
-}
-
-interface SerializedTool {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}
-
-interface XRayPayloadResponse {
-  system: string;
-  tools: Record<string, SerializedTool>;
-  messages: unknown[]; // Raw messages with metadata (token counts, etc.)
 }
 
 const xrayPayload = new Hono();
@@ -36,79 +23,12 @@ xrayPayload.post("/", async (c) => {
     const mcpClientManager = c.mcpClientManager;
     const { messages, systemPrompt, selectedServers } = body;
 
-    // Get MCP tools from selected servers
-    const mcpTools = await mcpClientManager.getToolsForAiSdk(
+    const response = await buildXRayPayload(
+      mcpClientManager,
       selectedServers ?? [],
+      messages ?? [],
+      systemPrompt,
     );
-
-    // Get skill tools and system prompt section
-    const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-      await getSkillToolsAndPrompt();
-
-    // Merge MCP tools with skill tools (same as chat-v2.ts)
-    const allTools = { ...mcpTools, ...skillTools };
-
-    // Build enhanced system prompt (same as chat-v2.ts)
-    const enhancedSystemPrompt = systemPrompt
-      ? systemPrompt + skillsPromptSection
-      : skillsPromptSection;
-
-    // Serialize tools to JSON-compatible format
-    const serializedTools: Record<string, SerializedTool> = {};
-    for (const [name, tool] of Object.entries(allTools)) {
-      if (!tool) continue;
-
-      let serializedSchema: Record<string, unknown> | undefined;
-      // AI SDK tools use 'parameters' (Zod schema), MCP tools use 'inputSchema' (JSON Schema)
-      const schema = (tool as any).parameters ?? (tool as any).inputSchema;
-
-      if (schema) {
-        if (
-          typeof schema === "object" &&
-          schema !== null &&
-          "jsonSchema" in (schema as Record<string, unknown>)
-        ) {
-          serializedSchema = (schema as any).jsonSchema as Record<
-            string,
-            unknown
-          >;
-        } else {
-          try {
-            serializedSchema = z.toJSONSchema(schema) as Record<
-              string,
-              unknown
-            >;
-          } catch {
-            serializedSchema = {
-              type: "object",
-              properties: {},
-              additionalProperties: false,
-            };
-          }
-        }
-      }
-
-      serializedTools[name] = {
-        name,
-        description: (tool as any).description,
-        inputSchema:
-          serializedSchema ??
-          ({
-            type: "object",
-            properties: {},
-            additionalProperties: false,
-          } as any),
-      };
-    }
-
-    // Return raw messages with metadata (includes token counts from responses)
-    // Note: The actual chat-v2.ts uses convertToModelMessages() before sending to the model,
-    // but we preserve the raw format here to show token usage metadata
-    const response: XRayPayloadResponse = {
-      system: enhancedSystemPrompt,
-      tools: serializedTools,
-      messages: messages ?? [],
-    };
 
     return c.json(response);
   } catch (error) {

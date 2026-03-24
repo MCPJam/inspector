@@ -9,6 +9,8 @@ export type ConnectionStatus =
   | "disconnected"
   | "oauth-flow";
 
+export type WorkspaceVisibility = "public" | "private";
+
 export interface InitializationInfo {
   protocolVersion?: string;
   transport?: string;
@@ -47,11 +49,15 @@ export interface Workspace {
   id: string;
   name: string;
   description?: string;
+  icon?: string;
   servers: Record<string, ServerWithName>;
   createdAt: Date;
   updatedAt: Date;
+  canDeleteWorkspace?: boolean;
   isDefault?: boolean;
   sharedWorkspaceId?: string;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
 }
 
 export interface AppState {

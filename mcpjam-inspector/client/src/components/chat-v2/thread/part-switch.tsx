@@ -6,10 +6,11 @@ import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 
-import { ChatGPTAppRenderer } from "./chatgpt-app-renderer";
-import { MCPAppsRenderer } from "./mcp-apps/mcp-apps-renderer";
 import { ToolPart } from "./parts/tool-part";
-import { ReasoningPart } from "./parts/reasoning-part";
+import {
+  ReasoningPart,
+  type ReasoningDisplayMode,
+} from "./parts/reasoning-part";
 import { FilePart } from "./parts/file-part";
 import { SourceUrlPart } from "./parts/source-url-part";
 import { SourceDocumentPart } from "./parts/source-document-part";
@@ -41,56 +42,14 @@ import {
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { WidgetReplay } from "./widget-replay";
 
-function readToolResultObject(
-  result: unknown,
-): Record<string, unknown> | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  return result as Record<string, unknown>;
-}
+import {
+  readToolResultMeta,
+  readToolResultServerId,
+} from "@/lib/tool-result-utils";
 
-function readToolResultMeta(
-  result: unknown,
-): Record<string, unknown> | undefined {
-  const direct = readToolResultObject(result);
-  if (
-    direct?._meta &&
-    typeof direct._meta === "object" &&
-    direct._meta !== null
-  ) {
-    return direct._meta as Record<string, unknown>;
-  }
-
-  const nested = readToolResultObject(direct?.value);
-  if (
-    nested?._meta &&
-    typeof nested._meta === "object" &&
-    nested._meta !== null
-  ) {
-    return nested._meta as Record<string, unknown>;
-  }
-
-  return undefined;
-}
-
-function readToolResultServerId(result: unknown): string | undefined {
-  const direct = readToolResultObject(result);
-  if (typeof direct?._serverId === "string") {
-    return direct._serverId;
-  }
-
-  const nested = readToolResultObject(direct?.value);
-  if (typeof nested?._serverId === "string") {
-    return nested._serverId;
-  }
-
-  const meta = readToolResultMeta(result);
-  if (typeof meta?._serverId === "string") {
-    return meta._serverId;
-  }
-
-  return undefined;
-}
+const NOOP_SEND_FOLLOW_UP = () => {};
 
 export function PartSwitch({
   part,
@@ -114,6 +73,8 @@ export function PartSwitch({
   toolRenderOverrides,
   showSaveViewButton = true,
   minimalMode = false,
+  interactive = true,
+  reasoningDisplayMode = "inline",
 }: {
   part: AnyPart;
   role: UIMessage["role"];
@@ -142,6 +103,8 @@ export function PartSwitch({
   toolRenderOverrides?: Record<string, ToolRenderOverride>;
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
+  interactive?: boolean;
+  reasoningDisplayMode?: ReasoningDisplayMode;
 }) {
   const [appSupportedDisplayModes, setAppSupportedDisplayModes] = useState<
     DisplayMode[] | undefined
@@ -152,7 +115,7 @@ export function PartSwitch({
   const { isAuthenticated } = useConvexAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
-  const savingEnabled = isAuthenticated && !minimalMode;
+  const savingEnabled = isAuthenticated && !minimalMode && interactive;
 
   // Get the Convex workspace ID (sharedWorkspaceId) from the active workspace
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
@@ -250,15 +213,16 @@ export function PartSwitch({
     const toolPart = part as ToolUIPart<UITools> | DynamicToolUIPart;
     const toolInfo = toolInfoFromPart ?? getToolInfo(toolPart);
     const approvalId = toolPart.approval?.id;
-    const approvalProps = approvalId
-      ? {
-          approvalId,
-          onApprove: (id: string) =>
-            onToolApprovalResponse?.({ id, approved: true }),
-          onDeny: (id: string) =>
-            onToolApprovalResponse?.({ id, approved: false }),
-        }
-      : {};
+    const approvalProps =
+      interactive && approvalId
+        ? {
+            approvalId,
+            onApprove: (id: string) =>
+              onToolApprovalResponse?.({ id, approved: true }),
+            onDeny: (id: string) =>
+              onToolApprovalResponse?.({ id, approved: false }),
+          }
+        : {};
     const renderOverride = toolInfo.toolCallId
       ? toolRenderOverrides?.[toolInfo.toolCallId]
       : undefined;
@@ -287,8 +251,12 @@ export function PartSwitch({
 
     // Can save if we have output (or output-available state) or error
     const canSaveView =
-      !minimalMode && isAuthenticated && !!convexWorkspaceId && hasOutput;
-    const allowSaveView = showSaveViewButton && !minimalMode;
+      interactive &&
+      !minimalMode &&
+      isAuthenticated &&
+      !!convexWorkspaceId &&
+      hasOutput;
+    const allowSaveView = interactive && showSaveViewButton && !minimalMode;
 
     // Compute reason for disabled state
     let saveDisabledReason: string | undefined;
@@ -336,76 +304,33 @@ export function PartSwitch({
           />
           <MCPUIResourcePart
             resource={uiResource.resource}
-            onSendFollowUp={onSendFollowUp}
+            onSendFollowUp={interactive ? onSendFollowUp : NOOP_SEND_FOLLOW_UP}
           />
         </>
       );
     }
-    const hasCachedHtmlForOffline = !!renderOverride?.cachedWidgetHtmlUrl;
-
-    if (
+    const shouldRenderWidget =
       uiType === UIType.OPENAI_SDK ||
-      (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
-        selectedProtocolOverrideIfBothExists === UIType.OPENAI_SDK)
-    ) {
-      if (
-        toolInfo.toolState !== "output-available" &&
-        toolInfo.toolState !== "approval-requested" &&
-        toolInfo.toolState !== "output-denied"
-      ) {
-        return (
-          <>
-            <ToolPart
-              part={toolPart}
-              uiType={uiType}
-              onSaveView={allowSaveView ? handleSaveView : undefined}
-              canSaveView={false}
-              isSaving={isSaving}
-              minimalMode={minimalMode}
-              {...approvalProps}
-            />
-            <div className="border border-border/40 rounded-md bg-muted/30 text-xs text-muted-foreground px-3 py-2">
-              Waiting for tool to finish executing...
-            </div>
-          </>
-        );
-      }
+      uiType === UIType.MCP_APPS ||
+      uiType === UIType.OPENAI_SDK_AND_MCP_APPS;
 
-      if (!serverId && !hasCachedHtmlForOffline) {
-        return (
-          <>
-            <ToolPart
-              part={toolPart}
-              uiType={uiType}
-              onSaveView={allowSaveView ? handleSaveView : undefined}
-              canSaveView={allowSaveView ? canSaveView : undefined}
-              saveDisabledReason={
-                allowSaveView ? saveDisabledReason : undefined
-              }
-              isSaving={isSaving}
-              minimalMode={minimalMode}
-              {...approvalProps}
-            />
-            <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              Failed to load tool server id.
-            </div>
-          </>
-        );
-      }
-
+    if (shouldRenderWidget) {
       return (
         <>
           <ToolPart
             part={toolPart}
             uiType={uiType}
-            displayMode={displayMode}
+            displayMode={interactive ? displayMode : undefined}
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
-            onDisplayModeChange={onDisplayModeChange}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
+            onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
+            onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
+            onExitFullscreen={interactive ? onExitFullscreen : undefined}
+            onRequestPip={interactive ? onRequestPip : undefined}
+            onExitPip={interactive ? onExitPip : undefined}
+            appSupportedDisplayModes={
+              interactive ? appSupportedDisplayModes : undefined
+            }
             onSaveView={allowSaveView ? handleSaveView : undefined}
             canSaveView={allowSaveView ? canSaveView : undefined}
             saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
@@ -413,121 +338,49 @@ export function PartSwitch({
             minimalMode={minimalMode}
             {...approvalProps}
           />
-          <ChatGPTAppRenderer
-            serverId={serverId ?? "offline-view"}
-            toolCallId={toolInfo.toolCallId}
+          <WidgetReplay
             toolName={toolInfo.toolName}
+            toolCallId={toolInfo.toolCallId}
             toolState={toolInfo.toolState}
             toolInput={toolInfo.input ?? null}
-            toolOutput={resolvedToolOutput ?? null}
-            toolMetadata={effectiveToolMeta ?? undefined}
-            onSendFollowUp={onSendFollowUp}
-            onCallTool={(toolName, params) =>
-              callTool(serverId ?? "offline-view", toolName, params)
-            }
-            onWidgetStateChange={onWidgetStateChange}
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-            displayMode={displayMode}
-            onDisplayModeChange={onDisplayModeChange}
-            initialWidgetState={renderOverride?.initialWidgetState}
-            isOffline={renderOverride?.isOffline}
-            cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
-            minimalMode={minimalMode}
-          />
-        </>
-      );
-    }
-
-    if (
-      uiType === UIType.MCP_APPS ||
-      (uiType === UIType.OPENAI_SDK_AND_MCP_APPS &&
-        selectedProtocolOverrideIfBothExists === UIType.MCP_APPS)
-    ) {
-      if (
-        (!serverId && !hasCachedHtmlForOffline) ||
-        (!uiResourceUri && !hasCachedHtmlForOffline) ||
-        !toolInfo.toolCallId
-      ) {
-        return (
-          <>
-            <ToolPart
-              part={toolPart}
-              uiType={uiType}
-              onSaveView={allowSaveView ? handleSaveView : undefined}
-              canSaveView={allowSaveView ? canSaveView : undefined}
-              saveDisabledReason={
-                allowSaveView ? saveDisabledReason : undefined
-              }
-              isSaving={isSaving}
-              minimalMode={minimalMode}
-              {...approvalProps}
-            />
-            <div className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2">
-              Failed to load server id or resource uri for MCP App.
-            </div>
-          </>
-        );
-      }
-
-      return (
-        <>
-          <ToolPart
-            part={toolPart}
-            uiType={uiType}
-            displayMode={displayMode}
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onDisplayModeChange={onDisplayModeChange}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
-            appSupportedDisplayModes={appSupportedDisplayModes}
-            onSaveView={allowSaveView ? handleSaveView : undefined}
-            canSaveView={allowSaveView ? canSaveView : undefined}
-            saveDisabledReason={allowSaveView ? saveDisabledReason : undefined}
-            isSaving={isSaving}
-            minimalMode={minimalMode}
-            {...approvalProps}
-          />
-          <MCPAppsRenderer
-            serverId={serverId ?? "offline-view"}
-            toolCallId={toolInfo.toolCallId}
-            toolName={toolInfo.toolName}
-            toolState={toolInfo.toolState}
-            toolInput={toolInfo.input}
             toolOutput={resolvedToolOutput}
+            rawOutput={toolInfo.rawOutput}
             toolErrorText={toolInfo.errorText}
-            resourceUri={uiResourceUri ?? "mcp://offline/view"}
             toolMetadata={effectiveToolMeta}
             toolsMetadata={toolsMetadata}
-            onSendFollowUp={onSendFollowUp}
-            onCallTool={(toolName, params) =>
-              callTool(serverId ?? "offline-view", toolName, params)
+            toolServerMap={toolServerMap}
+            renderOverride={renderOverride}
+            onSendFollowUp={interactive ? onSendFollowUp : undefined}
+            onCallTool={
+              interactive
+                ? (toolName, params) =>
+                    callTool(serverId ?? "offline-view", toolName, params)
+                : undefined
             }
-            onWidgetStateChange={onWidgetStateChange}
-            onModelContextUpdate={onModelContextUpdate}
+            onWidgetStateChange={interactive ? onWidgetStateChange : undefined}
+            onModelContextUpdate={
+              interactive ? onModelContextUpdate : undefined
+            }
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
-            onRequestPip={onRequestPip}
-            onExitPip={onExitPip}
-            displayMode={displayMode}
-            onDisplayModeChange={onDisplayModeChange}
-            onRequestFullscreen={onRequestFullscreen}
-            onExitFullscreen={onExitFullscreen}
-            onAppSupportedDisplayModesChange={setAppSupportedDisplayModes}
-            isOffline={renderOverride?.isOffline}
-            cachedWidgetHtmlUrl={renderOverride?.cachedWidgetHtmlUrl}
+            onRequestPip={interactive ? onRequestPip : undefined}
+            onExitPip={interactive ? onExitPip : undefined}
+            onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
+            onExitFullscreen={interactive ? onExitFullscreen : undefined}
+            displayMode={interactive ? displayMode : undefined}
+            onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
+            onAppSupportedDisplayModesChange={
+              interactive ? setAppSupportedDisplayModes : undefined
+            }
+            selectedProtocolOverrideIfBothExists={
+              selectedProtocolOverrideIfBothExists
+            }
             minimalMode={minimalMode}
           />
         </>
       );
     }
+
     return (
       <ToolPart
         part={toolPart}
@@ -544,7 +397,11 @@ export function PartSwitch({
 
   if (isDataPart(part)) {
     return (
-      <JsonPart label={getDataLabel(part.type)} value={(part as any).data} />
+      <JsonPart
+        label={getDataLabel(part.type)}
+        value={(part as any).data}
+        autoHeight={Boolean((part as any).autoHeight)}
+      />
     );
   }
 
@@ -552,7 +409,13 @@ export function PartSwitch({
     case "text":
       return <TextPart text={part.text} role={role} />;
     case "reasoning":
-      return <ReasoningPart text={part.text} state={part.state} />;
+      return (
+        <ReasoningPart
+          text={part.text}
+          state={part.state}
+          displayMode={reasoningDisplayMode}
+        />
+      );
     case "file":
       return <FilePart part={part} />;
     case "source-url":

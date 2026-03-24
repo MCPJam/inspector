@@ -12,6 +12,10 @@ import type {
   CoreAssistantMessage,
   CoreToolMessage,
 } from "./types.js";
+import type {
+  EvalResultInput,
+  EvalWidgetSnapshotInput,
+} from "./eval-reporting-types.js";
 
 /**
  * Represents the result of a TestAgent prompt.
@@ -36,8 +40,17 @@ export class PromptResult {
   /** Token usage statistics */
   private readonly _usage: TokenUsage;
 
+  /** Widget snapshots captured during tool execution */
+  private readonly _widgetSnapshots: EvalWidgetSnapshotInput[];
+
   /** Error message if the prompt failed */
   private readonly _error?: string;
+
+  /** LLM provider name (e.g., "openai", "anthropic") */
+  private readonly _provider?: string;
+
+  /** LLM model name (e.g., "gpt-4o", "claude-3-5-sonnet-20241022") */
+  private readonly _model?: string;
 
   /**
    * Create a new PromptResult
@@ -50,7 +63,10 @@ export class PromptResult {
     this._latency = data.latency;
     this._toolCalls = data.toolCalls;
     this._usage = data.usage;
+    this._widgetSnapshots = data.widgetSnapshots ?? [];
     this._error = data.error;
+    this._provider = data.provider;
+    this._model = data.model;
   }
 
   /**
@@ -224,6 +240,13 @@ export class PromptResult {
   }
 
   /**
+   * Get widget snapshots captured during tool execution.
+   */
+  getWidgetSnapshots(): EvalWidgetSnapshotInput[] {
+    return [...this._widgetSnapshots];
+  }
+
+  /**
    * Check if this prompt resulted in an error.
    *
    * @returns true if there was an error
@@ -239,6 +262,24 @@ export class PromptResult {
    */
   getError(): string | undefined {
     return this._error;
+  }
+
+  /**
+   * Get the LLM provider name.
+   *
+   * @returns The provider name or undefined
+   */
+  getProvider(): string | undefined {
+    return this._provider;
+  }
+
+  /**
+   * Get the LLM model name.
+   *
+   * @returns The model name or undefined
+   */
+  getModel(): string | undefined {
+    return this._model;
   }
 
   /**
@@ -263,7 +304,8 @@ export class PromptResult {
   static error(
     error: string,
     latency: LatencyBreakdown | number = 0,
-    prompt: string = ""
+    prompt: string = "",
+    metadata?: { provider?: string; model?: string }
   ): PromptResult {
     const latencyBreakdown: LatencyBreakdown =
       typeof latency === "number"
@@ -278,6 +320,8 @@ export class PromptResult {
       usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
       latency: latencyBreakdown,
       error,
+      provider: metadata?.provider,
+      model: metadata?.model,
     });
   }
 
@@ -289,5 +333,49 @@ export class PromptResult {
    */
   formatTrace(): string {
     return JSON.stringify(this._messages, null, 2);
+  }
+
+  /**
+   * Convert this prompt result into an EvalResultInput for report ingestion.
+   */
+  toEvalResult(
+    options?: Partial<
+      Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
+    >
+  ): EvalResultInput {
+    const caseTitle =
+      options?.caseTitle ??
+      (this.prompt.trim().length > 0 ? this.prompt : "PromptResult");
+    const passed =
+      typeof options?.passed === "boolean" ? options.passed : !this.hasError();
+    const usage = this.getUsage();
+
+    return {
+      caseTitle,
+      query: options?.query ?? this.prompt,
+      passed,
+      durationMs: options?.durationMs ?? this.e2eLatencyMs(),
+      provider: options?.provider ?? this._provider,
+      model: options?.model ?? this._model,
+      expectedToolCalls: options?.expectedToolCalls,
+      actualToolCalls: this.getToolCalls().map((toolCall) => ({
+        toolName: toolCall.toolName,
+        arguments: toolCall.arguments,
+      })),
+      tokens: {
+        input: usage.inputTokens,
+        output: usage.outputTokens,
+        total: usage.totalTokens,
+      },
+      error: options?.error ?? this.getError(),
+      errorDetails: options?.errorDetails,
+      trace: { messages: this.getMessages() as any[] },
+      externalIterationId: options?.externalIterationId,
+      externalCaseId: options?.externalCaseId,
+      metadata: options?.metadata,
+      isNegativeTest: options?.isNegativeTest,
+      advancedConfig: options?.advancedConfig,
+      widgetSnapshots: options?.widgetSnapshots ?? this.getWidgetSnapshots(),
+    };
   }
 }

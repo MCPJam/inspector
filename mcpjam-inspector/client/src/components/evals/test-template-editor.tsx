@@ -2,10 +2,8 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card } from "@/components/ui/card";
 import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -36,6 +34,7 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface TestTemplate {
   title: string;
@@ -209,7 +208,9 @@ export function TestTemplateEditor({
   const missingServers = useMemo(() => {
     if (!suite) return [];
     const suiteServers = suite.environment?.servers || [];
-    return suiteServers.filter((server) => !connectedServerNames.has(server));
+    return suiteServers.filter(
+      (server: string) => !connectedServerNames.has(server),
+    );
   }, [suite, connectedServerNames]);
 
   const canRun = missingServers.length === 0;
@@ -333,7 +334,7 @@ export function TestTemplateEditor({
       toast.success("Changes saved");
     } catch (error) {
       console.error("Failed to save:", error);
-      toast.error("Failed to save changes");
+      toast.error(getBillingErrorMessage(error, "Failed to save changes"));
       throw error;
     }
   };
@@ -446,25 +447,10 @@ export function TestTemplateEditor({
       toast.success("Test completed successfully!");
     } catch (error) {
       console.error("Failed to run test case:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to run test case",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to run test case"));
     } finally {
       setIsRunning(false);
     }
-  };
-
-  // Combined save and run handler
-  const handleSaveAndRun = async () => {
-    if (hasUnsavedChanges) {
-      try {
-        await handleSave();
-      } catch (error) {
-        // If save fails, don't proceed with run
-        return;
-      }
-    }
-    await handleRun();
   };
 
   const handleClearResult = async () => {
@@ -482,7 +468,7 @@ export function TestTemplateEditor({
       toast.success("Result cleared");
     } catch (error) {
       console.error("Failed to clear result:", error);
-      toast.error("Failed to clear result");
+      toast.error(getBillingErrorMessage(error, "Failed to clear result"));
     }
   };
 
@@ -503,7 +489,7 @@ export function TestTemplateEditor({
       setOptimisticNegative(null);
     } catch (error) {
       console.error("Failed to toggle negative test:", error);
-      toast.error("Failed to update test type");
+      toast.error(getBillingErrorMessage(error, "Failed to update test type"));
       // Revert optimistic update on error
       setOptimisticNegative(null);
     }
@@ -800,8 +786,8 @@ export function TestTemplateEditor({
           testCase={currentTestCase}
           loading={isRunning}
           onClear={handleClearResult}
-          serverNames={(suite?.environment?.servers || []).filter((name) =>
-            connectedServerNames.has(name),
+          serverNames={(suite?.environment?.servers || []).filter(
+            (name: string) => connectedServerNames.has(name),
           )}
         />
       </ResizablePanel>

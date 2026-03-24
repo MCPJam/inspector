@@ -26,10 +26,10 @@ import {
   clearOAuthData,
   initiateOAuth,
 } from "@/lib/oauth/mcp-oauth";
+import { getHostedOAuthCallbackContext } from "@/lib/hosted-oauth-callback";
 import { HOSTED_MODE } from "@/lib/config";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
-import { SHARED_OAUTH_PENDING_KEY } from "@/lib/shared-server-session";
 import { authFetch } from "@/lib/session-token";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
@@ -95,6 +95,11 @@ interface UseServerStateParams {
   logger: LoggerLike;
 }
 
+export interface ServerUpdateResult {
+  ok: boolean;
+  serverName: string;
+}
+
 export function useServerState({
   appState,
   dispatch,
@@ -122,6 +127,25 @@ export function useServerState({
     opTokenRef.current.set(name, next);
     return next;
   };
+
+  const failPendingOAuthConnection = useCallback(
+    (errorMessage: string) => {
+      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+      if (pendingServerName) {
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name: pendingServerName,
+          error: errorMessage,
+        });
+      }
+
+      localStorage.removeItem("mcp-oauth-return-hash");
+      localStorage.removeItem("mcp-oauth-pending");
+
+      return pendingServerName;
+    },
+    [dispatch],
+  );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
 
@@ -363,8 +387,33 @@ export function useServerState({
     [dispatch],
   );
 
+  /**
+   * Stores init info from an inline connection result, or falls back to
+   * fetching it via a separate request. Callers can fire-and-forget (no await)
+   * or await depending on whether they need it resolved before continuing.
+   */
+  const storeInitInfo = useCallback(
+    async (
+      serverName: string,
+      initInfo: Record<string, unknown> | null | undefined,
+    ) => {
+      if (initInfo) {
+        dispatch({
+          type: "SET_INITIALIZATION_INFO",
+          name: serverName,
+          initInfo,
+        });
+      } else {
+        await fetchAndStoreInitInfo(serverName);
+      }
+    },
+    [dispatch, fetchAndStoreInitInfo],
+  );
+
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
+      const pendingServerName = localStorage.getItem("mcp-oauth-pending");
+
       try {
         const result = await handleOAuthCallback(code);
 
@@ -396,8 +445,12 @@ export function useServerState({
               toast.success(
                 `OAuth connection successful! Connected to ${serverName}.`,
               );
-              fetchAndStoreInitInfo(serverName).catch((err) =>
-                logger.warn("Failed to fetch init info", { serverName, err }),
+              storeInitInfo(serverName, connectionResult.initInfo).catch(
+                (err) =>
+                  logger.warn("Failed to fetch init info", {
+                    serverName,
+                    err,
+                  }),
               );
             } else {
               dispatch({
@@ -441,12 +494,17 @@ export function useServerState({
           error instanceof Error ? error.message : "Unknown error";
         toast.error(`Error completing OAuth flow: ${errorMessage}`);
         logger.error("OAuth callback failed", { error: errorMessage });
-
-        localStorage.removeItem("mcp-oauth-return-hash");
-        localStorage.removeItem("mcp-oauth-pending");
+        const failedServerName =
+          failPendingOAuthConnection(errorMessage) ?? pendingServerName;
+        if (failedServerName) {
+          logger.warn("Marked pending OAuth connection as failed", {
+            serverName: failedServerName,
+            error: errorMessage,
+          });
+        }
       }
     },
-    [dispatch, logger, fetchAndStoreInitInfo],
+    [dispatch, failPendingOAuthConnection, logger, storeInitInfo],
   );
 
   useEffect(() => {
@@ -468,9 +526,13 @@ export function useServerState({
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get("code");
     const error = urlParams.get("error");
+    const errorDescription = urlParams.get("error_description");
+    const hostedOAuthCallbackContext = HOSTED_MODE
+      ? getHostedOAuthCallbackContext()
+      : null;
     if (code) {
-      if (localStorage.getItem(SHARED_OAUTH_PENDING_KEY)) {
-        return; // Handled by App.tsx shared OAuth interception
+      if (hostedOAuthCallbackContext) {
+        return; // Handled by App.tsx hosted OAuth interception
       }
       if (oauthCallbackHandledRef.current) {
         return;
@@ -486,9 +548,27 @@ export function useServerState({
 
       handleOAuthCallbackComplete(code);
     } else if (error) {
-      toast.error(`OAuth authorization failed: ${error}`);
-      localStorage.removeItem("mcp-oauth-pending");
-      window.history.replaceState({}, document.title, window.location.pathname);
+      if (hostedOAuthCallbackContext) {
+        return; // Handled by App.tsx hosted OAuth interception
+      }
+      const errorMessage = errorDescription
+        ? `${error}: ${errorDescription}`
+        : error;
+      const savedHash = localStorage.getItem("mcp-oauth-return-hash") || "";
+
+      toast.error(`OAuth authorization failed: ${errorMessage}`);
+      const failedServerName = failPendingOAuthConnection(errorMessage);
+      logger.warn("OAuth authorization failed before callback completion", {
+        serverName: failedServerName,
+        error,
+        errorDescription,
+      });
+      oauthCallbackHandledRef.current = true;
+      window.history.replaceState(
+        {},
+        document.title,
+        window.location.pathname + savedHash,
+      );
     }
   }, [
     isLoading,
@@ -497,7 +577,9 @@ export function useServerState({
     useLocalFallback,
     isLoadingWorkspaces,
     effectiveActiveWorkspaceId,
+    failPendingOAuthConnection,
     handleOAuthCallbackComplete,
+    logger,
   ]);
 
   const handleConnect = useCallback(
@@ -598,11 +680,12 @@ export function useServerState({
               toast.success(
                 "Connected successfully with existing OAuth tokens!",
               );
-              fetchAndStoreInitInfo(formData.name).catch((err) =>
-                logger.warn("Failed to fetch init info", {
-                  serverName: formData.name,
-                  err,
-                }),
+              storeInitInfo(formData.name, connectionResult.initInfo).catch(
+                (err) =>
+                  logger.warn("Failed to fetch init info", {
+                    serverName: formData.name,
+                    err,
+                  }),
               );
               return;
             }
@@ -651,11 +734,12 @@ export function useServerState({
                   tokens: getStoredTokens(formData.name),
                 });
                 toast.success("Connected successfully with OAuth!");
-                fetchAndStoreInitInfo(formData.name).catch((err) =>
-                  logger.warn("Failed to fetch init info", {
-                    serverName: formData.name,
-                    err,
-                  }),
+                storeInitInfo(formData.name, connectionResult.initInfo).catch(
+                  (err) =>
+                    logger.warn("Failed to fetch init info", {
+                      serverName: formData.name,
+                      err,
+                    }),
                 );
               } else {
                 dispatch({
@@ -709,7 +793,7 @@ export function useServerState({
           }
           logger.info("Connection successful", { serverName: formData.name });
           toast.success("Connected successfully!");
-          fetchAndStoreInitInfo(formData.name).catch((err) =>
+          storeInitInfo(formData.name, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,
               err,
@@ -750,7 +834,7 @@ export function useServerState({
       appState.activeWorkspaceId,
       syncServerToConvex,
       logger,
-      fetchAndStoreInitInfo,
+      storeInitInfo,
     ],
   );
 
@@ -909,7 +993,7 @@ export function useServerState({
             config: serverConfig,
             tokens: getStoredTokens(serverName),
           });
-          await fetchAndStoreInitInfo(serverName);
+          await storeInitInfo(serverName, result.initInfo);
           return { success: true };
         }
         dispatch({
@@ -932,7 +1016,7 @@ export function useServerState({
         return { success: false, error: errorMessage };
       }
     },
-    [dispatch, fetchAndStoreInitInfo],
+    [dispatch, storeInitInfo],
   );
 
   const handleConnectWithTokensFromOAuthFlow = useCallback(
@@ -992,6 +1076,10 @@ export function useServerState({
   const cliConfigProcessedRef = useRef<boolean>(false);
 
   useEffect(() => {
+    if (HOSTED_MODE) {
+      return;
+    }
+
     if (!isLoading && !cliConfigProcessedRef.current) {
       cliConfigProcessedRef.current = true;
       authFetch("/api/mcp-cli-config")
@@ -1227,7 +1315,7 @@ export function useServerState({
           logger.info("Reconnection with fresh OAuth successful", {
             serverName,
           });
-          fetchAndStoreInitInfo(serverName).catch((err) =>
+          storeInitInfo(serverName, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
           return;
@@ -1267,7 +1355,7 @@ export function useServerState({
             tokens: authResult.tokens,
           });
           logger.info("Reconnection successful", { serverName, result });
-          fetchAndStoreInitInfo(serverName).catch((err) =>
+          storeInitInfo(serverName, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", { serverName, err }),
           );
           return;
@@ -1296,7 +1384,7 @@ export function useServerState({
         });
       }
     },
-    [effectiveServers, fetchAndStoreInitInfo, logger, dispatch],
+    [effectiveServers, storeInitInfo, logger, dispatch],
   );
 
   useEffect(() => {
@@ -1353,11 +1441,11 @@ export function useServerState({
       originalServerName: string,
       formData: ServerFormData,
       skipAutoConnect?: boolean,
-    ) => {
+    ): Promise<ServerUpdateResult> => {
       const nextServerName = formData.name.trim();
       if (!nextServerName) {
         toast.error("Server name is required");
-        return;
+        return { ok: false, serverName: originalServerName };
       }
       const isRename = nextServerName !== originalServerName;
       const activeWorkspaceServers =
@@ -1366,7 +1454,7 @@ export function useServerState({
         toast.error(
           `A server named "${nextServerName}" already exists. Choose a different name.`,
         );
-        return;
+        return { ok: false, serverName: originalServerName };
       }
       const originalServer =
         appState.servers[originalServerName] ??
@@ -1425,7 +1513,7 @@ export function useServerState({
           setSelectedServer(nextServerName);
         }
         toast.success("Server configuration updated");
-        return;
+        return { ok: true, serverName: nextServerName };
       }
 
       const hadOAuthTokens = originalServer?.oauthTokens != null;
@@ -1455,9 +1543,9 @@ export function useServerState({
               name: originalServerName,
               config: mcpConfig,
             });
-            await fetchAndStoreInitInfo(originalServerName);
+            await storeInitInfo(originalServerName, result.initInfo);
             toast.success("Server configuration updated successfully!");
-            return;
+            return { ok: true, serverName: originalServerName };
           }
           console.warn(
             "OAuth connection test failed, falling back to full reconnect",
@@ -1489,6 +1577,7 @@ export function useServerState({
       ) {
         setSelectedServer(nextServerName);
       }
+      return { ok: true, serverName: nextServerName };
     },
     [
       appState.servers,
@@ -1499,7 +1588,7 @@ export function useServerState({
       effectiveWorkspaces,
       effectiveActiveWorkspaceId,
       effectiveServers,
-      fetchAndStoreInitInfo,
+      storeInitInfo,
       handleDisconnect,
       handleConnect,
       isAuthenticated,

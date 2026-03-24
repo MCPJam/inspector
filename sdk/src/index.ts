@@ -77,10 +77,18 @@ export {
   isAuthError,
   isMCPAuthError,
 } from "./mcp-client-manager/index.js";
+export { EvalReportingError, SdkError } from "./errors.js";
+
+// EvalAgent interface (for deterministic testing without concrete TestAgent)
+export type { EvalAgent, PromptOptions } from "./EvalAgent.js";
+
+// AI SDK stop condition helpers re-exported for TestAgent.prompt()
+export { hasToolCall, stepCountIs } from "ai";
+export type { StopCondition } from "ai";
 
 // TestAgent
 export { TestAgent } from "./TestAgent.js";
-export type { TestAgentConfig, PromptOptions } from "./TestAgent.js";
+export type { TestAgentConfig } from "./TestAgent.js";
 
 // PromptResult class (preferred over TestAgent's interface)
 export { PromptResult } from "./PromptResult.js";
@@ -116,6 +124,40 @@ export type {
   TestResult,
 } from "./EvalSuite.js";
 
+// Eval reporting APIs (DX-first ingestion)
+export {
+  reportEvalResults,
+  reportEvalResultsSafely,
+} from "./report-eval-results.js";
+export { createEvalRunReporter } from "./eval-run-reporter.js";
+export type {
+  CreateEvalRunReporterInput,
+  EvalRunReporter,
+} from "./eval-run-reporter.js";
+export { uploadEvalArtifact } from "./upload-eval-artifact.js";
+export type {
+  UploadEvalArtifactInput,
+  EvalArtifactFormat,
+} from "./upload-eval-artifact.js";
+export type {
+  EvalExpectedToolCall,
+  EvalCiMetadata,
+  EvalTraceInput,
+  EvalWidgetCsp,
+  EvalWidgetPermissions,
+  EvalWidgetSnapshotInput,
+  EvalResultInput,
+  MCPJamReportingConfig,
+  ReportEvalResultsInput,
+  ReportEvalResultsOutput,
+} from "./eval-reporting-types.js";
+
+// Eval result mapping utilities
+export type {
+  RunToEvalResultsOptions,
+  SuiteRunToEvalResultsOptions,
+} from "./eval-result-mapping.js";
+
 // Core SDK types
 export type {
   LLMProvider,
@@ -147,3 +189,9 @@ export type {
   ParsedLLMString,
   ProviderLanguageModel,
 } from "./model-factory.js";
+
+// Widget helpers (for injecting OpenAI compat runtime into MCP App HTML)
+export { injectOpenAICompat } from "./widget-helpers.js";
+
+// Skill reference (SKILL.md content for agent brief generation)
+export { SKILL_MD } from "./skill-reference.js";

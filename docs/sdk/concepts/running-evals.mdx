@@ -33,15 +33,16 @@ const test = new EvalTest({
   },
 });
 
-await test.run(agent, { iterations: 30 });
+const result = await test.run(agent, { iterations: 30 });
 
 console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 // "Accuracy: 96.7%"
+console.log(`${result.successes}/${result.iterations} passed`);
 ```
 
 ### Writing Test Functions
 
-Test functions receive a `TestAgent` and return `boolean`:
+Test functions receive an `EvalAgent` (implemented by `TestAgent` and mock agents) and return `boolean`:
 
 ```typescript
 // Simple: did the right tool get called?
@@ -73,6 +74,11 @@ await test.run(agent, {
   concurrency: 5,      // Parallel runs (careful with rate limits)
   retries: 2,          // Retry failures
   timeoutMs: 30000,    // Per-test timeout
+  mcpjam: {
+    // Auto-save is enabled when MCPJAM_API_KEY is available
+    suiteName: "SDK eval smoke",
+    strict: false, // warn by default; true to fail CI on upload errors
+  },
   onProgress: (done, total) => {
     console.log(`${done}/${total}`);
   },
@@ -123,8 +129,25 @@ suite.add(new EvalTest({
   },
 }));
 
-await suite.run(agent, { iterations: 30 });
+const result = await suite.run(agent, { iterations: 30 });
+console.log(`Overall: ${(result.aggregate.accuracy * 100).toFixed(1)}%`);
 ```
+
+## Save Results to MCPJam
+
+Both `EvalTest` and `EvalSuite` can automatically save results to MCPJam when a run completes. Set `MCPJAM_API_KEY` in your environment and results are saved automatically:
+
+```typescript
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: {
+    suiteName: "Addition Eval",
+    passCriteria: { minimumPassRate: 90 },
+  },
+});
+```
+
+For manual save APIs, CI metadata, and artifact uploads, see the [Save Results to MCPJam](/sdk/concepts/saving-results) guide.
 
 ### Suite Results
 
@@ -133,8 +156,8 @@ await suite.run(agent, { iterations: 30 });
 console.log(`Suite: ${(suite.accuracy() * 100).toFixed(1)}%`);
 
 // Per-test breakdown
-for (const test of suite.getTests()) {
-  console.log(`  ${test.name}: ${(test.accuracy() * 100).toFixed(1)}%`);
+for (const test of suite.getAll()) {
+  console.log(`  ${test.getName()}: ${(test.accuracy() * 100).toFixed(1)}%`);
 }
 
 // Get specific test
@@ -210,10 +233,16 @@ if (suite.accuracy() < 0.90) {
 }
 ```
 
+## Generate evals from the Inspector
+
+You can also generate eval code from the MCPJam Inspector. Click **⋮ → Copy markdown for server evals** on any server card, then paste it into an LLM. See the [Quickstart](/sdk/quickstart#generate-evals-from-the-inspector) for details.
+
+If you have a `MCPJAM_API_KEY`, the generated code will automatically save results to the **Evals** tab in the Inspector. Go to **Settings > Workspace API Key** to get your key.
+
 ## Next Steps
 
 <CardGroup cols={2}>
-  <Card title="Testing Across Providers" icon="microchip" href="/sdk/concepts/multi-provider">
+  <Card title="Testing Across Providers" icon="cpu" href="/sdk/concepts/multi-provider">
     Compare performance across LLMs
   </Card>
   <Card title="EvalTest Reference" icon="book" href="/sdk/reference/eval-test">
@@ -221,5 +250,8 @@ if (suite.accuracy() < 0.90) {
   </Card>
   <Card title="EvalSuite Reference" icon="book" href="/sdk/reference/eval-suite">
     Full EvalSuite API
+  </Card>
+  <Card title="Save Results to MCPJam" icon="cloud-upload" href="/sdk/concepts/saving-results">
+    Auto-save, manual APIs, CI metadata, and artifact upload
   </Card>
 </CardGroup>

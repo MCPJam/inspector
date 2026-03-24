@@ -82,6 +82,7 @@ describe("ActiveServerSelector", () => {
       enabled: true,
       retryCount: 0,
       useOAuth: false,
+      lastConnectionTime: new Date("2024-01-01"),
       config: {
         transportType: "stdio",
         command: "node",
@@ -476,11 +477,21 @@ describe("ActiveServerSelector", () => {
   });
 
   describe("auto-selection", () => {
-    it("auto-selects first server when current selection is invalid", async () => {
+    it("auto-selects most recently connected server when current selection is invalid", async () => {
       const onServerChange = vi.fn();
       const serverConfigs = {
-        "server-1": createServer({ name: "server-1" }),
-        "server-2": createServer({ name: "server-2" }),
+        "server-1": createServer({
+          name: "server-1",
+          lastConnectionTime: new Date("2024-01-01"),
+        }),
+        "server-2": createServer({
+          name: "server-2",
+          lastConnectionTime: new Date("2024-01-03"),
+        }),
+        "server-3": createServer({
+          name: "server-3",
+          lastConnectionTime: new Date("2024-01-02"),
+        }),
       };
 
       render(
@@ -493,7 +504,7 @@ describe("ActiveServerSelector", () => {
       );
 
       await waitFor(() => {
-        expect(onServerChange).toHaveBeenCalledWith("server-1");
+        expect(onServerChange).toHaveBeenCalledWith("server-2");
       });
     });
 

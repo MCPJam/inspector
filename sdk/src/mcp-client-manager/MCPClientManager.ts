@@ -60,9 +60,12 @@ import { isMethodUnavailableError, formatError } from "./error-utils.js";
 import { MCPAuthError, isAuthError } from "./errors.js";
 import {
   buildRequestInit,
+  normalizeHeaders,
+  getExistingAuthorization,
   wrapTransportForLogging,
   createDefaultRpcLogger,
 } from "./transport-utils.js";
+import { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import {
   NotificationManager,
   applyProgressHandler,
@@ -419,6 +422,22 @@ export class MCPClientManager {
   getAllToolsMetadata(serverId: string): Record<string, Record<string, any>> {
     const metadataMap = this.toolsMetadataCache.get(serverId);
     return metadataMap ? Object.fromEntries(metadataMap) : {};
+  }
+
+  /**
+   * Gets cached metadata for a specific tool.
+   * Metadata is populated when tools are listed via listTools()/getTools()/getToolsForAiSdk().
+   */
+  getToolMetadata(
+    serverId: string,
+    toolName: string
+  ): Record<string, unknown> | undefined {
+    const metadataMap = this.toolsMetadataCache.get(serverId);
+    const metadata = metadataMap?.get(toolName);
+    if (!metadata || typeof metadata !== "object") {
+      return undefined;
+    }
+    return { ...(metadata as Record<string, unknown>) };
   }
 
   /**
@@ -1044,8 +1063,55 @@ export class MCPClientManager {
     timeout: number
   ): Promise<Transport> {
     const url = new URL(config.url);
+
+    let effectiveAuthProvider = config.authProvider;
+    let effectiveAccessToken = config.accessToken;
+
+    if (config.refreshToken) {
+      const trimmedRefresh = config.refreshToken.trim();
+      const trimmedClientId = config.clientId?.trim();
+      const trimmedClientSecret = config.clientSecret?.trim() || undefined;
+      const trimmedAccessToken = config.accessToken?.trim();
+
+      if (!trimmedRefresh) {
+        throw new Error(
+          `Server "${serverId}": "refreshToken" must not be empty.`
+        );
+      }
+      if (trimmedAccessToken) {
+        throw new Error(
+          `Server "${serverId}": "refreshToken" and "accessToken" are mutually exclusive.`
+        );
+      }
+      if (config.authProvider) {
+        throw new Error(
+          `Server "${serverId}": "refreshToken" and "authProvider" are mutually exclusive.`
+        );
+      }
+      if (!trimmedClientId) {
+        throw new Error(
+          `Server "${serverId}": "clientId" is required when "refreshToken" is set.`
+        );
+      }
+      if (config.requestInit?.headers) {
+        const normalized = normalizeHeaders(config.requestInit.headers);
+        if (getExistingAuthorization(normalized)) {
+          throw new Error(
+            `Server "${serverId}": "requestInit.headers.Authorization" must not be set when "refreshToken" is used.`
+          );
+        }
+      }
+
+      effectiveAuthProvider = new RefreshTokenOAuthProvider(
+        trimmedClientId,
+        trimmedRefresh,
+        trimmedClientSecret
+      );
+      effectiveAccessToken = undefined;
+    }
+
     const requestInit = buildRequestInit(
-      config.accessToken,
+      effectiveAccessToken,
       config.requestInit
     );
     const preferSSE = config.preferSSE ?? url.pathname.endsWith("/sse");
@@ -1055,7 +1121,7 @@ export class MCPClientManager {
       const streamableTransport = new StreamableHTTPClientTransport(url, {
         requestInit,
         reconnectionOptions: config.reconnectionOptions,
-        authProvider: config.authProvider,
+        authProvider: effectiveAuthProvider,
         sessionId: config.sessionId,
       });
 
@@ -1077,7 +1143,7 @@ export class MCPClientManager {
     const sseTransport = new SSEClientTransport(url, {
       requestInit,
       eventSourceInit: config.eventSourceInit,
-      authProvider: config.authProvider,
+      authProvider: effectiveAuthProvider,
     });
 
     try {
@@ -1195,7 +1261,12 @@ export class MCPClientManager {
     if (!capabilities.elicitation) {
       capabilities.elicitation = {};
     }
-    // Add extensions here
+    // Advertise MCP Apps UI support (ext-apps spec)
+    (capabilities as Record<string, unknown>).extensions = {
+      "io.modelcontextprotocol/ui": {
+        mimeTypes: ["text/html;profile=mcp-app"],
+      },
+    };
     return capabilities;
   }
 

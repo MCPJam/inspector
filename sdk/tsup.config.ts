@@ -1,7 +1,8 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts"],
+  entry: ["src/index.ts", "src/skill-reference.ts"],
+  external: ["@sentry/node"],
   format: ["cjs", "esm"],
   dts: true,
   splitting: false,
@@ -9,4 +10,5 @@ export default defineConfig({
   clean: true,
   treeshake: true,
   minify: false,
+  loader: { '.md': 'text' },
 });

@@ -7,11 +7,60 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
+import type { ModelProvider } from "@/shared/types";
+import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler";
+import { persistChatSessionToConvex } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration";
+
+function formatStreamError(error: unknown, provider?: ModelProvider): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  // Duck-type statusCode/responseBody — APICallError.isInstance() can fail
+  // when multiple copies of @ai-sdk/provider are bundled (symbol mismatch).
+  const statusCode = (error as any).statusCode as number | undefined;
+  const responseBody = (error as any).responseBody as string | undefined;
+
+  // 401 is the standard "unauthorized" HTTP status — always means bad/missing key.
+  const isAuthStatus = statusCode === 401;
+
+  // Some providers (Google, xAI) return 400 instead of 401 for invalid keys.
+  // We check the response body for phrases that unambiguously indicate an auth error.
+  const lowerBody = responseBody?.toLowerCase() ?? "";
+  const isAuthBody =
+    lowerBody.includes("incorrect api key") ||
+    lowerBody.includes("invalid api key") ||
+    lowerBody.includes("api key not valid") ||
+    lowerBody.includes("api_key_invalid") ||
+    lowerBody.includes("authentication_error") ||
+    lowerBody.includes("authentication fails") ||
+    lowerBody.includes("invalid x-api-key");
+
+  if (isAuthStatus || isAuthBody) {
+    const providerName = provider || "your AI provider";
+
+    return JSON.stringify({
+      code: "auth_error",
+      message: `Invalid API key for ${providerName}. Please check your key under LLM Providers in Settings.`,
+      statusCode,
+    });
+  }
+
+  // For non-auth API errors, include the response body as details
+  if (responseBody && typeof responseBody === "string") {
+    return JSON.stringify({
+      message: error.message,
+      details: responseBody,
+    });
+  }
+
+  return error.message;
+}
 
 const chatV2 = new Hono();
 
@@ -77,18 +126,64 @@ chatV2.post("/", async (c) => {
         );
       }
 
+      // Resolve auth header: use client-provided token (WorkOS) if present,
+      // otherwise fetch a production guest token for guest-allowed models.
+      let authHeader = c.req.header("authorization");
+
+      if (!authHeader) {
+        if (!isGuestAllowedModel(String(modelDefinition.id))) {
+          return c.json(
+            {
+              error:
+                "Sign in to use this model. Guest users can use: claude-haiku-4.5, gpt-5-mini, gemini-2.5-flash.",
+            },
+            403,
+          );
+        }
+
+        try {
+          authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
+        } catch {
+          authHeader = undefined;
+        }
+        if (!authHeader) {
+          return c.json(
+            {
+              error:
+                "Unable to authenticate with MCPJam servers. Please try again or sign in.",
+            },
+            503,
+          );
+        }
+      }
+
       const modelMessages = await convertToModelMessages(messages);
+      const sessionStartedAt = Date.now();
 
       return handleMCPJamFreeChatModel({
-        messages: scrubMessages(modelMessages as ModelMessage[]),
+        messages: modelMessages as ModelMessage[],
         modelId: String(modelDefinition.id),
         systemPrompt: enhancedSystemPrompt,
         temperature: resolvedTemperature,
         tools: allTools as ToolSet,
-        authHeader: c.req.header("authorization"),
+        authHeader,
         mcpClientManager,
         selectedServers,
         requireToolApproval,
+        onConversationComplete: body.chatSessionId
+          ? async (fullHistory) => {
+              await persistChatSessionToConvex({
+                chatSessionId: body.chatSessionId,
+                modelId: String(modelDefinition.id),
+                modelSource: "mcpjam",
+                sourceType: "direct",
+                authHeader,
+                sessionMessages: fullHistory,
+                startedAt: sessionStartedAt,
+                lastActivityAt: Date.now(),
+              });
+            }
+          : undefined,
       });
     }
 
@@ -105,6 +200,9 @@ chatV2.post("/", async (c) => {
 
     const modelMessages = await convertToModelMessages(messages);
 
+    const streamStartedAt = Date.now();
+    const authHeader = c.req.header("authorization");
+
     const result = streamText({
       model: llmModel,
       messages: scrubMessages(modelMessages as ModelMessage[]),
@@ -114,6 +212,41 @@ chatV2.post("/", async (c) => {
       system: enhancedSystemPrompt,
       tools: allTools as ToolSet,
       stopWhen: stepCountIs(20),
+      onFinish: (event) => {
+        try {
+          const allToolCalls = event.steps.flatMap((s) => s.toolCalls ?? []);
+          const allToolResults = event.steps.flatMap(
+            (s) => s.toolResults ?? [],
+          );
+          const responseMessages = event.steps.flatMap((step: any) =>
+            Array.isArray(step?.response?.messages)
+              ? step.response.messages
+              : [],
+          );
+          persistChatSessionToConvex({
+            chatSessionId: body.chatSessionId,
+            modelId: String(modelDefinition.id),
+            modelSource: "byok",
+            sourceType: "direct",
+            messages: modelMessages as ModelMessage[],
+            systemPrompt: enhancedSystemPrompt,
+            ...(responseMessages.length > 0 ? { responseMessages } : {}),
+            assistantText: event.text,
+            toolCalls: allToolCalls,
+            toolResults: allToolResults,
+            usage: {
+              inputTokens: event.totalUsage.inputTokens,
+              outputTokens: event.totalUsage.outputTokens,
+            },
+            finishReason: event.finishReason,
+            authHeader,
+            startedAt: streamStartedAt,
+            lastActivityAt: Date.now(),
+          });
+        } catch (error) {
+          logger.warn("[mcp/chat-v2] onFinish ingestion error", error);
+        }
+      },
     });
 
     return result.toUIMessageStreamResponse({
@@ -128,17 +261,7 @@ chatV2.post("/", async (c) => {
       },
       onError: (error) => {
         logger.error("[mcp/chat-v2] stream error", error);
-        if (error instanceof Error) {
-          const responseBody = (error as any).responseBody;
-          if (responseBody && typeof responseBody === "string") {
-            return JSON.stringify({
-              message: error.message,
-              details: responseBody,
-            });
-          }
-          return error.message;
-        }
-        return String(error);
+        return formatStreamError(error, modelDefinition.provider);
       },
     });
   } catch (error) {

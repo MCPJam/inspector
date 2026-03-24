@@ -1,6 +1,5 @@
 import { useMemo, useState, useCallback, useEffect, useRef } from "react";
 import { useConvexAuth } from "convex/react";
-import { useAuth } from "@workos-inc/authkit-react";
 import { usePostHog } from "posthog-js/react";
 import { Layers } from "lucide-react";
 import { toast } from "sonner";
@@ -30,11 +29,10 @@ import { PlaygroundMain } from "./ui-playground/PlaygroundMain";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import { buildPersistedExecutionReplay } from "@/components/chat-v2/thread/persisted-execution-replay";
 
 interface ViewsTabProps {
   selectedServer?: string;
-  onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 interface EditSignatures {
@@ -51,13 +49,8 @@ function safeSerializeForCompare(value: unknown): string {
   }
 }
 
-export function ViewsTab({
-  selectedServer,
-  onWorkspaceShared,
-  onLeaveWorkspace,
-}: ViewsTabProps) {
+export function ViewsTab({ selectedServer }: ViewsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
-  const { user } = useAuth();
   const posthog = usePostHog();
   const appState = useSharedAppState();
 
@@ -381,38 +374,51 @@ export function ViewsTab({
     if (lastInjectedViewSignature.current === signature) return;
     lastInjectedViewSignature.current = signature;
 
-    setPendingExecution({
+    const replay = buildPersistedExecutionReplay({
+      protocol: selectedView.protocol,
+      toolCallId: `view-preview-${selectedView._id}`,
       toolName: selectedView.toolName,
-      params: (liveToolInput ?? selectedView.toolInput ?? {}) as Record<
+      toolInput: (liveToolInput ?? selectedView.toolInput ?? {}) as Record<
         string,
         unknown
       >,
-      result: liveToolOutput,
-      toolMeta:
-        (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
-        undefined,
-      state:
+      toolOutput: liveToolOutput,
+      toolState:
         selectedView.toolState === "output-error"
           ? "output-error"
           : "output-available",
-      errorText: selectedView.toolErrorText,
-      renderOverride: {
-        serverId: serverNameForView || selectedView.serverId,
-        isOffline: getServerConnectionStatus(serverNameForView) !== "connected",
-        cachedWidgetHtmlUrl: selectedView.widgetHtmlUrl ?? undefined,
-        initialWidgetState:
-          selectedView.protocol === "openai-apps"
-            ? (liveWidgetState ?? selectedView.widgetState)
-            : undefined,
-        resourceUri:
-          selectedView.protocol === "mcp-apps"
-            ? selectedView.resourceUri
-            : undefined,
-        toolMetadata:
-          (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
-          undefined,
-      },
-      toolCallId: `view-preview-${selectedView._id}`,
+      toolErrorText: selectedView.toolErrorText,
+      toolMetadata:
+        (selectedView.toolMetadata as Record<string, unknown> | undefined) ??
+        undefined,
+      serverId: serverNameForView || selectedView.serverId,
+      isOffline: getServerConnectionStatus(serverNameForView) !== "connected",
+      cachedWidgetHtmlUrl: selectedView.widgetHtmlUrl ?? undefined,
+      resourceUri:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.resourceUri
+          : undefined,
+      initialWidgetState:
+        selectedView.protocol === "openai-apps"
+          ? (liveWidgetState ?? selectedView.widgetState)
+          : undefined,
+      widgetCsp:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.widgetCsp
+          : undefined,
+      widgetPermissions:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.widgetPermissions
+          : undefined,
+      widgetPermissive:
+        selectedView.protocol === "mcp-apps"
+          ? selectedView.widgetPermissive
+          : undefined,
+      prefersBorder: selectedView.prefersBorder,
+    });
+
+    setPendingExecution({
+      ...replay,
       replaceExisting: true,
     });
   }, [
@@ -1058,13 +1064,6 @@ export function ViewsTab({
               deletingViewId={deletingViewId}
               duplicatingViewId={duplicatingViewId}
               isLoading={isViewsLoading}
-              workspaceName={activeWorkspace?.name || "Workspace"}
-              workspaceServers={activeWorkspace?.servers || {}}
-              sharedWorkspaceId={activeWorkspace?.sharedWorkspaceId}
-              currentUser={user}
-              isAuthenticated={isAuthenticated}
-              onWorkspaceShared={onWorkspaceShared}
-              onLeaveWorkspace={onLeaveWorkspace}
             />
           )}
         </ResizablePanel>

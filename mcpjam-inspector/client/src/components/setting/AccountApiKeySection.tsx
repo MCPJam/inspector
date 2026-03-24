@@ -27,7 +27,6 @@ import {
 } from "@/components/ui/tooltip";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { format, formatDistanceToNow } from "date-fns";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
@@ -78,7 +77,15 @@ function ApiKeyCopyField({
   );
 }
 
-export function AccountApiKeySection() {
+type AccountApiKeySectionProps = {
+  workspaceId: string | null;
+  workspaceName: string | null;
+};
+
+export function AccountApiKeySection({
+  workspaceId,
+  workspaceName,
+}: AccountApiKeySectionProps) {
   const [apiKeyPlaintext, setApiKeyPlaintext] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
@@ -89,9 +96,13 @@ export function AccountApiKeySection() {
   const { signIn } = useAuth();
   const posthog = usePostHog();
 
-  const maybeApiKey = useQuery("apiKeys:list" as any) as
+  const maybeApiKey = useQuery(
+    "apiKeys:list" as any,
+    workspaceId ? ({ workspaceId } as any) : "skip",
+  ) as
     | {
         _id: string;
+        workspaceId?: string;
         name: string;
         prefix: string;
         createdAt: number;
@@ -102,10 +113,11 @@ export function AccountApiKeySection() {
 
   const regenerateAndGet = useMutation(
     "apiKeys:regenerateAndGet" as any,
-  ) as unknown as () => Promise<{
+  ) as unknown as (args: { workspaceId?: string }) => Promise<{
     apiKey: string;
     key: {
       _id: string;
+      workspaceId?: string;
       prefix: string;
       name: string;
       createdAt: number;
@@ -128,11 +140,11 @@ export function AccountApiKeySection() {
   };
 
   const handleGenerate = async () => {
-    if (!isAuthenticated) return false;
+    if (!isAuthenticated || !workspaceId) return false;
     try {
       setIsGenerating(true);
       setIsCopied(false);
-      const result = await regenerateAndGet();
+      const result = await regenerateAndGet({ workspaceId });
       setApiKeyPlaintext(result.apiKey);
       setIsApiKeyModalOpen(true);
       return true;
@@ -146,21 +158,17 @@ export function AccountApiKeySection() {
 
   if (isAuthLoading) {
     return (
-      <div className="rounded-md border p-3 text-sm text-muted-foreground">
-        Checking authentication…
+      <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
+        <span className="text-sm text-muted-foreground">Workspace API Key</span>
+        <span className="text-sm text-muted-foreground">Checking…</span>
       </div>
     );
   }
 
   if (!isAuthenticated) {
     return (
-      <div className="space-y-3 rounded-md border p-4">
-        <div className="flex items-center gap-2">
-          <h3 className="text-lg font-semibold">MCPJam API Key</h3>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          Sign in to view and manage your API key.
-        </p>
+      <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
+        <span className="text-sm text-muted-foreground">Workspace API Key</span>
         <Button
           type="button"
           onClick={() => {
@@ -179,130 +187,118 @@ export function AccountApiKeySection() {
     );
   }
 
-  const existingKey =
-    maybeApiKey && maybeApiKey.length > 0 ? maybeApiKey[0] : null;
+  if (!workspaceId) {
+    return (
+      <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
+        <span className="text-sm text-muted-foreground">
+          Select a workspace to manage API keys.
+        </span>
+      </div>
+    );
+  }
 
-  const describeTimestamp = (
-    timestamp: number | null,
-    emptyLabel = "Never",
-  ) => {
-    if (!timestamp) return emptyLabel;
-    const date = new Date(timestamp);
-    const relative = formatDistanceToNow(date, { addSuffix: true });
-    return `${format(date, "PP p")} · ${relative}`;
-  };
+  const activeKeys = maybeApiKey?.filter((k) => !k.revokedAt);
+  const existingKey =
+    activeKeys && activeKeys.length > 0 ? activeKeys[0] : null;
+
+  const rightSide = (() => {
+    if (maybeApiKey === undefined) {
+      return <span className="text-sm text-muted-foreground">Loading…</span>;
+    }
+    if ((activeKeys?.length ?? 0) === 0 && !apiKeyPlaintext) {
+      return (
+        <Button
+          type="button"
+          onClick={() => {
+            void handleGenerate();
+          }}
+          disabled={isGenerating}
+          size="sm"
+        >
+          {isGenerating ? "Generating…" : "Generate API key"}
+        </Button>
+      );
+    }
+    return (
+      <div className="flex items-center gap-3">
+        {existingKey && (
+          <span className="font-mono text-xs text-muted-foreground">
+            mcpjam_{existingKey.prefix}_{"••••••••"}
+          </span>
+        )}
+        <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
+          <AlertDialogTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isGenerating}
+              size="sm"
+              className="gap-1.5"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${isGenerating ? "animate-spin" : ""}`}
+              />
+              {isGenerating ? "Regenerating…" : "Regenerate"}
+            </Button>
+          </AlertDialogTrigger>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="text-lg font-semibold">
+                Regenerate Workspace API Key?
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-sm text-muted-foreground leading-relaxed">
+                This will immediately invalidate your current API key. Any
+                integrations or services using the existing key will stop
+                working. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter className="gap-3">
+              <AlertDialogCancel
+                disabled={isGenerating}
+                className="font-medium"
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async (event) => {
+                  event.preventDefault();
+                  const success = await handleGenerate();
+                  if (success) {
+                    setIsConfirmOpen(false);
+                  }
+                }}
+                disabled={isGenerating}
+                className="font-medium"
+              >
+                {isGenerating ? "Regenerating…" : "Regenerate"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </div>
+    );
+  })();
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-2">
-        <h3 className="text-lg font-semibold">MCPJam API Key</h3>
+    <>
+      <div className="flex items-center justify-between px-4 py-3 rounded-md border border-border/40">
+        <div className="flex flex-col">
+          <span className="text-sm text-muted-foreground">
+            Workspace API Key
+            {workspaceName ? ` · ${workspaceName}` : ""}
+          </span>
+          <span className="text-muted-foreground text-xs">
+            Shared with all workspace members.
+          </span>
+        </div>
+        <span className="text-sm">{rightSide}</span>
       </div>
-      {maybeApiKey === undefined ? (
-        <p className="text-sm text-muted-foreground">Loading API key status…</p>
-      ) : apiKeyPlaintext ? (
-        <div className="space-y-4">
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            Copy and save this key now. You won't be able to view it again
-            later.
-          </p>
-          <ApiKeyCopyField
-            value={apiKeyPlaintext}
-            isCopied={isCopied}
-            onCopy={handleCopyPlaintext}
-            copyLabel="Copy key"
-          />
-        </div>
-      ) : (maybeApiKey?.length ?? 0) === 0 ? (
-        <div className="space-y-4">
-          <Button
-            type="button"
-            onClick={() => {
-              void handleGenerate();
-            }}
-            disabled={isGenerating}
-          >
-            {isGenerating ? "Generating…" : "Generate API key"}
-          </Button>
-        </div>
-      ) : (
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <AlertDialog open={isConfirmOpen} onOpenChange={setIsConfirmOpen}>
-              <AlertDialogTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  disabled={isGenerating}
-                  className="inline-flex items-center gap-2.5 rounded-lg border border-border/50 bg-background px-4 py-2.5 text-sm font-medium text-foreground/80 hover:border-border hover:bg-background/80 hover:text-foreground transition-all duration-200"
-                >
-                  <RefreshCw
-                    className={`h-4 w-4 ${isGenerating ? "animate-spin" : ""} text-foreground/60`}
-                  />
-                  <span>{isGenerating ? "Regenerating…" : "Regenerate"}</span>
-                </Button>
-              </AlertDialogTrigger>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle className="text-lg font-semibold">
-                    Confirm
-                  </AlertDialogTitle>
-                  <AlertDialogDescription className="text-sm text-muted-foreground leading-relaxed">
-                    Regenerating an API key will replace your previous API key.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter className="gap-3">
-                  <AlertDialogCancel
-                    disabled={isGenerating}
-                    className="font-medium"
-                  >
-                    Cancel
-                  </AlertDialogCancel>
-                  <AlertDialogAction
-                    onClick={async (event) => {
-                      event.preventDefault();
-                      const success = await handleGenerate();
-                      if (success) {
-                        setIsConfirmOpen(false);
-                      }
-                    }}
-                    disabled={isGenerating}
-                    className="font-medium"
-                  >
-                    {isGenerating ? "Regenerating…" : "Regenerate"}
-                  </AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </div>
-          {existingKey ? (
-            <div className="rounded-lg border border-border/30 bg-background/50 p-4">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium text-foreground/50 uppercase tracking-wide">
-                    Created
-                  </span>
-                  <span className="text-xs text-foreground/70">
-                    {describeTimestamp(existingKey.createdAt)}
-                  </span>
-                </div>
-                <div className="flex flex-col gap-0.5">
-                  <span className="text-xs font-medium text-foreground/50 uppercase tracking-wide">
-                    Last Used
-                  </span>
-                  <span className="text-xs text-foreground/70">
-                    {describeTimestamp(existingKey.lastUsedAt, "Never used")}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      )}
       <Dialog
         open={Boolean(apiKeyPlaintext) && isApiKeyModalOpen}
         onOpenChange={(open) => {
           if (!open) {
             setIsCopied(false);
+            setApiKeyPlaintext(null);
           }
           setIsApiKeyModalOpen(open);
         }}
@@ -311,8 +307,9 @@ export function AccountApiKeySection() {
           <DialogHeader>
             <DialogTitle>API Key</DialogTitle>
             <DialogDescription>
-              Copy and store this key securely. You will not be able to view it
-              again.
+              {workspaceName
+                ? `This key belongs to ${workspaceName}. Copy and store it securely. You will not be able to view it again.`
+                : "Copy and store this key securely. You will not be able to view it again."}
             </DialogDescription>
           </DialogHeader>
           <ApiKeyCopyField
@@ -323,6 +320,6 @@ export function AccountApiKeySection() {
           />
         </DialogContent>
       </Dialog>
-    </div>
+    </>
   );
 }

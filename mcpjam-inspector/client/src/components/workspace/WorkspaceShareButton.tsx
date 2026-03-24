@@ -11,21 +11,26 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { WorkspaceVisibility } from "@/state/app-types";
 
 interface WorkspaceShareButtonProps {
   workspaceName: string;
   workspaceServers: Record<string, any>;
   sharedWorkspaceId?: string | null;
+  organizationId?: string;
+  visibility?: WorkspaceVisibility;
+  organizationName?: string;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
-  onLeaveWorkspace?: () => void;
 }
 
 export function WorkspaceShareButton({
   workspaceName,
   workspaceServers,
   sharedWorkspaceId,
+  organizationId,
+  visibility,
+  organizationName,
   onWorkspaceShared,
-  onLeaveWorkspace,
 }: WorkspaceShareButtonProps) {
   const { user } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -69,9 +74,11 @@ export function WorkspaceShareButton({
           workspaceName={workspaceName}
           workspaceServers={workspaceServers}
           sharedWorkspaceId={sharedWorkspaceId}
+          organizationId={organizationId}
+          visibility={visibility}
+          organizationName={organizationName}
           currentUser={user}
           onWorkspaceShared={onWorkspaceShared}
-          onLeaveWorkspace={onLeaveWorkspace}
         />
       )}
     </>

@@ -4,6 +4,22 @@ import { buildHostedServerRequest } from "./context";
 export interface HostedServerValidateResponse {
   success: boolean;
   status?: string;
+  initInfo?: Record<string, unknown> | null;
+}
+
+export interface HostedServerOAuthRequirementResponse {
+  useOAuth: boolean;
+  serverUrl: string | null;
+}
+
+export async function checkHostedServerOAuthRequirement(
+  serverNameOrId: string,
+): Promise<HostedServerOAuthRequirementResponse> {
+  const request = buildHostedServerRequest(serverNameOrId);
+  return webPost<typeof request, HostedServerOAuthRequirementResponse>(
+    "/api/web/servers/check-oauth",
+    request,
+  );
 }
 
 export async function validateHostedServer(

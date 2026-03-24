@@ -14,6 +14,7 @@ import { ElicitationDialog } from "@/components/ElicitationDialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
+import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { usePostHog } from "posthog-js/react";
@@ -42,6 +43,7 @@ import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -52,7 +54,14 @@ interface ChatTabProps {
   hostedSelectedServerIdsOverride?: string[];
   hostedOAuthTokensOverride?: Record<string, string>;
   hostedShareToken?: string;
-  onOAuthRequired?: (serverUrl?: string) => void;
+  hostedSandboxToken?: string;
+  hostedSandboxSurface?: "preview" | "share_link";
+  initialModelId?: string;
+  initialSystemPrompt?: string;
+  initialTemperature?: number;
+  initialRequireToolApproval?: boolean;
+  reasoningDisplayMode?: ReasoningDisplayMode;
+  onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
 }
 
 function ScrollToBottomButton() {
@@ -82,6 +91,13 @@ export function ChatTabV2({
   hostedSelectedServerIdsOverride,
   hostedOAuthTokensOverride,
   hostedShareToken,
+  hostedSandboxToken,
+  hostedSandboxSurface,
+  initialModelId,
+  initialSystemPrompt,
+  initialTemperature,
+  initialRequireToolApproval,
+  reasoningDisplayMode = "inline",
   onOAuthRequired,
 }: ChatTabProps) {
   const { signUp } = useAuth();
@@ -195,6 +211,12 @@ export function ChatTabV2({
     hostedSelectedServerIds: effectiveHostedSelectedServerIds,
     hostedOAuthTokens: effectiveHostedOAuthTokens,
     hostedShareToken,
+    hostedSandboxToken,
+    hostedSandboxSurface,
+    initialModelId,
+    initialSystemPrompt,
+    initialTemperature,
+    initialRequireToolApproval,
     minimalMode,
     onReset: () => {
       setInput("");
@@ -445,7 +467,20 @@ export function ChatTabV2({
     try {
       const parsed = JSON.parse(msg);
       if (parsed?.details?.oauthRequired) {
-        onOAuthRequired(parsed.details.serverUrl);
+        onOAuthRequired({
+          serverUrl:
+            typeof parsed.details.serverUrl === "string"
+              ? parsed.details.serverUrl
+              : null,
+          serverId:
+            typeof parsed.details.serverId === "string"
+              ? parsed.details.serverId
+              : null,
+          serverName:
+            typeof parsed.details.serverName === "string"
+              ? parsed.details.serverName
+              : null,
+        });
         return;
       }
     } catch {
@@ -592,8 +627,8 @@ export function ChatTabV2({
     onChangeFileAttachments: setFileAttachments,
     skillResults,
     onChangeSkillResults: setSkillResults,
-    xrayMode: HOSTED_MODE || minimalMode ? false : xrayMode,
-    onXrayModeChange: HOSTED_MODE || minimalMode ? undefined : setXrayMode,
+    xrayMode,
+    onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
     minimalMode,
@@ -677,6 +712,7 @@ export function ChatTabV2({
                       fullscreenChatDisabled={inputDisabled}
                       onToolApprovalResponse={addToolApprovalResponse}
                       minimalMode={minimalMode}
+                      reasoningDisplayMode={reasoningDisplayMode}
                     />
                   </StickToBottom.Content>
                   <ScrollToBottomButton />

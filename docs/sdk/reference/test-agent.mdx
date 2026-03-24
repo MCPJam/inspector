@@ -4,7 +4,7 @@ description: "API reference for TestAgent"
 icon: "book"
 ---
 
-The `TestAgent` class wraps LLM providers via the Vercel AI SDK, enabling you to run prompts with MCP tools. It handles the agentic loop and returns rich result objects.
+The `TestAgent` class runs prompts with MCP tools enabled. It handles the multi-step prompt loop and returns rich result objects.
 
 ## Import
 
@@ -26,15 +26,15 @@ new TestAgent(options: TestAgentOptions)
 
 ### TestAgentOptions
 
-| Property | Type | Required | Default | Description |
-|----------|------|----------|---------|-------------|
-| `tools` | `Record<string, Tool>` | Yes | - | MCP tools from `manager.getTools()` |
-| `model` | `string` | Yes | - | Model identifier in `provider/model` format |
-| `apiKey` | `string` | Yes | - | API key for the LLM provider |
-| `systemPrompt` | `string` | No | `undefined` | System prompt for the LLM |
-| `temperature` | `number` | No | `undefined` | Sampling temperature (0-2). If undefined, uses model default. |
-| `maxSteps` | `number` | No | `10` | Maximum agentic loop iterations |
-| `customProviders` | `Record<string, CustomProvider>` | No | `undefined` | Custom LLM provider definitions |
+| Property          | Type                             | Required | Default     | Description                                                   |
+| ----------------- | -------------------------------- | -------- | ----------- | ------------------------------------------------------------- |
+| `tools`           | `Record<string, Tool>`           | Yes      | -           | MCP tools from `manager.getTools()`                           |
+| `model`           | `string`                         | Yes      | -           | Model identifier in `provider/model` format                   |
+| `apiKey`          | `string`                         | Yes      | -           | API key for the LLM provider                                  |
+| `systemPrompt`    | `string`                         | No       | `undefined` | System prompt for the LLM                                     |
+| `temperature`     | `number`                         | No       | `undefined` | Sampling temperature (0-2). If undefined, uses model default. |
+| `maxSteps`        | `number`                         | No       | `10`        | Maximum agentic loop iterations                               |
+| `customProviders` | `Record<string, CustomProvider>` | No       | `undefined` | Custom LLM provider definitions                               |
 
 ### Example
 
@@ -66,16 +66,21 @@ prompt(
 
 #### Parameters
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `message` | `string` | Yes | The user prompt |
-| `options` | `PromptOptions` | No | Additional options |
+| Parameter | Type            | Required | Description        |
+| --------- | --------------- | -------- | ------------------ |
+| `message` | `string`        | Yes      | The user prompt    |
+| `options` | `PromptOptions` | No       | Additional options |
 
 #### PromptOptions
 
-| Property | Type | Description |
-|----------|------|-------------|
-| `context` | `PromptResult \| PromptResult[]` | Previous result(s) for multi-turn conversations |
+| Property            | Type                                                                | Description                                                                                                                                                                           |
+| ------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `context`           | `PromptResult \| PromptResult[]`                                    | Previous result(s) for multi-turn conversations                                                                                                                                       |
+| `abortSignal`       | `AbortSignal`                                                       | Cancels the prompt runtime when aborted                                                                                                                                               |
+| `stopWhen`          | `StopCondition<ToolSet> \| Array<StopCondition<ToolSet>>`           | Additional conditions for the multi-step prompt loop. Tools still execute normally. `TestAgent` always applies `stepCountIs(maxSteps)` as a safety guard.                             |
+| `timeout`           | `number \| { totalMs?: number; stepMs?: number; chunkMs?: number }` | Bounds prompt runtime. `number` and `totalMs` cap the full prompt, `stepMs` caps each generation step, and `chunkMs` is accepted for parity but is mainly relevant to streaming APIs. |
+| `timeoutMs`         | `number`                                                            | Shortcut for a total prompt timeout in milliseconds                                                                                                                                   |
+| `stopAfterToolCall` | `string \| string[]`                                                | Short-circuits the named tool(s) with a stub result and stops after the step where they were called. Tool names and args are still captured in the `PromptResult`.                    |
 
 #### Returns
 
@@ -84,6 +89,8 @@ prompt(
 #### Example
 
 ```typescript
+import { hasToolCall } from "@mcpjam/sdk";
+
 // Simple prompt
 const result = await agent.prompt("Add 2 and 3");
 
@@ -93,11 +100,47 @@ const r2 = await agent.prompt("Mark it complete", { context: r1 });
 
 // Multiple context items
 const r3 = await agent.prompt("Show summary", { context: [r1, r2] });
+
+// Stop the loop after the step where a tool is called
+const r4 = await agent.prompt("Search for tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+console.log(r4.hasToolCall("search_tasks"));
+
+// Bound prompt runtime
+const r5 = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500 },
+});
+
+if (r5.hasError()) {
+  console.error(r5.getError());
+}
+
+// Exit early after selecting a tool, without waiting for the real MCP call
+const r6 = await agent.prompt("Search for tasks", {
+  stopAfterToolCall: "search_tasks",
+  timeoutMs: 5_000,
+});
+console.log(r6.getToolArguments("search_tasks"));
 ```
 
 <Note>
-`prompt()` never throws exceptions. Errors are captured in the `PromptResult`. Check `result.hasError()` to detect failures.
+  `prompt()` never throws exceptions. Errors are captured in the `PromptResult`.
+  Check `result.hasError()` to detect failures.
 </Note>
+
+<Note>
+  `stopAfterToolCall` is intended for evals that only care about tool selection
+  and arguments. If the model emits multiple tool calls in the same step,
+  non-target sibling tools may still execute before the loop stops.
+</Note>
+
+<Info>
+  `timeout` bounds prompt runtime. The runtime creates an internal abort signal,
+  so tools can stop early if their implementation respects the provided
+  `abortSignal`. If a tool ignores that signal, its underlying work may continue
+  briefly after the prompt returns an error result.
+</Info>
 
 ---
 
@@ -107,34 +150,34 @@ Models are specified as `provider/model`:
 
 ```typescript
 // Anthropic
-"anthropic/claude-sonnet-4-20250514"
-"anthropic/claude-3-haiku-20240307"
+"anthropic/claude-sonnet-4-20250514";
+"anthropic/claude-3-haiku-20240307";
 
 // OpenAI
-"openai/gpt-4o"
-"openai/gpt-4o-mini"
+"openai/gpt-4o";
+"openai/gpt-4o-mini";
 
 // Google
-"google/gemini-1.5-pro"
-"google/gemini-1.5-flash"
+"google/gemini-1.5-pro";
+"google/gemini-1.5-flash";
 
 // Azure
-"azure/gpt-4o"
+"azure/gpt-4o";
 
 // Mistral
-"mistral/mistral-large-latest"
+"mistral/mistral-large-latest";
 
 // DeepSeek
-"deepseek/deepseek-chat"
+"deepseek/deepseek-chat";
 
 // Ollama (local)
-"ollama/llama3"
+"ollama/llama3";
 
 // OpenRouter
-"openrouter/anthropic/claude-3-opus"
+"openrouter/anthropic/claude-3-opus";
 
 // xAI
-"xai/grok-beta"
+"xai/grok-beta";
 ```
 
 ---
@@ -145,14 +188,14 @@ Add custom OpenAI or Anthropic-compatible endpoints.
 
 ### CustomProvider Type
 
-| Property | Type | Required | Description |
-|----------|------|----------|-------------|
-| `name` | `string` | Yes | Provider identifier |
-| `protocol` | `"openai-compatible" \| "anthropic-compatible"` | Yes | API protocol |
-| `baseUrl` | `string` | Yes | API endpoint URL |
-| `modelIds` | `string[]` | Yes | Available model IDs |
-| `useChatCompletions` | `boolean` | No | Use `/chat/completions` endpoint |
-| `apiKeyEnvVar` | `string` | No | Custom env var for API key |
+| Property             | Type                                            | Required | Description                      |
+| -------------------- | ----------------------------------------------- | -------- | -------------------------------- |
+| `name`               | `string`                                        | Yes      | Provider identifier              |
+| `protocol`           | `"openai-compatible" \| "anthropic-compatible"` | Yes      | API protocol                     |
+| `baseUrl`            | `string`                                        | Yes      | API endpoint URL                 |
+| `modelIds`           | `string[]`                                      | Yes      | Available model IDs              |
+| `useChatCompletions` | `boolean`                                       | No       | Use `/chat/completions` endpoint |
+| `apiKeyEnvVar`       | `string`                                        | No       | Custom env var for API key       |
 
 ### Example
 
@@ -191,7 +234,7 @@ const agent = new TestAgent({ tools, ... });
 The LLM model identifier. Format: `provider/model-id`.
 
 ```typescript
-model: "anthropic/claude-sonnet-4-20250514"
+model: "anthropic/claude-sonnet-4-20250514";
 ```
 
 ### apiKey
@@ -199,7 +242,7 @@ model: "anthropic/claude-sonnet-4-20250514"
 The API key for the LLM provider.
 
 ```typescript
-apiKey: process.env.ANTHROPIC_API_KEY
+apiKey: process.env.ANTHROPIC_API_KEY;
 ```
 
 ### systemPrompt
@@ -207,7 +250,7 @@ apiKey: process.env.ANTHROPIC_API_KEY
 Optional system prompt to guide the LLM's behavior.
 
 ```typescript
-systemPrompt: "You are a task management assistant. Be concise."
+systemPrompt: "You are a task management assistant. Be concise.";
 ```
 
 ### temperature
@@ -215,8 +258,8 @@ systemPrompt: "You are a task management assistant. Be concise."
 Controls response randomness. Range: 0.0 (deterministic) to 1.0 (creative).
 
 ```typescript
-temperature: 0.1  // More deterministic, better for testing
-temperature: 0.9  // More creative
+temperature: 0.1; // More deterministic, better for testing
+temperature: 0.9; // More creative
 ```
 
 ### maxSteps
@@ -224,12 +267,63 @@ temperature: 0.9  // More creative
 Maximum iterations of the agentic loop (prompt → tool → result → continue).
 
 ```typescript
-maxSteps: 5  // Stop after 5 tool calls
+maxSteps: 5; // Stop after 5 tool calls
 ```
 
 <Warning>
-Setting `maxSteps` too low may prevent complex tasks from completing. Setting it too high may allow runaway loops.
+  Setting `maxSteps` too low may prevent complex tasks from completing. Setting
+  it too high may allow runaway loops.
 </Warning>
+
+---
+
+## Control Multi-Step Loops with stopWhen
+
+Use `stopWhen` to control whether the agent starts another step after the current step completes.
+
+```typescript
+import { hasToolCall } from "@mcpjam/sdk";
+
+// Stop after the step where "search_tasks" is called
+const result = await agent.prompt("Find my open tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+
+expect(result.hasToolCall("search_tasks")).toBe(true);
+
+// Stop after any of multiple conditions
+const result2 = await agent.prompt("Do something", {
+  stopWhen: [hasToolCall("tool_a"), hasToolCall("tool_b")],
+});
+```
+
+<Info>
+  `stopWhen` does not skip tool execution. It controls whether the prompt loop
+  continues after the current step completes, and `TestAgent` also applies
+  `stepCountIs(maxSteps)` as a safety guard.
+</Info>
+
+---
+
+## Bound Prompt Runtime with timeout
+
+Use `timeout` when you want to bound how long `TestAgent.prompt()` can run:
+
+```typescript
+const result = await agent.prompt("Run a long workflow", {
+  timeout: 10_000,
+});
+
+const result2 = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500, chunkMs: 1_000 },
+});
+```
+
+<Info>
+  `chunkMs` is accepted for parity, but it is mainly useful for streaming APIs.
+  For `TestAgent.prompt()`, `number`, `totalMs`, and `stepMs` are the main
+  settings to focus on.
+</Info>
 
 ---
 

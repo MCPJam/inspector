@@ -1,29 +1,54 @@
 /**
  * MCP OAuth Module Tests
  *
- * Tests for the OAuth fetch interceptor that proxies OAuth requests
- * through the backend to bypass CORS restrictions.
+ * Tests for the OAuth fetch interceptor and persisted discovery state.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Mock the session-token module
+const { mockSdkAuth } = vi.hoisted(() => ({
+  mockSdkAuth: vi.fn(),
+}));
+
+vi.mock("@modelcontextprotocol/sdk/client/auth.js", () => ({
+  auth: mockSdkAuth,
+}));
+
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-// Mock the helpers module
 vi.mock("../state-machines/shared/helpers", () => ({
   generateRandomString: vi.fn(() => "mock-random-string"),
 }));
 
-describe("OAuth fetch interceptor", () => {
+function createDiscoveryState(): any {
+  return {
+    authorizationServerUrl: "https://auth.example.com",
+    resourceMetadataUrl:
+      "https://example.com/.well-known/oauth-protected-resource",
+    resourceMetadata: {
+      resource: "https://example.com",
+      authorization_servers: ["https://auth.example.com"],
+    },
+    authorizationServerMetadata: {
+      issuer: "https://auth.example.com",
+      authorization_endpoint: "https://auth.example.com/authorize",
+      token_endpoint: "https://auth.example.com/token",
+      registration_endpoint: "https://auth.example.com/register",
+    },
+  };
+}
+
+describe("mcp-oauth", () => {
   let authFetch: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+    mockSdkAuth.mockReset();
 
-    // Get the mocked authFetch
     const sessionToken = await import("@/lib/session-token");
     authFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
     authFetch.mockReset();
@@ -31,11 +56,12 @@ describe("OAuth fetch interceptor", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
   });
 
   describe("proxy endpoint auth failures", () => {
     it("returns 401 response directly when auth fails on proxy endpoint", async () => {
-      // Simulate auth failure - middleware returns 401 with error body
       const authErrorResponse = new Response(
         JSON.stringify({
           error: "Unauthorized",
@@ -49,86 +75,212 @@ describe("OAuth fetch interceptor", () => {
         },
       );
       authFetch.mockResolvedValue(authErrorResponse);
+      mockSdkAuth.mockImplementation(async () => {
+        const response = await window.fetch(
+          "https://example.com/.well-known/oauth-protected-resource/mcp",
+        );
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return "AUTHORIZED";
+      });
 
-      // Import the module fresh to get the interceptor
       const { initiateOAuth } = await import("../mcp-oauth");
-
-      // Attempt OAuth flow - this will use the interceptor internally
       const result = await initiateOAuth({
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
       });
 
-      // Should fail with an error, not succeed with masked 200
       expect(result.success).toBe(false);
       expect(result.error).toBeDefined();
     });
 
     it("does not mask 401 as 200 with empty body", async () => {
-      // This tests the specific bug where:
-      // 1. authFetch returns 401 { error, message, hint }
-      // 2. Code tried to access data.body, data.status (undefined)
-      // 3. new Response(undefined, { status: undefined }) defaulted to 200
-
-      const authErrorBody = {
-        error: "Unauthorized",
-        message: "Session token required.",
-      };
-
-      const authErrorResponse = new Response(JSON.stringify(authErrorBody), {
-        status: 401,
-        statusText: "Unauthorized",
+      const authErrorResponse = new Response(
+        JSON.stringify({
+          error: "Unauthorized",
+          message: "Session token required.",
+        }),
+        {
+          status: 401,
+          statusText: "Unauthorized",
+        },
+      );
+      authFetch.mockResolvedValue(authErrorResponse);
+      mockSdkAuth.mockImplementation(async () => {
+        const response = await window.fetch(
+          "https://example.com/.well-known/oauth-protected-resource/mcp",
+        );
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        return "AUTHORIZED";
       });
 
-      // Reset modules first, then re-import to get fresh mock reference
-      vi.resetModules();
-      const sessionToken = await import("@/lib/session-token");
-      const freshAuthFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
-      freshAuthFetch.mockResolvedValue(authErrorResponse);
-
-      const mcpOauth = await import("../mcp-oauth");
-
-      const result = await mcpOauth.initiateOAuth({
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
       });
 
-      // The key assertion: auth failure should NOT result in success
       expect(result.success).toBe(false);
     });
 
     it("propagates successful proxy responses correctly", async () => {
-      // First call: metadata fetch succeeds
       const metadataResponse = new Response(
         JSON.stringify({
           authorization_servers: ["https://auth.example.com"],
         }),
         { status: 200 },
       );
+      authFetch.mockResolvedValue(metadataResponse);
+      mockSdkAuth.mockImplementation(async () => {
+        const response = await window.fetch(
+          "https://example.com/.well-known/oauth-protected-resource/mcp",
+        );
+        expect(response.ok).toBe(true);
+        return "REDIRECT";
+      });
 
-      // Reset modules first, then re-import to get fresh mock reference
-      vi.resetModules();
-      const sessionToken = await import("@/lib/session-token");
-      const freshAuthFetch = sessionToken.authFetch as ReturnType<typeof vi.fn>;
-      freshAuthFetch.mockResolvedValue(metadataResponse);
-
-      const mcpOauth = await import("../mcp-oauth");
-
-      // This will fail later in the OAuth flow (no real auth server),
-      // but the metadata fetch should succeed
-      const result = await mcpOauth.initiateOAuth({
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
         serverName: "test-server",
         serverUrl: "https://example.com/mcp",
       });
 
-      // Verify metadata endpoint was actually requested with correct arguments
-      // The URL is proxied through /api/mcp/oauth/metadata with the target URL encoded as a query param
-      expect(freshAuthFetch).toHaveBeenCalledWith(
+      expect(result.success).toBe(true);
+      expect(authFetch).toHaveBeenCalledWith(
         expect.stringMatching(
           /\/api\/mcp\/oauth\/metadata\?url=.*oauth-protected-resource/,
         ),
         expect.objectContaining({ method: "GET" }),
       );
+    });
+  });
+
+  describe("persisted discovery state", () => {
+    it("round-trips discovery state for the matching server URL", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const discoveryState = createDiscoveryState();
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+
+      await provider.saveDiscoveryState(discoveryState);
+
+      expect(provider.discoveryState()).toEqual(discoveryState);
+    });
+
+    it("ignores stale discovery state when the server URL changes", async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const discoveryState = createDiscoveryState();
+      const originalProvider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      await originalProvider.saveDiscoveryState(discoveryState);
+
+      const nextProvider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/alt-sse",
+      );
+
+      expect(nextProvider.discoveryState()).toBeUndefined();
+    });
+
+    it('clears discovery state on invalidateCredentials("all")', async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      await provider.saveDiscoveryState(createDiscoveryState());
+
+      await provider.invalidateCredentials("all");
+
+      expect(localStorage.getItem("mcp-discovery-asana")).toBeNull();
+      expect(provider.discoveryState()).toBeUndefined();
+    });
+
+    it('clears discovery state on invalidateCredentials("discovery")', async () => {
+      const { MCPOAuthProvider } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      await provider.saveDiscoveryState(createDiscoveryState());
+
+      await provider.invalidateCredentials("discovery");
+
+      expect(localStorage.getItem("mcp-discovery-asana")).toBeNull();
+      expect(provider.discoveryState()).toBeUndefined();
+    });
+
+    it("clears discovery state in clearOAuthData", async () => {
+      const { MCPOAuthProvider, clearOAuthData } = await import("../mcp-oauth");
+      const provider = new MCPOAuthProvider(
+        "asana",
+        "https://mcp.asana.com/sse",
+      );
+      await provider.saveDiscoveryState(createDiscoveryState());
+
+      clearOAuthData("asana");
+
+      expect(localStorage.getItem("mcp-discovery-asana")).toBeNull();
+      expect(provider.discoveryState()).toBeUndefined();
+    });
+
+    it("reuses cached discovery state after the callback reload", async () => {
+      const discoveryState = createDiscoveryState();
+      mockSdkAuth
+        .mockImplementationOnce(async (provider) => {
+          await provider.saveDiscoveryState?.(discoveryState);
+          return "REDIRECT";
+        })
+        .mockImplementationOnce(async (provider, options) => {
+          expect(options.authorizationCode).toBe("oauth-code");
+          expect(provider.discoveryState?.()).toEqual(discoveryState);
+          await provider.saveTokens({
+            access_token: "access-token",
+            refresh_token: "refresh-token",
+          });
+          return "AUTHORIZED";
+        });
+
+      const { getStoredTokens, handleOAuthCallback, initiateOAuth } =
+        await import("../mcp-oauth");
+
+      const initiateResult = await initiateOAuth({
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+      });
+      expect(initiateResult).toEqual({ success: true });
+
+      const callbackResult = await handleOAuthCallback("oauth-code");
+
+      expect(callbackResult.success).toBe(true);
+      expect(callbackResult.serverName).toBe("asana");
+      expect(callbackResult.serverConfig?.requestInit?.headers).toEqual({
+        Authorization: "Bearer access-token",
+      });
+      expect(getStoredTokens("asana")?.access_token).toBe("access-token");
+      expect(localStorage.getItem("mcp-discovery-asana")).not.toBeNull();
+      expect(mockSdkAuth).toHaveBeenCalledTimes(2);
+    });
+
+    it("treats malformed stored token data as invalid instead of throwing", async () => {
+      const { getStoredTokens, getStoredTokensState } =
+        await import("../mcp-oauth");
+
+      localStorage.setItem("mcp-tokens-asana", '{"access_token":"broken"');
+      localStorage.setItem("mcp-client-asana", '{"client_id":"broken"');
+
+      expect(getStoredTokens("asana")).toBeUndefined();
+      expect(getStoredTokensState("asana")).toEqual({
+        tokens: undefined,
+        isInvalid: true,
+      });
     });
   });
 });

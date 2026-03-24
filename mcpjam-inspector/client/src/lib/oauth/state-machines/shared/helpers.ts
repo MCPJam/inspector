@@ -11,6 +11,7 @@ import type {
   OAuthFlowStep,
 } from "../types";
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
 
 /**
  * Helper function to make requests via backend debug proxy (bypasses CORS)
@@ -64,7 +65,11 @@ export async function proxyFetch(
     headers: mergedHeaders,
   };
 
-  const response = await authFetch("/api/mcp/oauth/debug/proxy", {
+  const debugProxyPath = HOSTED_MODE
+    ? "/api/web/oauth/debug/proxy"
+    : "/api/mcp/oauth/debug/proxy";
+
+  const response = await authFetch(debugProxyPath, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -218,6 +223,85 @@ export function loadPreregisteredCredentials(serverName: string): {
     console.error("Failed to load pre-registered credentials:", e);
   }
   return {};
+}
+
+/**
+ * Merge custom headers with per-request headers.
+ * Request headers override custom headers.
+ */
+export function mergeHeaders(
+  customHeaders: Record<string, string> | undefined,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  const keysByLowercase = new Map<string, string>();
+
+  const applyHeaders = (headers: Record<string, string> | undefined) => {
+    if (!headers) return;
+
+    for (const [key, value] of Object.entries(headers)) {
+      const lowerKey = key.toLowerCase();
+      const previousKey = keysByLowercase.get(lowerKey);
+
+      if (previousKey && previousKey !== key) {
+        delete merged[previousKey];
+      }
+
+      keysByLowercase.set(lowerKey, key);
+      merged[key] = value;
+    }
+  };
+
+  applyHeaders(customHeaders);
+  applyHeaders(requestHeaders);
+
+  return merged;
+}
+
+/**
+ * Merge custom headers with per-request headers, then strip any
+ * Authorization header (case-insensitive, per RFC 7230 §3.2).
+ *
+ * Use this for requests to the Authorization Server (token endpoint,
+ * registration endpoint, metadata discovery) to prevent connection-level
+ * Bearer tokens (meant for the MCP/resource server) from leaking.
+ */
+export function mergeHeadersForAuthServer(
+  customHeaders: Record<string, string> | undefined,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+  const merged = mergeHeaders(customHeaders, requestHeaders);
+  for (const key of Object.keys(merged)) {
+    if (key.toLowerCase() === "authorization") {
+      delete merged[key];
+    }
+  }
+  return merged;
+}
+
+/**
+ * Merge headers for protected resource metadata requests.
+ *
+ * Same-origin metadata lookups keep MCP server headers, but cross-origin
+ * metadata hops are treated like Authorization Server requests so MCP server
+ * Authorization headers do not leak off-origin.
+ */
+export function mergeHeadersForResourceMetadataRequest(
+  serverUrl: string,
+  requestUrl: string,
+  customHeaders: Record<string, string> | undefined,
+  requestHeaders: Record<string, string> = {},
+): Record<string, string> {
+  try {
+    const serverOrigin = new URL(serverUrl).origin;
+    const requestOrigin = new URL(requestUrl, serverUrl).origin;
+
+    return requestOrigin === serverOrigin
+      ? mergeHeaders(customHeaders, requestHeaders)
+      : mergeHeadersForAuthServer(customHeaders, requestHeaders);
+  } catch {
+    return mergeHeadersForAuthServer(customHeaders, requestHeaders);
+  }
 }
 
 /**

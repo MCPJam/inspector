@@ -23,6 +23,7 @@ export const SHARED_SERVER_SESSION_STORAGE_KEY =
 export const SHARED_OAUTH_PENDING_KEY = "mcp-oauth-shared-chat-pending";
 export const SHARED_SIGN_IN_RETURN_PATH_STORAGE_KEY =
   "mcpjam_shared_signin_return_path_v1";
+export const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
 export function slugify(name: string): string {
   const slug = name
@@ -33,6 +34,17 @@ export function slugify(name: string): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/g, "");
   return slug || "server";
+}
+
+export function getShareableAppOrigin(): string {
+  if (typeof window === "undefined") {
+    return MCPJAM_APP_ORIGIN;
+  }
+
+  return window.location.protocol === "http:" ||
+    window.location.protocol === "https:"
+    ? window.location.origin
+    : MCPJAM_APP_ORIGIN;
 }
 
 export function extractSharedTokenFromPath(pathname: string): string | null {

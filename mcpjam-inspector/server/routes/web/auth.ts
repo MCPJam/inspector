@@ -2,6 +2,7 @@ import { z } from "zod";
 import { MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
 import {
   ErrorCode,
   WebRouteError,
@@ -15,13 +16,33 @@ import {
 
 // ── Zod Schemas ──────────────────────────────────────────────────────
 
-export const workspaceServerSchema = z.object({
-  workspaceId: z.string().min(1),
-  serverId: z.string().min(1),
-  oauthAccessToken: z.string().optional(),
-  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-  shareToken: z.string().min(1).optional(),
-});
+function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
+  return schema.superRefine((value, ctx) => {
+    const hostedValue = value as {
+      shareToken?: string;
+      sandboxToken?: string;
+    };
+
+    if (hostedValue.shareToken && hostedValue.sandboxToken) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["sandboxToken"],
+        message: "shareToken and sandboxToken cannot both be provided",
+      });
+    }
+  });
+}
+
+export const workspaceServerSchema = refineHostedTokens(
+  z.object({
+    workspaceId: z.string().min(1),
+    serverId: z.string().min(1),
+    oauthAccessToken: z.string().optional(),
+    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+    shareToken: z.string().min(1).optional(),
+    sandboxToken: z.string().min(1).optional(),
+  }),
+);
 
 export const toolsListSchema = workspaceServerSchema.extend({
   modelId: z.string().optional(),
@@ -46,13 +67,16 @@ export const promptsListSchema = workspaceServerSchema.extend({
   cursor: z.string().optional(),
 });
 
-export const promptsListMultiSchema = z.object({
-  workspaceId: z.string().min(1),
-  serverIds: z.array(z.string().min(1)).min(1),
-  oauthTokens: z.record(z.string(), z.string()).optional(),
-  accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-  shareToken: z.string().min(1).optional(),
-});
+export const promptsListMultiSchema = refineHostedTokens(
+  z.object({
+    workspaceId: z.string().min(1),
+    serverIds: z.array(z.string().min(1)).min(1),
+    oauthTokens: z.record(z.string(), z.string()).optional(),
+    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+    shareToken: z.string().min(1).optional(),
+    sandboxToken: z.string().min(1).optional(),
+  }),
+);
 
 export const promptsGetSchema = workspaceServerSchema.extend({
   promptName: z.string().min(1),
@@ -61,15 +85,27 @@ export const promptsGetSchema = workspaceServerSchema.extend({
     .optional(),
 });
 
-export const hostedChatSchema = z
-  .object({
-    workspaceId: z.string().min(1),
-    selectedServerIds: z.array(z.string().min(1)),
-    oauthTokens: z.record(z.string(), z.string()).optional(),
-    accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
-    shareToken: z.string().min(1).optional(),
-  })
-  .passthrough();
+export const hostedChatSchema = refineHostedTokens(
+  z
+    .object({
+      workspaceId: z.string().min(1),
+      selectedServerIds: z.array(z.string().min(1)),
+      chatSessionId: z.string().min(1).optional(),
+      surface: z.enum(["preview", "share_link"]).optional(),
+      oauthTokens: z.record(z.string(), z.string()).optional(),
+      accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
+      shareToken: z.string().min(1).optional(),
+      sandboxToken: z.string().min(1).optional(),
+    })
+    .passthrough(),
+);
+
+// ── Guest Schema ─────────────────────────────────────────────────────
+
+export const guestServerInputSchema = z.object({
+  serverUrl: z.string().min(1),
+  serverHeaders: z.record(z.string(), z.string()).optional(),
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -101,6 +137,7 @@ export async function authorizeServer(
   options?: {
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
+    sandboxToken?: string;
   },
 ): Promise<ConvexAuthorizeResponse> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -114,6 +151,14 @@ export async function authorizeServer(
 
   let response: Response;
   try {
+    if (options?.shareToken && options?.sandboxToken) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "shareToken and sandboxToken cannot both be provided",
+      );
+    }
+
     response = await fetch(`${convexUrl}/web/authorize`, {
       method: "POST",
       headers: {
@@ -125,6 +170,9 @@ export async function authorizeServer(
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
+        ...(options?.sandboxToken
+          ? { sandboxToken: options.sandboxToken }
+          : {}),
       }),
     });
   } catch (error) {
@@ -216,6 +264,7 @@ export async function createAuthorizedManager(
   options?: {
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
+    sandboxToken?: string;
   },
 ): Promise<AuthorizedManagerResult> {
   const uniqueServerIds = Array.from(new Set(serverIds));
@@ -225,6 +274,7 @@ export async function createAuthorizedManager(
       const auth = await authorizeServer(bearerToken, workspaceId, serverId, {
         accessScope: options?.accessScope,
         shareToken: options?.shareToken,
+        sandboxToken: options?.sandboxToken,
       });
       const oauthToken = oauthTokens?.[serverId];
 
@@ -239,6 +289,7 @@ export async function createAuthorizedManager(
             `Server "${serverId}" requires OAuth authentication. Please complete the OAuth flow first.`,
             {
               oauthRequired: true,
+              serverId,
               serverUrl: auth.serverConfig.url,
             },
           );
@@ -327,6 +378,11 @@ function resolveConnectionParams(body: Record<string, unknown>): {
  *   6. Disconnect all servers (finally)
  *   7. Return JSON response (or structured error)
  *
+ * Guest users (identified by guestId in Hono context) bypass Convex authorization
+ * entirely. They provide a `serverUrl` (+optional `serverHeaders`) directly in the
+ * request body, which is validated for safety (HTTPS-only, no private IPs) before
+ * creating a direct ephemeral connection.
+ *
  * Not suitable for streaming routes (chat-v2) — those need manual lifecycle
  * management via `onStreamComplete` because the Response is returned before
  * the stream finishes.
@@ -341,8 +397,94 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
   options?: { timeoutMs?: number },
 ) {
   return handleRoute(c, async () => {
+    // Read body once — Hono streams can only be consumed once
+    const rawBody = await readJsonBody<Record<string, unknown>>(c);
+
+    // Detect guest requests by body shape: presence of serverUrl without workspaceId.
+    // This is more robust than relying solely on guestId from middleware, which
+    // may not be set when the guest token is expired/invalid but the client still
+    // sends a guest-shaped body.
+    const isGuestRequest =
+      typeof rawBody.serverUrl === "string" && !rawBody.workspaceId;
+
+    if (isGuestRequest) {
+      // ── Guest path: direct connection, no Convex ────────────────
+      const guestId = c.get("guestId") as string | undefined;
+      if (!guestId) {
+        throw new WebRouteError(
+          401,
+          ErrorCode.UNAUTHORIZED,
+          "Valid guest token required. Please refresh the page to obtain a new session.",
+        );
+      }
+
+      // Validate guest-specific fields (serverUrl is required)
+      const guestInput = parseWithSchema(guestServerInputSchema, rawBody);
+
+      // Safety: HTTPS-only, no private/reserved IPs
+      try {
+        await validateUrl(guestInput.serverUrl, true);
+      } catch (err) {
+        if (err instanceof OAuthProxyError) {
+          throw new WebRouteError(
+            err.status,
+            ErrorCode.VALIDATION_ERROR,
+            err.message,
+          );
+        }
+        throw err;
+      }
+
+      const timeoutMs = options?.timeoutMs ?? WEB_CALL_TIMEOUT_MS;
+
+      // Inject synthetic IDs so downstream schema parsing works unchanged
+      const augmentedBody = {
+        ...rawBody,
+        workspaceId: "__guest__",
+        serverId: "__guest__",
+      };
+      const body = parseWithSchema(schema, augmentedBody);
+
+      // Create ephemeral manager directly from guest-provided config
+      const headers: Record<string, string> = {
+        ...(guestInput.serverHeaders ?? {}),
+      };
+
+      // Allow callers to supply a fresh OAuth bearer explicitly. This avoids
+      // depending on reactive client state having already persisted updated
+      // Authorization headers after an OAuth callback completes.
+      if (
+        typeof (body as { oauthAccessToken?: unknown }).oauthAccessToken ===
+        "string"
+      ) {
+        headers["Authorization"] = `Bearer ${
+          (body as { oauthAccessToken: string }).oauthAccessToken
+        }`;
+      }
+
+      const httpConfig: HttpServerConfig = {
+        url: guestInput.serverUrl,
+        requestInit: {
+          headers,
+        },
+        timeout: timeoutMs,
+      };
+
+      const manager = new MCPClientManager(
+        { __guest__: httpConfig },
+        { defaultTimeout: timeoutMs },
+      );
+
+      try {
+        return await fn(manager, body as z.infer<S>);
+      } finally {
+        await manager.disconnectAllServers();
+      }
+    }
+
+    // ── Authenticated path: Convex authorization ──────────────────
     const bearerToken = assertBearerToken(c);
-    const body = parseWithSchema(schema, await readJsonBody<unknown>(c));
+    const body = parseWithSchema(schema, rawBody);
     // Cast for internal plumbing — all web schemas include workspaceId + serverId(s).
     // The strongly-typed `body` is passed through to `fn` unchanged.
     const raw = body as Record<string, unknown>;
@@ -356,6 +498,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
       typeof raw.shareToken === "string" && raw.shareToken.trim()
         ? raw.shareToken
         : undefined;
+    const sandboxToken =
+      typeof raw.sandboxToken === "string" && raw.sandboxToken.trim()
+        ? raw.sandboxToken
+        : undefined;
 
     return withManager(
       createAuthorizedManager(
@@ -367,6 +513,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         {
           accessScope,
           shareToken,
+          sandboxToken,
         },
       ),
       (manager) => fn(manager, body as z.infer<S>),

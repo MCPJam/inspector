@@ -1,7 +1,7 @@
 ---
 title: "Testing with LLMs"
 description: "Use TestAgent to run prompts and inspect tool calls"
-icon: "robot"
+icon: "bot"
 ---
 
 The `TestAgent` connects an LLM to your MCP tools, letting you test how models interact with your server. It handles the agentic loop (prompt → tool call → result → response) and gives you rich inspection capabilities.
@@ -142,6 +142,43 @@ const agent = new TestAgent({
   maxSteps: 5, // Stop after 5 tool calls
 });
 ```
+
+## Control Multi-Step Loops with stopWhen
+
+Use `stopWhen` when you want to stop the multi-step loop after a particular step completes:
+
+```typescript
+import { hasToolCall } from "@mcpjam/sdk";
+
+// Stop after the step where the tool is called
+const result = await agent.prompt("Search for open tasks", {
+  stopWhen: hasToolCall("search_tasks"),
+});
+
+expect(result.hasToolCall("search_tasks")).toBe(true);
+```
+
+<Tip>
+`stopWhen` does not skip tool execution. It controls whether the prompt loop continues after the current step completes, and `TestAgent` also applies `stepCountIs(maxSteps)` as a safety guard.
+</Tip>
+
+## Bound Prompt Runtime with timeout
+
+Use `timeout` when you want to bound how long `TestAgent.prompt()` can run:
+
+```typescript
+const result = await agent.prompt("Run a long workflow", {
+  timeout: { totalMs: 10_000, stepMs: 2_500 },
+});
+
+if (result.hasError()) {
+  console.error(result.getError());
+}
+```
+
+<Tip>
+`timeout` accepts `number`, `totalMs`, `stepMs`, and `chunkMs`. In practice, `number` and `totalMs` cap the full prompt, `stepMs` caps each step, and `chunkMs` mainly matters in streaming flows. The runtime creates an internal abort signal, so tools can stop early if their implementation respects the provided `abortSignal`.
+</Tip>
 
 ## Writing Assertions
 

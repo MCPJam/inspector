@@ -25,12 +25,93 @@ vi.mock("../../../utils/oauth-proxy.js", () => ({
 }));
 
 import { OAuthProxyError } from "../../../utils/oauth-proxy.js";
+import { initGuestTokenSecret } from "../../../services/guest-token.js";
+
+// Guest token secret must be initialized before oauth routes validate tokens
+initGuestTokenSecret();
 
 interface OAuthErrorResponse {
   code: string;
   message: string;
   error: string;
 }
+
+describe("web routes — oauth requires bearer token", () => {
+  const { app, token } = createWebTestApp();
+
+  beforeEach(() => {
+    executeOAuthProxyMock.mockReset();
+    fetchOAuthMetadataMock.mockReset();
+  });
+
+  it("POST /proxy returns 401 without bearer token", async () => {
+    const response = await postJson(app, "/api/web/oauth/proxy", {
+      url: "https://example.com/token",
+    });
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(401);
+    expect(data).toEqual({
+      code: "UNAUTHORIZED",
+      message: "Bearer token required",
+    });
+  });
+
+  it("GET /metadata returns 401 without bearer token", async () => {
+    const response = await getJson(
+      app,
+      "/api/web/oauth/metadata?url=https://example.com/.well-known/oauth",
+    );
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(401);
+    expect(data).toEqual({
+      code: "UNAUTHORIZED",
+      message: "Bearer token required",
+    });
+  });
+
+  it("POST /proxy succeeds with bearer token", async () => {
+    executeOAuthProxyMock.mockResolvedValueOnce({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: { ok: true },
+    });
+
+    const response = await postJson(
+      app,
+      "/api/web/oauth/proxy",
+      { url: "https://example.com/token" },
+      token,
+    );
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      body: { ok: true },
+    });
+  });
+
+  it("GET /metadata succeeds with bearer token", async () => {
+    fetchOAuthMetadataMock.mockResolvedValueOnce({
+      metadata: { issuer: "https://example.com" },
+    });
+
+    const response = await getJson(
+      app,
+      "/api/web/oauth/metadata?url=https://example.com/.well-known/oauth",
+      token,
+    );
+    const { status, data } = await expectJson(response);
+
+    expect(status).toBe(200);
+    expect(data).toEqual({ issuer: "https://example.com" });
+  });
+});
 
 describe("web routes — oauth error contract", () => {
   const { app, token } = createWebTestApp();

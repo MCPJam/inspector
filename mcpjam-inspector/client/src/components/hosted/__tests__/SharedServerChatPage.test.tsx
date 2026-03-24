@@ -1,19 +1,39 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { SharedServerChatPage } from "../SharedServerChatPage";
 import {
   clearSharedServerSession,
   writeSharedServerSession,
 } from "@/lib/shared-server-session";
+import {
+  clearHostedOAuthResumeMarker,
+  writeHostedOAuthResumeMarker,
+} from "@/lib/hosted-oauth-resume";
 
-const mockResolveShareForViewer = vi.fn();
-const mockGetAccessToken = vi.fn();
-const mockClipboardWriteText = vi.fn();
-const mockGetStoredTokens = vi.fn();
-const mockInitiateOAuth = vi.fn(async () => ({ success: false }));
-const toastSuccess = vi.fn();
-const toastError = vi.fn();
+const {
+  mockResolveShareForViewer,
+  mockGetAccessToken,
+  mockClipboardWriteText,
+  mockGetStoredTokens,
+  mockInitiateOAuth,
+  mockCheckHostedServerOAuthRequirement,
+  mockValidateHostedServer,
+  mockChatTabV2,
+  toastSuccess,
+  toastError,
+} = vi.hoisted(() => ({
+  mockResolveShareForViewer: vi.fn(),
+  mockGetAccessToken: vi.fn(),
+  mockClipboardWriteText: vi.fn(),
+  mockGetStoredTokens: vi.fn(),
+  mockInitiateOAuth: vi.fn(async () => ({ success: false })),
+  mockCheckHostedServerOAuthRequirement: vi.fn(),
+  mockValidateHostedServer: vi.fn(),
+  mockChatTabV2: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+}));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
@@ -34,12 +54,51 @@ vi.mock("@/hooks/hosted/use-hosted-api-context", () => ({
 }));
 
 vi.mock("@/components/ChatTabV2", () => ({
-  ChatTabV2: () => <div data-testid="shared-chat-tab" />,
+  ChatTabV2: (props: {
+    onOAuthRequired?: (details?: {
+      serverUrl?: string | null;
+      serverId?: string | null;
+      serverName?: string | null;
+    }) => void;
+    reasoningDisplayMode?: string;
+  }) => {
+    mockChatTabV2(props);
+    const { onOAuthRequired } = props;
+    return (
+      <div>
+        <div data-testid="shared-chat-tab" />
+        {onOAuthRequired ? (
+          <>
+            <button type="button" onClick={() => onOAuthRequired()}>
+              Trigger OAuth
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onOAuthRequired({
+                  serverId: "srv_asana",
+                  serverName: "Asana",
+                  serverUrl: "https://mcp.asana.com/sse",
+                })
+              }
+            >
+              Trigger targeted OAuth
+            </button>
+          </>
+        ) : null}
+      </div>
+    );
+  },
 }));
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
-  getStoredTokens: (...args: unknown[]) => mockGetStoredTokens(...args),
-  initiateOAuth: (...args: unknown[]) => mockInitiateOAuth(...args),
+  getStoredTokens: mockGetStoredTokens,
+  initiateOAuth: mockInitiateOAuth,
+}));
+
+vi.mock("@/lib/apis/web/servers-api", () => ({
+  checkHostedServerOAuthRequirement: mockCheckHostedServerOAuthRequirement,
+  validateHostedServer: mockValidateHostedServer,
 }));
 
 vi.mock("sonner", () => ({
@@ -50,22 +109,12 @@ vi.mock("sonner", () => ({
 }));
 
 describe("SharedServerChatPage", () => {
-  function createDeferred<T>() {
-    let resolve!: (value: T) => void;
-    let reject!: (reason?: unknown) => void;
-    const promise = new Promise<T>((res, rej) => {
-      resolve = res;
-      reject = rej;
-    });
-    return { promise, resolve, reject };
-  }
-
   function createSharePayload(
     overrides: Partial<{
       workspaceId: string;
       serverId: string;
       serverName: string;
-      mode: "invited_only" | "workspace";
+      mode: "any_signed_in_with_link" | "invited_only";
       viewerIsWorkspaceMember: boolean;
       useOAuth: boolean;
       serverUrl: string | null;
@@ -77,7 +126,7 @@ describe("SharedServerChatPage", () => {
       workspaceId: "ws_1",
       serverId: "srv_1",
       serverName: "Server One",
-      mode: "invited_only" as const,
+      mode: "any_signed_in_with_link" as const,
       viewerIsWorkspaceMember: false,
       useOAuth: false,
       serverUrl: null,
@@ -87,37 +136,35 @@ describe("SharedServerChatPage", () => {
     };
   }
 
-  function createFetchResponse(
-    body: unknown,
-    overrides: Partial<{
-      ok: boolean;
-      status: number;
-      statusText: string;
-    }> = {},
-  ) {
-    return {
-      ok: overrides.ok ?? true,
-      status: overrides.status ?? 200,
-      statusText: overrides.statusText ?? "OK",
-      json: async () => body,
-      text: async () => JSON.stringify(body),
-      headers: new Headers(),
-    } as Response;
-  }
-
   beforeEach(() => {
+    vi.useRealTimers();
     clearSharedServerSession();
+    clearHostedOAuthResumeMarker();
+    localStorage.clear();
+    sessionStorage.clear();
     mockResolveShareForViewer.mockReset();
     mockGetAccessToken.mockReset();
     mockClipboardWriteText.mockReset();
     mockGetStoredTokens.mockReset();
     mockInitiateOAuth.mockReset();
+    mockCheckHostedServerOAuthRequirement.mockReset();
+    mockValidateHostedServer.mockReset();
+    mockChatTabV2.mockReset();
     toastSuccess.mockReset();
     toastError.mockReset();
 
     mockGetAccessToken.mockResolvedValue("workos-token");
     mockGetStoredTokens.mockReturnValue(null);
     mockInitiateOAuth.mockResolvedValue({ success: false });
+    mockCheckHostedServerOAuthRequirement.mockResolvedValue({
+      useOAuth: false,
+      serverUrl: null,
+    });
+    mockValidateHostedServer.mockResolvedValue({
+      success: true,
+      status: "connected",
+      initInfo: null,
+    });
     mockClipboardWriteText.mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -125,6 +172,12 @@ describe("SharedServerChatPage", () => {
         writeText: mockClipboardWriteText,
       },
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it("copies the full shared path link from the header", async () => {
@@ -147,79 +200,153 @@ describe("SharedServerChatPage", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
-  it("ignores a stale validation network error after the effect is cancelled", async () => {
-    const deferredValidate = createDeferred<Response>();
-    vi.mocked(global.fetch).mockImplementation(
-      async (input: RequestInfo | URL) => {
-        const url =
-          typeof input === "string"
-            ? input
-            : input instanceof URL
-              ? input.toString()
-              : input.url;
-
-        if (url === "/api/web/servers/validate") {
-          return deferredValidate.promise;
-        }
-
-        return createFetchResponse({});
-      },
-    );
-
-    mockGetStoredTokens.mockImplementation((serverName: string) => {
-      if (serverName === "OAuth One") {
-        return { access_token: "expired-token" };
-      }
-      return null;
+  it("keeps shared server reasoning rendering unchanged", async () => {
+    writeSharedServerSession({
+      token: "token-1",
+      payload: createSharePayload(),
     });
+
+    render(<SharedServerChatPage />);
+
+    expect(await screen.findByTestId("shared-chat-tab")).toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenCalledWith(
+      expect.not.objectContaining({
+        reasoningDisplayMode: "hidden",
+      }),
+    );
+  });
+
+  it("auto-resumes hosted OAuth after callback completion", async () => {
+    vi.useFakeTimers();
+    let hasToken = false;
+    mockGetStoredTokens.mockImplementation(() =>
+      hasToken ? { access_token: "oauth-token" } : null,
+    );
 
     writeSharedServerSession({
       token: "token-one",
       payload: createSharePayload({
-        workspaceId: "ws_oauth_1",
-        serverId: "srv_oauth_1",
-        serverName: "OAuth One",
+        serverName: "Asana",
+        serverId: "srv_asana",
         useOAuth: true,
-        serverUrl: "https://oauth-one.example.com/mcp",
+        serverUrl: "https://mcp.asana.com/sse",
       }),
     });
-
-    const { rerender } = render(<SharedServerChatPage />);
-
-    await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith(
-        "/api/web/servers/validate",
-        expect.any(Object),
-      );
+    writeHostedOAuthResumeMarker({
+      surface: "shared",
+      serverName: "asana production",
+      serverUrl: "https://mcp.asana.com/sse",
     });
 
-    mockResolveShareForViewer.mockResolvedValueOnce(
-      createSharePayload({
-        workspaceId: "ws_oauth_2",
-        serverId: "srv_oauth_2",
-        serverName: "OAuth Two",
-        useOAuth: true,
-        serverUrl: "https://oauth-two.example.com/mcp",
-      }),
+    render(<SharedServerChatPage />);
+
+    expect(
+      screen.getByRole("heading", { name: "Finishing authorization" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Authorize" }),
+    ).not.toBeInTheDocument();
+
+    await act(async () => {
+      hasToken = true;
+      await vi.runAllTimersAsync();
+    });
+
+    expect(screen.getByTestId("shared-chat-tab")).toBeInTheDocument();
+    expect(mockValidateHostedServer).toHaveBeenCalledWith(
+      "srv_asana",
+      "oauth-token",
     );
+    expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+  });
 
-    rerender(<SharedServerChatPage pathToken="token-two" />);
+  it("marks runtime OAuth as required after switching a shared page into OAuth mode", async () => {
+    mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
+
+    writeSharedServerSession({
+      token: "token-runtime",
+      payload: createSharePayload({
+        serverId: "srv_asana",
+        serverName: "Asana",
+        useOAuth: false,
+        serverUrl: null,
+      }),
+    });
+
+    render(<SharedServerChatPage />);
+
+    expect(await screen.findByTestId("shared-chat-tab")).toBeInTheDocument();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Trigger targeted OAuth" }),
+    );
 
     expect(
       await screen.findByRole("heading", { name: "Authorization Required" }),
     ).toBeInTheDocument();
-    expect(screen.queryByTestId("shared-chat-tab")).not.toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Asana requires authorization to continue. You'll return here automatically after consent.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Authorize" }),
+    ).toBeInTheDocument();
+    expect(mockValidateHostedServer).not.toHaveBeenCalled();
+  });
+
+  it("shows an explicit retry CTA when hosted OAuth validation keeps failing", async () => {
+    vi.useFakeTimers();
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
+    mockValidateHostedServer.mockRejectedValue(
+      new Error("invalid_token from hosted validation"),
+    );
+
+    writeSharedServerSession({
+      token: "token-fail",
+      payload: createSharePayload({
+        serverName: "Asana",
+        serverId: "srv_asana",
+        useOAuth: true,
+        serverUrl: "https://mcp.asana.com/sse",
+      }),
+    });
+
+    render(<SharedServerChatPage />);
+
+    expect(
+      screen.getByRole("heading", { name: "Finishing authorization" }),
+    ).toBeInTheDocument();
 
     await act(async () => {
-      deferredValidate.reject(new Error("validation request failed"));
-      await Promise.resolve();
+      await vi.runAllTimersAsync();
     });
 
-    await waitFor(() => {
-      expect(
-        screen.getByRole("heading", { name: "Authorization Required" }),
-      ).toBeInTheDocument();
-    });
+    expect(
+      screen.getByRole("heading", { name: "Authorization Required" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Your authorization expired or was rejected. Authorize again to continue.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("invalid_token from hosted validation"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Authorize again" }),
+    ).toBeInTheDocument();
     expect(screen.queryByTestId("shared-chat-tab")).not.toBeInTheDocument();
+    expect(consoleError).toHaveBeenCalledWith(
+      "[useHostedOAuthGate] OAuth validation failed",
+      expect.objectContaining({
+        surface: "shared",
+        serverId: "srv_asana",
+        serverName: "Asana",
+      }),
+    );
   });
 });

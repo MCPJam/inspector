@@ -1,7 +1,7 @@
 ---
 title: "Multi-server connections"
 description: "Connect to multiple MCP servers with different transport methods"
-icon: "Plug"
+icon: "plug"
 ---
 
 You can connect to MCP servers using all transports: STDIO, SSE, and Streamable HTTP. With OAuth 2 and Dynamic Client Registration (DCR) support.
@@ -54,6 +54,10 @@ Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indi
 
 - **Info tab**: Standard server information and capabilities
 - **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
+
+<Note>
+  Using the [hosted app](https://app.mcpjam.com)? Only SSE and Streamable HTTP connections are available. STDIO and HTTP (non-HTTPS) connections require the [local inspector](/installation). See [Hosted App](/hosted/overview) for details.
+</Note>
 
 ## STDIO servers
 

@@ -10,11 +10,13 @@ import {
   createUIMessageStream,
   createUIMessageStreamResponse,
   parseJsonEventStream,
+  pruneMessages,
   uiMessageChunkSchema,
   type ToolSet,
 } from "ai";
 import type {
   UIMessageChunk,
+  ReasoningUIPart,
   TextPart,
   ToolCallPart,
   ToolModelMessage,
@@ -49,6 +51,9 @@ export interface MCPJamHandlerOptions {
   mcpClientManager: MCPClientManager;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  onConversationComplete?: (
+    fullHistory: ModelMessage[],
+  ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
 }
 
@@ -70,8 +75,10 @@ interface StepContext {
   usedToolCallIds: Set<string>;
 }
 
+type PersistedAssistantPart = TextPart | ToolCallPart | ReasoningUIPart;
+
 interface StreamResult {
-  contentParts: Array<TextPart | ToolCallPart>;
+  contentParts: PersistedAssistantPart[];
   hasToolCalls: boolean;
   finishChunk: UIMessageChunk | null;
 }
@@ -174,8 +181,13 @@ function scrubMessagesForBackend(
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
 ): ModelMessage[] {
+  const pruned = pruneMessages({
+    messages,
+    reasoning: "all",
+  }) as unknown as ModelMessage[];
+
   // First strip approval-specific parts that Convex/OpenRouter doesn't understand
-  const stripped: ModelMessage[] = messages.map((msg) => {
+  const stripped: ModelMessage[] = pruned.map((msg) => {
     if (msg.role === "assistant") {
       const assistantMsg = msg as AssistantModelMessage;
       if (!Array.isArray(assistantMsg.content)) return msg;
@@ -219,8 +231,10 @@ async function processStream(
   normalizeToolCallId: (toolCallId?: string) => string,
   requireToolApproval?: boolean,
 ): Promise<StreamResult> {
-  const contentParts: Array<TextPart | ToolCallPart> = [];
+  const contentParts: PersistedAssistantPart[] = [];
   let pendingText = "";
+  let pendingReasoning = "";
+  let pendingReasoningId: string | null = null;
   let hasToolCalls = false;
   let finishChunk: UIMessageChunk | null = null;
 
@@ -229,6 +243,18 @@ async function processStream(
       contentParts.push({ type: "text", text: pendingText });
       pendingText = "";
     }
+  };
+
+  const flushReasoning = () => {
+    if (pendingReasoning) {
+      contentParts.push({
+        type: "reasoning",
+        text: pendingReasoning,
+        state: "done",
+      });
+      pendingReasoning = "";
+    }
+    pendingReasoningId = null;
   };
 
   const parsedStream = parseJsonEventStream({
@@ -263,11 +289,13 @@ async function processStream(
       // Handle chunk by type
       switch (chunk?.type) {
         case "text-start":
+          flushReasoning();
           flushText();
           writer.write(chunk);
           break;
 
         case "text-delta":
+          flushReasoning();
           pendingText += chunk.delta ?? "";
           writer.write(chunk);
           break;
@@ -277,9 +305,37 @@ async function processStream(
           writer.write(chunk);
           break;
 
+        case "reasoning-start":
+          flushText();
+          flushReasoning();
+          pendingReasoningId = chunk.id;
+          writer.write(chunk);
+          break;
+
+        case "reasoning-delta":
+          flushText();
+          if (pendingReasoningId !== null && chunk.id !== pendingReasoningId) {
+            flushReasoning();
+          }
+          pendingReasoningId = chunk.id;
+          pendingReasoning += chunk.delta ?? "";
+          writer.write(chunk);
+          break;
+
+        case "reasoning-end":
+          if (pendingReasoningId !== null && chunk.id !== pendingReasoningId) {
+            flushReasoning();
+            pendingReasoningId = chunk.id;
+          }
+          flushReasoning();
+          writer.write(chunk);
+          break;
+
         case "tool-input-start":
         case "tool-input-delta":
         case "tool-input-error": {
+          flushText();
+          flushReasoning();
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           writer.write({ ...chunk, toolCallId });
           break;
@@ -287,6 +343,7 @@ async function processStream(
 
         case "tool-input-available": {
           flushText();
+          flushReasoning();
           const toolCallId = normalizeToolCallId(chunk.toolCallId);
           contentParts.push({
             type: "tool-call",
@@ -328,6 +385,7 @@ async function processStream(
   }
 
   flushText();
+  flushReasoning();
   return { contentParts, hasToolCalls, finishChunk };
 }
 
@@ -629,6 +687,9 @@ async function processOneStep(
     },
     body: JSON.stringify({
       mode: "stream",
+      // Persist only once at the end of the full agentic loop via
+      // onConversationComplete to avoid storing partial per-step traces.
+      skipChatIngestion: true,
       messages: JSON.stringify(scrubbedMessages),
       model: modelId,
       systemPrompt,
@@ -711,6 +772,7 @@ export async function handleMCPJamFreeChatModel(
     mcpClientManager,
     selectedServers,
     requireToolApproval,
+    onConversationComplete,
     onStreamComplete,
   } = options;
 
@@ -718,6 +780,7 @@ export async function handleMCPJamFreeChatModel(
   const messageHistory = [...messages];
   const usedToolCallIds = collectUsedToolCallIds(messageHistory);
   let steps = 0;
+  let runSucceeded = false;
 
   const stream = createUIMessageStream({
     execute: async ({ writer }) => {
@@ -774,6 +837,8 @@ export async function handleMCPJamFreeChatModel(
             totalUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
           } as unknown as UIMessageChunk);
         }
+
+        runSucceeded = true;
       } catch (error) {
         logger.error("[mcpjam-stream-handler] Error in agentic loop", error);
         writer.write({
@@ -784,12 +849,25 @@ export async function handleMCPJamFreeChatModel(
     },
     onFinish: async () => {
       try {
-        await onStreamComplete?.();
-      } catch (cleanupError) {
-        logger.error(
-          "[mcpjam-stream-handler] Error while running stream cleanup",
-          cleanupError,
-        );
+        if (runSucceeded) {
+          try {
+            await onConversationComplete?.([...messageHistory]);
+          } catch (persistenceError) {
+            logger.error(
+              "[mcpjam-stream-handler] Error while persisting conversation",
+              persistenceError,
+            );
+          }
+        }
+      } finally {
+        try {
+          await onStreamComplete?.();
+        } catch (cleanupError) {
+          logger.error(
+            "[mcpjam-stream-handler] Error while running stream cleanup",
+            cleanupError,
+          );
+        }
       }
     },
   });

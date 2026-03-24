@@ -15,6 +15,20 @@ function Card({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
+function CardInteractive({ className, ...props }: React.ComponentProps<"div">) {
+  return (
+    <Card
+      data-slot="card-interactive"
+      className={cn(
+        "group cursor-pointer border-border/70 bg-card/80 p-4 transition-all",
+        "hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-xl",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
@@ -83,6 +97,7 @@ function CardFooter({ className, ...props }: React.ComponentProps<"div">) {
 
 export {
   Card,
+  CardInteractive,
   CardHeader,
   CardFooter,
   CardTitle,

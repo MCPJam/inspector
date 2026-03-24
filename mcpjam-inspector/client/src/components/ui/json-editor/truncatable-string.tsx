@@ -75,7 +75,7 @@ export function TruncatableString({
   if (menuItems.length === 1) {
     return (
       <span
-        className="relative inline-flex items-center group/copy"
+        className="relative group/copy"
         onMouseEnter={() => setIsHovered(true)}
         onMouseLeave={() => setIsHovered(false)}
       >
@@ -114,7 +114,7 @@ export function TruncatableString({
   // Multiple options: show dropdown
   return (
     <span
-      className="relative inline-flex items-center group/copy"
+      className="relative group/copy"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >

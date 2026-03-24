@@ -5,6 +5,11 @@ describe("PromptResult", () => {
   const createMockData = (
     overrides: Partial<PromptResultData> = {}
   ): PromptResultData => ({
+    prompt: "Test prompt",
+    messages: [
+      { role: "user", content: "Test prompt" },
+      { role: "assistant", content: "Test response" },
+    ],
     text: "Test response",
     toolCalls: [
       { toolName: "add", arguments: { a: 1, b: 2 } },
@@ -223,6 +228,98 @@ describe("PromptResult", () => {
         expect(result.llmLatencyMs()).toBe(3000);
         expect(result.mcpLatencyMs()).toBe(1500);
       });
+    });
+  });
+
+  describe("provider/model metadata", () => {
+    it("should store and return provider/model from data", () => {
+      const data = createMockData({
+        provider: "openai",
+        model: "gpt-4o",
+      });
+      const result = new PromptResult(data);
+
+      expect(result.getProvider()).toBe("openai");
+      expect(result.getModel()).toBe("gpt-4o");
+    });
+
+    it("should return undefined when provider/model not provided", () => {
+      const data = createMockData();
+      const result = new PromptResult(data);
+
+      expect(result.getProvider()).toBeUndefined();
+      expect(result.getModel()).toBeUndefined();
+    });
+
+    it("toEvalResult should default to stored provider/model", () => {
+      const data = createMockData({
+        provider: "anthropic",
+        model: "claude-3-5-sonnet-20241022",
+      });
+      const result = new PromptResult(data);
+      const evalResult = result.toEvalResult({
+        caseTitle: "test",
+        passed: true,
+      });
+
+      expect(evalResult.provider).toBe("anthropic");
+      expect(evalResult.model).toBe("claude-3-5-sonnet-20241022");
+    });
+
+    it("toEvalResult should allow overriding provider/model", () => {
+      const data = createMockData({
+        provider: "anthropic",
+        model: "claude-3-5-sonnet-20241022",
+      });
+      const result = new PromptResult(data);
+      const evalResult = result.toEvalResult({
+        caseTitle: "test",
+        passed: true,
+        provider: "openai",
+        model: "gpt-4o",
+      });
+
+      expect(evalResult.provider).toBe("openai");
+      expect(evalResult.model).toBe("gpt-4o");
+    });
+
+    it("PromptResult.error should accept provider/model metadata", () => {
+      const result = PromptResult.error("fail", 0, "test", {
+        provider: "openai",
+        model: "gpt-4o",
+      });
+
+      expect(result.getProvider()).toBe("openai");
+      expect(result.getModel()).toBe("gpt-4o");
+    });
+
+    it("toEvalResult should include captured widget snapshots", () => {
+      const data = createMockData({
+        widgetSnapshots: [
+          {
+            toolCallId: "call-1",
+            toolName: "create_view",
+            protocol: "mcp-apps",
+            serverId: "server-1",
+            resourceUri: "ui://widget/create-view.html",
+            toolMetadata: {
+              ui: { resourceUri: "ui://widget/create-view.html" },
+            },
+            widgetCsp: null,
+            widgetPermissions: null,
+            widgetPermissive: true,
+            prefersBorder: true,
+            widgetHtml: "<html>cached</html>",
+          },
+        ],
+      });
+      const result = new PromptResult(data);
+      const evalResult = result.toEvalResult({
+        caseTitle: "test",
+        passed: true,
+      });
+
+      expect(evalResult.widgetSnapshots).toEqual(data.widgetSnapshots);
     });
   });
 

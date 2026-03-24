@@ -19,6 +19,7 @@ import type {
 } from "./types";
 import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 export function SuiteIterationsView({
   suite,
@@ -40,6 +41,7 @@ export function SuiteIterationsView({
   deletingRunId,
   availableModels,
   route,
+  userMap,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -60,6 +62,7 @@ export function SuiteIterationsView({
   deletingRunId: string | null;
   availableModels: any[];
   route: EvalsRoute;
+  userMap?: Map<string, { name: string; imageUrl?: string }>;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -96,7 +99,7 @@ export function SuiteIterationsView({
   const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
 
   // Use custom hooks for data calculations
-  const { runTrendData, modelStats, caseGroups, templateGroups } = useSuiteData(
+  const { runTrendData, modelStats } = useSuiteData(
     suite,
     cases,
     iterations,
@@ -117,6 +120,39 @@ export function SuiteIterationsView({
     const run = runs.find((r) => r._id === selectedRunId);
     return run ?? null;
   }, [selectedRunId, runs]);
+
+  // Derive selectedIterationId from route
+  const selectedIterationId =
+    route.type === "run-detail" ? (route.iteration ?? null) : null;
+
+  // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
+  useEffect(() => {
+    if (route.type !== "run-detail" || caseGroupsForSelectedRun.length === 0) {
+      return;
+    }
+
+    const iterationIds = new Set(caseGroupsForSelectedRun.map((i) => i._id));
+
+    if (!route.iteration || !iterationIds.has(route.iteration)) {
+      navigateToEvalsRoute({
+        type: "run-detail",
+        suiteId: route.suiteId,
+        runId: route.runId,
+        iteration: caseGroupsForSelectedRun[0]._id,
+      });
+    }
+  }, [route, caseGroupsForSelectedRun]);
+
+  const handleSelectIteration = (iterationId: string) => {
+    if (route.type === "run-detail") {
+      navigateToEvalsRoute({
+        type: "run-detail",
+        suiteId: route.suiteId,
+        runId: route.runId,
+        iteration: iterationId,
+      });
+    }
+  };
 
   // Update local description state when suite changes
   useEffect(() => {
@@ -165,7 +201,9 @@ export function SuiteIterationsView({
         });
         toast.success("Suite description updated");
       } catch (error) {
-        toast.error("Failed to update suite description");
+        toast.error(
+          getBillingErrorMessage(error, "Failed to update suite description"),
+        );
         console.error("Failed to update suite description:", error);
         setEditedDescription(suite.description || "");
       }
@@ -195,7 +233,7 @@ export function SuiteIterationsView({
       });
       toast.success("Models updated successfully");
     } catch (error) {
-      toast.error("Failed to update models");
+      toast.error(getBillingErrorMessage(error, "Failed to update models"));
       console.error("Failed to update models:", error);
       throw error;
     }
@@ -276,6 +314,13 @@ export function SuiteIterationsView({
                   serverNames={(suite.environment?.servers || []).filter(
                     (name) => connectedServerNames.has(name),
                   )}
+                  suiteName={suite.name}
+                  onNavigateToSuite={() => {
+                    navigateToEvalsRoute({
+                      type: "suite-overview",
+                      suiteId: suite._id,
+                    });
+                  }}
                   onBack={() => {
                     navigateToEvalsRoute({
                       type: "suite-overview",
@@ -313,6 +358,7 @@ export function SuiteIterationsView({
                       view: value,
                     });
                   }}
+                  userMap={userMap}
                 />
               ) : (
                 <TestCasesOverview
@@ -346,6 +392,7 @@ export function SuiteIterationsView({
             <RunDetailView
               selectedRunDetails={selectedRunDetails}
               caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+              source={suite.source}
               selectedRunChartData={selectedRunChartData}
               runDetailSortBy={runDetailSortBy}
               onSortChange={setRunDetailSortBy}
@@ -354,6 +401,8 @@ export function SuiteIterationsView({
               serverNames={(suite.environment?.servers || []).filter((name) =>
                 connectedServerNames.has(name),
               )}
+              selectedIterationId={selectedIterationId}
+              onSelectIteration={handleSelectIteration}
             />
           ) : null}
         </div>
@@ -430,7 +479,9 @@ export function SuiteIterationsView({
                     });
                     toast.success("Suite updated successfully");
                   } catch (error) {
-                    toast.error("Failed to update suite");
+                    toast.error(
+                      getBillingErrorMessage(error, "Failed to update suite"),
+                    );
                     console.error("Failed to update suite:", error);
                     setDefaultMinimumPassRate(
                       suite.defaultPassCriteria?.minimumPassRate ?? 100,

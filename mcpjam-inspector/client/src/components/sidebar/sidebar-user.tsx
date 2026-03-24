@@ -30,10 +30,16 @@ import {
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
+import { HOSTED_MODE } from "@/lib/config";
+import { Button } from "@/components/ui/button";
 
-export function SidebarUser() {
+export function SidebarUser({
+  activeOrganizationId,
+}: {
+  activeOrganizationId?: string;
+}) {
   const { isLoading, isAuthenticated } = useConvexAuth();
-  const { user, signOut } = useAuth();
+  const { user, signIn, signOut } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
   const convexUser = useQuery("users:getCurrentUser" as any);
   const { isMobile } = useSidebar();
@@ -51,6 +57,13 @@ export function SidebarUser() {
   const displayName = convexUser?.name || workOsName || "User";
   const email = user?.email ?? "";
   const initials = getInitials(displayName);
+  const activeOrgName = activeOrganizationId
+    ? sortedOrganizations.find((org) => org._id === activeOrganizationId)?.name
+    : undefined;
+  const subtitle = activeOrgName || email;
+  const navigateToOrganization = (organizationId: string) => {
+    window.location.hash = `organizations/${organizationId}`;
+  };
 
   const handleSignOut = () => {
     const isElectron = (window as any).isElectron;
@@ -63,8 +76,19 @@ export function SidebarUser() {
 
   const avatarUrl = profilePictureUrl;
 
-  // Not logged in state - auth buttons are now in the header
+  // Not logged in state
   if (!user) {
+    if (HOSTED_MODE) {
+      return (
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <Button variant="outline" size="sm" onClick={() => signIn()}>
+              Sign in
+            </Button>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      );
+    }
     return null;
   }
 
@@ -108,7 +132,7 @@ export function SidebarUser() {
                 <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
                   <span className="truncate font-semibold">{displayName}</span>
                   <span className="truncate text-xs text-muted-foreground">
-                    {email}
+                    {subtitle}
                   </span>
                 </div>
                 <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
@@ -137,7 +161,7 @@ export function SidebarUser() {
                       {displayName}
                     </span>
                     <span className="truncate text-xs text-muted-foreground">
-                      {email}
+                      {subtitle}
                     </span>
                   </div>
                 </div>
@@ -163,30 +187,34 @@ export function SidebarUser() {
                 Organizations
               </DropdownMenuLabel>
               {sortedOrganizations.length > 0 ? (
-                sortedOrganizations.map((org) => (
-                  <DropdownMenuItem
-                    key={org._id}
-                    onClick={() =>
-                      (window.location.hash = `organizations/${org._id}`)
-                    }
-                    className="cursor-pointer"
-                  >
-                    <Avatar className="size-6 rounded">
-                      <AvatarImage src={org.logoUrl} alt={org.name} />
-                      <AvatarFallback className="rounded bg-primary/10 text-primary text-xs font-semibold">
-                        {org.name.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="flex-1 truncate">{org.name}</span>
-                    <Settings
-                      className="size-4 text-muted-foreground hover:text-foreground"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        window.location.hash = `organizations/${org._id}`;
-                      }}
-                    />
-                  </DropdownMenuItem>
-                ))
+                sortedOrganizations.map((org) => {
+                  const isOrgAdmin =
+                    org.myRole === "owner" || org.myRole === "admin";
+                  return (
+                    <DropdownMenuItem
+                      key={org._id}
+                      onClick={() => navigateToOrganization(org._id)}
+                      className="cursor-pointer"
+                    >
+                      <Avatar className="size-6 rounded">
+                        <AvatarImage src={org.logoUrl} alt={org.name} />
+                        <AvatarFallback className="rounded bg-primary/10 text-primary text-xs font-semibold">
+                          {org.name.charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <span className="flex-1 truncate">{org.name}</span>
+                      {isOrgAdmin ? (
+                        <Settings
+                          className="size-4 text-muted-foreground hover:text-foreground"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigateToOrganization(org._id);
+                          }}
+                        />
+                      ) : null}
+                    </DropdownMenuItem>
+                  );
+                })
               ) : (
                 <DropdownMenuItem
                   onClick={() => setShowCreateOrgDialog(true)}

@@ -1,14 +1,19 @@
 import { describe, it, expect, vi, beforeEach, type Mock } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { toast } from "sonner";
-import { ServerConnectionCard } from "../ServerConnectionCard";
 import type { ServerWithName } from "@/hooks/use-app-state";
+
+// Mock the agent brief generator to avoid @mcpjam/sdk dependency
+vi.mock("@/lib/generate-agent-brief", () => ({
+  generateAgentBrief: vi.fn().mockReturnValue("mocked brief"),
+}));
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 // Mock the APIs
@@ -51,6 +56,9 @@ vi.mock("sonner", () => ({
   },
 }));
 
+// Must import after mocks are set up
+import { ServerConnectionCard } from "../ServerConnectionCard";
+
 // Mock navigator.clipboard
 const mockClipboard = {
   writeText: vi.fn().mockResolvedValue(undefined),
@@ -62,12 +70,12 @@ describe("ServerConnectionCard", () => {
     overrides: Partial<ServerWithName> = {},
   ): ServerWithName => ({
     name: "test-server",
+    lastConnectionTime: new Date(),
     connectionStatus: "connected",
     enabled: true,
     retryCount: 0,
     useOAuth: false,
     config: {
-      transportType: "stdio",
       command: "npx",
       args: ["-y", "@modelcontextprotocol/server-test"],
     },
@@ -77,7 +85,6 @@ describe("ServerConnectionCard", () => {
   const defaultProps = {
     onDisconnect: vi.fn(),
     onReconnect: vi.fn().mockResolvedValue(undefined),
-    onEdit: vi.fn(),
     onRemove: vi.fn(),
   };
 
@@ -103,7 +110,6 @@ describe("ServerConnectionCard", () => {
     it("renders command display for stdio transport", () => {
       const server = createServer({
         config: {
-          transportType: "stdio",
           command: "node",
           args: ["server.js"],
         },
@@ -116,7 +122,6 @@ describe("ServerConnectionCard", () => {
     it("renders URL for http transport", () => {
       const server = createServer({
         config: {
-          transportType: "streamableHttp",
           url: "http://localhost:3000/mcp",
         },
       });
@@ -277,7 +282,6 @@ describe("ServerConnectionCard", () => {
     it("copies command to clipboard when copy button is clicked", async () => {
       const server = createServer({
         config: {
-          transportType: "stdio",
           command: "node",
           args: ["server.js"],
         },
@@ -308,6 +312,7 @@ describe("ServerConnectionCard", () => {
       const server = createServer({
         initializationInfo: {
           serverVersion: {
+            name: "test-server",
             version: "1.0.0",
             title: "Test Server",
           },
@@ -319,7 +324,7 @@ describe("ServerConnectionCard", () => {
       expect(screen.getByText("v1.0.0")).toBeInTheDocument();
     });
 
-    it("shows view server info button when initialization info exists", () => {
+    it("does not show view server info pill (replaced by card click)", () => {
       const server = createServer({
         initializationInfo: {
           serverCapabilities: { tools: {} },
@@ -328,7 +333,32 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      expect(screen.getByText("View server info")).toBeInTheDocument();
+      expect(screen.queryByText("View server info")).not.toBeInTheDocument();
+    });
+
+    it("requests the shared modal when the card is clicked", () => {
+      const server = createServer({
+        initializationInfo: {
+          serverCapabilities: { tools: {} },
+          protocolVersion: "2024-11-05",
+        },
+      });
+      const onOpenDetailModal = vi.fn();
+
+      const { container } = render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onOpenDetailModal={onOpenDetailModal}
+        />,
+      );
+
+      const card = container.querySelector("[data-slot='card']");
+      fireEvent.click(card!);
+      expect(onOpenDetailModal).toHaveBeenCalledWith(
+        expect.objectContaining({ name: "test-server" }),
+        "configuration",
+      );
     });
   });
 

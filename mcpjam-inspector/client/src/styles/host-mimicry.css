@@ -1,0 +1,22 @@
+.sandbox-host-shell {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+.sandbox-host-shell .sandbox-host-user-bubble,
+.sandbox-host-shell .sandbox-host-assistant-avatar,
+.sandbox-host-shell .sandbox-host-composer {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.sandbox-host-shell[data-host-style="chatgpt"] .sandbox-host-composer {
+  border-width: 1px;
+  border-color: transparent;
+}
+
+.sandbox-host-shell[data-host-style="claude"] .sandbox-host-composer {
+  border-width: 1px;
+}

@@ -1,7 +1,17 @@
-import { EvalCase, EvalIteration, EvalSuite, SuiteAggregate } from "./types";
+import {
+  CommitGroup,
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+  SuiteAggregate,
+  TagGroupAggregate,
+} from "./types";
 import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
@@ -161,7 +171,7 @@ export function aggregateSuite(
  */
 export function handleMutationError(error: unknown, action: string) {
   console.error(`Failed to ${action}:`, error);
-  toast.error(error instanceof Error ? error.message : `Failed to ${action}`);
+  toast.error(getBillingErrorMessage(error, `Failed to ${action}`));
 }
 
 /**
@@ -226,3 +236,145 @@ export const formatters = {
   percentage: formatPercentage,
   tokens: formatTokens,
 } as const;
+
+/**
+ * Flatten recentRuns across all suites and group by commitSha.
+ * Runs without a commitSha go into a "manual" group.
+ */
+export function groupRunsByCommit(
+  overview: EvalSuiteOverviewEntry[],
+): CommitGroup[] {
+  const buckets = new Map<
+    string,
+    { runs: EvalSuiteRun[]; suiteMap: Map<string, string> }
+  >();
+
+  for (const entry of overview) {
+    for (const run of entry.recentRuns) {
+      const sha = run.ciMetadata?.commitSha?.trim() || "";
+      // Each manual run (no commit SHA) gets its own group keyed by run ID
+      const key = sha || `__manual__${run._id}`;
+      if (!buckets.has(key)) {
+        buckets.set(key, { runs: [], suiteMap: new Map() });
+      }
+      const bucket = buckets.get(key)!;
+      bucket.runs.push(run);
+      bucket.suiteMap.set(entry.suite._id, entry.suite.name);
+    }
+  }
+
+  const groups: CommitGroup[] = [];
+  for (const [key, { runs, suiteMap }] of buckets) {
+    const isManual = key.startsWith("__manual__");
+    const summary = { total: runs.length, passed: 0, failed: 0, running: 0 };
+    let latestTimestamp = 0;
+    let branch: string | null = null;
+
+    for (const run of runs) {
+      const ts = run.completedAt ?? run.createdAt;
+      if (ts > latestTimestamp) latestTimestamp = ts;
+      if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
+      if (run.status === "running" || run.status === "pending")
+        summary.running++;
+      else if (run.result === "passed") summary.passed++;
+      else if (run.result === "failed") summary.failed++;
+    }
+
+    let status: CommitGroup["status"];
+    if (summary.running > 0) status = "running";
+    else if (summary.failed > 0 && summary.passed > 0) status = "mixed";
+    else if (summary.failed > 0) status = "failed";
+    else status = "passed";
+
+    // For manual runs, use a unique ID so each gets its own page
+    const manualId = isManual ? key.replace("__manual__", "manual-") : null;
+
+    groups.push({
+      commitSha: isManual ? manualId! : key,
+      shortSha: isManual ? "Manual" : key.slice(0, 7),
+      branch: isManual ? null : branch,
+      timestamp: latestTimestamp,
+      status,
+      runs,
+      suiteMap,
+      summary,
+    });
+  }
+
+  // Sort by most recent first, manual always last
+  groups.sort((a, b) => {
+    if (a.commitSha.startsWith("manual-")) return 1;
+    if (b.commitSha.startsWith("manual-")) return -1;
+    return b.timestamp - a.timestamp;
+  });
+
+  return groups;
+}
+
+/**
+ * Format relative time for sidebar display
+ */
+export function formatRelativeTime(timestamp?: number): string {
+  if (!timestamp) return "No runs yet";
+  const now = Date.now();
+  const diff = now - timestamp;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "Just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return new Date(timestamp).toLocaleDateString();
+}
+
+/**
+ * Group overview entries by tag and compute aggregated stats per tag.
+ */
+export function groupSuitesByTag(
+  overview: EvalSuiteOverviewEntry[],
+): TagGroupAggregate[] {
+  const buckets = new Map<string, EvalSuiteOverviewEntry[]>();
+
+  for (const entry of overview) {
+    const tags = entry.suite.tags;
+    if (!tags || tags.length === 0) {
+      const bucket = buckets.get("Untagged") ?? [];
+      bucket.push(entry);
+      buckets.set("Untagged", bucket);
+    } else {
+      for (const tag of tags) {
+        const bucket = buckets.get(tag) ?? [];
+        bucket.push(entry);
+        buckets.set(tag, bucket);
+      }
+    }
+  }
+
+  const groups: TagGroupAggregate[] = [];
+  for (const [tag, entries] of buckets) {
+    const totals = { passed: 0, failed: 0, runs: 0 };
+    for (const e of entries) {
+      totals.passed += e.totals.passed;
+      totals.failed += e.totals.failed;
+      totals.runs += e.totals.runs;
+    }
+    const total = totals.passed + totals.failed;
+    groups.push({
+      tag,
+      suiteCount: entries.length,
+      totals,
+      passRate: total > 0 ? Math.round((totals.passed / total) * 100) : 0,
+      entries,
+    });
+  }
+
+  // Sort alphabetically, "Untagged" last
+  groups.sort((a, b) => {
+    if (a.tag === "Untagged") return 1;
+    if (b.tag === "Untagged") return -1;
+    return a.tag.localeCompare(b.tag);
+  });
+
+  return groups;
+}

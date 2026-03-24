@@ -1,6 +1,9 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "maple",
+  "icons": {
+    "library": "lucide"
+  },
   "name": "MCPJam Inspector",
   "colors": {
     "primary": "#EF5B25",
@@ -17,7 +20,8 @@
           "index",
           "getting-started",
           "installation",
-          "inspector/launch-from-code"
+          "inspector/launch-from-code",
+          "hosted/overview"
         ]
       },
       {
@@ -47,6 +51,7 @@
               "sdk/concepts/connecting-servers",
               "sdk/concepts/testing-with-llms",
               "sdk/concepts/running-evals",
+              "sdk/concepts/saving-results",
               "sdk/concepts/multi-provider"
             ]
           },
@@ -59,6 +64,7 @@
               "sdk/reference/prompt-result",
               "sdk/reference/eval-test",
               "sdk/reference/eval-suite",
+              "sdk/reference/eval-reporting",
               "sdk/reference/validators",
               "sdk/reference/llm-providers"
             ]

@@ -1,8 +1,15 @@
 import { useAction } from "convex/react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
-import { MessageSquare, Code2, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  MessageSquare,
+  Code2,
+  ChevronDown,
+  ChevronRight,
+  ShieldCheck,
+  ShieldX,
+} from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
@@ -10,15 +17,147 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  getModelById,
+  type ModelDefinition,
+  type ModelProvider,
+} from "@/shared/types";
+
+const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
+const EMPTY_SERVER_NAMES: string[] = [];
+const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
+  "anthropic",
+  "azure",
+  "openai",
+  "ollama",
+  "deepseek",
+  "google",
+  "meta",
+  "xai",
+  "mistral",
+  "moonshotai",
+  "openrouter",
+  "z-ai",
+  "minimax",
+  "custom",
+];
+
+function tryParseStructuredArgumentString(value: string): unknown | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const firstCharacter = trimmed[0];
+  if (firstCharacter !== "{" && firstCharacter !== "[") {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed !== null && typeof parsed === "object") {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function stringifyToolArgumentValue(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    typeof value === "bigint"
+  ) {
+    return String(value);
+  }
+  if (value === null) {
+    return "null";
+  }
+  if (value === undefined) {
+    return "undefined";
+  }
+
+  try {
+    return JSON.stringify(value) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+export function resolveFormattedArgumentValue(
+  value: unknown,
+):
+  | { kind: "structured"; value: unknown }
+  | { kind: "text"; value: string; renderAsBlock: boolean } {
+  if (value !== null && typeof value === "object") {
+    return { kind: "structured", value };
+  }
+
+  if (typeof value === "string") {
+    const parsedStructuredValue = tryParseStructuredArgumentString(value);
+    if (parsedStructuredValue !== null) {
+      return { kind: "structured", value: parsedStructuredValue };
+    }
+  }
+
+  const textValue = stringifyToolArgumentValue(value);
+  return {
+    kind: "text",
+    value: textValue,
+    renderAsBlock:
+      textValue.length > TOOL_ARGUMENT_BLOCK_THRESHOLD ||
+      textValue.includes("\n"),
+  };
+}
+
+function normalizeModelProvider(provider?: string): ModelProvider {
+  return KNOWN_MODEL_PROVIDERS.includes(provider as ModelProvider)
+    ? (provider as ModelProvider)
+    : "custom";
+}
+
+function resolveTraceModel(
+  iteration: EvalIteration,
+  testCase: EvalCase | null,
+): ModelDefinition {
+  const snapshotProvider = iteration.testCaseSnapshot?.provider;
+  const snapshotModel = iteration.testCaseSnapshot?.model;
+  const fallbackProvider = testCase?.models[0]?.provider;
+  const fallbackModel = testCase?.models[0]?.model;
+
+  const provider = snapshotProvider || fallbackProvider || "openai";
+  const model = snapshotModel || fallbackModel || "unknown-model";
+  const providerModelId =
+    model.startsWith(`${provider}/`) || !provider
+      ? model
+      : `${provider}/${model}`;
+
+  return (
+    getModelById(providerModelId) ??
+    getModelById(model) ?? {
+      id: providerModelId,
+      name: model.includes("/") ? model.split("/").slice(1).join("/") : model,
+      provider: normalizeModelProvider(provider),
+    }
+  );
+}
 
 export function IterationDetails({
   iteration,
   testCase,
-  serverNames = [],
+  serverNames = EMPTY_SERVER_NAMES,
+  layoutMode = "compact",
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
   serverNames?: string[];
+  layoutMode?: "compact" | "full";
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -34,6 +173,7 @@ export function IterationDetails({
     Record<string, Record<string, any>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [connectedServerIds, setConnectedServerIds] = useState<string[]>([]);
   const [toolsWithSchema, setToolsWithSchema] = useState<
     Record<string, { name: string; inputSchema?: any }>
   >({});
@@ -68,70 +208,91 @@ export function IterationDetails({
   }, [iteration.blob, getBlob]);
 
   useEffect(() => {
-    const fetchToolsMetadata = async () => {
-      if (serverNames.length === 0) {
-        setToolsMetadata({});
-        setToolServerMap({});
-        setToolsWithSchema({});
-        return;
-      }
-      try {
-        // Fetch tools with their inputSchema for type display
-        // This makes only ONE call per server instead of two
-        const toolsMap: Record<string, { name: string; inputSchema?: any }> =
-          {};
-        const metadata: Record<string, Record<string, any>> = {};
-        const toolServerMap: ToolServerMap = {};
+    let cancelled = false;
 
-        await Promise.all(
-          serverNames.map(async (serverId) => {
-            try {
-              const result = await listTools({ serverId: serverId });
+    if (serverNames.length === 0) {
+      setToolsMetadata({});
+      setToolServerMap({});
+      setToolsWithSchema({});
+      setConnectedServerIds([]);
+      return () => {
+        cancelled = true;
+      };
+    }
 
-              // Extract tools with schemas
-              if (result.tools) {
-                for (const tool of result.tools) {
-                  toolsMap[tool.name] = {
-                    name: tool.name,
-                    inputSchema: tool.inputSchema,
-                  };
-                  toolServerMap[tool.name] = serverId;
-                }
+    setToolsMetadata({});
+    setToolServerMap({});
+    setToolsWithSchema({});
+    setConnectedServerIds([]);
+
+    serverNames.forEach((serverId) => {
+      void listTools({ serverId })
+        .then((result) => {
+          if (cancelled) return;
+
+          setConnectedServerIds((prev) =>
+            prev.includes(serverId) ? prev : [...prev, serverId],
+          );
+
+          if (result.tools?.length) {
+            setToolsWithSchema((prev) => {
+              const next = { ...prev };
+              for (const tool of result.tools ?? []) {
+                next[tool.name] = {
+                  name: tool.name,
+                  inputSchema: tool.inputSchema,
+                };
               }
+              return next;
+            });
 
-              // Extract metadata
-              const toolsMetadata = result.toolsMetadata ?? {};
-              for (const [toolName, meta] of Object.entries(toolsMetadata)) {
-                metadata[toolName] = meta as Record<string, unknown>;
+            setToolServerMap((prev) => {
+              const next = { ...prev };
+              for (const tool of result.tools ?? []) {
+                next[tool.name] = serverId;
               }
-            } catch (error) {
-              // Silently fail for disconnected servers
-              console.warn(
-                `Failed to fetch tools for server ${serverId}:`,
-                error,
-              );
-            }
-          }),
-        );
+              return next;
+            });
+          }
 
-        setToolsWithSchema(toolsMap);
-        setToolsMetadata(metadata);
-        setToolServerMap(toolServerMap);
-      } catch (error) {
-        // Silently fail if servers aren't connected
-        // This is expected in evals where servers may not be running
-        setToolsMetadata({});
-        setToolServerMap({});
-        setToolsWithSchema({});
-      }
+          if (result.toolsMetadata) {
+            setToolsMetadata((prev) => ({
+              ...prev,
+              ...Object.fromEntries(
+                Object.entries(result.toolsMetadata ?? {}).map(
+                  ([toolName, meta]) => [
+                    toolName,
+                    meta as Record<string, unknown>,
+                  ],
+                ),
+              ),
+            }));
+          }
+        })
+        .catch((loadError) => {
+          if (cancelled) return;
+
+          console.warn(
+            `Failed to fetch tools for server ${serverId}:`,
+            loadError,
+          );
+        });
+    });
+
+    return () => {
+      cancelled = true;
     };
-    fetchToolsMetadata();
   }, [serverNames]);
+
+  const traceModel = useMemo(
+    () => resolveTraceModel(iteration, testCase),
+    [iteration, testCase],
+  );
 
   // Use snapshot values first (reflects what was actually tested, including unsaved edits)
   const expectedToolCalls =
-    iteration.testCaseSnapshot?.expectedToolCalls ||
-    testCase?.expectedToolCalls ||
+    iteration.testCaseSnapshot?.expectedToolCalls ??
+    testCase?.expectedToolCalls ??
     [];
   const actualToolCalls = iteration.actualToolCalls || [];
 
@@ -160,12 +321,17 @@ export function IterationDetails({
       return <span className="text-muted-foreground italic">No arguments</span>;
     }
     return (
-      <div className="space-y-1">
+      <div className="space-y-2">
         {entries.map(([key, value]) => {
           const argSchema = toolName ? getArgumentSchema(toolName, key) : null;
+          const formattedValue = resolveFormattedArgumentValue(value);
+
           return (
-            <div key={key} className="flex items-start gap-2">
-              <div className="flex items-center gap-1.5">
+            <div
+              key={key}
+              className="rounded-md border border-border/20 bg-background/40 px-2 py-1.5"
+            >
+              <div className="flex flex-wrap items-center gap-1.5">
                 <span className="font-medium text-foreground">{key}:</span>
                 {argSchema?.type && (
                   <span className="text-[10px] font-normal text-muted-foreground bg-background/50 px-1.5 py-0.5 rounded border border-border/40">
@@ -173,14 +339,65 @@ export function IterationDetails({
                   </span>
                 )}
               </div>
-              <span className="font-mono text-muted-foreground">
-                {typeof value === "object"
-                  ? JSON.stringify(value)
-                  : String(value)}
-              </span>
+
+              {formattedValue.kind === "structured" ? (
+                <div className="mt-2 overflow-hidden rounded-md border border-border/30 bg-background/80">
+                  <JsonEditor
+                    value={formattedValue.value}
+                    viewOnly
+                    collapsible
+                    defaultExpandDepth={1}
+                    collapseStringsAfterLength={160}
+                    expandJsonStrings
+                    className="max-h-72"
+                  />
+                </div>
+              ) : formattedValue.renderAsBlock ? (
+                <div className="mt-2 overflow-hidden rounded-md border border-border/30 bg-background/80">
+                  <JsonEditor
+                    value={formattedValue.value}
+                    viewOnly
+                    collapsible
+                    defaultExpandDepth={1}
+                    collapseStringsAfterLength={160}
+                    expandJsonStrings
+                    className="max-h-72"
+                  />
+                </div>
+              ) : (
+                <div className="mt-1 min-w-0 break-words font-mono text-[11px] leading-relaxed text-muted-foreground">
+                  {formattedValue.value}
+                </div>
+              )}
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  const renderRawToolCalls = (
+    toolCalls: Array<{ toolName: string; arguments: Record<string, any> }>,
+    emptyMessage: string,
+  ) => {
+    if (toolCalls.length === 0) {
+      return (
+        <div className="text-xs text-muted-foreground italic">
+          {emptyMessage}
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-hidden rounded-md border border-border/30 bg-background/50">
+        <JsonEditor
+          value={toolCalls}
+          viewOnly
+          collapsible
+          defaultExpandDepth={2}
+          collapseStringsAfterLength={160}
+          className="min-h-[160px] max-h-72"
+        />
       </div>
     );
   };
@@ -198,8 +415,46 @@ export function IterationDetails({
   const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
 
+  const isNegativeTest =
+    iteration.testCaseSnapshot?.isNegativeTest || testCase?.isNegativeTest;
+  const negativeTestScenario =
+    iteration.testCaseSnapshot?.scenario || testCase?.scenario;
+
   return (
     <div className="space-y-4 py-2">
+      {/* Negative Test Summary */}
+      {isNegativeTest && (
+        <div
+          className={`rounded-md border p-3 space-y-1 ${
+            iteration.result === "passed"
+              ? "border-emerald-500/30 bg-emerald-500/10"
+              : "border-destructive/30 bg-destructive/10"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {iteration.result === "passed" ? (
+              <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0" />
+            ) : (
+              <ShieldX className="h-4 w-4 text-destructive shrink-0" />
+            )}
+            <span className="text-xs font-semibold">
+              Negative Test{" "}
+              {iteration.result === "passed" ? "Passed" : "Failed"}
+            </span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {iteration.result === "passed"
+              ? "No tools were called, which is the expected behavior for this test."
+              : "Tools were unexpectedly called during this negative test."}
+          </p>
+          {negativeTestScenario && (
+            <p className="text-xs text-muted-foreground/80 italic mt-1">
+              Scenario: {negativeTestScenario}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Error Display */}
       {iteration.error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
@@ -285,14 +540,9 @@ export function IterationDetails({
                 <div className="text-xs font-medium text-muted-foreground uppercase">
                   Expected
                 </div>
-                {expectedToolCalls.length === 0 ? (
-                  <div className="text-xs text-muted-foreground italic">
-                    No expected tool calls
-                  </div>
-                ) : (
-                  <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
-                    {JSON.stringify(expectedToolCalls, null, 2)}
-                  </pre>
+                {renderRawToolCalls(
+                  expectedToolCalls,
+                  "No expected tool calls",
                 )}
               </div>
 
@@ -301,15 +551,7 @@ export function IterationDetails({
                 <div className="text-xs font-medium text-muted-foreground uppercase">
                   Actual
                 </div>
-                {actualToolCalls.length === 0 ? (
-                  <div className="text-xs text-muted-foreground italic">
-                    No tool calls made
-                  </div>
-                ) : (
-                  <pre className="text-xs font-mono bg-background/50 rounded p-2 overflow-x-auto">
-                    {JSON.stringify(actualToolCalls, null, 2)}
-                  </pre>
-                )}
+                {renderRawToolCalls(actualToolCalls, "No tool calls made")}
               </div>
             </div>
           ) : (
@@ -388,7 +630,9 @@ export function IterationDetails({
       {iteration.blob && (
         <div className="space-y-1.5">
           <div className="text-xs font-semibold">Trace</div>
-          <div className="rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto">
+          <div
+            className={`rounded-md bg-muted/20 p-3${layoutMode === "compact" ? " max-h-[480px] overflow-y-auto" : ""}`}
+          >
             {loading ? (
               <div className="text-xs text-muted-foreground">Loading trace</div>
             ) : error ? (
@@ -396,13 +640,10 @@ export function IterationDetails({
             ) : (
               <TraceViewer
                 trace={blob}
-                modelProvider={
-                  testCase?.models[0]?.provider ||
-                  iteration.testCaseSnapshot?.provider ||
-                  "openai"
-                }
+                model={traceModel}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
+                connectedServerIds={connectedServerIds}
               />
             )}
           </div>
