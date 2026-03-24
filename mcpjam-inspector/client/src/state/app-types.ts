@@ -1,6 +1,7 @@
-import { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { OauthTokens } from "@/shared/types.js";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
 
 export type ConnectionStatus =
   | "connected"
@@ -50,6 +51,7 @@ export interface Workspace {
   name: string;
   description?: string;
   icon?: string;
+  clientConfig?: WorkspaceClientConfig;
   servers: Record<string, ServerWithName>;
   createdAt: Date;
   updatedAt: Date;

@@ -17,6 +17,8 @@ import { ViewsTab } from "./components/ViewsTab";
 import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
+import { ClientConfigTab } from "./components/client-config/ClientConfigTab";
+import { WorkspaceClientConfigSync } from "./components/client-config/WorkspaceClientConfigSync";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -106,10 +108,12 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import type {
   BillingRolloutState,
   OrganizationEntitlements,
 } from "./hooks/useOrganizationBilling";
+import { useClientConfigStore } from "./stores/client-config-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -139,6 +143,7 @@ export default function App() {
     "billing-entitlements-ui",
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
+  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const {
     getAccessToken,
     signIn,
@@ -354,6 +359,7 @@ export default function App() {
     handleSwitchWorkspace,
     handleCreateWorkspace,
     handleUpdateWorkspace,
+    handleUpdateClientConfig,
     handleDeleteWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
@@ -423,6 +429,14 @@ export default function App() {
 
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
+  const isClientConfigSyncPending = useClientConfigStore(
+    (state) =>
+      state.isAwaitingRemoteEcho &&
+      state.pendingWorkspaceId === activeWorkspaceId,
+  );
+  const hostedClientCapabilities = getEffectiveWorkspaceClientCapabilities(
+    activeWorkspace?.clientConfig,
+  ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
   const rawBillingOrganizationId =
     activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
@@ -506,9 +520,12 @@ export default function App() {
       ),
     [appState.servers],
   );
+
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
+    clientCapabilities: hostedClientCapabilities,
+    clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,
@@ -641,9 +658,15 @@ export default function App() {
       (learningEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
+    } else if (
+      activeTab === "client-config" &&
+      (clientConfigEnabled !== true || !isAuthenticated)
+    ) {
+      applyNavigation("servers", { updateHash: true });
     }
   }, [
     ciEvalsEnabled,
+    clientConfigEnabled,
     activeTabBillingFeature,
     activeTabBillingLocked,
     learningEnabled,
@@ -965,6 +988,13 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
+          {activeTab === "client-config" && (
+            <ClientConfigTab
+              activeWorkspaceId={activeWorkspaceId}
+              workspace={activeWorkspace}
+              onSaveClientConfig={handleUpdateClientConfig}
+            />
+          )}
           {activeTab === "workspace-settings" && (
             <WorkspaceSettingsTab
               activeWorkspaceId={activeWorkspaceId}
@@ -1000,6 +1030,10 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
+      <WorkspaceClientConfigSync
+        activeWorkspaceId={activeWorkspaceId}
+        savedClientConfig={activeWorkspace?.clientConfig}
+      />
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
         <HostedShellGate

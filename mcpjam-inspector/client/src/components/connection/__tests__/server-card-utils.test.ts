@@ -4,7 +4,7 @@ import {
   getServerCommandDisplay,
   getServerTransportLabel,
 } from "../server-card-utils.js";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
 
 describe("getConnectionStatusMeta", () => {

@@ -176,6 +176,9 @@ vi.mock("../components/SandboxesTab", () => ({
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
 }));
+vi.mock("../components/client-config/WorkspaceClientConfigSync", () => ({
+  WorkspaceClientConfigSync: () => null,
+}));
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
 }));

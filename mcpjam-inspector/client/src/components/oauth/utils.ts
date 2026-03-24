@@ -1,5 +1,5 @@
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { HttpServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import {
   EMPTY_OAUTH_TEST_PROFILE,
   type OAuthTestProfile,

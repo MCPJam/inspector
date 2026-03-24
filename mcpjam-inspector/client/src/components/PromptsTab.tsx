@@ -22,7 +22,7 @@ import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
-import { MCPServerConfig, type MCPPrompt } from "@mcpjam/sdk";
+import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
 import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,

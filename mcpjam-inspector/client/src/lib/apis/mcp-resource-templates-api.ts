@@ -1,4 +1,4 @@
-import type { MCPResourceTemplate } from "@mcpjam/sdk";
+import type { MCPResourceTemplate } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { ensureLocalMode } from "@/lib/apis/mode-client";
 

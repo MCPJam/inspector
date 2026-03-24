@@ -15,7 +15,7 @@ import {
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
-import { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import {
   Task,
   listTasks,

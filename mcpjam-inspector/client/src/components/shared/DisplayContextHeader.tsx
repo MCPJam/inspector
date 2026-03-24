@@ -4,7 +4,8 @@
  * Reusable component for display context controls (device, locale, timezone, CSP, capabilities, safe area).
  * Extracted from PlaygroundMain to be shared between App Builder and Views pages.
  *
- * Reads/writes to useUIPlaygroundStore for state management.
+ * Reads/writes UI playground state via useUIPlaygroundStore and derives theme, locale, timezone,
+ * display modes, device capabilities, and safe-area defaults from useClientConfigStore hostContext.
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
@@ -42,11 +43,21 @@ import {
   type CspMode,
 } from "@/stores/ui-playground-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
-import { updateThemeMode } from "@/lib/theme-utils";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  clampDisplayModeToAvailableModes,
+  extractEffectiveHostDisplayMode,
+  extractHostDeviceCapabilities,
+  extractHostDisplayModes,
+  extractHostLocale,
+  extractHostTheme,
+  extractHostTimeZone,
+  type HostDisplayMode,
+} from "@/lib/client-config";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 export const PRESET_DEVICE_CONFIGS: Record<
@@ -152,16 +163,13 @@ export function DisplayContextHeader({
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
+  const [displayModesPopoverOpen, setDisplayModesPopoverOpen] = useState(false);
 
   // Store state
   const deviceType = useUIPlaygroundStore((s) => s.deviceType);
   const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
   const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
-  const globals = useUIPlaygroundStore((s) => s.globals);
-  const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
-  const capabilities = useUIPlaygroundStore((s) => s.capabilities);
-  const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
 
   // Host style (Claude / ChatGPT)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
@@ -174,6 +182,8 @@ export function DisplayContextHeader({
   // CSP mode for MCP Apps (SEP-1865)
   const mcpAppsCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const setMcpAppsCspMode = useUIPlaygroundStore((s) => s.setMcpAppsCspMode);
+  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const patchHostContext = useClientConfigStore((s) => s.patchHostContext);
 
   // Protocol-aware CSP mode
   const activeCspMode = protocol === UIType.MCP_APPS ? mcpAppsCspMode : cspMode;
@@ -197,15 +207,16 @@ export function DisplayContextHeader({
     prevViolationCount.current = violationCount;
   }, [violationCount]);
 
-  // Theme handling
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+  const fallbackLocale = navigator.language || "en-US";
+  const fallbackTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const themePreference = usePreferencesStore((s) => s.themeMode);
+  const theme = extractHostTheme(hostContext) ?? themePreference;
 
   const handleThemeChange = useCallback(() => {
-    const newTheme = themeMode === "dark" ? "light" : "dark";
-    updateThemeMode(newTheme);
-    setThemeMode(newTheme);
-  }, [themeMode, setThemeMode]);
+    const newTheme = theme === "dark" ? "light" : "dark";
+    patchHostContext({ theme: newTheme });
+  }, [theme, patchHostContext]);
 
   // Device config - use custom dimensions from store for custom type
   const deviceConfig = useMemo(() => {
@@ -220,9 +231,53 @@ export function DisplayContextHeader({
   }, [deviceType, customViewport]);
   const DeviceIcon = deviceConfig.icon;
 
-  // Locale and timezone from globals
-  const locale = globals.locale;
-  const timeZone = globals.timeZone;
+  // Host display context comes directly from hostContext.
+  const locale = extractHostLocale(hostContext, fallbackLocale);
+  const timeZone = extractHostTimeZone(hostContext, fallbackTimeZone);
+  const displayMode = extractEffectiveHostDisplayMode(hostContext);
+  const availableDisplayModes = extractHostDisplayModes(hostContext);
+  const capabilities = extractHostDeviceCapabilities(hostContext);
+
+  const handleDisplayModeChange = useCallback(
+    (nextDisplayMode: "inline" | "pip" | "fullscreen") => {
+      patchHostContext({ displayMode: nextDisplayMode });
+    },
+    [patchHostContext],
+  );
+
+  const toggleAvailableDisplayMode = useCallback(
+    (mode: "inline" | "pip" | "fullscreen") => {
+      const nextAvailableDisplayModes: HostDisplayMode[] =
+        availableDisplayModes.includes(mode)
+          ? availableDisplayModes.filter((value) => value !== mode)
+          : [...availableDisplayModes, mode];
+      const normalizedAvailableDisplayModes: HostDisplayMode[] =
+        nextAvailableDisplayModes.length > 0
+          ? nextAvailableDisplayModes
+          : ["inline"];
+      const nextDisplayMode = clampDisplayModeToAvailableModes(
+        displayMode,
+        normalizedAvailableDisplayModes,
+      );
+
+      patchHostContext({
+        availableDisplayModes: normalizedAvailableDisplayModes,
+        displayMode: nextDisplayMode,
+      });
+    },
+    [availableDisplayModes, displayMode, patchHostContext],
+  );
+
+  const handleCapabilityToggle = useCallback(
+    (key: "hover" | "touch") => {
+      const nextCapabilities = {
+        hover: key === "hover" ? !capabilities.hover : capabilities.hover,
+        touch: key === "touch" ? !capabilities.touch : capabilities.touch,
+      };
+      patchHostContext({ deviceCapabilities: nextCapabilities });
+    },
+    [capabilities, patchHostContext],
+  );
 
   // Show ChatGPT Apps controls when: no protocol selected (default) or openai-apps
   const showChatGPTControls =
@@ -394,7 +449,7 @@ export function DisplayContextHeader({
                     <button
                       key={option.code}
                       onClick={() => {
-                        updateGlobal("locale", option.code);
+                        patchHostContext({ locale: option.code });
                         setLocalePopoverOpen(false);
                       }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
@@ -475,9 +530,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.hover ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ hover: !capabilities.hover })
-                    }
+                    onClick={() => handleCapabilityToggle("hover")}
                     className="h-7 w-7"
                   >
                     <MousePointer2 className="h-3.5 w-3.5" />
@@ -495,9 +548,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.touch ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ touch: !capabilities.touch })
-                    }
+                    onClick={() => handleCapabilityToggle("touch")}
                     className="h-7 w-7"
                   >
                     <Hand className="h-3.5 w-3.5" />
@@ -687,7 +738,7 @@ export function DisplayContextHeader({
                     <button
                       key={option.code}
                       onClick={() => {
-                        updateGlobal("locale", option.code);
+                        patchHostContext({ locale: option.code });
                         setLocalePopoverOpen(false);
                       }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
@@ -737,7 +788,7 @@ export function DisplayContextHeader({
                     <button
                       key={option.zone}
                       onClick={() => {
-                        updateGlobal("timeZone", option.zone);
+                        patchHostContext({ timeZone: option.zone });
                         setTimezonePopoverOpen(false);
                       }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
@@ -752,6 +803,85 @@ export function DisplayContextHeader({
                       </span>
                     </button>
                   ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+
+            <Popover
+              open={displayModesPopoverOpen}
+              onOpenChange={setDisplayModesPopoverOpen}
+            >
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                      <span>{displayMode}</span>
+                      <span className="text-muted-foreground text-[10px]">
+                        {availableDisplayModes.length}/3
+                      </span>
+                    </Button>
+                  </PopoverTrigger>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="font-medium">Display Modes</p>
+                </TooltipContent>
+              </Tooltip>
+              <PopoverContent className="w-56 p-3" align="start">
+                <div className="space-y-3">
+                  <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Current mode
+                    </div>
+                    <div className="grid grid-cols-3 gap-1">
+                      {(["inline", "pip", "fullscreen"] as const).map(
+                        (mode) => (
+                          <Button
+                            key={mode}
+                            type="button"
+                            variant={
+                              displayMode === mode ? "secondary" : "ghost"
+                            }
+                            size="sm"
+                            disabled={!availableDisplayModes.includes(mode)}
+                            onClick={() => handleDisplayModeChange(mode)}
+                            className="h-7 text-[11px]"
+                          >
+                            {mode}
+                          </Button>
+                        ),
+                      )}
+                    </div>
+                  </div>
+                  <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                      Host available modes
+                    </div>
+                    <div className="grid grid-cols-1 gap-1">
+                      {(["inline", "pip", "fullscreen"] as const).map(
+                        (mode) => (
+                          <Button
+                            key={mode}
+                            type="button"
+                            variant={
+                              availableDisplayModes.includes(mode)
+                                ? "secondary"
+                                : "ghost"
+                            }
+                            size="sm"
+                            onClick={() => toggleAvailableDisplayMode(mode)}
+                            className="justify-start h-7 text-[11px]"
+                          >
+                            {mode}
+                          </Button>
+                        ),
+                      )}
+                    </div>
+                  </div>
                 </div>
               </PopoverContent>
             </Popover>
@@ -819,9 +949,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.hover ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ hover: !capabilities.hover })
-                    }
+                    onClick={() => handleCapabilityToggle("hover")}
                     className="h-7 w-7"
                   >
                     <MousePointer2 className="h-3.5 w-3.5" />
@@ -839,9 +967,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.touch ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ touch: !capabilities.touch })
-                    }
+                    onClick={() => handleCapabilityToggle("touch")}
                     className="h-7 w-7"
                   >
                     <Hand className="h-3.5 w-3.5" />
@@ -918,7 +1044,7 @@ export function DisplayContextHeader({
                 onClick={handleThemeChange}
                 className="h-7 w-7 border bg-background shadow-xs"
               >
-                {themeMode === "dark" ? (
+                {theme === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
                 ) : (
                   <Moon className="h-3.5 w-3.5" />
@@ -926,7 +1052,7 @@ export function DisplayContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {themeMode === "dark" ? "Light mode" : "Dark mode"}
+              {theme === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
         )}

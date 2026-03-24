@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import { storePresets } from "@/test/mocks";
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => {
@@ -90,6 +92,7 @@ describe("ToolPart display mode controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     onDisplayModeChange = vi.fn();
+    useClientConfigStore.setState(storePresets.clientConfig());
   });
 
   const renderWithDisplayModes = (
@@ -156,6 +159,22 @@ describe("ToolPart display mode controls", () => {
     const buttons = screen.getAllByRole("button");
     const disabledButtons = buttons.filter((b) => b.disabled);
     expect(disabledButtons).toHaveLength(0);
+  });
+
+  it("disables modes that the host does not advertise even when the app supports them", () => {
+    useClientConfigStore.setState(
+      storePresets.clientConfigWithHostDisplayModes(["inline"]),
+    );
+
+    renderWithDisplayModes(["inline", "pip", "fullscreen"]);
+
+    const disabledButtons = screen
+      .getAllByRole("button")
+      .filter((b) => b.disabled);
+    expect(disabledButtons).toHaveLength(2);
+    expect(screen.getByLabelText("Inline")).not.toBeDisabled();
+    expect(screen.getByLabelText("PiP")).toBeDisabled();
+    expect(screen.getByLabelText("Fullscreen")).toBeDisabled();
   });
 
   it("allows clicking enabled display mode buttons", async () => {

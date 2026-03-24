@@ -29,6 +29,10 @@ import { useConvexAuth } from "convex/react";
 import { Workspace } from "@/state/app-types";
 import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
 import {
+  getEffectiveServerClientCapabilities,
+  workspaceClientCapabilitiesNeedReconnect,
+} from "@/lib/client-config";
+import {
   DndContext,
   closestCenter,
   PointerSensor,
@@ -78,6 +82,7 @@ function SortableServerCard({
   id,
   dndDisabled,
   server,
+  needsReconnect,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -87,6 +92,7 @@ function SortableServerCard({
   id: string;
   dndDisabled: boolean;
   server: ServerWithName;
+  needsReconnect?: boolean;
   onDisconnect: (name: string) => void;
   onReconnect: (
     name: string,
@@ -117,6 +123,7 @@ function SortableServerCard({
     <div ref={setNodeRef} style={style} {...dragListeners}>
       <ServerConnectionCard
         server={server}
+        needsReconnect={needsReconnect}
         onDisconnect={onDisconnect}
         onReconnect={onReconnect}
         onRemove={onRemove}
@@ -232,6 +239,27 @@ export function ServersTab({
   };
 
   const activeServer = activeId ? workspaceServers[activeId] : null;
+  const reconnectWarningByServerName = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(workspaceServers).map(([serverName, server]) => [
+          serverName,
+          server.connectionStatus === "connected" &&
+            workspaceClientCapabilitiesNeedReconnect({
+              desiredCapabilities: getEffectiveServerClientCapabilities({
+                workspaceClientConfig:
+                  workspaces[activeWorkspaceId]?.clientConfig,
+                serverCapabilities: server.config.capabilities as
+                  | Record<string, unknown>
+                  | undefined,
+              }),
+              initializedCapabilities: server.initializationInfo
+                ?.clientCapabilities as Record<string, unknown> | undefined,
+            }),
+        ]),
+      ),
+    [activeWorkspaceId, workspaceServers, workspaces],
+  );
 
   const detailModalLiveServer = detailModalState.serverName
     ? (workspaceServers[detailModalState.serverName] ?? null)
@@ -478,6 +506,7 @@ export function ServersTab({
                       id={name}
                       dndDisabled={false}
                       server={server}
+                      needsReconnect={reconnectWarningByServerName[name]}
                       onDisconnect={onDisconnect}
                       onReconnect={onReconnect}
                       onRemove={onRemove}
@@ -493,6 +522,9 @@ export function ServersTab({
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
                     server={activeServer}
+                    needsReconnect={
+                      reconnectWarningByServerName[activeServer.name]
+                    }
                     onDisconnect={onDisconnect}
                     onReconnect={onReconnect}
                     onRemove={onRemove}
@@ -605,6 +637,7 @@ export function ServersTab({
           isOpen={detailModalState.isOpen}
           onClose={handleCloseDetailModal}
           server={detailModalServer}
+          needsReconnect={reconnectWarningByServerName[detailModalServer.name]}
           defaultTab={detailModalState.defaultTab}
           onSubmit={handleSubmitDetailModal}
           onDisconnect={onDisconnect}

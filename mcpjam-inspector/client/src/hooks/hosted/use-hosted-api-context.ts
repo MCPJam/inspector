@@ -5,6 +5,8 @@ import { setHostedApiContext } from "@/lib/apis/web/context";
 interface UseHostedApiContextOptions {
   workspaceId: string | null;
   serverIdsByName: Record<string, string>;
+  clientCapabilities?: Record<string, unknown>;
+  clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
@@ -19,6 +21,8 @@ interface UseHostedApiContextOptions {
 export function useHostedApiContext({
   workspaceId,
   serverIdsByName,
+  clientCapabilities,
+  clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
   guestOauthTokensByServerName,
@@ -46,6 +50,8 @@ export function useHostedApiContext({
     setHostedApiContext({
       workspaceId,
       serverIdsByName,
+      clientCapabilities,
+      clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
       guestOauthTokensByServerName,
@@ -62,6 +68,8 @@ export function useHostedApiContext({
     enabled,
     workspaceId,
     serverIdsByName,
+    clientCapabilities,
+    clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,

@@ -4,7 +4,7 @@ import type {
   ElicitResult,
   ListToolsResult,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { MCPTask, TaskOptions } from "@mcpjam/sdk";
+import type { MCPTask, TaskOptions } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { executeHostedTool, listHostedTools } from "@/lib/apis/web/tools-api";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
