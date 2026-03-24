@@ -29,7 +29,10 @@ import { useConvexAuth } from "convex/react";
 import { Workspace } from "@/state/app-types";
 import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
-import { workspaceClientCapabilitiesNeedReconnect } from "@/lib/client-config";
+import {
+  mergeWorkspaceClientCapabilities,
+  workspaceClientCapabilitiesNeedReconnect,
+} from "@/lib/client-config";
 import {
   DndContext,
   closestCenter,
@@ -237,7 +240,7 @@ export function ServersTab({
   };
 
   const activeServer = activeId ? workspaceServers[activeId] : null;
-  const desiredCapabilities =
+  const workspaceDesiredCapabilities =
     (workspaces[activeWorkspaceId]?.clientConfig?.clientCapabilities as
       | Record<string, unknown>
       | undefined) ??
@@ -249,13 +252,16 @@ export function ServersTab({
           serverName,
           server.connectionStatus === "connected" &&
             workspaceClientCapabilitiesNeedReconnect({
-              desiredCapabilities,
+              desiredCapabilities: mergeWorkspaceClientCapabilities(
+                server.config.capabilities as Record<string, unknown> | undefined,
+                workspaceDesiredCapabilities,
+              ),
               initializedCapabilities: server.initializationInfo
                 ?.clientCapabilities as Record<string, unknown> | undefined,
             }),
         ]),
       ),
-    [desiredCapabilities, workspaceServers],
+    [workspaceDesiredCapabilities, workspaceServers],
   );
 
   const detailModalLiveServer = detailModalState.serverName

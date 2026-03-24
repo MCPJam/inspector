@@ -45,6 +45,7 @@ import {
   extractHostLocale,
   extractHostSafeAreaInsets,
   extractHostTheme,
+  extractHostTimeZone,
 } from "@/lib/client-config";
 
 type ToolState =
@@ -628,13 +629,20 @@ export function ChatGPTAppRenderer({
   const draftHostContext = useClientConfigStore(
     (s) => s.draftConfig?.hostContext,
   );
-  // Get locale from playground store, fallback to navigator.language
+  // Get locale and time zone from playground store, fallback to browser settings
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
+  const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
   const locale = extractHostLocale(
     draftHostContext,
     playgroundLocale || navigator.language || "en-US",
   );
   const resolvedTheme = extractHostTheme(draftHostContext) ?? themeMode;
+  const hostTimeZone = extractHostTimeZone(
+    draftHostContext,
+    playgroundTimeZone ||
+      Intl.DateTimeFormat().resolvedOptions().timeZone ||
+      "UTC",
+  );
 
   const {
     resolvedToolCallId,
@@ -906,6 +914,7 @@ export function ChatGPTAppRenderer({
         displayMode: effectiveDisplayMode,
         maxHeight: maxHeight ?? undefined,
         locale,
+        timeZone: hostTimeZone,
         safeArea: { insets: safeAreaInsets },
         userAgent: {
           device: { type: deviceType },
@@ -921,6 +930,7 @@ export function ChatGPTAppRenderer({
     effectiveDisplayMode,
     maxHeight,
     locale,
+    hostTimeZone,
     deviceType,
     capabilities,
     safeAreaInsets,
@@ -1397,6 +1407,7 @@ export function ChatGPTAppRenderer({
       displayMode: "inline",
       maxHeight: null,
       locale,
+      timeZone: hostTimeZone,
       safeArea: { insets: safeAreaInsets },
       userAgent: {
         device: { type: deviceType },
@@ -1415,6 +1426,7 @@ export function ChatGPTAppRenderer({
   }, [
     resolvedTheme,
     locale,
+    hostTimeZone,
     deviceType,
     capabilities,
     safeAreaInsets,
@@ -1453,6 +1465,7 @@ export function ChatGPTAppRenderer({
       theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
       locale,
+      timeZone: hostTimeZone,
       safeArea: { insets: safeAreaInsets },
       userAgent: {
         device: { type: deviceType },
@@ -1474,6 +1487,7 @@ export function ChatGPTAppRenderer({
     maxHeight,
     effectiveDisplayMode,
     locale,
+    hostTimeZone,
     deviceType,
     capabilities,
     safeAreaInsets,

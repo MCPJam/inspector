@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToolPart } from "../tool-part";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import { storePresets } from "@/test/mocks";
 
 // Mock lucide-react icons
 vi.mock("lucide-react", () => {
@@ -42,20 +44,6 @@ vi.mock("@/stores/widget-debug-store", () => ({
         ["call-1", { globals: {}, logs: [], cspViolations: [] }],
       ]),
     }),
-}));
-
-const mockClientConfigStoreState = {
-  draftConfig: undefined as
-    | {
-        hostContext?: {
-          availableDisplayModes?: ("inline" | "pip" | "fullscreen")[];
-        };
-      }
-    | undefined,
-};
-
-vi.mock("@/stores/client-config-store", () => ({
-  useClientConfigStore: (selector: any) => selector(mockClientConfigStoreState),
 }));
 
 // Mock thread-helpers
@@ -104,7 +92,7 @@ describe("ToolPart display mode controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     onDisplayModeChange = vi.fn();
-    mockClientConfigStoreState.draftConfig = undefined;
+    useClientConfigStore.setState(storePresets.clientConfig());
   });
 
   const renderWithDisplayModes = (
@@ -174,11 +162,9 @@ describe("ToolPart display mode controls", () => {
   });
 
   it("disables modes that the host does not advertise even when the app supports them", () => {
-    mockClientConfigStoreState.draftConfig = {
-      hostContext: {
-        availableDisplayModes: ["inline"],
-      },
-    };
+    useClientConfigStore.setState(
+      storePresets.clientConfigWithHostDisplayModes(["inline"]),
+    );
 
     renderWithDisplayModes(["inline", "pip", "fullscreen"]);
 

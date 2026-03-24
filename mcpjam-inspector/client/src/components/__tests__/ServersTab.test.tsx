@@ -5,6 +5,7 @@ import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
 import type { ServerFormData } from "@/shared/types.js";
+import { mergeWorkspaceClientCapabilities } from "@/lib/client-config";
 import {
   captureServerDetailModalOAuthResume,
   writeOpenServerDetailModalState,
@@ -448,5 +449,51 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.getByText("Needs reconnect")).toBeInTheDocument();
+  });
+
+  it("does not surface reconnect warnings when server capability overrides already match initialize payload", () => {
+    const serverCapabilities = {
+      experimental: {
+        serverOverride: true,
+      },
+    };
+    const initializedCapabilities = mergeWorkspaceClientCapabilities(
+      serverCapabilities,
+      getDefaultClientCapabilities() as Record<string, unknown>,
+    );
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={{
+          "test-server": createServer({
+            config: {
+              command: "npx",
+              args: ["-y", "@modelcontextprotocol/server-test"],
+              capabilities: serverCapabilities,
+            },
+            initializationInfo: {
+              clientCapabilities: initializedCapabilities,
+            } as any,
+          }),
+        }}
+        workspaces={{
+          "workspace-1": createWorkspace({
+            "test-server": createServer({
+              config: {
+                command: "npx",
+                args: ["-y", "@modelcontextprotocol/server-test"],
+                capabilities: serverCapabilities,
+              },
+              initializationInfo: {
+                clientCapabilities: initializedCapabilities,
+              } as any,
+            }),
+          }),
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
   });
 });

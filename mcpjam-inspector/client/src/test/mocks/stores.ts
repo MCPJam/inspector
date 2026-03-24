@@ -4,6 +4,10 @@
  */
 import { vi } from "vitest";
 import type { AppState, ServerWithName, Workspace } from "@/state/app-types";
+import type {
+  HostDisplayMode,
+  WorkspaceClientConfig,
+} from "@/lib/client-config";
 import { createServer, createWorkspace } from "../factories";
 
 /**
@@ -152,6 +156,54 @@ export function createMockWorkspaceMutations(overrides = {}) {
   };
 }
 
+export type MockClientConfigStoreState = {
+  activeWorkspaceId: string | null;
+  defaultConfig: WorkspaceClientConfig | null;
+  savedConfig: WorkspaceClientConfig | undefined;
+  draftConfig: WorkspaceClientConfig | null;
+  clientCapabilitiesText: string;
+  hostContextText: string;
+  clientCapabilitiesError: string | null;
+  hostContextError: string | null;
+  isSaving: boolean;
+  isDirty: boolean;
+};
+
+function stringifyJson(value: unknown) {
+  return JSON.stringify(value, null, 2);
+}
+
+export function createMockWorkspaceClientConfig(
+  overrides: Partial<WorkspaceClientConfig> = {},
+): WorkspaceClientConfig {
+  return {
+    version: 1,
+    clientCapabilities: overrides.clientCapabilities ?? {},
+    hostContext: overrides.hostContext ?? {},
+  };
+}
+
+export function createMockClientConfigStoreState(
+  overrides: Partial<MockClientConfigStoreState> = {},
+): MockClientConfigStoreState {
+  const draftConfig =
+    overrides.draftConfig === undefined ? null : overrides.draftConfig;
+
+  return {
+    activeWorkspaceId: null,
+    defaultConfig: null,
+    savedConfig: undefined,
+    draftConfig,
+    clientCapabilitiesText: stringifyJson(draftConfig?.clientCapabilities ?? {}),
+    hostContextText: stringifyJson(draftConfig?.hostContext ?? {}),
+    clientCapabilitiesError: null,
+    hostContextError: null,
+    isSaving: false,
+    isDirty: false,
+    ...overrides,
+  };
+}
+
 /**
  * Presets for common testing scenarios
  */
@@ -226,5 +278,21 @@ export const storePresets = {
   authenticated: () =>
     createMockUseAppState({
       isCloudSyncActive: true,
+    }),
+
+  /** Empty client config store state */
+  clientConfig: (overrides: Partial<MockClientConfigStoreState> = {}) =>
+    createMockClientConfigStoreState(overrides),
+
+  /** Client config with specific host-advertised display modes */
+  clientConfigWithHostDisplayModes: (
+    availableDisplayModes: HostDisplayMode[],
+    overrides: Partial<MockClientConfigStoreState> = {},
+  ) =>
+    createMockClientConfigStoreState({
+      draftConfig: createMockWorkspaceClientConfig({
+        hostContext: { availableDisplayModes },
+      }),
+      ...overrides,
     }),
 };
