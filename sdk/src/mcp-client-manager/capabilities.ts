@@ -67,24 +67,26 @@ export function mergeClientCapabilities(
   base?: ClientCapabilityOptions,
   overrides?: ClientCapabilityOptions,
 ): ClientCapabilityOptions {
+  const baseRecord = base as Record<string, unknown> | undefined;
+  const overrideRecord = overrides as Record<string, unknown> | undefined;
   const merged: Record<string, unknown> = {
     ...(base ?? {}),
     ...(overrides ?? {}),
   };
 
   if (
-    overrides &&
-    Object.prototype.hasOwnProperty.call(overrides, "extensions")
+    overrideRecord &&
+    Object.prototype.hasOwnProperty.call(overrideRecord, "extensions")
   ) {
-    const overExt = overrides.extensions;
+    const overExt = overrideRecord.extensions;
     if (overExt === undefined) {
-      merged.extensions = base?.extensions;
+      merged.extensions = baseRecord?.extensions;
     } else if (isPlainObject(overExt)) {
       if (Object.keys(overExt).length === 0) {
         merged.extensions = {};
-      } else if (isPlainObject(base?.extensions)) {
+      } else if (isPlainObject(baseRecord?.extensions)) {
         merged.extensions = mergeExtensionsMaps(
-          base!.extensions as Record<string, unknown>,
+          baseRecord.extensions as Record<string, unknown>,
           overExt,
         );
       } else {

@@ -34,8 +34,13 @@ export type ClientCapabilityOptions = NonNullable<
  * Base configuration shared by all server types
  */
 export type BaseServerConfig = {
-  /** Client capabilities to advertise to this server */
+  /** Legacy merge-style client capabilities to advertise to this server */
   capabilities?: ClientCapabilityOptions;
+  /**
+   * Exact client capabilities to advertise to this server.
+   * When provided, this bypasses manager defaults and legacy capability merging.
+   */
+  clientCapabilities?: ClientCapabilityOptions;
   /** Request timeout in milliseconds */
   timeout?: number;
   /** Client version to report */

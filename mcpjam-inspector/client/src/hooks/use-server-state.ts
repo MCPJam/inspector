@@ -218,6 +218,7 @@ export function useServerState({
       return {
         ...serverConfig,
         capabilities: mergedCapabilities,
+        clientCapabilities: mergedCapabilities,
       };
     },
     [activeWorkspace?.clientConfig],

@@ -1,5 +1,4 @@
 import { MCPClientManager } from "../src/mcp-client-manager";
-import { getDefaultClientCapabilities } from "../src/mcp-client-manager/capabilities";
 import {
   startMockHttpServer,
   startMockStreamableHttpServer,
@@ -287,27 +286,10 @@ describe("MCPClientManager", () => {
       expect(capabilities?.tools).toBeDefined();
     }, 30000);
 
-    it("should not advertise MCP Apps UI extension by default", async () => {
+    it("should advertise MCP Apps UI extension by default", async () => {
       await manager.connectToServer("extensions-test", {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
-
-      const info = manager.getInitializationInfo("extensions-test");
-      expect(info).toBeDefined();
-
-      const extensions = (info!.clientCapabilities as Record<string, unknown>)
-        .extensions as Record<string, unknown>;
-      expect(extensions).toBeUndefined();
-
-      await manager.disconnectServer("extensions-test");
-    }, 30000);
-
-    it("should advertise provided MCP Apps UI extension in client capabilities", async () => {
-      await manager.connectToServer("extensions-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-        capabilities: getDefaultClientCapabilities(),
       });
 
       const info = manager.getInitializationInfo("extensions-test");
@@ -322,8 +304,8 @@ describe("MCPClientManager", () => {
       await manager.disconnectServer("extensions-test");
     }, 30000);
 
-    it("should preserve custom capabilities without injecting the UI extension", async () => {
-      await manager.connectToServer("custom-caps-test", {
+    it("should merge legacy per-server capabilities on top of default UI capabilities", async () => {
+      await manager.connectToServer("legacy-caps-test", {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-everything"],
         capabilities: {
@@ -333,7 +315,7 @@ describe("MCPClientManager", () => {
         } as any,
       });
 
-      const info = manager.getInitializationInfo("custom-caps-test");
+      const info = manager.getInitializationInfo("legacy-caps-test");
       expect(info).toBeDefined();
       expect(info!.clientCapabilities).toMatchObject({
         experimental: {
@@ -341,8 +323,93 @@ describe("MCPClientManager", () => {
         },
         elicitation: {},
       });
+
+      const extensions = (info!.clientCapabilities as Record<string, unknown>)
+        .extensions as Record<string, unknown>;
+      expect(extensions["io.modelcontextprotocol/ui"]).toEqual({
+        mimeTypes: ["text/html;profile=mcp-app"],
+      });
+
+      await manager.disconnectServer("legacy-caps-test");
+    }, 30000);
+
+    it("should merge manager defaultCapabilities with legacy per-server capabilities", async () => {
+      const managerWithDefaults = new MCPClientManager(
+        {},
+        {
+          defaultCapabilities: {
+            sampling: {},
+          } as any,
+        },
+      );
+
+      try {
+        await managerWithDefaults.connectToServer("manager-default-caps-test", {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-everything"],
+          capabilities: {
+            experimental: {
+              inspectorProfile: {},
+            },
+          } as any,
+        });
+
+        const info = managerWithDefaults.getInitializationInfo(
+          "manager-default-caps-test",
+        );
+        expect(info).toBeDefined();
+        expect(info!.clientCapabilities).toMatchObject({
+          sampling: {},
+          experimental: {
+            inspectorProfile: {},
+          },
+          elicitation: {},
+        });
+        expect(
+          ((info!.clientCapabilities as Record<string, unknown>).extensions as
+            | Record<string, unknown>
+            | undefined)?.["io.modelcontextprotocol/ui"],
+        ).toEqual({
+          mimeTypes: ["text/html;profile=mcp-app"],
+        });
+      } finally {
+        await managerWithDefaults.disconnectAllServers();
+      }
+    }, 30000);
+
+    it("should let per-server clientCapabilities bypass defaults and legacy merge", async () => {
+      await manager.connectToServer("custom-caps-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        capabilities: {
+          experimental: {
+            legacyPath: {},
+          },
+        } as any,
+        clientCapabilities: {
+          experimental: {
+            exactPath: {},
+          },
+        } as any,
+      });
+
+      const info = manager.getInitializationInfo("custom-caps-test");
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).toMatchObject({
+        experimental: {
+          exactPath: {},
+        },
+        elicitation: {},
+      });
+      expect(info!.clientCapabilities).not.toMatchObject({
+        experimental: {
+          legacyPath: {},
+        },
+      });
       expect(
-        (info!.clientCapabilities as Record<string, unknown>).extensions,
+        ((info!.clientCapabilities as Record<string, unknown>).extensions as
+          | Record<string, unknown>
+          | undefined)?.["io.modelcontextprotocol/ui"],
       ).toBeUndefined();
 
       await manager.disconnectServer("custom-caps-test");

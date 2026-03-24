@@ -2,6 +2,7 @@ import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, AppAction } from "@/state/app-types";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useServerState } from "../use-server-state";
 
@@ -65,18 +66,23 @@ vi.mock("../useWorkspaces", () => ({
   }),
 }));
 
-function createAppState(): AppState {
+function createAppState(options?: {
+  workspaceClientConfig?: WorkspaceClientConfig;
+  serverCapabilities?: Record<string, unknown>;
+}): AppState {
   return {
     workspaces: {
       default: {
         id: "default",
         name: "Default",
+        clientConfig: options?.workspaceClientConfig,
         servers: {
           "demo-server": {
             name: "demo-server",
             config: {
               type: "http",
               url: "https://example.com/mcp",
+              capabilities: options?.serverCapabilities,
             } as any,
             lastConnectionTime: new Date(),
             connectionStatus: "connecting",
@@ -97,6 +103,7 @@ function createAppState(): AppState {
         config: {
           type: "http",
           url: "https://example.com/mcp",
+          capabilities: options?.serverCapabilities,
         } as any,
         lastConnectionTime: new Date(),
         connectionStatus: "connecting",
@@ -111,8 +118,10 @@ function createAppState(): AppState {
   };
 }
 
-function renderUseServerState(dispatch: (action: AppAction) => void) {
-  const appState = createAppState();
+function renderUseServerState(
+  dispatch: (action: AppAction) => void,
+  appState = createAppState(),
+) {
   return renderHook(() =>
     useServerState({
       appState,
@@ -232,5 +241,65 @@ describe("useServerState OAuth callback failures", () => {
     expect(
       dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST"),
     ).toBe(false);
+  });
+
+  it("passes exact workspace-derived clientCapabilities on local reconnect", async () => {
+    const { reconnectServer } = await import("@/state/mcp-api");
+    const { ensureAuthorizedForReconnect } = await import(
+      "@/state/oauth-orchestrator"
+    );
+    vi.mocked(reconnectServer).mockResolvedValue({
+      success: true,
+      initInfo: {
+        clientCapabilities: {},
+      },
+    } as any);
+
+    const appState = createAppState({
+      workspaceClientConfig: {
+        version: 1,
+        clientCapabilities: {
+          experimental: {
+            workspaceProfile: {},
+          },
+        },
+        hostContext: {},
+      },
+      serverCapabilities: {
+        sampling: {},
+      },
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, appState);
+    vi.mocked(ensureAuthorizedForReconnect).mockResolvedValue({
+      kind: "ready",
+      serverConfig: appState.workspaces.default.servers["demo-server"].config,
+      tokens: undefined,
+    } as any);
+
+    await result.current.handleReconnect("demo-server");
+
+    await waitFor(() => {
+      expect(vi.mocked(reconnectServer)).toHaveBeenCalled();
+    });
+
+    const [, effectiveConfig] = vi.mocked(reconnectServer).mock.calls[0] ?? [];
+    expect(effectiveConfig).toMatchObject({
+      capabilities: {
+        experimental: {
+          workspaceProfile: {},
+        },
+        sampling: {},
+        elicitation: {},
+      },
+      clientCapabilities: {
+        experimental: {
+          workspaceProfile: {},
+        },
+        sampling: {},
+        elicitation: {},
+      },
+    });
   });
 });

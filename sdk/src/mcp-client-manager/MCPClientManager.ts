@@ -90,7 +90,11 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
-import { mergeClientCapabilities } from "./capabilities.js";
+import {
+  getDefaultClientCapabilities,
+  mergeClientCapabilities,
+  normalizeClientCapabilities,
+} from "./capabilities.js";
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -147,7 +151,10 @@ export class MCPClientManager {
     this.defaultClientVersion =
       options.defaultClientVersion ?? DEFAULT_CLIENT_VERSION;
     this.defaultClientName = options.defaultClientName;
-    this.defaultCapabilities = { ...(options.defaultCapabilities ?? {}) };
+    this.defaultCapabilities = mergeClientCapabilities(
+      getDefaultClientCapabilities(),
+      options.defaultCapabilities,
+    );
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
@@ -1255,6 +1262,10 @@ export class MCPClientManager {
   }
 
   private buildCapabilities(config: MCPServerConfig): ClientCapabilityOptions {
+    if (config.clientCapabilities) {
+      return normalizeClientCapabilities(config.clientCapabilities);
+    }
+
     return mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
   }
 
