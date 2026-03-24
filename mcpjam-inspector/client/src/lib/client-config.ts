@@ -173,7 +173,9 @@ export function extractHostLocale(
   hostContext?: Record<string, unknown>,
   fallback = "en-US",
 ): string {
-  return typeof hostContext?.locale === "string" ? hostContext.locale : fallback;
+  return typeof hostContext?.locale === "string"
+    ? hostContext.locale
+    : fallback;
 }
 
 export function extractHostTimeZone(

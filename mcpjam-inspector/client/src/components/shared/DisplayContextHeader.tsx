@@ -244,11 +244,14 @@ export function DisplayContextHeader({
 
   const toggleAvailableDisplayMode = useCallback(
     (mode: "inline" | "pip" | "fullscreen") => {
-      const nextAvailableDisplayModes: HostDisplayMode[] = availableDisplayModes.includes(mode)
-        ? availableDisplayModes.filter((value) => value !== mode)
-        : [...availableDisplayModes, mode];
+      const nextAvailableDisplayModes: HostDisplayMode[] =
+        availableDisplayModes.includes(mode)
+          ? availableDisplayModes.filter((value) => value !== mode)
+          : [...availableDisplayModes, mode];
       const normalizedAvailableDisplayModes: HostDisplayMode[] =
-        nextAvailableDisplayModes.length > 0 ? nextAvailableDisplayModes : ["inline"];
+        nextAvailableDisplayModes.length > 0
+          ? nextAvailableDisplayModes
+          : ["inline"];
       const nextDisplayMode = clampDisplayModeToAvailableModes(
         displayMode,
         normalizedAvailableDisplayModes,
@@ -832,19 +835,23 @@ export function DisplayContextHeader({
                       Current mode
                     </div>
                     <div className="grid grid-cols-3 gap-1">
-                      {(["inline", "pip", "fullscreen"] as const).map((mode) => (
-                        <Button
-                          key={mode}
-                          type="button"
-                          variant={displayMode === mode ? "secondary" : "ghost"}
-                          size="sm"
-                          disabled={!availableDisplayModes.includes(mode)}
-                          onClick={() => handleDisplayModeChange(mode)}
-                          className="h-7 text-[11px]"
-                        >
-                          {mode}
-                        </Button>
-                      ))}
+                      {(["inline", "pip", "fullscreen"] as const).map(
+                        (mode) => (
+                          <Button
+                            key={mode}
+                            type="button"
+                            variant={
+                              displayMode === mode ? "secondary" : "ghost"
+                            }
+                            size="sm"
+                            disabled={!availableDisplayModes.includes(mode)}
+                            onClick={() => handleDisplayModeChange(mode)}
+                            className="h-7 text-[11px]"
+                          >
+                            {mode}
+                          </Button>
+                        ),
+                      )}
                     </div>
                   </div>
                   <div className="space-y-1">
@@ -852,22 +859,24 @@ export function DisplayContextHeader({
                       Host available modes
                     </div>
                     <div className="grid grid-cols-1 gap-1">
-                      {(["inline", "pip", "fullscreen"] as const).map((mode) => (
-                        <Button
-                          key={mode}
-                          type="button"
-                          variant={
-                            availableDisplayModes.includes(mode)
-                              ? "secondary"
-                              : "ghost"
-                          }
-                          size="sm"
-                          onClick={() => toggleAvailableDisplayMode(mode)}
-                          className="justify-start h-7 text-[11px]"
-                        >
-                          {mode}
-                        </Button>
-                      ))}
+                      {(["inline", "pip", "fullscreen"] as const).map(
+                        (mode) => (
+                          <Button
+                            key={mode}
+                            type="button"
+                            variant={
+                              availableDisplayModes.includes(mode)
+                                ? "secondary"
+                                : "ghost"
+                            }
+                            size="sm"
+                            onClick={() => toggleAvailableDisplayMode(mode)}
+                            className="justify-start h-7 text-[11px]"
+                          >
+                            {mode}
+                          </Button>
+                        ),
+                      )}
                     </div>
                   </div>
                 </div>

@@ -625,7 +625,9 @@ export function ChatGPTAppRenderer({
   const rootRef = useRef<HTMLDivElement>(null);
   const inlineWidthRef = useRef<number | undefined>(undefined);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const draftHostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const draftHostContext = useClientConfigStore(
+    (s) => s.draftConfig?.hostContext,
+  );
   // Get locale from playground store, fallback to navigator.language
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const locale = extractHostLocale(

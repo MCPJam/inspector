@@ -55,17 +55,18 @@ function createInitialState(): Omit<
   };
 }
 
-function computeBaselineConfig(state: Pick<
-  ClientConfigStoreState,
-  "defaultConfig" | "savedConfig"
->) {
+function computeBaselineConfig(
+  state: Pick<ClientConfigStoreState, "defaultConfig" | "savedConfig">,
+) {
   return state.savedConfig ?? state.defaultConfig;
 }
 
-function computeDirtyState(state: Pick<
-  ClientConfigStoreState,
-  "defaultConfig" | "savedConfig" | "draftConfig"
->) {
+function computeDirtyState(
+  state: Pick<
+    ClientConfigStoreState,
+    "defaultConfig" | "savedConfig" | "draftConfig"
+  >,
+) {
   const baseline = computeBaselineConfig(state);
   if (!baseline || !state.draftConfig) {
     return false;
@@ -179,7 +180,11 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
           ...currentHostContext,
           ...patch,
         };
-        const nextState = setSectionValue(state, "hostContext", nextHostContext);
+        const nextState = setSectionValue(
+          state,
+          "hostContext",
+          nextHostContext,
+        );
         return {
           ...nextState,
           hostContextText: stringifyJson(nextHostContext),

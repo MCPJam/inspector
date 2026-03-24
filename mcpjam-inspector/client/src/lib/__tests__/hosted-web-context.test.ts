@@ -12,8 +12,10 @@ import {
 } from "../apis/web/context";
 
 describe("hosted web context", () => {
-  const defaultClientCapabilities =
-    getDefaultClientCapabilities() as Record<string, unknown>;
+  const defaultClientCapabilities = getDefaultClientCapabilities() as Record<
+    string,
+    unknown
+  >;
 
   afterEach(() => {
     setHostedApiContext(null);

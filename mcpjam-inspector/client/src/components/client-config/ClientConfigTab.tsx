@@ -63,10 +63,8 @@ export function ClientConfigTab({
 
       return workspaceClientCapabilitiesNeedReconnect({
         desiredCapabilities,
-        initializedCapabilities:
-          server.initializationInfo?.clientCapabilities as
-            | Record<string, unknown>
-            | undefined,
+        initializedCapabilities: server.initializationInfo
+          ?.clientCapabilities as Record<string, unknown> | undefined,
       });
     });
   }, [desiredCapabilities, workspace]);
@@ -88,7 +86,9 @@ export function ClientConfigTab({
     } catch (error) {
       markSaving(false);
       toast.error(
-        error instanceof Error ? error.message : "Failed to save client profile.",
+        error instanceof Error
+          ? error.message
+          : "Failed to save client profile.",
       );
     }
   };
@@ -132,9 +132,7 @@ export function ClientConfigTab({
               <div className="flex items-start gap-3">
                 <AlertTriangle className="mt-0.5 h-4 w-4 text-amber-600" />
                 <div className="space-y-1">
-                  <div className="text-sm font-medium">
-                    Needs reconnect
-                  </div>
+                  <div className="text-sm font-medium">Needs reconnect</div>
                   <p className="text-sm text-muted-foreground">
                     Saved client capabilities differ from the last initialize
                     payload for:{" "}

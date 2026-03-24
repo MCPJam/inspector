@@ -250,10 +250,8 @@ export function ServersTab({
           server.connectionStatus === "connected" &&
             workspaceClientCapabilitiesNeedReconnect({
               desiredCapabilities,
-              initializedCapabilities:
-                server.initializationInfo?.clientCapabilities as
-                  | Record<string, unknown>
-                  | undefined,
+              initializedCapabilities: server.initializationInfo
+                ?.clientCapabilities as Record<string, unknown> | undefined,
             }),
         ]),
       ),
@@ -521,7 +519,9 @@ export function ServersTab({
                 <div style={{ opacity: 0.85 }}>
                   <ServerConnectionCard
                     server={activeServer}
-                    needsReconnect={reconnectWarningByServerName[activeServer.name]}
+                    needsReconnect={
+                      reconnectWarningByServerName[activeServer.name]
+                    }
                     onDisconnect={onDisconnect}
                     onReconnect={onReconnect}
                     onRemove={onRemove}
