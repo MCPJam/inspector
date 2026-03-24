@@ -245,9 +245,8 @@ describe("useServerState OAuth callback failures", () => {
 
   it("passes exact workspace-derived clientCapabilities on local reconnect", async () => {
     const { reconnectServer } = await import("@/state/mcp-api");
-    const { ensureAuthorizedForReconnect } = await import(
-      "@/state/oauth-orchestrator"
-    );
+    const { ensureAuthorizedForReconnect } =
+      await import("@/state/oauth-orchestrator");
     vi.mocked(reconnectServer).mockResolvedValue({
       success: true,
       initInfo: {
