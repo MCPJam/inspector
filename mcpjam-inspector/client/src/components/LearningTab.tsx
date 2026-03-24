@@ -97,13 +97,15 @@ function WhatIsMcpWalkthrough({ onBack }: { onBack: () => void }) {
   const handleDiagramStepClick = useCallback(
     (nodeId: string) => {
       const nodeToStep: Record<string, string> = {
-        "chat-interfaces": "host_app",
-        "ides": "host_app",
-        "other-ai-apps": "host_app",
-        "mcp-protocol": "mcp_client",
-        "data-filesystems": "resources",
-        "dev-tools": "tools",
-        "productivity-tools": "prompts",
+        "host-group": "host_app",
+        "llm-app": "host_app",
+        "mcp-client": "mcp_client",
+        "server-tools": "mcp_servers",
+        "server-resources": "mcp_servers",
+        "server-prompts": "mcp_servers",
+        tools: "tools",
+        resources: "resources",
+        prompts: "prompts",
       };
       const stepId = nodeToStep[nodeId] ?? nodeId;
       if (

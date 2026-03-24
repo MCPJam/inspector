@@ -35,28 +35,26 @@ export const WHAT_IS_MCP_STEP_ORDER: WhatIsMcpStep[] = [
 // ---------------------------------------------------------------------------
 
 const ALL_NODES = [
-  "chat-interfaces",
-  "ides",
-  "other-ai-apps",
-  "mcp-protocol",
-  "data-filesystems",
-  "dev-tools",
-  "productivity-tools",
+  "host-group",
+  "llm-app",
+  "mcp-client",
+  "server-tools",
+  "server-resources",
+  "server-prompts",
+  "tools",
+  "resources",
+  "prompts",
 ];
 
-const LEFT_EDGES = [
-  "e-chat-mcp",
-  "e-ides-mcp",
-  "e-other-mcp",
+const ALL_EDGES = [
+  "e-llm-client",
+  "e-client-server-tools",
+  "e-client-server-resources",
+  "e-client-server-prompts",
+  "e-server-tools",
+  "e-server-resources",
+  "e-server-prompts",
 ];
-
-const RIGHT_EDGES = [
-  "e-mcp-data",
-  "e-mcp-dev",
-  "e-mcp-prod",
-];
-
-const ALL_EDGES = [...LEFT_EDGES, ...RIGHT_EDGES];
 
 export const STEP_HIGHLIGHTS: Record<WhatIsMcpStep, StepHighlightMap> = {
   intro: {
@@ -64,28 +62,32 @@ export const STEP_HIGHLIGHTS: Record<WhatIsMcpStep, StepHighlightMap> = {
     activeEdges: ALL_EDGES,
   },
   host_app: {
-    activeNodes: ["chat-interfaces", "ides", "other-ai-apps"],
+    activeNodes: ["host-group", "llm-app"],
     activeEdges: [],
   },
   mcp_client: {
-    activeNodes: ["mcp-protocol"],
-    activeEdges: LEFT_EDGES,
+    activeNodes: ["mcp-client"],
+    activeEdges: ["e-llm-client"],
   },
   mcp_servers: {
-    activeNodes: ["mcp-protocol"],
-    activeEdges: RIGHT_EDGES,
+    activeNodes: ["server-tools", "server-resources", "server-prompts"],
+    activeEdges: [
+      "e-client-server-tools",
+      "e-client-server-resources",
+      "e-client-server-prompts",
+    ],
   },
   tools: {
-    activeNodes: ["dev-tools"],
-    activeEdges: ["e-mcp-dev"],
+    activeNodes: ["tools"],
+    activeEdges: ["e-server-tools"],
   },
   resources: {
-    activeNodes: ["data-filesystems"],
-    activeEdges: ["e-mcp-data"],
+    activeNodes: ["resources"],
+    activeEdges: ["e-server-resources"],
   },
   prompts: {
-    activeNodes: ["productivity-tools"],
-    activeEdges: ["e-mcp-prod"],
+    activeNodes: ["prompts"],
+    activeEdges: ["e-server-prompts"],
   },
   ecosystem: {
     activeNodes: ALL_NODES,
@@ -94,141 +96,144 @@ export const STEP_HIGHLIGHTS: Record<WhatIsMcpStep, StepHighlightMap> = {
 };
 
 // ---------------------------------------------------------------------------
-// Architecture diagram data — hub-and-spoke layout matching MCP overview
+// Architecture diagram data — matches internal MCP architecture from guide
 // ---------------------------------------------------------------------------
 
-// Layout: 3 left nodes → center MCP → 3 right nodes
-const LEFT_X = 0;
-const CENTER_X = 300;
-const RIGHT_X = 600;
-const ROW_SPACING = 110;
-const TOP_Y = 0;
-
 const NODES: ArchNodeDef[] = [
-  // Left column — AI Applications (Host Applications)
+  // Host Application group
   {
-    id: "chat-interfaces",
-    label: "Chat interface",
-    subtitle: "Claude Desktop, LibreChat",
-    icon: "💬",
-    type: "block",
-    color: "#8b5cf6", // purple
-    position: { x: LEFT_X, y: TOP_Y },
-  },
-  {
-    id: "ides",
-    label: "IDEs and code editors",
-    subtitle: "Claude Code, Goose",
-    icon: "💻",
-    type: "block",
-    color: "#8b5cf6",
-    position: { x: LEFT_X, y: TOP_Y + ROW_SPACING },
-  },
-  {
-    id: "other-ai-apps",
-    label: "Other AI applications",
-    subtitle: "5ire, Superinterface",
-    icon: "🤖",
-    type: "block",
-    color: "#8b5cf6",
-    position: { x: LEFT_X, y: TOP_Y + ROW_SPACING * 2 },
-  },
-
-  // Center — MCP Protocol (larger block)
-  {
-    id: "mcp-protocol",
-    label: "MCP",
-    subtitle: "Standardized protocol",
-    type: "block",
-    color: "#3b82f6", // blue
-    position: { x: CENTER_X, y: TOP_Y + 30 },
-    width: 200,
+    id: "host-group",
+    label: "Host Application",
+    subtitle: "Claude Desktop, Cursor, VS Code, etc.",
+    type: "group",
+    color: "#6366f1", // indigo
+    position: { x: 0, y: 0 },
+    width: 420,
     height: 160,
   },
 
-  // Right column — Data Sources and Tools
+  // Inside host
   {
-    id: "data-filesystems",
-    label: "Data and file systems",
-    subtitle: "PostgreSQL, SQLite, GDrive",
-    icon: "🗄️",
+    id: "llm-app",
+    label: "LLM / AI Engine",
+    subtitle: "Language model",
+    icon: "🧠",
     type: "block",
-    color: "#10b981", // green
-    position: { x: RIGHT_X, y: TOP_Y },
+    color: "#8b5cf6", // purple
+    position: { x: 30, y: 55 },
+    parentId: "host-group",
   },
   {
-    id: "dev-tools",
-    label: "Development tools",
-    subtitle: "Git, Sentry, etc.",
+    id: "mcp-client",
+    label: "MCP Client",
+    subtitle: "Protocol bridge",
+    icon: "🔌",
+    type: "block",
+    color: "#3b82f6", // blue
+    position: { x: 230, y: 55 },
+    parentId: "host-group",
+  },
+
+  // MCP Servers (outside host, to the right)
+  {
+    id: "server-tools",
+    label: "MCP Server",
+    subtitle: "Tool provider",
+    icon: "⚙️",
+    type: "block",
+    color: "#f59e0b", // amber
+    position: { x: 530, y: 0 },
+  },
+  {
+    id: "server-resources",
+    label: "MCP Server",
+    subtitle: "Data provider",
+    icon: "⚙️",
+    type: "block",
+    color: "#f59e0b",
+    position: { x: 530, y: 110 },
+  },
+  {
+    id: "server-prompts",
+    label: "MCP Server",
+    subtitle: "Prompt provider",
+    icon: "⚙️",
+    type: "block",
+    color: "#f59e0b",
+    position: { x: 530, y: 220 },
+  },
+
+  // Capabilities (rightmost column)
+  {
+    id: "tools",
+    label: "Tools",
+    subtitle: "APIs, functions, actions",
     icon: "🔧",
     type: "block",
-    color: "#10b981",
-    position: { x: RIGHT_X, y: TOP_Y + ROW_SPACING },
+    color: "#10b981", // green
+    position: { x: 780, y: 0 },
   },
   {
-    id: "productivity-tools",
-    label: "Productivity tools",
-    subtitle: "Slack, Google Maps, etc.",
-    icon: "📋",
+    id: "resources",
+    label: "Resources",
+    subtitle: "Files, databases, data",
+    icon: "📦",
     type: "block",
     color: "#10b981",
-    position: { x: RIGHT_X, y: TOP_Y + ROW_SPACING * 2 },
+    position: { x: 780, y: 110 },
+  },
+  {
+    id: "prompts",
+    label: "Prompts",
+    subtitle: "Templates, workflows",
+    icon: "📝",
+    type: "block",
+    color: "#10b981",
+    position: { x: 780, y: 220 },
   },
 ];
 
 const EDGES: ArchEdgeDef[] = [
-  // Left → MCP (AI apps to protocol)
+  // LLM ↔ MCP Client (inside host)
   {
-    id: "e-chat-mcp",
-    source: "chat-interfaces",
-    target: "mcp-protocol",
-    sourceHandle: "right",
-    targetHandle: "left",
-    bidirectional: true,
-  },
-  {
-    id: "e-ides-mcp",
-    source: "ides",
-    target: "mcp-protocol",
-    sourceHandle: "right",
-    targetHandle: "left",
-    bidirectional: true,
-    label: "Bidirectional data flow",
-  },
-  {
-    id: "e-other-mcp",
-    source: "other-ai-apps",
-    target: "mcp-protocol",
-    sourceHandle: "right",
-    targetHandle: "left",
-    bidirectional: true,
+    id: "e-llm-client",
+    source: "llm-app",
+    target: "mcp-client",
   },
 
-  // MCP → Right (protocol to data sources)
+  // MCP Client → Servers (via MCP Protocol)
   {
-    id: "e-mcp-data",
-    source: "mcp-protocol",
-    target: "data-filesystems",
-    sourceHandle: "right",
-    targetHandle: "left",
-    bidirectional: true,
+    id: "e-client-server-tools",
+    source: "mcp-client",
+    target: "server-tools",
+    label: "MCP Protocol",
   },
   {
-    id: "e-mcp-dev",
-    source: "mcp-protocol",
-    target: "dev-tools",
-    sourceHandle: "right",
-    targetHandle: "left",
-    bidirectional: true,
-    label: "Bidirectional data flow",
+    id: "e-client-server-resources",
+    source: "mcp-client",
+    target: "server-resources",
   },
   {
-    id: "e-mcp-prod",
-    source: "mcp-protocol",
-    target: "productivity-tools",
-    sourceHandle: "right",
-    targetHandle: "left",
-    bidirectional: true,
+    id: "e-client-server-prompts",
+    source: "mcp-client",
+    target: "server-prompts",
+  },
+
+  // Servers → Capabilities
+  {
+    id: "e-server-tools",
+    source: "server-tools",
+    target: "tools",
+  },
+  {
+    id: "e-server-resources",
+    source: "server-resources",
+    target: "resources",
+  },
+  {
+    id: "e-server-prompts",
+    source: "server-prompts",
+    target: "prompts",
   },
 ];
 
