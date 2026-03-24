@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
 import { toast } from "sonner";
-import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -33,6 +33,7 @@ import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
+import { mergeWorkspaceClientCapabilities } from "@/lib/client-config";
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
@@ -194,6 +195,26 @@ export function useServerState({
   const effectiveServers = useMemo(() => {
     return activeWorkspace?.servers || {};
   }, [activeWorkspace]);
+
+  const activeWorkspaceClientCapabilities = useMemo(
+    () => activeWorkspace?.clientConfig?.clientCapabilities,
+    [activeWorkspace?.clientConfig?.clientCapabilities],
+  );
+
+  const withWorkspaceClientCapabilities = useCallback(
+    (serverConfig: MCPServerConfig): MCPServerConfig => {
+      const mergedCapabilities = mergeWorkspaceClientCapabilities(
+        serverConfig.capabilities as Record<string, unknown> | undefined,
+        activeWorkspaceClientCapabilities,
+      );
+
+      return {
+        ...serverConfig,
+        capabilities: mergedCapabilities,
+      };
+    },
+    [activeWorkspaceClientCapabilities],
+  );
 
   const validateForm = (formData: ServerFormData): string | null => {
     if (formData.type === "stdio") {
@@ -431,7 +452,7 @@ export function useServerState({
 
           try {
             const connectionResult = await testConnection(
-              result.serverConfig,
+              withWorkspaceClientCapabilities(result.serverConfig),
               serverName,
             );
             if (connectionResult.success) {
@@ -504,7 +525,13 @@ export function useServerState({
         }
       }
     },
-    [dispatch, failPendingOAuthConnection, logger, storeInitInfo],
+    [
+      dispatch,
+      failPendingOAuthConnection,
+      logger,
+      storeInitInfo,
+      withWorkspaceClientCapabilities,
+    ],
   );
 
   useEffect(() => {
@@ -666,7 +693,7 @@ export function useServerState({
               },
             } satisfies HttpServerConfig;
             const connectionResult = await testConnection(
-              serverConfig,
+              withWorkspaceClientCapabilities(serverConfig),
               formData.name,
             );
             if (isStaleOp(formData.name, token)) return;
@@ -722,7 +749,7 @@ export function useServerState({
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
               const connectionResult = await testConnection(
-                oauthResult.serverConfig,
+                withWorkspaceClientCapabilities(oauthResult.serverConfig),
                 formData.name,
               );
               if (isStaleOp(formData.name, token)) return;
@@ -776,7 +803,8 @@ export function useServerState({
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
-        const result = await testConnection(mcpConfig, formData.name);
+        const effectiveConfig = withWorkspaceClientCapabilities(mcpConfig);
+        const result = await testConnection(effectiveConfig, formData.name);
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
           dispatch({
@@ -835,6 +863,7 @@ export function useServerState({
       syncServerToConvex,
       logger,
       storeInitInfo,
+      withWorkspaceClientCapabilities,
     ],
   );
 
@@ -982,7 +1011,10 @@ export function useServerState({
       const token = nextOpToken(serverName);
 
       try {
-        const result = await reconnectServer(serverName, serverConfig);
+        const result = await reconnectServer(
+          serverName,
+          withWorkspaceClientCapabilities(serverConfig),
+        );
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
         }
@@ -1016,7 +1048,7 @@ export function useServerState({
         return { success: false, error: errorMessage };
       }
     },
-    [dispatch, storeInitInfo],
+    [dispatch, storeInitInfo, withWorkspaceClientCapabilities],
   );
 
   const handleConnectWithTokensFromOAuthFlow = useCallback(
@@ -1302,7 +1334,7 @@ export function useServerState({
         }
         const result = await reconnectServer(
           serverName,
-          oauthResult.serverConfig!,
+          withWorkspaceClientCapabilities(oauthResult.serverConfig!),
         );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
@@ -1344,7 +1376,7 @@ export function useServerState({
         }
         const result = await reconnectServer(
           serverName,
-          authResult.serverConfig,
+          withWorkspaceClientCapabilities(authResult.serverConfig),
         );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
@@ -1384,7 +1416,13 @@ export function useServerState({
         });
       }
     },
-    [effectiveServers, storeInitInfo, logger, dispatch],
+    [
+      effectiveServers,
+      storeInitInfo,
+      logger,
+      dispatch,
+      withWorkspaceClientCapabilities,
+    ],
   );
 
   useEffect(() => {
@@ -1534,7 +1572,7 @@ export function useServerState({
         saveOAuthConfigToLocalStorage(formData);
         try {
           const result = await testConnection(
-            originalServer.config,
+            withWorkspaceClientCapabilities(originalServer.config),
             originalServerName,
           );
           if (result.success) {

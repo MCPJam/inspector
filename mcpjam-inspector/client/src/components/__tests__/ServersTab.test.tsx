@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { useState, type ReactNode } from "react";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type { ServerWithName, ServerUpdateResult } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
 import type { ServerFormData } from "@/shared/types.js";
@@ -43,14 +44,19 @@ vi.mock("@/hooks/useWorkspaces", () => ({
 vi.mock("../connection/ServerConnectionCard", () => ({
   ServerConnectionCard: ({
     server,
+    needsReconnect,
     onOpenDetailModal,
   }: {
     server: ServerWithName;
+    needsReconnect?: boolean;
     onOpenDetailModal?: (server: ServerWithName, defaultTab: string) => void;
   }) => (
-    <button onClick={() => onOpenDetailModal?.(server, "configuration")}>
-      Open {server.name}
-    </button>
+    <div>
+      <button onClick={() => onOpenDetailModal?.(server, "configuration")}>
+        Open {server.name}
+      </button>
+      {needsReconnect ? <span>Needs reconnect</span> : null}
+    </div>
   ),
 }));
 
@@ -375,5 +381,70 @@ describe("ServersTab shared detail modal", () => {
     fireEvent.click(screen.getByText("Close Modal"));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("surfaces reconnect warnings when workspace client capabilities changed", () => {
+    const initializedCapabilities =
+      getDefaultClientCapabilities() as Record<string, unknown>;
+
+    const { rerender } = render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={{
+          "test-server": createServer({
+            initializationInfo: {
+              clientCapabilities: initializedCapabilities,
+            } as any,
+          }),
+        }}
+        workspaces={{
+          "workspace-1": createWorkspace({
+            "test-server": createServer({
+              initializationInfo: {
+                clientCapabilities: initializedCapabilities,
+              } as any,
+            }),
+          }),
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+
+    rerender(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={{
+          "test-server": createServer({
+            initializationInfo: {
+              clientCapabilities: initializedCapabilities,
+            } as any,
+          }),
+        }}
+        workspaces={{
+          "workspace-1": {
+            ...createWorkspace({
+              "test-server": createServer({
+                initializationInfo: {
+                  clientCapabilities: initializedCapabilities,
+                } as any,
+              }),
+            }),
+            clientConfig: {
+              version: 1,
+              clientCapabilities: {
+                elicitation: {},
+                experimental: {
+                  inspectorProfile: true,
+                },
+              },
+              hostContext: {},
+            },
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Needs reconnect")).toBeInTheDocument();
   });
 });

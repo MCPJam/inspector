@@ -43,7 +43,6 @@ import {
   type DeviceType,
   type DisplayMode,
 } from "@/stores/ui-playground-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import {
@@ -62,6 +61,11 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  extractEffectiveHostDisplayMode,
+  extractHostTheme,
+} from "@/lib/client-config";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -164,7 +168,7 @@ export function PlaygroundMain({
   // These are kept for backward compatibility but are no longer used
   deviceType: _deviceType = "mobile",
   onDeviceTypeChange: _onDeviceTypeChange,
-  displayMode = "inline",
+  displayMode: displayModeProp = "inline",
   onDisplayModeChange,
   locale: _locale = "en-US",
   onLocaleChange: _onLocaleChange,
@@ -202,6 +206,8 @@ export function PlaygroundMain({
   // Device config from store (managed by DisplayContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
+  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const patchHostContext = useClientConfigStore((s) => s.patchHostContext);
 
   // Device config for frame sizing
   const deviceConfig = useMemo(() => {
@@ -301,12 +307,22 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
-  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const hostTheme = extractHostTheme(hostContext) ?? "dark";
   const chatBg =
     hostStyle === "chatgpt"
       ? CHATGPT_CHAT_BACKGROUND
       : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[themeMode];
+  const hostBackgroundColor = chatBg[hostTheme];
+  const displayMode =
+    extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
+
+  const handleDisplayModeChange = useCallback(
+    (mode: DisplayMode) => {
+      patchHostContext({ displayMode: mode });
+      onDisplayModeChange?.(mode);
+    },
+    [patchHostContext, onDisplayModeChange],
+  );
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -620,7 +636,7 @@ export function PlaygroundMain({
                 onWidgetStateChange={handleWidgetStateChange}
                 onModelContextUpdate={handleModelContextUpdate}
                 displayMode={displayMode}
-                onDisplayModeChange={onDisplayModeChange}
+                onDisplayModeChange={handleDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocol ?? undefined

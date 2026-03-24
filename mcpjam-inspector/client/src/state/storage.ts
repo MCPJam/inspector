@@ -4,6 +4,7 @@ import {
   ServerWithName,
   Workspace,
 } from "./app-types";
+import { isWorkspaceClientConfig } from "@/lib/client-config";
 
 const STORAGE_KEY = "mcp-inspector-state";
 const WORKSPACES_STORAGE_KEY = "mcp-inspector-workspaces";
@@ -48,6 +49,9 @@ export function loadAppState(): AppState {
               id,
               {
                 ...workspace,
+                clientConfig: isWorkspaceClientConfig(workspace.clientConfig)
+                  ? workspace.clientConfig
+                  : undefined,
                 servers: Object.fromEntries(
                   Object.entries(workspace.servers || {}).map(
                     ([name, server]) => [name, reviveServer(server)],

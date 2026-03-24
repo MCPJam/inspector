@@ -4,8 +4,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
-  getDefaultEnvironment,
   StdioClientTransport,
+  getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -90,6 +90,7 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import { mergeClientCapabilities } from "./capabilities.js";
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -1254,20 +1255,7 @@ export class MCPClientManager {
   }
 
   private buildCapabilities(config: MCPServerConfig): ClientCapabilityOptions {
-    const capabilities: ClientCapabilityOptions = {
-      ...this.defaultCapabilities,
-      ...(config.capabilities ?? {}),
-    };
-    if (!capabilities.elicitation) {
-      capabilities.elicitation = {};
-    }
-    // Advertise MCP Apps UI support (ext-apps spec)
-    (capabilities as Record<string, unknown>).extensions = {
-      "io.modelcontextprotocol/ui": {
-        mimeTypes: ["text/html;profile=mcp-app"],
-      },
-    };
-    return capabilities;
+    return mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
   }
 
   private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {

@@ -70,6 +70,13 @@ import type { CheckoutSession } from "@/shared/acp-types";
 import { listResources, readResource } from "@/lib/apis/mcp-resources-api";
 import { listPrompts } from "@/lib/apis/mcp-prompts-api";
 import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  clampDisplayModeToAvailableModes,
+  extractHostDisplayMode,
+  extractHostDisplayModes,
+  extractHostTheme,
+} from "@/lib/client-config";
 
 // Injected by Vite at build time from package.json
 declare const __APP_VERSION__: string;
@@ -172,6 +179,17 @@ export function MCPAppsRenderer({
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
+  const draftHostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const baseHostContext = useMemo(
+    () =>
+      draftHostContext &&
+      typeof draftHostContext === "object" &&
+      !Array.isArray(draftHostContext)
+        ? draftHostContext
+        : {},
+    [draftHostContext],
+  );
+  const resolvedTheme = extractHostTheme(baseHostContext) ?? themeMode;
 
   // Get CSP mode and host style from playground store when in playground
   const isPlaygroundActive = useUIPlaygroundStore((s) => s.isPlaygroundActive);
@@ -186,24 +204,58 @@ export function MCPAppsRenderer({
   // Get locale and timeZone from playground store when active, fallback to browser defaults
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
   const playgroundTimeZone = useUIPlaygroundStore((s) => s.globals.timeZone);
-  const locale = isPlaygroundActive
+  const fallbackLocale = isPlaygroundActive
     ? playgroundLocale
     : navigator.language || "en-US";
-  const timeZone = isPlaygroundActive
+  const fallbackTimeZone = isPlaygroundActive
     ? playgroundTimeZone
     : Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const locale =
+    typeof draftHostContext?.locale === "string"
+      ? draftHostContext.locale
+      : fallbackLocale;
+  const timeZone =
+    typeof draftHostContext?.timeZone === "string"
+      ? draftHostContext.timeZone
+      : fallbackTimeZone;
 
   // Get displayMode from playground store when active (SEP-1865)
   const playgroundDisplayMode = useUIPlaygroundStore((s) => s.displayMode);
+  const configuredDisplayMode = useMemo(
+    () => extractHostDisplayMode(draftHostContext),
+    [draftHostContext],
+  );
+  const configuredAvailableDisplayModes = useMemo(
+    () => extractHostDisplayModes(draftHostContext),
+    [draftHostContext],
+  );
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
   const deviceCapabilities = useMemo(
-    () =>
-      isPlaygroundActive
+    () => {
+      const configuredCapabilities =
+        draftHostContext?.deviceCapabilities &&
+        typeof draftHostContext.deviceCapabilities === "object" &&
+        !Array.isArray(draftHostContext.deviceCapabilities)
+          ? (draftHostContext.deviceCapabilities as {
+              hover?: boolean;
+              touch?: boolean;
+            })
+          : undefined;
+
+      if (configuredCapabilities) {
+        return {
+          hover: configuredCapabilities.hover ?? true,
+          touch: configuredCapabilities.touch ?? false,
+        };
+      }
+
+      return isPlaygroundActive
         ? playgroundCapabilities
-        : { hover: true, touch: false }, // Desktop defaults
-    [isPlaygroundActive, playgroundCapabilities],
+        : { hover: true, touch: false };
+    },
+    [draftHostContext, isPlaygroundActive, playgroundCapabilities],
   );
 
   // Get safe area insets from playground store (SEP-1865)
@@ -211,11 +263,33 @@ export function MCPAppsRenderer({
     (s) => s.safeAreaInsets,
   );
   const safeAreaInsets = useMemo(
-    () =>
-      isPlaygroundActive
+    () => {
+      const configuredSafeAreaInsets =
+        draftHostContext?.safeAreaInsets &&
+        typeof draftHostContext.safeAreaInsets === "object" &&
+        !Array.isArray(draftHostContext.safeAreaInsets)
+          ? (draftHostContext.safeAreaInsets as {
+              top?: number;
+              right?: number;
+              bottom?: number;
+              left?: number;
+            })
+          : undefined;
+
+      if (configuredSafeAreaInsets) {
+        return {
+          top: configuredSafeAreaInsets.top ?? 0,
+          right: configuredSafeAreaInsets.right ?? 0,
+          bottom: configuredSafeAreaInsets.bottom ?? 0,
+          left: configuredSafeAreaInsets.left ?? 0,
+        };
+      }
+
+      return isPlaygroundActive
         ? playgroundSafeAreaInsets
-        : { top: 0, right: 0, bottom: 0, left: 0 },
-    [isPlaygroundActive, playgroundSafeAreaInsets],
+        : { top: 0, right: 0, bottom: 0, left: 0 };
+    },
+    [draftHostContext, isPlaygroundActive, playgroundSafeAreaInsets],
   );
 
   // Get device type from playground store for platform derivation (SEP-1865)
@@ -224,16 +298,27 @@ export function MCPAppsRenderer({
   // Display mode: controlled (via props) or uncontrolled (internal state)
   const isControlled = displayModeProp !== undefined;
   const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>(
-    isPlaygroundActive ? playgroundDisplayMode : "inline",
+    clampDisplayModeToAvailableModes(
+      configuredDisplayMode ?? (isPlaygroundActive ? playgroundDisplayMode : "inline"),
+      configuredAvailableDisplayModes,
+    ),
   );
   const displayMode = isControlled ? displayModeProp : internalDisplayMode;
-  const effectiveDisplayMode = useMemo<DisplayMode>(() => {
+  const requestedDisplayMode = useMemo<DisplayMode>(() => {
     if (!isControlled) return displayMode;
     if (displayMode === "fullscreen" && fullscreenWidgetId === toolCallId)
       return "fullscreen";
     if (displayMode === "pip" && pipWidgetId === toolCallId) return "pip";
     return "inline";
   }, [displayMode, fullscreenWidgetId, isControlled, pipWidgetId, toolCallId]);
+  const effectiveDisplayMode = useMemo<DisplayMode>(
+    () =>
+      clampDisplayModeToAvailableModes(
+        requestedDisplayMode,
+        configuredAvailableDisplayModes,
+      ),
+    [configuredAvailableDisplayModes, requestedDisplayMode],
+  );
   const setDisplayMode = useCallback(
     (mode: DisplayMode) => {
       if (isControlled) {
@@ -258,6 +343,21 @@ export function MCPAppsRenderer({
       displayMode,
     ],
   );
+  const lastForcedDisplayModeRef = useRef<DisplayMode | null>(null);
+
+  useEffect(() => {
+    if (requestedDisplayMode === effectiveDisplayMode) {
+      lastForcedDisplayModeRef.current = null;
+      return;
+    }
+
+    if (lastForcedDisplayModeRef.current === effectiveDisplayMode) {
+      return;
+    }
+
+    lastForcedDisplayModeRef.current = effectiveDisplayMode;
+    setDisplayMode(effectiveDisplayMode);
+  }, [effectiveDisplayMode, requestedDisplayMode, setDisplayMode]);
 
   const [isReady, setIsReady] = useState(false);
   const [reinitCount, setReinitCount] = useState(0);
@@ -341,7 +441,6 @@ export function MCPAppsRenderer({
   const toolOutputRef = useRef(toolOutput);
   toolOutputRef.current = toolOutput;
   const themeModeRef = useRef(themeMode);
-  themeModeRef.current = themeMode;
 
   const {
     canRenderStreamingInput,
@@ -520,9 +619,20 @@ export function MCPAppsRenderer({
   // Only sync when not in controlled mode (parent controls displayMode via props)
   useEffect(() => {
     if (isPlaygroundActive && !isControlled) {
-      setInternalDisplayMode(playgroundDisplayMode);
+      setInternalDisplayMode(
+        clampDisplayModeToAvailableModes(
+          configuredDisplayMode ?? playgroundDisplayMode,
+          configuredAvailableDisplayModes,
+        ),
+      );
     }
-  }, [isPlaygroundActive, playgroundDisplayMode, isControlled]);
+  }, [
+    configuredAvailableDisplayModes,
+    configuredDisplayMode,
+    isPlaygroundActive,
+    playgroundDisplayMode,
+    isControlled,
+  ]);
 
   // Initialize widget debug info
   useEffect(() => {
@@ -532,7 +642,7 @@ export function MCPAppsRenderer({
       widgetState: null, // MCP Apps don't have widget state in the same way
       prefersBorder,
       globals: {
-        theme: themeMode,
+        theme: resolvedTheme,
         displayMode: effectiveDisplayMode,
         locale,
         timeZone,
@@ -544,7 +654,7 @@ export function MCPAppsRenderer({
     toolCallId,
     toolName,
     setWidgetDebugInfo,
-    themeMode,
+    resolvedTheme,
     effectiveDisplayMode,
     locale,
     timeZone,
@@ -556,7 +666,7 @@ export function MCPAppsRenderer({
   // Update globals in debug store when they change
   useEffect(() => {
     setWidgetGlobals(toolCallId, {
-      theme: themeMode,
+      theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
       locale,
       timeZone,
@@ -565,7 +675,7 @@ export function MCPAppsRenderer({
     });
   }, [
     toolCallId,
-    themeMode,
+    resolvedTheme,
     effectiveDisplayMode,
     locale,
     timeZone,
@@ -580,33 +690,52 @@ export function MCPAppsRenderer({
     ? playgroundHostStyle
     : (sandboxHostStyle ?? "claude");
   const useChatGPTStyle = effectiveHostStyle === "chatgpt";
+  themeModeRef.current = resolvedTheme;
   const styleVariables = useMemo(
     () =>
       useChatGPTStyle
-        ? getChatGPTStyleVariables(themeMode)
-        : getClaudeDesktopStyleVariables(themeMode),
-    [themeMode, useChatGPTStyle],
+        ? getChatGPTStyleVariables(resolvedTheme)
+        : getClaudeDesktopStyleVariables(resolvedTheme),
+    [resolvedTheme, useChatGPTStyle],
   );
 
   // containerDimensions (maxWidth/maxHeight) was previously sent here but
   // removed — width is now fully host-controlled.
   const hostContext = useMemo<McpUiHostContext>(
     () => ({
-      theme: themeMode,
+      ...baseHostContext,
+      theme:
+        baseHostContext.theme === "light" || baseHostContext.theme === "dark"
+          ? baseHostContext.theme
+          : resolvedTheme,
       displayMode: effectiveDisplayMode,
-      availableDisplayModes: ["inline", "pip", "fullscreen"],
+      availableDisplayModes: configuredAvailableDisplayModes,
       locale,
       timeZone,
-      platform: useChatGPTStyle ? CHATGPT_PLATFORM : CLAUDE_DESKTOP_PLATFORM,
+      platform:
+        baseHostContext.platform === "web" ||
+        baseHostContext.platform === "desktop" ||
+        baseHostContext.platform === "mobile"
+          ? baseHostContext.platform
+          : useChatGPTStyle
+            ? CHATGPT_PLATFORM
+            : CLAUDE_DESKTOP_PLATFORM,
       userAgent: navigator.userAgent,
       deviceCapabilities,
       safeAreaInsets,
-      styles: {
-        variables: styleVariables,
-        css: {
-          fonts: useChatGPTStyle ? CHATGPT_FONT_CSS : CLAUDE_DESKTOP_FONT_CSS,
-        },
-      },
+      styles:
+        baseHostContext.styles &&
+        typeof baseHostContext.styles === "object" &&
+        !Array.isArray(baseHostContext.styles)
+          ? (baseHostContext.styles as McpUiHostContext["styles"])
+          : {
+              variables: styleVariables,
+              css: {
+                fonts: useChatGPTStyle
+                  ? CHATGPT_FONT_CSS
+                  : CLAUDE_DESKTOP_FONT_CSS,
+              },
+            },
       toolInfo: {
         id: toolCallId,
         tool: {
@@ -622,8 +751,10 @@ export function MCPAppsRenderer({
       },
     }),
     [
-      themeMode,
+      baseHostContext,
+      resolvedTheme,
       effectiveDisplayMode,
+      configuredAvailableDisplayModes,
       locale,
       timeZone,
       deviceCapabilities,
@@ -830,13 +961,20 @@ export function MCPAppsRenderer({
 
       bridge.onrequestdisplaymode = async ({ mode }) => {
         const requestedMode = mode ?? "inline";
+        const hostAvailableModes = extractHostDisplayModes(
+          hostContextRef.current as Record<string, unknown> | undefined,
+        );
         // Use device type for mobile detection (defaults to mobile-like behavior when not in playground)
         const isMobile = isPlaygroundActiveRef.current
           ? playgroundDeviceTypeRef.current === "mobile" ||
             playgroundDeviceTypeRef.current === "tablet"
           : true;
-        const actualMode: DisplayMode =
+        const mobileAdjustedMode: DisplayMode =
           isMobile && requestedMode === "pip" ? "fullscreen" : requestedMode;
+        const actualMode = clampDisplayModeToAvailableModes(
+          mobileAdjustedMode,
+          hostAvailableModes,
+        );
 
         setDisplayModeRef.current(actualMode);
 

@@ -9,14 +9,18 @@ import { RectangleHorizontal } from "lucide-react";
 import {
   useUIPlaygroundStore,
   SAFE_AREA_PRESETS,
-  type SafeAreaInsets,
   type SafeAreaPreset,
 } from "@/stores/ui-playground-store";
 import { cn } from "@/lib/utils";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  extractHostSafeAreaInsets,
+  type HostSafeAreaInsets,
+} from "@/lib/client-config";
 
 /** Preset buttons for common device safe areas */
 const PRESET_OPTIONS: {
-  preset: SafeAreaPreset;
+  preset: Exclude<SafeAreaPreset, "custom">;
   label: string;
   shortLabel: string;
 }[] = [
@@ -31,7 +35,7 @@ const PRESET_OPTIONS: {
 ];
 
 /** Safe Area Visualization - shows the insets visually */
-function SafeAreaVisualization({ insets }: { insets: SafeAreaInsets }) {
+function SafeAreaVisualization({ insets }: { insets: HostSafeAreaInsets }) {
   const hasAnyInset =
     insets.top > 0 || insets.bottom > 0 || insets.left > 0 || insets.right > 0;
 
@@ -145,12 +149,18 @@ function InsetInput({
 
 export function SafeAreaEditor() {
   const safeAreaPreset = useUIPlaygroundStore((s) => s.safeAreaPreset);
-  const safeAreaInsets = useUIPlaygroundStore((s) => s.safeAreaInsets);
   const setSafeAreaPreset = useUIPlaygroundStore((s) => s.setSafeAreaPreset);
-  const setSafeAreaInsets = useUIPlaygroundStore((s) => s.setSafeAreaInsets);
+  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const patchHostContext = useClientConfigStore((s) => s.patchHostContext);
+  const safeAreaInsets = extractHostSafeAreaInsets(hostContext);
 
-  const handleInsetChange = (key: keyof SafeAreaInsets, value: number) => {
-    setSafeAreaInsets({ [key]: value });
+  const handleInsetChange = (key: keyof HostSafeAreaInsets, value: number) => {
+    const nextInsets = {
+      ...safeAreaInsets,
+      [key]: value,
+    };
+    setSafeAreaPreset("custom");
+    patchHostContext({ safeAreaInsets: nextInsets });
   };
 
   const hasAnyInset =
@@ -196,7 +206,12 @@ export function SafeAreaEditor() {
                   safeAreaPreset === option.preset ? "secondary" : "ghost"
                 }
                 size="sm"
-                onClick={() => setSafeAreaPreset(option.preset)}
+                onClick={() => {
+                  setSafeAreaPreset(option.preset);
+                  patchHostContext({
+                    safeAreaInsets: SAFE_AREA_PRESETS[option.preset] ?? safeAreaInsets,
+                  });
+                }}
                 className={cn(
                   "flex-1 h-6 text-[10px] px-1",
                   safeAreaPreset === option.preset && "ring-1 ring-ring",

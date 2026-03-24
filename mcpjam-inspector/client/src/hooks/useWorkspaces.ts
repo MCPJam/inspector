@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import type { WorkspaceVisibility } from "@/state/app-types";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
 
 export type WorkspaceMembershipRole = "owner" | "admin" | "member" | "guest";
 export type WorkspaceRole = "admin" | "editor";
@@ -14,6 +15,7 @@ export interface RemoteWorkspace {
   name: string;
   description?: string;
   icon?: string;
+  clientConfig?: WorkspaceClientConfig;
   servers: Record<string, any>;
   canDeleteWorkspace?: boolean;
   organizationId?: string;
@@ -175,6 +177,9 @@ export function useWorkspaceMutations() {
     "workspaces:ensureDefaultWorkspace" as any,
   );
   const updateWorkspace = useMutation("workspaces:updateWorkspace" as any);
+  const updateClientConfig = useMutation(
+    "workspaces:updateClientConfig" as any,
+  );
   const deleteWorkspace = useMutation("workspaces:deleteWorkspace" as any);
   const inviteWorkspaceMember = useMutation(
     "workspaces:inviteWorkspaceMember" as any,
@@ -193,6 +198,7 @@ export function useWorkspaceMutations() {
     createWorkspace,
     ensureDefaultWorkspace,
     updateWorkspace,
+    updateClientConfig,
     deleteWorkspace,
     inviteWorkspaceMember,
     removeWorkspaceMember,

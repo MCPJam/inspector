@@ -20,10 +20,9 @@ import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { generateFormFieldsFromSchema } from "@/lib/tool-form";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
 
@@ -44,7 +43,6 @@ export function AppBuilderTab({
   serverName,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
-  const themeMode = usePreferencesStore((s) => s.themeMode);
   // Compute server key for saved requests storage
   const serverKey = useServerKey(serverConfig);
 
@@ -55,8 +53,6 @@ export function AppBuilderTab({
     formFields,
     isExecuting,
     deviceType,
-    displayMode,
-    globals,
     isSidebarVisible,
     selectedProtocol,
     setTools,
@@ -70,33 +66,10 @@ export function AppBuilderTab({
     setExecutionError,
     setWidgetState,
     setDeviceType,
-    setDisplayMode,
-    updateGlobal,
     toggleSidebar,
     setSelectedProtocol,
     reset,
   } = useUIPlaygroundStore();
-
-  // Sync theme from preferences to globals
-  useEffect(() => {
-    updateGlobal("theme", themeMode);
-  }, [themeMode, updateGlobal]);
-
-  // Locale change handler
-  const handleLocaleChange = useCallback(
-    (locale: string) => {
-      updateGlobal("locale", locale);
-    },
-    [updateGlobal],
-  );
-
-  // Timezone change handler (SEP-1865)
-  const handleTimeZoneChange = useCallback(
-    (timeZone: string) => {
-      updateGlobal("timeZone", timeZone);
-    },
-    [updateGlobal],
-  );
 
   // Log when App Builder tab is viewed
   useEffect(() => {
@@ -288,12 +261,6 @@ export function AppBuilderTab({
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}
-            displayMode={displayMode}
-            onDisplayModeChange={setDisplayMode}
-            locale={globals.locale}
-            onLocaleChange={handleLocaleChange}
-            timeZone={globals.timeZone}
-            onTimeZoneChange={handleTimeZoneChange}
           />
         </ResizablePanel>
       </ResizablePanelGroup>

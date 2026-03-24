@@ -1,5 +1,4 @@
-import { MCPServerConfig } from "@mcpjam/sdk";
-import type { HttpServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
@@ -53,6 +52,8 @@ async function safeValidateHostedServer(
     return await validateHostedServer(
       serverId,
       extractOAuthToken(serverConfig),
+      (serverConfig.capabilities as Record<string, unknown> | undefined) ??
+        undefined,
     );
   } catch (error) {
     return {

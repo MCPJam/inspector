@@ -39,6 +39,13 @@ import {
   loadLocalChatGptWidget,
   type WidgetCspData,
 } from "./chatgpt-widget-loaders";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  extractHostDeviceCapabilities,
+  extractHostLocale,
+  extractHostSafeAreaInsets,
+  extractHostTheme,
+} from "@/lib/client-config";
 
 type ToolState =
   | "input-streaming"
@@ -618,9 +625,14 @@ export function ChatGPTAppRenderer({
   const rootRef = useRef<HTMLDivElement>(null);
   const inlineWidthRef = useRef<number | undefined>(undefined);
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const draftHostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
   // Get locale from playground store, fallback to navigator.language
   const playgroundLocale = useUIPlaygroundStore((s) => s.globals.locale);
-  const locale = playgroundLocale || navigator.language || "en-US";
+  const locale = extractHostLocale(
+    draftHostContext,
+    playgroundLocale || navigator.language || "en-US",
+  );
+  const resolvedTheme = extractHostTheme(draftHostContext) ?? themeMode;
 
   const {
     resolvedToolCallId,
@@ -734,12 +746,14 @@ export function ChatGPTAppRenderer({
     ? playgroundDeviceType
     : getDeviceType();
   // Use stable default objects to avoid infinite re-renders in useWidgetFetch
-  const capabilities = isPlaygroundActive
-    ? playgroundCapabilities
-    : DEFAULT_CAPABILITIES;
-  const safeAreaInsets = isPlaygroundActive
-    ? playgroundSafeAreaInsets
-    : DEFAULT_SAFE_AREA_INSETS;
+  const capabilities = extractHostDeviceCapabilities(
+    draftHostContext,
+    isPlaygroundActive ? playgroundCapabilities : DEFAULT_CAPABILITIES,
+  );
+  const safeAreaInsets = extractHostSafeAreaInsets(
+    draftHostContext,
+    isPlaygroundActive ? playgroundSafeAreaInsets : DEFAULT_SAFE_AREA_INSETS,
+  );
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
@@ -803,7 +817,7 @@ export function ChatGPTAppRenderer({
     resolvedToolInput,
     resolvedToolOutput,
     toolResponseMetadata,
-    themeMode,
+    resolvedTheme,
     locale,
     cspMode,
     deviceType,
@@ -886,7 +900,7 @@ export function ChatGPTAppRenderer({
       widgetState: initialWidgetState ?? null,
       prefersBorder,
       globals: {
-        theme: themeMode,
+        theme: resolvedTheme,
         displayMode: effectiveDisplayMode,
         maxHeight: maxHeight ?? undefined,
         locale,
@@ -901,7 +915,7 @@ export function ChatGPTAppRenderer({
     resolvedToolCallId,
     toolName,
     setWidgetDebugInfo,
-    themeMode,
+    resolvedTheme,
     effectiveDisplayMode,
     maxHeight,
     locale,
@@ -914,13 +928,13 @@ export function ChatGPTAppRenderer({
 
   useEffect(() => {
     setWidgetGlobals(resolvedToolCallId, {
-      theme: themeMode,
+      theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
       maxHeight: maxHeight ?? undefined,
     });
   }, [
     resolvedToolCallId,
-    themeMode,
+    resolvedTheme,
     effectiveDisplayMode,
     maxHeight,
     setWidgetGlobals,
@@ -1377,7 +1391,7 @@ export function ChatGPTAppRenderer({
     // Widget state is loaded from localStorage by widget-runtime initialization
     // Push current globals
     const globals: Record<string, unknown> = {
-      theme: themeMode,
+      theme: resolvedTheme,
       displayMode: "inline",
       maxHeight: null,
       locale,
@@ -1397,7 +1411,7 @@ export function ChatGPTAppRenderer({
       globals,
     });
   }, [
-    themeMode,
+    resolvedTheme,
     locale,
     deviceType,
     capabilities,
@@ -1434,7 +1448,7 @@ export function ChatGPTAppRenderer({
   useEffect(() => {
     if (!isReady) return;
     const globals: Record<string, unknown> = {
-      theme: themeMode,
+      theme: resolvedTheme,
       displayMode: effectiveDisplayMode,
       locale,
       safeArea: { insets: safeAreaInsets },
@@ -1454,7 +1468,7 @@ export function ChatGPTAppRenderer({
     postToWidget({ type: "openai:set_globals", globals });
     if (modalOpen) postToWidget({ type: "openai:set_globals", globals }, true);
   }, [
-    themeMode,
+    resolvedTheme,
     maxHeight,
     effectiveDisplayMode,
     locale,

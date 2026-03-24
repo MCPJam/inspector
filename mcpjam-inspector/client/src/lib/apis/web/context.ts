@@ -1,11 +1,13 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
 export interface HostedApiContext {
   workspaceId: string | null;
   serverIdsByName: Record<string, string>;
+  clientCapabilities?: Record<string, unknown>;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
@@ -106,6 +108,7 @@ function shouldPreferGuestBearer(): boolean {
 export function buildGuestServerRequest(
   config: unknown,
   oauthAccessToken?: string,
+  clientCapabilities?: Record<string, unknown>,
 ): Record<string, unknown> {
   const httpConfig = config as {
     url?: string | URL;
@@ -125,11 +128,19 @@ export function buildGuestServerRequest(
       ? { serverHeaders: headers }
       : {}),
     ...(oauthAccessToken ? { oauthAccessToken } : {}),
+    ...(clientCapabilities ? { clientCapabilities } : {}),
   };
 }
 
 export function setHostedApiContext(next: HostedApiContext | null): void {
-  hostedApiContext = next ?? EMPTY_CONTEXT;
+  hostedApiContext = next
+    ? {
+        ...next,
+        clientCapabilities:
+          next.clientCapabilities ??
+          (getDefaultClientCapabilities() as Record<string, unknown>),
+      }
+    : EMPTY_CONTEXT;
   resetTokenCache();
 }
 
@@ -232,7 +243,11 @@ export function buildHostedServerRequest(
       readStoredGuestOAuthAccessToken(serverNameOrId) ??
       hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId];
 
-    return buildGuestServerRequest(config, oauthToken);
+    return buildGuestServerRequest(
+      config,
+      oauthToken,
+      hostedApiContext.clientCapabilities,
+    );
   }
 
   // Authenticated path: resolve via Convex server mappings
@@ -245,6 +260,9 @@ export function buildHostedServerRequest(
     workspaceId: getHostedWorkspaceId(),
     serverId,
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
+    ...(hostedApiContext.clientCapabilities
+      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+      : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
     ...(sandboxToken ? { sandboxToken } : {}),
@@ -254,6 +272,7 @@ export function buildHostedServerRequest(
 export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   workspaceId: string;
   serverIds: string[];
+  clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   shareToken?: string;
@@ -267,6 +286,9 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   return {
     workspaceId: getHostedWorkspaceId(),
     serverIds,
+    ...(hostedApiContext.clientCapabilities
+      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+      : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),

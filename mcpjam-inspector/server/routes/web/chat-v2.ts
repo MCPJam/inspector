@@ -260,6 +260,7 @@ chatV2.post("/", async (c) => {
       selectedServerIds,
       WEB_STREAM_TIMEOUT_MS,
       hostedBody.oauthTokens,
+      hostedBody.clientCapabilities,
       {
         accessScope: "chat_v2",
         shareToken,

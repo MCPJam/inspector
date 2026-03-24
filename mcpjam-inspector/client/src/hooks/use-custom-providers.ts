@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import type { CustomProvider } from "@mcpjam/sdk";
+import type { CustomProvider } from "@mcpjam/sdk/browser";
 
 const STORAGE_KEY = "mcp-inspector-custom-providers";
 

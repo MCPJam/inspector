@@ -17,6 +17,7 @@ import { ViewsTab } from "./components/ViewsTab";
 import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
+import { ClientConfigTab } from "./components/client-config/ClientConfigTab";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -106,10 +107,16 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import {
+  buildDefaultWorkspaceClientConfig,
+} from "./lib/client-config";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type {
   BillingRolloutState,
   OrganizationEntitlements,
 } from "./hooks/useOrganizationBilling";
+import { useClientConfigStore } from "./stores/client-config-store";
+import { useUIPlaygroundStore } from "./stores/ui-playground-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -354,6 +361,7 @@ export default function App() {
     handleSwitchWorkspace,
     handleCreateWorkspace,
     handleUpdateWorkspace,
+    handleUpdateClientConfig,
     handleDeleteWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
@@ -367,6 +375,11 @@ export default function App() {
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  const playgroundGlobals = useUIPlaygroundStore((s) => s.globals);
+  const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
+  const playgroundSafeAreaInsets = useUIPlaygroundStore(
+    (s) => s.safeAreaInsets,
+  );
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
@@ -423,6 +436,11 @@ export default function App() {
 
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
+  const hostedClientCapabilities =
+    (activeWorkspace?.clientConfig?.clientCapabilities as
+      | Record<string, unknown>
+      | undefined) ??
+    (getDefaultClientCapabilities() as Record<string, unknown>);
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
   const rawBillingOrganizationId =
     activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
@@ -506,9 +524,28 @@ export default function App() {
       ),
     [appState.servers],
   );
+
+  useEffect(() => {
+    const defaultClientConfig = buildDefaultWorkspaceClientConfig({
+      theme: getInitialThemeMode(),
+      displayMode: playgroundGlobals.displayMode,
+      locale: playgroundGlobals.locale,
+      timeZone: playgroundGlobals.timeZone,
+      deviceCapabilities: playgroundCapabilities,
+      safeAreaInsets: playgroundSafeAreaInsets,
+    });
+
+    useClientConfigStore.getState().loadWorkspaceConfig({
+      workspaceId: activeWorkspaceId,
+      defaultConfig: defaultClientConfig,
+      savedConfig: activeWorkspace?.clientConfig,
+    });
+  }, [activeWorkspaceId, activeWorkspace?.clientConfig]);
+
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
+    clientCapabilities: hostedClientCapabilities,
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,
@@ -963,6 +1000,13 @@ export default function App() {
             <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
+            />
+          )}
+          {activeTab === "client-config" && (
+            <ClientConfigTab
+              activeWorkspaceId={activeWorkspaceId}
+              workspace={activeWorkspace}
+              onSaveClientConfig={handleUpdateClientConfig}
             />
           )}
           {activeTab === "workspace-settings" && (

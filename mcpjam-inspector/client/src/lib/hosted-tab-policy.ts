@@ -9,6 +9,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "sandboxes",
   "app-builder",
   "views",
+  "client-config",
   "ci-evals",
   "tools",
   "resources",

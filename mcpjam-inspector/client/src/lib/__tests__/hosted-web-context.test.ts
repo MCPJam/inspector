@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 vi.mock("../config", () => ({
   HOSTED_MODE: true,
@@ -11,6 +12,9 @@ import {
 } from "../apis/web/context";
 
 describe("hosted web context", () => {
+  const defaultClientCapabilities =
+    getDefaultClientCapabilities() as Record<string, unknown>;
+
   afterEach(() => {
     setHostedApiContext(null);
     localStorage.removeItem("mcp-tokens-myServer");
@@ -27,6 +31,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerRequest("bench")).toEqual({
       workspaceId: "ws_shared",
       serverId: "srv_bench",
+      clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
       shareToken: "share_tok_123",
     });
@@ -34,6 +39,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerBatchRequest(["bench"])).toEqual({
       workspaceId: "ws_shared",
       serverIds: ["srv_bench"],
+      clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
       shareToken: "share_tok_123",
     });
@@ -49,6 +55,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerRequest("bench")).toEqual({
       workspaceId: "ws_regular",
       serverId: "srv_bench",
+      clientCapabilities: defaultClientCapabilities,
     });
   });
 
@@ -68,6 +75,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
       serverHeaders: { "X-Api-Key": "key123" },
+      clientCapabilities: defaultClientCapabilities,
     });
   });
 
@@ -88,6 +96,7 @@ describe("hosted web context", () => {
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
       serverHeaders: { "X-Api-Key": "key123" },
+      clientCapabilities: defaultClientCapabilities,
     });
   });
 
@@ -118,6 +127,7 @@ describe("hosted web context", () => {
         Authorization: "Bearer stale-access-token",
         "X-Api-Key": "key123",
       },
+      clientCapabilities: defaultClientCapabilities,
       oauthAccessToken: "fresh-access-token",
     });
   });
@@ -154,6 +164,7 @@ describe("hosted web context", () => {
       serverHeaders: {
         "X-Api-Key": "key123",
       },
+      clientCapabilities: defaultClientCapabilities,
       oauthAccessToken: "storage-access-token",
     });
   });
@@ -173,6 +184,27 @@ describe("hosted web context", () => {
 
     expect(buildHostedServerRequest("myServer")).toEqual({
       serverUrl: "https://example.com/mcp",
+      clientCapabilities: defaultClientCapabilities,
+    });
+  });
+
+  it("uses explicit client capabilities overrides when provided", () => {
+    const clientCapabilities = {
+      elicitation: {},
+      experimental: { inspectorProfile: true },
+    } as Record<string, unknown>;
+
+    setHostedApiContext({
+      workspaceId: "ws_override",
+      serverIdsByName: { bench: "srv_bench" },
+      clientCapabilities,
+      getAccessToken: async () => null,
+    });
+
+    expect(buildHostedServerRequest("bench")).toEqual({
+      workspaceId: "ws_override",
+      serverId: "srv_bench",
+      clientCapabilities,
     });
   });
 

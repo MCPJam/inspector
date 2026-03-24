@@ -38,6 +38,8 @@ import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import { extractHostDisplayModes } from "@/lib/client-config";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
@@ -154,6 +156,9 @@ export function ToolPart({
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
+  );
+  const hostAvailableDisplayModes = useClientConfigStore((s) =>
+    extractHostDisplayModes(s.draftConfig?.hostContext),
   );
   const hasWidgetDebug = !!widgetDebugInfo;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
@@ -275,8 +280,9 @@ export function ToolPart({
     displayModeOptions.map(({ mode, icon: Icon }) => {
       const isActive = displayMode === mode;
       const isDisabled =
-        appSupportedDisplayModes !== undefined &&
-        !appSupportedDisplayModes.includes(mode);
+        !hostAvailableDisplayModes.includes(mode) ||
+        (appSupportedDisplayModes !== undefined &&
+          !appSupportedDisplayModes.includes(mode));
       const buttonLabel =
         mode === "inline" ? "Inline" : mode === "pip" ? "PiP" : "Fullscreen";
       return (

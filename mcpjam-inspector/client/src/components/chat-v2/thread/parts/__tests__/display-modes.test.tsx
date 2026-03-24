@@ -44,6 +44,20 @@ vi.mock("@/stores/widget-debug-store", () => ({
     }),
 }));
 
+const mockClientConfigStoreState = {
+  draftConfig: undefined as
+    | {
+        hostContext?: {
+          availableDisplayModes?: ("inline" | "pip" | "fullscreen")[];
+        };
+      }
+    | undefined,
+};
+
+vi.mock("@/stores/client-config-store", () => ({
+  useClientConfigStore: (selector: any) => selector(mockClientConfigStoreState),
+}));
+
 // Mock thread-helpers
 vi.mock("../../thread-helpers", () => ({
   getToolNameFromType: () => "test-tool",
@@ -90,6 +104,7 @@ describe("ToolPart display mode controls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     onDisplayModeChange = vi.fn();
+    mockClientConfigStoreState.draftConfig = undefined;
   });
 
   const renderWithDisplayModes = (
@@ -156,6 +171,22 @@ describe("ToolPart display mode controls", () => {
     const buttons = screen.getAllByRole("button");
     const disabledButtons = buttons.filter((b) => b.disabled);
     expect(disabledButtons).toHaveLength(0);
+  });
+
+  it("disables modes that the host does not advertise even when the app supports them", () => {
+    mockClientConfigStoreState.draftConfig = {
+      hostContext: {
+        availableDisplayModes: ["inline"],
+      },
+    };
+
+    renderWithDisplayModes(["inline", "pip", "fullscreen"]);
+
+    const disabledButtons = screen.getAllByRole("button").filter((b) => b.disabled);
+    expect(disabledButtons).toHaveLength(2);
+    expect(screen.getByLabelText("Inline")).not.toBeDisabled();
+    expect(screen.getByLabelText("PiP")).toBeDisabled();
+    expect(screen.getByLabelText("Fullscreen")).toBeDisabled();
   });
 
   it("allows clicking enabled display mode buttons", async () => {

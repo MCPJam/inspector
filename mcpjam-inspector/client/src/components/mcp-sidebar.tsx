@@ -147,6 +147,11 @@ const navigationSections: NavSection[] = [
         icon: Layers,
       },
       {
+        title: "Client Config",
+        url: "#client-config",
+        icon: Settings,
+      },
+      {
         title: "Generate Evals",
         url: "#evals",
         icon: FlaskConical,

@@ -6,7 +6,7 @@
  */
 
 import { useMemo } from "react";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 // Type guards for discriminated union
 interface StdioConfig {

@@ -17,6 +17,7 @@ import {
   deserializeServersFromConvex,
   serializeServersForSharing,
 } from "@/lib/workspace-serialization";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
 
 interface LoggerLike {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -65,6 +66,7 @@ export function useWorkspaceState({
     createWorkspace: convexCreateWorkspace,
     ensureDefaultWorkspace: convexEnsureDefaultWorkspace,
     updateWorkspace: convexUpdateWorkspace,
+    updateClientConfig: convexUpdateClientConfig,
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
 
@@ -159,6 +161,7 @@ export function useWorkspaceState({
             name: rw.name,
             description: rw.description,
             icon: rw.icon,
+            clientConfig: rw.clientConfig,
             servers: deserializedServers,
             createdAt: new Date(rw.createdAt),
             updatedAt: new Date(rw.updatedAt),
@@ -297,6 +300,7 @@ export function useWorkspaceState({
         const workspaceId = await convexCreateWorkspace({
           name: workspace.name,
           description: workspace.description,
+          clientConfig: workspace.clientConfig,
           servers: serializedServers,
           ...(activeOrganizationId
             ? { organizationId: activeOrganizationId }
@@ -378,6 +382,7 @@ export function useWorkspaceState({
         try {
           const workspaceId = await convexCreateWorkspace({
             name,
+            clientConfig: undefined,
             servers: {},
             ...(activeOrganizationId
               ? { organizationId: activeOrganizationId }
@@ -448,6 +453,39 @@ export function useWorkspaceState({
       }
     },
     [isAuthenticated, convexUpdateWorkspace, logger, dispatch],
+  );
+
+  const handleUpdateClientConfig = useCallback(
+    async (
+      workspaceId: string,
+      clientConfig: WorkspaceClientConfig | undefined,
+    ): Promise<void> => {
+      if (isAuthenticated) {
+        try {
+          await convexUpdateClientConfig({
+            workspaceId,
+            clientConfig,
+          });
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+          logger.error("Failed to update workspace client config", {
+            error: errorMessage,
+            workspaceId,
+          });
+          toast.error(errorMessage);
+          throw error instanceof Error ? error : new Error(errorMessage);
+        }
+        return;
+      }
+
+      dispatch({
+        type: "UPDATE_WORKSPACE",
+        workspaceId,
+        updates: { clientConfig },
+      });
+    },
+    [isAuthenticated, convexUpdateClientConfig, logger, dispatch],
   );
 
   const handleDeleteWorkspace = useCallback(
@@ -533,6 +571,7 @@ export function useWorkspaceState({
           await convexCreateWorkspace({
             name: newName,
             description: sourceWorkspace.description,
+            clientConfig: sourceWorkspace.clientConfig,
             servers: serializedServers,
             ...(activeOrganizationId
               ? { organizationId: activeOrganizationId }
@@ -615,6 +654,7 @@ export function useWorkspaceState({
           await convexCreateWorkspace({
             name: workspaceData.name,
             description: workspaceData.description,
+            clientConfig: workspaceData.clientConfig,
             servers: serializedServers,
             ...(activeOrganizationId
               ? { organizationId: activeOrganizationId }
@@ -652,6 +692,7 @@ export function useWorkspaceState({
     effectiveActiveWorkspaceId,
     handleCreateWorkspace,
     handleUpdateWorkspace,
+    handleUpdateClientConfig,
     handleDeleteWorkspace,
     handleDuplicateWorkspace,
     handleSetDefaultWorkspace,

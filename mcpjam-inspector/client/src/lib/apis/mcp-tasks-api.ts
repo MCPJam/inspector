@@ -1,4 +1,4 @@
-import type { MCPTask, MCPListTasksResult } from "@mcpjam/sdk";
+import type { MCPListTasksResult, MCPTask } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import { ensureLocalMode, runByMode } from "@/lib/apis/mode-client";
 
