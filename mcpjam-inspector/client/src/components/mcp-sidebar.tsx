@@ -150,6 +150,7 @@ const navigationSections: NavSection[] = [
         title: "Client Config",
         url: "#client-config",
         icon: Settings,
+        featureFlag: "client-config-enabled",
       },
       {
         title: "Generate Evals",
@@ -286,6 +287,7 @@ export function MCPSidebar({
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
+  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -382,8 +384,9 @@ export function MCPSidebar({
       "ci-evals-enabled": !!ciEvalsEnabled && isAuthenticated,
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
+      "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
     }),
-    [ciEvalsEnabled, learningEnabled, sandboxesEnabled, isAuthenticated],
+    [ciEvalsEnabled, learningEnabled, sandboxesEnabled, clientConfigEnabled, isAuthenticated],
   );
   const visibleNavigationSections = filterByBillingEntitlements(
     filterByFeatureFlags(

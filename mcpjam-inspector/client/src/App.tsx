@@ -146,6 +146,7 @@ export default function App() {
     "billing-entitlements-ui",
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
+  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const {
     getAccessToken,
     signIn,
@@ -678,9 +679,15 @@ export default function App() {
       (learningEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
+    } else if (
+      activeTab === "client-config" &&
+      (clientConfigEnabled !== true || !isAuthenticated)
+    ) {
+      applyNavigation("servers", { updateHash: true });
     }
   }, [
     ciEvalsEnabled,
+    clientConfigEnabled,
     activeTabBillingFeature,
     activeTabBillingLocked,
     learningEnabled,

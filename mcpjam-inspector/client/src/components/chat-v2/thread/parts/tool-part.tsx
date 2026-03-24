@@ -157,8 +157,10 @@ export function ToolPart({
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
   );
-  const hostAvailableDisplayModes = useClientConfigStore((s) =>
-    extractHostDisplayModes(s.draftConfig?.hostContext),
+  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const hostAvailableDisplayModes = useMemo(
+    () => extractHostDisplayModes(hostContext),
+    [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
