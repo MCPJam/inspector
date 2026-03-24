@@ -386,7 +386,13 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
     }),
-    [ciEvalsEnabled, learningEnabled, sandboxesEnabled, clientConfigEnabled, isAuthenticated],
+    [
+      ciEvalsEnabled,
+      learningEnabled,
+      sandboxesEnabled,
+      clientConfigEnabled,
+      isAuthenticated,
+    ],
   );
   const visibleNavigationSections = filterByBillingEntitlements(
     filterByFeatureFlags(
