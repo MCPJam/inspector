@@ -1,6 +1,8 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, AppAction } from "@/state/app-types";
+import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
+import { useClientConfigStore } from "@/stores/client-config-store";
 import { useServerState } from "../use-server-state";
 
 const { toastError, toastSuccess, handleOAuthCallbackMock } = vi.hoisted(
@@ -138,6 +140,21 @@ describe("useServerState OAuth callback failures", () => {
     vi.clearAllMocks();
     localStorage.clear();
     window.history.replaceState({}, "", "/");
+    useClientConfigStore.setState({
+      activeWorkspaceId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      clientCapabilitiesText: "{}",
+      hostContextText: "{}",
+      clientCapabilitiesError: null,
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
   });
 
   it("marks the pending server as failed when authorization is denied", async () => {
@@ -192,5 +209,30 @@ describe("useServerState OAuth callback failures", () => {
       "Error completing OAuth flow: Token exchange failed",
     );
     expect(localStorage.getItem("mcp-oauth-pending")).toBeNull();
+  });
+
+  it("blocks connect while workspace client config sync is pending", async () => {
+    useClientConfigStore.setState({
+      pendingWorkspaceId: "default",
+      isAwaitingRemoteEcho: true,
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await result.current.handleConnect({
+      name: "new-server",
+      type: "http",
+      url: "https://example.com/mcp",
+    });
+
+    expect(toastError).toHaveBeenCalledWith(
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+    );
+    expect(
+      dispatch.mock.calls.some(
+        ([action]) => action.type === "CONNECT_REQUEST",
+      ),
+    ).toBe(false);
   });
 });

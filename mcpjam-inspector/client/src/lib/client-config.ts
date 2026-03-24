@@ -25,6 +25,9 @@ export type HostSafeAreaInsets = {
   left: number;
 };
 
+export const CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE =
+  "Workspace client config is still syncing. Try again in a moment.";
+
 export const DEFAULT_HOST_DEVICE_CAPABILITIES: HostDeviceCapabilities = {
   hover: true,
   touch: false,
@@ -103,12 +106,38 @@ export function sanitizeWorkspaceClientConfig(
 }
 
 export function mergeWorkspaceClientCapabilities(
-  serverCapabilities?: Record<string, unknown>,
   workspaceCapabilities?: Record<string, unknown>,
+  serverCapabilities?: Record<string, unknown>,
 ): ClientCapabilityOptions {
   return mergeClientCapabilities(
-    serverCapabilities as ClientCapabilityOptions | undefined,
     workspaceCapabilities as ClientCapabilityOptions | undefined,
+    serverCapabilities as ClientCapabilityOptions | undefined,
+  );
+}
+
+export function getEffectiveWorkspaceClientCapabilities(
+  workspaceClientConfig?: Pick<WorkspaceClientConfig, "clientCapabilities"> | null,
+): ClientCapabilityOptions {
+  return normalizeWorkspaceClientCapabilities(
+    (workspaceClientConfig?.clientCapabilities as
+      | Record<string, unknown>
+      | undefined) ??
+      (getDefaultClientCapabilities() as Record<string, unknown>),
+  );
+}
+
+export function getEffectiveServerClientCapabilities(args: {
+  workspaceClientConfig?: Pick<WorkspaceClientConfig, "clientCapabilities"> | null;
+  workspaceCapabilities?: Record<string, unknown>;
+  serverCapabilities?: Record<string, unknown>;
+}): ClientCapabilityOptions {
+  const workspaceCapabilities =
+    args.workspaceCapabilities ??
+    getEffectiveWorkspaceClientCapabilities(args.workspaceClientConfig);
+
+  return mergeWorkspaceClientCapabilities(
+    workspaceCapabilities as Record<string, unknown>,
+    args.serverCapabilities,
   );
 }
 
@@ -120,15 +149,35 @@ export function normalizeWorkspaceClientCapabilities(
   );
 }
 
+function canonicalizeJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(canonicalizeJsonValue);
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nestedValue]) => [key, canonicalizeJsonValue(nestedValue)]),
+    );
+  }
+
+  return value;
+}
+
+export function stableStringifyJson(value: unknown): string {
+  return JSON.stringify(canonicalizeJsonValue(value));
+}
+
 export function workspaceClientCapabilitiesNeedReconnect(args: {
   desiredCapabilities?: Record<string, unknown>;
   initializedCapabilities?: Record<string, unknown>;
 }): boolean {
   return (
-    stringifyJson(
+    stableStringifyJson(
       normalizeWorkspaceClientCapabilities(args.desiredCapabilities),
     ) !==
-    stringifyJson(
+    stableStringifyJson(
       normalizeWorkspaceClientCapabilities(args.initializedCapabilities),
     )
   );
@@ -248,8 +297,4 @@ function isHostDisplayMode(value: unknown): value is HostDisplayMode {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringifyJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
 }

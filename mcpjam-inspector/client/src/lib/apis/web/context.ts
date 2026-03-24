@@ -1,5 +1,6 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
+import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
@@ -8,6 +9,7 @@ export interface HostedApiContext {
   workspaceId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
+  clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
@@ -63,6 +65,14 @@ function assertHostedMode() {
   if (!HOSTED_MODE) {
     throw new Error("Hosted API context is only available in hosted mode");
   }
+}
+
+function assertHostedClientConfigSynced() {
+  if (!hostedApiContext.clientConfigSyncPending) {
+    return;
+  }
+
+  throw new Error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
 }
 
 /**
@@ -251,6 +261,7 @@ export function buildHostedServerRequest(
   }
 
   // Authenticated path: resolve via Convex server mappings
+  assertHostedClientConfigSynced();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
   const shareToken = getHostedShareToken();
@@ -278,6 +289,7 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   shareToken?: string;
   sandboxToken?: string;
 } {
+  assertHostedClientConfigSynced();
   const serverIds = resolveHostedServerIds(serverNamesOrIds);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const shareToken = getHostedShareToken();

@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { JsonEditor } from "@/components/ui/json-editor";
 import type { Workspace } from "@/state/app-types";
 import {
+  getEffectiveServerClientCapabilities,
   workspaceClientCapabilitiesNeedReconnect,
   type WorkspaceClientConfig,
 } from "@/lib/client-config";
@@ -26,7 +27,6 @@ export function ClientConfigTab({
   workspace,
   onSaveClientConfig,
 }: ClientConfigTabProps) {
-  const defaultConfig = useClientConfigStore((s) => s.defaultConfig);
   const draftConfig = useClientConfigStore((s) => s.draftConfig);
   const clientCapabilitiesText = useClientConfigStore(
     (s) => s.clientCapabilitiesText,
@@ -43,13 +43,7 @@ export function ClientConfigTab({
     (s) => s.resetSectionToDefault,
   );
   const resetToBaseline = useClientConfigStore((s) => s.resetToBaseline);
-  const markSaving = useClientConfigStore((s) => s.markSaving);
-  const markSaved = useClientConfigStore((s) => s.markSaved);
-
-  const desiredCapabilities =
-    workspace?.clientConfig?.clientCapabilities ??
-    defaultConfig?.clientCapabilities ??
-    {};
+  const failSave = useClientConfigStore((s) => s.failSave);
 
   const reconnectServers = useMemo(() => {
     if (!workspace) {
@@ -62,12 +56,17 @@ export function ClientConfigTab({
       }
 
       return workspaceClientCapabilitiesNeedReconnect({
-        desiredCapabilities,
+        desiredCapabilities: getEffectiveServerClientCapabilities({
+          workspaceClientConfig: workspace.clientConfig,
+          serverCapabilities: server.config.capabilities as
+            | Record<string, unknown>
+            | undefined,
+        }),
         initializedCapabilities: server.initializationInfo
           ?.clientCapabilities as Record<string, unknown> | undefined,
       });
     });
-  }, [desiredCapabilities, workspace]);
+  }, [workspace]);
 
   const handleSave = async () => {
     if (!draftConfig) {
@@ -78,18 +77,11 @@ export function ClientConfigTab({
       return;
     }
 
-    markSaving(true);
     try {
       await onSaveClientConfig(activeWorkspaceId, draftConfig);
-      markSaved(draftConfig);
       toast.success("Workspace client profile saved.");
-    } catch (error) {
-      markSaving(false);
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to save client profile.",
-      );
+    } catch {
+      failSave();
     }
   };
 
@@ -122,7 +114,7 @@ export function ClientConfigTab({
               </Button>
               <Button onClick={handleSave} disabled={isSaving || !isDirty}>
                 <Save className="mr-2 h-4 w-4" />
-                Save
+                {isSaving ? "Saving..." : "Save"}
               </Button>
             </div>
           </div>
@@ -173,6 +165,7 @@ export function ClientConfigTab({
                   setSectionText("clientCapabilities", value)
                 }
                 mode="edit"
+                readOnly={isSaving}
                 showModeToggle={false}
                 className="h-full border"
                 height="100%"
@@ -208,6 +201,7 @@ export function ClientConfigTab({
                 rawContent={hostContextText}
                 onRawChange={(value) => setSectionText("hostContext", value)}
                 mode="edit"
+                readOnly={isSaving}
                 showModeToggle={false}
                 className="h-full border"
                 height="100%"

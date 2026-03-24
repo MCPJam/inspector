@@ -4,7 +4,8 @@
  * Reusable component for display context controls (device, locale, timezone, CSP, capabilities, safe area).
  * Extracted from PlaygroundMain to be shared between App Builder and Views pages.
  *
- * Reads/writes to useUIPlaygroundStore for state management.
+ * Reads/writes UI playground state via useUIPlaygroundStore and derives theme, locale, timezone,
+ * display modes, device capabilities, and safe-area defaults from useClientConfigStore hostContext.
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";

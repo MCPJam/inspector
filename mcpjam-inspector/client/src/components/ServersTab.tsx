@@ -28,9 +28,8 @@ import { Skeleton } from "./ui/skeleton";
 import { useConvexAuth } from "convex/react";
 import { Workspace } from "@/state/app-types";
 import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import {
-  mergeWorkspaceClientCapabilities,
+  getEffectiveServerClientCapabilities,
   workspaceClientCapabilitiesNeedReconnect,
 } from "@/lib/client-config";
 import {
@@ -240,11 +239,6 @@ export function ServersTab({
   };
 
   const activeServer = activeId ? workspaceServers[activeId] : null;
-  const workspaceDesiredCapabilities =
-    (workspaces[activeWorkspaceId]?.clientConfig?.clientCapabilities as
-      | Record<string, unknown>
-      | undefined) ??
-    (getDefaultClientCapabilities() as Record<string, unknown>);
   const reconnectWarningByServerName = useMemo(
     () =>
       Object.fromEntries(
@@ -252,16 +246,19 @@ export function ServersTab({
           serverName,
           server.connectionStatus === "connected" &&
             workspaceClientCapabilitiesNeedReconnect({
-              desiredCapabilities: mergeWorkspaceClientCapabilities(
-                server.config.capabilities as Record<string, unknown> | undefined,
-                workspaceDesiredCapabilities,
-              ),
+              desiredCapabilities: getEffectiveServerClientCapabilities({
+                workspaceClientConfig: workspaces[activeWorkspaceId]
+                  ?.clientConfig,
+                serverCapabilities: server.config.capabilities as
+                  | Record<string, unknown>
+                  | undefined,
+              }),
               initializedCapabilities: server.initializationInfo
                 ?.clientCapabilities as Record<string, unknown> | undefined,
             }),
         ]),
       ),
-    [workspaceDesiredCapabilities, workspaceServers],
+    [activeWorkspaceId, workspaceServers, workspaces],
   );
 
   const detailModalLiveServer = detailModalState.serverName

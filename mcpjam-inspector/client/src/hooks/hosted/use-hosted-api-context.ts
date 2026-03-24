@@ -6,6 +6,7 @@ interface UseHostedApiContextOptions {
   workspaceId: string | null;
   serverIdsByName: Record<string, string>;
   clientCapabilities?: Record<string, unknown>;
+  clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
@@ -21,6 +22,7 @@ export function useHostedApiContext({
   workspaceId,
   serverIdsByName,
   clientCapabilities,
+  clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
   guestOauthTokensByServerName,
@@ -49,6 +51,7 @@ export function useHostedApiContext({
       workspaceId,
       serverIdsByName,
       clientCapabilities,
+      clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
       guestOauthTokensByServerName,
@@ -66,6 +69,7 @@ export function useHostedApiContext({
     workspaceId,
     serverIdsByName,
     clientCapabilities,
+    clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,

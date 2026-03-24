@@ -454,12 +454,12 @@ describe("ServersTab shared detail modal", () => {
   it("does not surface reconnect warnings when server capability overrides already match initialize payload", () => {
     const serverCapabilities = {
       experimental: {
-        serverOverride: true,
+        serverOverride: { enabled: true },
       },
     };
     const initializedCapabilities = mergeWorkspaceClientCapabilities(
-      serverCapabilities,
       getDefaultClientCapabilities() as Record<string, unknown>,
+      serverCapabilities,
     );
 
     render(

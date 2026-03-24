@@ -31,9 +31,13 @@ import { HOSTED_MODE } from "@/lib/config";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
+import { useClientConfigStore } from "@/stores/client-config-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
-import { mergeWorkspaceClientCapabilities } from "@/lib/client-config";
+import {
+  CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+  getEffectiveServerClientCapabilities,
+} from "@/lib/client-config";
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
@@ -196,24 +200,60 @@ export function useServerState({
     return activeWorkspace?.servers || {};
   }, [activeWorkspace]);
 
-  const activeWorkspaceClientCapabilities = useMemo(
-    () => activeWorkspace?.clientConfig?.clientCapabilities,
-    [activeWorkspace?.clientConfig?.clientCapabilities],
+  const isClientConfigSyncPending = useClientConfigStore(
+    (state) =>
+      state.isAwaitingRemoteEcho &&
+      state.pendingWorkspaceId === effectiveActiveWorkspaceId,
   );
 
   const withWorkspaceClientCapabilities = useCallback(
     (serverConfig: MCPServerConfig): MCPServerConfig => {
-      const mergedCapabilities = mergeWorkspaceClientCapabilities(
-        serverConfig.capabilities as Record<string, unknown> | undefined,
-        activeWorkspaceClientCapabilities,
-      );
+      const mergedCapabilities = getEffectiveServerClientCapabilities({
+        workspaceClientConfig: activeWorkspace?.clientConfig,
+        serverCapabilities: serverConfig.capabilities as
+          | Record<string, unknown>
+          | undefined,
+      });
 
       return {
         ...serverConfig,
         capabilities: mergedCapabilities,
       };
     },
-    [activeWorkspaceClientCapabilities],
+    [activeWorkspace?.clientConfig],
+  );
+
+  const assertClientConfigSynced = useCallback(() => {
+    if (!isClientConfigSyncPending) {
+      return;
+    }
+
+    throw new Error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
+  }, [isClientConfigSyncPending]);
+
+  const notifyIfClientConfigSyncPending = useCallback(() => {
+    if (!isClientConfigSyncPending) {
+      return false;
+    }
+
+    toast.error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
+    return true;
+  }, [isClientConfigSyncPending]);
+
+  const guardedTestConnection = useCallback(
+    async (serverConfig: MCPServerConfig, serverName: string) => {
+      assertClientConfigSynced();
+      return testConnection(serverConfig, serverName);
+    },
+    [assertClientConfigSynced],
+  );
+
+  const guardedReconnectServer = useCallback(
+    async (serverName: string, serverConfig: MCPServerConfig) => {
+      assertClientConfigSynced();
+      return reconnectServer(serverName, serverConfig);
+    },
+    [assertClientConfigSynced],
   );
 
   const validateForm = (formData: ServerFormData): string | null => {
@@ -451,7 +491,7 @@ export function useServerState({
           });
 
           try {
-            const connectionResult = await testConnection(
+            const connectionResult = await guardedTestConnection(
               withWorkspaceClientCapabilities(result.serverConfig),
               serverName,
             );
@@ -530,6 +570,7 @@ export function useServerState({
       failPendingOAuthConnection,
       logger,
       storeInitInfo,
+      guardedTestConnection,
       withWorkspaceClientCapabilities,
     ],
   );
@@ -611,6 +652,10 @@ export function useServerState({
 
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       const validationError = validateForm(formData);
       if (validationError) {
         toast.error(validationError);
@@ -692,7 +737,7 @@ export function useServerState({
                 },
               },
             } satisfies HttpServerConfig;
-            const connectionResult = await testConnection(
+            const connectionResult = await guardedTestConnection(
               withWorkspaceClientCapabilities(serverConfig),
               formData.name,
             );
@@ -748,7 +793,7 @@ export function useServerState({
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
-              const connectionResult = await testConnection(
+              const connectionResult = await guardedTestConnection(
                 withWorkspaceClientCapabilities(oauthResult.serverConfig),
                 formData.name,
               );
@@ -804,7 +849,10 @@ export function useServerState({
           clearOAuthData(formData.name);
         }
         const effectiveConfig = withWorkspaceClientCapabilities(mcpConfig);
-        const result = await testConnection(effectiveConfig, formData.name);
+        const result = await guardedTestConnection(
+          effectiveConfig,
+          formData.name,
+        );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
           dispatch({
@@ -860,9 +908,11 @@ export function useServerState({
       isAuthenticated,
       appState.workspaces,
       appState.activeWorkspaceId,
+      notifyIfClientConfigSyncPending,
       syncServerToConvex,
       logger,
       storeInitInfo,
+      guardedTestConnection,
       withWorkspaceClientCapabilities,
     ],
   );
@@ -1011,7 +1061,7 @@ export function useServerState({
       const token = nextOpToken(serverName);
 
       try {
-        const result = await reconnectServer(
+        const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(serverConfig),
         );
@@ -1048,7 +1098,12 @@ export function useServerState({
         return { success: false, error: errorMessage };
       }
     },
-    [dispatch, storeInitInfo, withWorkspaceClientCapabilities],
+    [
+      dispatch,
+      storeInitInfo,
+      guardedReconnectServer,
+      withWorkspaceClientCapabilities,
+    ],
   );
 
   const handleConnectWithTokensFromOAuthFlow = useCallback(
@@ -1064,6 +1119,10 @@ export function useServerState({
       },
       serverUrl: string,
     ) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
@@ -1075,7 +1134,7 @@ export function useServerState({
         toast.error(`Connection failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow],
+    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
   );
 
   const handleRefreshTokensFromOAuthFlow = useCallback(
@@ -1091,6 +1150,10 @@ export function useServerState({
       },
       serverUrl: string,
     ) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
@@ -1102,7 +1165,7 @@ export function useServerState({
         toast.error(`Token refresh failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow],
+    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
   );
 
   const cliConfigProcessedRef = useRef<boolean>(false);
@@ -1276,6 +1339,10 @@ export function useServerState({
 
   const handleReconnect = useCallback(
     async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       logger.info("Reconnecting to server", { serverName, options });
       const server = effectiveServers[serverName];
       if (!server) {
@@ -1332,7 +1399,7 @@ export function useServerState({
           toast.error(`OAuth failed: ${serverName}`);
           return;
         }
-        const result = await reconnectServer(
+        const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(oauthResult.serverConfig!),
         );
@@ -1374,7 +1441,7 @@ export function useServerState({
           toast.error(`Failed to connect: ${serverName}`);
           return;
         }
-        const result = await reconnectServer(
+        const result = await guardedReconnectServer(
           serverName,
           withWorkspaceClientCapabilities(authResult.serverConfig),
         );
@@ -1421,6 +1488,8 @@ export function useServerState({
       storeInitInfo,
       logger,
       dispatch,
+      notifyIfClientConfigSyncPending,
+      guardedReconnectServer,
       withWorkspaceClientCapabilities,
     ],
   );
@@ -1555,6 +1624,10 @@ export function useServerState({
       }
 
       const hadOAuthTokens = originalServer?.oauthTokens != null;
+      if (notifyIfClientConfigSyncPending()) {
+        return { ok: false, serverName: originalServerName };
+      }
+
       const shouldPreserveOAuth =
         hadOAuthTokens &&
         formData.useOAuth &&
@@ -1571,7 +1644,7 @@ export function useServerState({
         });
         saveOAuthConfigToLocalStorage(formData);
         try {
-          const result = await testConnection(
+          const result = await guardedTestConnection(
             withWorkspaceClientCapabilities(originalServer.config),
             originalServerName,
           );
@@ -1633,6 +1706,8 @@ export function useServerState({
       removeServerFromStateAndCloud,
       setSelectedServer,
       syncServerToConvex,
+      notifyIfClientConfigSyncPending,
+      guardedTestConnection,
     ],
   );
 

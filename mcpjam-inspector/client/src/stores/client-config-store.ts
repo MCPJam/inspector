@@ -1,5 +1,8 @@
 import { create } from "zustand";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
+import {
+  stableStringifyJson,
+  type WorkspaceClientConfig,
+} from "@/lib/client-config";
 
 type JsonSection = "clientCapabilities" | "hostContext";
 
@@ -14,6 +17,9 @@ interface ClientConfigStoreState {
   hostContextError: string | null;
   isSaving: boolean;
   isDirty: boolean;
+  pendingWorkspaceId: string | null;
+  pendingSavedConfig: WorkspaceClientConfig | undefined;
+  isAwaitingRemoteEcho: boolean;
   loadWorkspaceConfig: (input: {
     workspaceId: string | null;
     defaultConfig: WorkspaceClientConfig | null;
@@ -23,8 +29,13 @@ interface ClientConfigStoreState {
   patchHostContext: (patch: Record<string, unknown>) => void;
   resetSectionToDefault: (section: JsonSection) => void;
   resetToBaseline: () => void;
-  markSaving: (isSaving: boolean) => void;
+  beginSave: (input: {
+    workspaceId: string;
+    savedConfig: WorkspaceClientConfig | undefined;
+    awaitRemoteEcho: boolean;
+  }) => void;
   markSaved: (savedConfig: WorkspaceClientConfig | undefined) => void;
+  failSave: () => void;
 }
 
 function stringifyJson(value: unknown): string {
@@ -38,8 +49,9 @@ function createInitialState(): Omit<
   | "patchHostContext"
   | "resetSectionToDefault"
   | "resetToBaseline"
-  | "markSaving"
+  | "beginSave"
   | "markSaved"
+  | "failSave"
 > {
   return {
     activeWorkspaceId: null,
@@ -52,6 +64,9 @@ function createInitialState(): Omit<
     hostContextError: null,
     isSaving: false,
     isDirty: false,
+    pendingWorkspaceId: null,
+    pendingSavedConfig: undefined,
+    isAwaitingRemoteEcho: false,
   };
 }
 
@@ -72,7 +87,7 @@ function computeDirtyState(
     return false;
   }
 
-  return stringifyJson(state.draftConfig) !== stringifyJson(baseline);
+  return stableStringifyJson(state.draftConfig) !== stableStringifyJson(baseline);
 }
 
 function resetFromConfig(
@@ -90,8 +105,28 @@ function resetFromConfig(
     hostContextText: stringifyJson(baseline?.hostContext ?? {}),
     clientCapabilitiesError: null,
     hostContextError: null,
+    pendingWorkspaceId: null,
+    pendingSavedConfig: undefined,
+    isAwaitingRemoteEcho: false,
+    isSaving: false,
     isDirty: false,
   };
+}
+
+function isPendingRemoteEchoMatch(
+  state: Pick<
+    ClientConfigStoreState,
+    "isAwaitingRemoteEcho" | "pendingWorkspaceId" | "pendingSavedConfig"
+  >,
+  workspaceId: string | null,
+  savedConfig?: WorkspaceClientConfig,
+) {
+  return (
+    state.isAwaitingRemoteEcho &&
+    state.pendingWorkspaceId === workspaceId &&
+    stableStringifyJson(state.pendingSavedConfig) ===
+      stableStringifyJson(savedConfig)
+  );
 }
 
 function parseRecordJson(text: string): Record<string, unknown> {
@@ -132,13 +167,33 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
 
     loadWorkspaceConfig: ({ workspaceId, defaultConfig, savedConfig }) => {
       const state = get();
+      const shouldApplyPendingRemoteEcho = isPendingRemoteEchoMatch(
+        state,
+        workspaceId,
+        savedConfig,
+      );
+
+      if (
+        state.isDirty &&
+        state.activeWorkspaceId === workspaceId &&
+        !shouldApplyPendingRemoteEcho
+      ) {
+        return;
+      }
       const sameWorkspace = state.activeWorkspaceId === workspaceId;
       const sameDefault =
-        stringifyJson(state.defaultConfig) === stringifyJson(defaultConfig);
+        stableStringifyJson(state.defaultConfig) ===
+        stableStringifyJson(defaultConfig);
       const sameSaved =
-        stringifyJson(state.savedConfig) === stringifyJson(savedConfig);
+        stableStringifyJson(state.savedConfig) ===
+        stableStringifyJson(savedConfig);
 
-      if (sameWorkspace && sameDefault && sameSaved) {
+      if (
+        sameWorkspace &&
+        sameDefault &&
+        sameSaved &&
+        !shouldApplyPendingRemoteEcho
+      ) {
         return;
       }
 
@@ -227,17 +282,34 @@ export const useClientConfigStore = create<ClientConfigStoreState>(
       );
     },
 
-    markSaving: (isSaving) => set({ isSaving }),
+    beginSave: ({ workspaceId, savedConfig, awaitRemoteEcho }) =>
+      set({
+        isSaving: true,
+        pendingWorkspaceId: awaitRemoteEcho ? workspaceId : null,
+        pendingSavedConfig: awaitRemoteEcho ? savedConfig : undefined,
+        isAwaitingRemoteEcho: awaitRemoteEcho,
+      }),
 
     markSaved: (savedConfig) =>
       set((state) => ({
         savedConfig,
         isSaving: false,
+        pendingWorkspaceId: null,
+        pendingSavedConfig: undefined,
+        isAwaitingRemoteEcho: false,
         isDirty: computeDirtyState({
           defaultConfig: state.defaultConfig,
           savedConfig,
           draftConfig: state.draftConfig,
         }),
       })),
+
+    failSave: () =>
+      set({
+        isSaving: false,
+        pendingWorkspaceId: null,
+        pendingSavedConfig: undefined,
+        isAwaitingRemoteEcho: false,
+      }),
   }),
 );

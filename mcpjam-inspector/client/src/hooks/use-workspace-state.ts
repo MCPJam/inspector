@@ -17,7 +17,27 @@ import {
   deserializeServersFromConvex,
   serializeServersForSharing,
 } from "@/lib/workspace-serialization";
-import type { WorkspaceClientConfig } from "@/lib/client-config";
+import {
+  stableStringifyJson,
+  type WorkspaceClientConfig,
+} from "@/lib/client-config";
+import { useClientConfigStore } from "@/stores/client-config-store";
+
+const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
+
+function stringifyWorkspaceClientConfig(
+  clientConfig: WorkspaceClientConfig | undefined,
+) {
+  return stableStringifyJson(clientConfig ?? null);
+}
+
+interface PendingClientConfigSync {
+  workspaceId: string;
+  expectedSerializedConfig: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+}
 
 interface LoggerLike {
   info: (message: string, meta?: Record<string, unknown>) => void;
@@ -89,7 +109,27 @@ export function useWorkspaceState({
   const ensureDefaultInFlightRef = useRef(new Set<string>());
   const [useLocalFallback, setUseLocalFallback] = useState(false);
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingClientConfigSyncRef = useRef<PendingClientConfigSync | null>(
+    null,
+  );
   const CONVEX_TIMEOUT_MS = 10000;
+
+  const clearPendingClientConfigSync = useCallback(
+    (error?: Error) => {
+      const pending = pendingClientConfigSyncRef.current;
+      if (!pending) {
+        return;
+      }
+
+      clearTimeout(pending.timeoutId);
+      pendingClientConfigSyncRef.current = null;
+
+      if (error) {
+        pending.reject(error);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -130,6 +170,22 @@ export function useWorkspaceState({
       }
     };
   }, [isAuthenticated, remoteWorkspaces, useLocalFallback, logger]);
+
+  useEffect(() => {
+    if (isAuthenticated && !useLocalFallback) {
+      return;
+    }
+
+    clearPendingClientConfigSync(
+      new Error("Workspace client config sync was interrupted."),
+    );
+  }, [clearPendingClientConfigSync, isAuthenticated, useLocalFallback]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingClientConfigSync();
+    };
+  }, [clearPendingClientConfigSync]);
 
   const isLoadingRemoteWorkspaces =
     (isAuthenticated &&
@@ -174,6 +230,26 @@ export function useWorkspaceState({
       }),
     );
   }, [remoteWorkspaces, convexActiveWorkspaceId, activeWorkspaceServersFlat]);
+
+  useEffect(() => {
+    const pending = pendingClientConfigSyncRef.current;
+    if (!pending) {
+      return;
+    }
+
+    const syncedClientConfig =
+      convexWorkspaces[pending.workspaceId]?.clientConfig ?? undefined;
+    if (
+      stringifyWorkspaceClientConfig(syncedClientConfig) !==
+      pending.expectedSerializedConfig
+    ) {
+      return;
+    }
+
+    clearTimeout(pending.timeoutId);
+    pendingClientConfigSyncRef.current = null;
+    pending.resolve();
+  }, [convexWorkspaces]);
 
   const effectiveWorkspaces = useMemo((): Record<string, Workspace> => {
     if (useLocalFallback) {
@@ -460,13 +536,47 @@ export function useWorkspaceState({
       workspaceId: string,
       clientConfig: WorkspaceClientConfig | undefined,
     ): Promise<void> => {
-      if (isAuthenticated) {
+      const clientConfigStore = useClientConfigStore.getState();
+      const awaitRemoteEcho = isAuthenticated && !useLocalFallback;
+
+      clientConfigStore.beginSave({
+        workspaceId,
+        savedConfig: clientConfig,
+        awaitRemoteEcho,
+      });
+
+      if (awaitRemoteEcho) {
+        const remoteEchoPromise = new Promise<void>((resolve, reject) => {
+          clearPendingClientConfigSync();
+
+          const timeoutId = setTimeout(() => {
+            pendingClientConfigSyncRef.current = null;
+            reject(
+              new Error(
+                "Timed out waiting for workspace client config to sync.",
+              ),
+            );
+          }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
+
+          pendingClientConfigSyncRef.current = {
+            workspaceId,
+            expectedSerializedConfig:
+              stringifyWorkspaceClientConfig(clientConfig),
+            resolve,
+            reject,
+            timeoutId,
+          };
+        });
+
         try {
           await convexUpdateClientConfig({
             workspaceId,
             clientConfig,
           });
+          await remoteEchoPromise;
         } catch (error) {
+          clearPendingClientConfigSync();
+          clientConfigStore.failSave();
           const errorMessage =
             error instanceof Error ? error.message : "Unknown error";
           logger.error("Failed to update workspace client config", {
@@ -484,8 +594,16 @@ export function useWorkspaceState({
         workspaceId,
         updates: { clientConfig },
       });
+      clientConfigStore.markSaved(clientConfig);
     },
-    [isAuthenticated, convexUpdateClientConfig, logger, dispatch],
+    [
+      isAuthenticated,
+      useLocalFallback,
+      convexUpdateClientConfig,
+      clearPendingClientConfigSync,
+      logger,
+      dispatch,
+    ],
   );
 
   const handleDeleteWorkspace = useCallback(

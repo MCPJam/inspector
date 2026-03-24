@@ -52,8 +52,7 @@ async function safeValidateHostedServer(
     return await validateHostedServer(
       serverId,
       extractOAuthToken(serverConfig),
-      (serverConfig.capabilities as Record<string, unknown> | undefined) ??
-        undefined,
+      serverConfig.capabilities as Record<string, unknown> | undefined,
     );
   } catch (error) {
     return {

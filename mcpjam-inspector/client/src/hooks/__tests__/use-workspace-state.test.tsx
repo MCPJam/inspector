@@ -1,11 +1,14 @@
-import { renderHook, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppAction, AppState, Workspace } from "@/state/app-types";
 import { useWorkspaceState } from "../use-workspace-state";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
 
 const {
   createWorkspaceMock,
   ensureDefaultWorkspaceMock,
+  updateClientConfigMock,
   updateWorkspaceMock,
   deleteWorkspaceMock,
   workspaceQueryState,
@@ -13,6 +16,7 @@ const {
 } = vi.hoisted(() => ({
   createWorkspaceMock: vi.fn(),
   ensureDefaultWorkspaceMock: vi.fn(),
+  updateClientConfigMock: vi.fn(),
   updateWorkspaceMock: vi.fn(),
   deleteWorkspaceMock: vi.fn(),
   workspaceQueryState: {
@@ -37,6 +41,7 @@ vi.mock("../useWorkspaces", () => ({
     createWorkspace: createWorkspaceMock,
     ensureDefaultWorkspace: ensureDefaultWorkspaceMock,
     updateWorkspace: updateWorkspaceMock,
+    updateClientConfig: updateClientConfigMock,
     deleteWorkspace: deleteWorkspaceMock,
   }),
   useWorkspaceServers: () => ({
@@ -127,16 +132,37 @@ function renderUseWorkspaceState({
 }
 
 describe("useWorkspaceState automatic workspace creation", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
     localStorage.clear();
     createWorkspaceMock.mockResolvedValue("remote-workspace-id");
     ensureDefaultWorkspaceMock.mockResolvedValue("default-workspace-id");
+    updateClientConfigMock.mockResolvedValue(undefined);
     updateWorkspaceMock.mockResolvedValue("remote-workspace-id");
     deleteWorkspaceMock.mockResolvedValue(undefined);
     workspaceQueryState.allWorkspaces = [];
     workspaceQueryState.workspaces = [];
     workspaceQueryState.isLoading = false;
+    useClientConfigStore.setState({
+      activeWorkspaceId: null,
+      defaultConfig: null,
+      savedConfig: undefined,
+      draftConfig: null,
+      clientCapabilitiesText: "{}",
+      hostContextText: "{}",
+      clientCapabilitiesError: null,
+      hostContextError: null,
+      isSaving: false,
+      isDirty: false,
+      pendingWorkspaceId: null,
+      pendingSavedConfig: undefined,
+      isAwaitingRemoteEcho: false,
+    });
   });
 
   it("ensures one initial workspace per empty organization and dedupes rerenders", async () => {
@@ -257,5 +283,121 @@ describe("useWorkspaceState automatic workspace creation", () => {
     await waitFor(() => {
       expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("keeps authenticated client-config saves pending until the remote echo arrives", async () => {
+    const savedConfig: WorkspaceClientConfig = {
+      version: 1,
+      clientCapabilities: {
+        experimental: {
+          inspectorProfile: true,
+        },
+      },
+      hostContext: {},
+    };
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: undefined,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result, rerender } = renderUseWorkspaceState({ appState });
+
+    let resolved = false;
+    const savePromise = result.current
+      .handleUpdateClientConfig("remote-1", savedConfig)
+      .then(() => {
+        resolved = true;
+      });
+
+    await waitFor(() => {
+      expect(updateClientConfigMock).toHaveBeenCalledWith({
+        workspaceId: "remote-1",
+        clientConfig: savedConfig,
+      });
+    });
+
+    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(true);
+    expect(resolved).toBe(false);
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        ...workspaceQueryState.allWorkspaces[0],
+        clientConfig: savedConfig,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    rerender({ organizationId: undefined });
+
+    await waitFor(() => {
+      expect(resolved).toBe(true);
+    });
+
+    await savePromise;
+  });
+
+  it("fails authenticated client-config saves when the remote echo times out", async () => {
+    vi.useFakeTimers();
+
+    const savedConfig: WorkspaceClientConfig = {
+      version: 1,
+      clientCapabilities: {
+        experimental: {
+          inspectorProfile: true,
+        },
+      },
+      hostContext: {},
+    };
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: undefined,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    const savePromise = result.current.handleUpdateClientConfig(
+      "remote-1",
+      savedConfig,
+    );
+    const saveError = savePromise.catch((error) => error);
+
+    await Promise.resolve();
+    expect(updateClientConfigMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+
+    await expect(saveError).resolves.toBeInstanceOf(Error);
+    await expect(savePromise).rejects.toThrow(
+      "Timed out waiting for workspace client config to sync.",
+    );
+    expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
+    expect(useClientConfigStore.getState().isSaving).toBe(false);
   });
 });

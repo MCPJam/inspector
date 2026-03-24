@@ -107,8 +107,10 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
-import { buildDefaultWorkspaceClientConfig } from "./lib/client-config";
-import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import {
+  buildDefaultWorkspaceClientConfig,
+  getEffectiveWorkspaceClientCapabilities,
+} from "./lib/client-config";
 import type {
   BillingRolloutState,
   OrganizationEntitlements,
@@ -435,11 +437,14 @@ export default function App() {
 
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
-  const hostedClientCapabilities =
-    (activeWorkspace?.clientConfig?.clientCapabilities as
-      | Record<string, unknown>
-      | undefined) ??
-    (getDefaultClientCapabilities() as Record<string, unknown>);
+  const isClientConfigSyncPending = useClientConfigStore(
+    (state) =>
+      state.isAwaitingRemoteEcho &&
+      state.pendingWorkspaceId === activeWorkspaceId,
+  );
+  const hostedClientCapabilities = getEffectiveWorkspaceClientCapabilities(
+    activeWorkspace?.clientConfig,
+  ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
   const rawBillingOrganizationId =
     activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
@@ -545,6 +550,7 @@ export default function App() {
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
     clientCapabilities: hostedClientCapabilities,
+    clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,

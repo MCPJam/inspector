@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
+import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "../client-config";
 
 vi.mock("../config", () => ({
   HOSTED_MODE: true,
@@ -207,6 +208,41 @@ describe("hosted web context", () => {
       workspaceId: "ws_override",
       serverId: "srv_bench",
       clientCapabilities,
+    });
+  });
+
+  it("blocks hosted workspace requests while client config sync is pending", () => {
+    setHostedApiContext({
+      workspaceId: "ws_pending",
+      serverIdsByName: { bench: "srv_bench" },
+      clientConfigSyncPending: true,
+      getAccessToken: async () => null,
+    });
+
+    expect(() => buildHostedServerRequest("bench")).toThrow(
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+    );
+    expect(() => buildHostedServerBatchRequest(["bench"])).toThrow(
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+    );
+  });
+
+  it("keeps direct guest requests working while sync-pending gating is enabled elsewhere", () => {
+    setHostedApiContext({
+      workspaceId: null,
+      isAuthenticated: false,
+      clientConfigSyncPending: true,
+      serverIdsByName: {},
+      serverConfigs: {
+        myServer: {
+          url: "https://example.com/mcp",
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("myServer")).toEqual({
+      serverUrl: "https://example.com/mcp",
+      clientCapabilities: defaultClientCapabilities,
     });
   });
 
