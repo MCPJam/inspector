@@ -400,4 +400,57 @@ describe("useWorkspaceState automatic workspace creation", () => {
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
     expect(useClientConfigStore.getState().isSaving).toBe(false);
   });
+
+  it("rejects authenticated client-config saves when the hook unmounts mid-sync", async () => {
+    const savedConfig: WorkspaceClientConfig = {
+      version: 1,
+      clientCapabilities: {
+        experimental: {
+          inspectorProfile: true,
+        },
+      },
+      hostContext: {},
+    };
+
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+        clientConfig: undefined,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result, unmount } = renderUseWorkspaceState({ appState });
+
+    const savePromise = result.current.handleUpdateClientConfig(
+      "remote-1",
+      savedConfig,
+    );
+
+    await waitFor(() => {
+      expect(updateClientConfigMock).toHaveBeenCalledWith({
+        workspaceId: "remote-1",
+        clientConfig: savedConfig,
+      });
+    });
+
+    unmount();
+
+    await expect(savePromise).rejects.toThrow(
+      "Workspace client config sync was interrupted.",
+    );
+    await waitFor(() => {
+      expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
+      expect(useClientConfigStore.getState().isSaving).toBe(false);
+    });
+  });
 });

@@ -756,13 +756,21 @@ export function ChatGPTAppRenderer({
     ? playgroundDeviceType
     : getDeviceType();
   // Use stable default objects to avoid infinite re-renders in useWidgetFetch
-  const capabilities = extractHostDeviceCapabilities(
-    draftHostContext,
-    isPlaygroundActive ? playgroundCapabilities : DEFAULT_CAPABILITIES,
+  const capabilities = useMemo(
+    () =>
+      extractHostDeviceCapabilities(
+        draftHostContext,
+        isPlaygroundActive ? playgroundCapabilities : DEFAULT_CAPABILITIES,
+      ),
+    [draftHostContext, isPlaygroundActive, playgroundCapabilities],
   );
-  const safeAreaInsets = extractHostSafeAreaInsets(
-    draftHostContext,
-    isPlaygroundActive ? playgroundSafeAreaInsets : DEFAULT_SAFE_AREA_INSETS,
+  const safeAreaInsets = useMemo(
+    () =>
+      extractHostSafeAreaInsets(
+        draftHostContext,
+        isPlaygroundActive ? playgroundSafeAreaInsets : DEFAULT_SAFE_AREA_INSETS,
+      ),
+    [draftHostContext, isPlaygroundActive, playgroundSafeAreaInsets],
   );
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
   const setWidgetHtml = useWidgetDebugStore((s) => s.setWidgetHtml);

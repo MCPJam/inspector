@@ -18,6 +18,7 @@ import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
 import { ClientConfigTab } from "./components/client-config/ClientConfigTab";
+import { WorkspaceClientConfigSync } from "./components/client-config/WorkspaceClientConfigSync";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -107,16 +108,12 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
-import {
-  buildDefaultWorkspaceClientConfig,
-  getEffectiveWorkspaceClientCapabilities,
-} from "./lib/client-config";
+import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import type {
   BillingRolloutState,
   OrganizationEntitlements,
 } from "./hooks/useOrganizationBilling";
 import { useClientConfigStore } from "./stores/client-config-store";
-import { useUIPlaygroundStore } from "./stores/ui-playground-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -376,11 +373,6 @@ export default function App() {
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
-  const playgroundGlobals = useUIPlaygroundStore((s) => s.globals);
-  const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
-  const playgroundSafeAreaInsets = useUIPlaygroundStore(
-    (s) => s.safeAreaInsets,
-  );
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
@@ -528,23 +520,6 @@ export default function App() {
       ),
     [appState.servers],
   );
-
-  useEffect(() => {
-    const defaultClientConfig = buildDefaultWorkspaceClientConfig({
-      theme: getInitialThemeMode(),
-      displayMode: playgroundGlobals.displayMode,
-      locale: playgroundGlobals.locale,
-      timeZone: playgroundGlobals.timeZone,
-      deviceCapabilities: playgroundCapabilities,
-      safeAreaInsets: playgroundSafeAreaInsets,
-    });
-
-    useClientConfigStore.getState().loadWorkspaceConfig({
-      workspaceId: activeWorkspaceId,
-      defaultConfig: defaultClientConfig,
-      savedConfig: activeWorkspace?.clientConfig,
-    });
-  }, [activeWorkspaceId, activeWorkspace?.clientConfig]);
 
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
@@ -1055,6 +1030,10 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
+      <WorkspaceClientConfigSync
+        activeWorkspaceId={activeWorkspaceId}
+        savedClientConfig={activeWorkspace?.clientConfig}
+      />
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
         <HostedShellGate

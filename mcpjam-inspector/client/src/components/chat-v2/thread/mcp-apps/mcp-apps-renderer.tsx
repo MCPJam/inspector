@@ -723,7 +723,8 @@ export function MCPAppsRenderer({
       styles:
         baseHostContext.styles &&
         typeof baseHostContext.styles === "object" &&
-        !Array.isArray(baseHostContext.styles)
+        !Array.isArray(baseHostContext.styles) &&
+        Object.keys(baseHostContext.styles as Record<string, unknown>).length > 0
           ? (baseHostContext.styles as McpUiHostContext["styles"])
           : {
               variables: styleVariables,

@@ -44,6 +44,7 @@ import {
 } from "@/stores/ui-playground-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { cn } from "@/lib/utils";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useClientConfigStore } from "@/stores/client-config-store";
@@ -209,7 +210,8 @@ export function DisplayContextHeader({
   const fallbackLocale = navigator.language || "en-US";
   const fallbackTimeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const theme = extractHostTheme(hostContext) ?? "dark";
+  const themePreference = usePreferencesStore((s) => s.themeMode);
+  const theme = extractHostTheme(hostContext) ?? themePreference;
 
   const handleThemeChange = useCallback(() => {
     const newTheme = theme === "dark" ? "light" : "dark";

@@ -180,7 +180,9 @@ export function useWorkspaceState({
 
   useEffect(() => {
     return () => {
-      clearPendingClientConfigSync();
+      clearPendingClientConfigSync(
+        new Error("Workspace client config sync was interrupted."),
+      );
     };
   }, [clearPendingClientConfigSync]);
 
