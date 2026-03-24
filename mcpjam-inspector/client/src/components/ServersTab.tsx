@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
-import { Plus, FileText, Package, ArrowRight } from "lucide-react";
+import { Plus, FileText, Package, ArrowRight, Loader2 } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
@@ -29,6 +29,12 @@ import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "./ui/skeleton";
 import { useConvexAuth } from "convex/react";
 import { Workspace } from "@/state/app-types";
+import {
+  clearPendingQuickConnect,
+  readPendingQuickConnect,
+  writePendingQuickConnect,
+  type PendingQuickConnectState,
+} from "@/lib/quick-connect-pending";
 import { useWorkspaceServers as useRemoteWorkspaceServers } from "@/hooks/useWorkspaces";
 import {
   getEffectiveServerClientCapabilities,
@@ -169,11 +175,12 @@ export function ServersTab({
   activeWorkspaceId,
   isLoadingWorkspaces,
   onWorkspaceShared,
-  onLeaveWorkspace,
   onNavigateToRegistry,
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
+  const [pendingQuickConnect, setPendingQuickConnect] =
+    useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
 
   // Fetch featured registry servers for the quick-connect section
   const registryServers = useQuery(
@@ -335,7 +342,44 @@ export function ServersTab({
     });
   }, []);
 
+  useEffect(() => {
+    if (pendingQuickConnect?.sourceTab !== "servers") {
+      return;
+    }
+
+    const pendingServer = workspaceServers[pendingQuickConnect.serverName];
+    if (!pendingServer) {
+      return;
+    }
+
+    if (
+      pendingServer.connectionStatus === "connected" ||
+      pendingServer.connectionStatus === "failed" ||
+      pendingServer.connectionStatus === "disconnected"
+    ) {
+      clearPendingQuickConnect();
+      setPendingQuickConnect(null);
+    }
+  }, [pendingQuickConnect, workspaceServers]);
+
   const connectedCount = Object.keys(workspaceServers).length;
+  const hasConnectedServers = Object.values(workspaceServers).some(
+    (server) => server.connectionStatus === "connected",
+  );
+  const hasAnyServers = connectedCount > 0;
+  const pendingQuickConnectServer =
+    pendingQuickConnect?.sourceTab === "servers"
+      ? workspaceServers[pendingQuickConnect.serverName]
+      : null;
+  const isPendingQuickConnectVisible =
+    pendingQuickConnect?.sourceTab === "servers" &&
+    (!pendingQuickConnectServer ||
+      pendingQuickConnectServer.connectionStatus === "oauth-flow" ||
+      pendingQuickConnectServer.connectionStatus === "connecting");
+  const pendingQuickConnectPhaseLabel =
+    pendingQuickConnectServer?.connectionStatus === "connecting"
+      ? "Finishing setup..."
+      : "Authorizing...";
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
   const { serversRecord: sharedWorkspaceServersRecord } =
@@ -427,6 +471,38 @@ export function ServersTab({
       onConnect(server);
     });
   };
+
+  const handleQuickConnect = (server: RegistryServer) => {
+    const nextPendingQuickConnect: PendingQuickConnectState = {
+      serverName: server.displayName,
+      registryServerId: server._id,
+      displayName: server.displayName,
+      sourceTab: "servers",
+      createdAt: Date.now(),
+    };
+    writePendingQuickConnect(nextPendingQuickConnect);
+    setPendingQuickConnect(nextPendingQuickConnect);
+    onConnect({
+      name: server.displayName,
+      type: server.transport.transportType,
+      url: server.transport.url,
+      useOAuth: server.transport.useOAuth,
+      oauthScopes: server.transport.oauthScopes,
+      oauthCredentialKey: server.transport.oauthCredentialKey,
+      registryServerId: server._id,
+    });
+  };
+
+  const clearPendingQuickConnectIfMatches = useCallback(
+    (serverName: string) => {
+      if (pendingQuickConnect?.serverName !== serverName) {
+        return;
+      }
+      clearPendingQuickConnect();
+      setPendingQuickConnect(null);
+    },
+    [pendingQuickConnect],
+  );
 
   const handleAddServerClick = () => {
     posthog.capture("add_server_button_clicked", {
@@ -611,47 +687,84 @@ export function ServersTab({
               </Button>
             )}
           </div>
-          <div className="flex gap-3 overflow-x-auto pb-1">
-            {featuredRegistryServers.map((server) => (
-              <button
-                key={server._id}
-                type="button"
-                aria-label={`Connect ${server.displayName}`}
-                className="p-3 flex items-center gap-3 min-w-[220px] max-w-[280px] flex-shrink-0 rounded-xl border bg-card text-card-foreground hover:bg-accent/50 transition-colors text-left"
-                onClick={() =>
-                  onConnect({
-                    name: server.displayName,
-                    type: server.transport.transportType,
-                    url: server.transport.url,
-                    useOAuth: server.transport.useOAuth,
-                    oauthScopes: server.transport.oauthScopes,
-                    oauthCredentialKey: server.transport.oauthCredentialKey,
-                    registryServerId: server._id,
-                  })
-                }
-              >
-                {server.iconUrl ? (
-                  <img
-                    src={server.iconUrl}
-                    alt={server.displayName}
-                    className="h-8 w-8 rounded-md object-contain flex-shrink-0"
-                  />
-                ) : (
-                  <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
-                    <Package className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                )}
+          {isPendingQuickConnectVisible && pendingQuickConnect && (
+            <Card className="border-blue-500/30 bg-blue-500/5 px-4 py-3">
+              <div className="flex items-center gap-3">
+                <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
                 <div className="min-w-0">
                   <p className="text-sm font-medium truncate">
-                    {server.displayName}
+                    {`Connecting ${pendingQuickConnect.displayName}...`}
                   </p>
-                  <p className="text-xs text-muted-foreground truncate">
-                    {server.publisher}
+                  <p className="text-xs text-muted-foreground">
+                    {pendingQuickConnectPhaseLabel}
                   </p>
                 </div>
-              </button>
-            ))}
+              </div>
+            </Card>
+          )}
+          <div className="flex gap-3 overflow-x-auto pb-1">
+            {featuredRegistryServers.map((server) => {
+              const isPendingServer =
+                pendingQuickConnect?.sourceTab === "servers" &&
+                (pendingQuickConnect.registryServerId === server._id ||
+                  pendingQuickConnect.serverName === server.displayName);
+
+              return (
+                <button
+                  key={server._id}
+                  type="button"
+                  aria-label={`Connect ${server.displayName}`}
+                  className="p-3 flex items-center gap-3 min-w-[220px] max-w-[280px] flex-shrink-0 rounded-xl border bg-card text-card-foreground hover:bg-accent/50 transition-colors text-left disabled:cursor-not-allowed disabled:opacity-80"
+                  onClick={() => handleQuickConnect(server)}
+                  disabled={isPendingServer}
+                >
+                  {isPendingServer ? (
+                    <div className="h-8 w-8 rounded-md bg-blue-500/10 flex items-center justify-center flex-shrink-0">
+                      <Loader2 className="h-4 w-4 animate-spin text-blue-500" />
+                    </div>
+                  ) : server.iconUrl ? (
+                    <img
+                      src={server.iconUrl}
+                      alt={server.displayName}
+                      className="h-8 w-8 rounded-md object-contain flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                      <Package className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate">
+                      {server.displayName}
+                    </p>
+                    <p className="text-xs text-muted-foreground truncate">
+                      {isPendingServer
+                        ? pendingQuickConnectPhaseLabel
+                        : server.publisher}
+                    </p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
+          {isPendingQuickConnectVisible && pendingQuickConnectServer && (
+            <ServerConnectionCard
+              server={pendingQuickConnectServer}
+              onDisconnect={(serverName) => {
+                clearPendingQuickConnectIfMatches(serverName);
+                onDisconnect(serverName);
+              }}
+              onReconnect={onReconnect}
+              onRemove={(serverName) => {
+                clearPendingQuickConnectIfMatches(serverName);
+                onRemove(serverName);
+              }}
+              hostedServerId={
+                sharedWorkspaceServersRecord[pendingQuickConnectServer.name]?._id
+              }
+              onOpenDetailModal={handleOpenDetailModal}
+            />
+          )}
         </div>
       )}
 
@@ -688,7 +801,7 @@ export function ServersTab({
     <div className="h-full flex flex-col">
       {isLoadingWorkspaces
         ? renderLoadingContent()
-        : connectedCount > 0
+        : hasConnectedServers || (hasAnyServers && !isPendingQuickConnectVisible)
           ? renderConnectedContent()
           : renderEmptyContent()}
 

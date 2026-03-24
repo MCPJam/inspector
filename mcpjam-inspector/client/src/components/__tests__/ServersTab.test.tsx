@@ -10,6 +10,21 @@ import {
   captureServerDetailModalOAuthResume,
   writeOpenServerDetailModalState,
 } from "@/lib/server-detail-modal-resume";
+import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
+
+let mockIsAuthenticated = false;
+let mockRegistryServers: Array<{
+  _id: string;
+  displayName: string;
+  publisher?: string;
+  transport: {
+    transportType: "http" | "stdio";
+    url?: string;
+    useOAuth?: boolean;
+    oauthScopes?: string[];
+    oauthCredentialKey?: string;
+  };
+}> | undefined;
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -19,9 +34,9 @@ vi.mock("posthog-js/react", () => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
-    isAuthenticated: false,
+    isAuthenticated: mockIsAuthenticated,
   }),
-  useQuery: () => undefined,
+  useQuery: () => mockRegistryServers,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -58,6 +73,9 @@ vi.mock("../connection/ServerConnectionCard", () => ({
         Open {server.name}
       </button>
       {needsReconnect ? <span>Needs reconnect</span> : null}
+      <div data-testid={`server-card-${server.name}`}>
+        {server.name}:{server.connectionStatus}
+      </div>
     </div>
   ),
 }));
@@ -255,6 +273,8 @@ describe("ServersTab shared detail modal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    mockIsAuthenticated = false;
+    mockRegistryServers = undefined;
   });
 
   it("opens the shared modal from a server card on configuration", () => {
@@ -496,5 +516,191 @@ describe("ServersTab shared detail modal", () => {
     );
 
     expect(screen.queryByText("Needs reconnect")).not.toBeInTheDocument();
+  });
+
+  it("keeps quick connect visible after clicking a quick connect server", () => {
+    mockIsAuthenticated = true;
+    mockRegistryServers = [
+      {
+        _id: "linear-1",
+        displayName: "Linear",
+        publisher: "MCPJam",
+        transport: {
+          transportType: "http",
+          url: "https://mcp.linear.app/mcp",
+          useOAuth: true,
+          oauthScopes: ["read", "write"],
+        },
+      },
+    ];
+
+    render(<ServersTab {...defaultProps} workspaceServers={{}} />);
+
+    fireEvent.click(screen.getByLabelText("Connect Linear"));
+
+    expect(defaultProps.onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Linear",
+        type: "http",
+        url: "https://mcp.linear.app/mcp",
+        useOAuth: true,
+        registryServerId: "linear-1",
+      }),
+    );
+    expect(screen.getByText("Quick Connect")).toBeInTheDocument();
+    expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
+    expect(screen.getByText("Authorizing...")).toBeInTheDocument();
+    expect(screen.getByLabelText("Connect Linear")).toBeDisabled();
+  });
+
+  it("keeps quick connect visible during oauth-flow after return", () => {
+    mockIsAuthenticated = true;
+    mockRegistryServers = [
+      {
+        _id: "linear-1",
+        displayName: "Linear",
+        publisher: "MCPJam",
+        transport: {
+          transportType: "http",
+          url: "https://mcp.linear.app/mcp",
+          useOAuth: true,
+        },
+      },
+    ];
+    writePendingQuickConnect({
+      serverName: "Linear",
+      registryServerId: "linear-1",
+      displayName: "Linear",
+      sourceTab: "servers",
+      createdAt: 123,
+    });
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={{
+          Linear: createServer({
+            name: "Linear",
+            connectionStatus: "oauth-flow",
+            useOAuth: true,
+          }),
+        }}
+        workspaces={{
+          "workspace-1": createWorkspace({
+            Linear: createServer({
+              name: "Linear",
+              connectionStatus: "oauth-flow",
+              useOAuth: true,
+            }),
+          }),
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Quick Connect")).toBeInTheDocument();
+    expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
+    expect(screen.getByText("Authorizing...")).toBeInTheDocument();
+    expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
+      "Linear:oauth-flow",
+    );
+  });
+
+  it("shows finishing setup copy while the pending quick connect is connecting", () => {
+    mockIsAuthenticated = true;
+    mockRegistryServers = [
+      {
+        _id: "linear-1",
+        displayName: "Linear",
+        publisher: "MCPJam",
+        transport: {
+          transportType: "http",
+          url: "https://mcp.linear.app/mcp",
+          useOAuth: true,
+        },
+      },
+    ];
+    writePendingQuickConnect({
+      serverName: "Linear",
+      registryServerId: "linear-1",
+      displayName: "Linear",
+      sourceTab: "servers",
+      createdAt: 123,
+    });
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={{
+          Linear: createServer({
+            name: "Linear",
+            connectionStatus: "connecting",
+            useOAuth: true,
+          }),
+        }}
+        workspaces={{
+          "workspace-1": createWorkspace({
+            Linear: createServer({
+              name: "Linear",
+              connectionStatus: "connecting",
+              useOAuth: true,
+            }),
+          }),
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
+    expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
+      "Linear:connecting",
+    );
+  });
+
+  it("clears pending quick connect UI once the server is fully connected", () => {
+    mockIsAuthenticated = true;
+    mockRegistryServers = [
+      {
+        _id: "linear-1",
+        displayName: "Linear",
+        publisher: "MCPJam",
+        transport: {
+          transportType: "http",
+          url: "https://mcp.linear.app/mcp",
+          useOAuth: true,
+        },
+      },
+    ];
+    writePendingQuickConnect({
+      serverName: "Linear",
+      registryServerId: "linear-1",
+      displayName: "Linear",
+      sourceTab: "servers",
+      createdAt: 123,
+    });
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        workspaceServers={{
+          Linear: createServer({
+            name: "Linear",
+            connectionStatus: "connected",
+            useOAuth: true,
+          }),
+        }}
+        workspaces={{
+          "workspace-1": createWorkspace({
+            Linear: createServer({
+              name: "Linear",
+              connectionStatus: "connected",
+              useOAuth: true,
+            }),
+          }),
+        }}
+      />,
+    );
+
+    expect(screen.queryByText("Connecting Linear...")).not.toBeInTheDocument();
+    expect(screen.queryByText("Quick Connect")).not.toBeInTheDocument();
+    expect(localStorage.getItem("mcp-quick-connect-pending")).toBeNull();
   });
 });

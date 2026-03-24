@@ -150,7 +150,27 @@ describe("ServerConnectionCard", () => {
       const server = createServer({ connectionStatus: "connecting" });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      expect(screen.getByText("Connecting...")).toBeInTheDocument();
+      expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
+      expect(
+        screen.getByText("Authorization complete. Finalizing the MCP connection."),
+      ).toBeInTheDocument();
+    });
+
+    it("shows oauth browser authorization state", () => {
+      const server = createServer({
+        connectionStatus: "oauth-flow",
+        useOAuth: true,
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(
+        screen.getByText("Authorizing in browser..."),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Complete sign-in in the browser. Inspector will resume automatically.",
+        ),
+      ).toBeInTheDocument();
     });
 
     it("shows failed status with retry count", () => {

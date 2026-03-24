@@ -108,8 +108,12 @@ export function ServerConnectionCard({
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
-  const { label: connectionStatusLabel, indicatorColor } =
-    getConnectionStatusMeta(server.connectionStatus);
+  const {
+    label: connectionStatusLabel,
+    indicatorColor,
+    Icon: ConnectionStatusIcon,
+    iconClassName,
+  } = getConnectionStatusMeta(server.connectionStatus);
   const commandDisplay = getServerCommandDisplay(server.config);
 
   const initializationInfo = server.initializationInfo;
@@ -126,10 +130,12 @@ export function ServerConnectionCard({
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
-  const isReconnectMenuDisabled =
-    isReconnecting ||
+  const isPendingConnection =
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
+  const isReconnectMenuDisabled =
+    isReconnecting ||
+    isPendingConnection;
   const isStdioServer = "command" in server.config;
   const isInsecureHttpServer =
     "url" in server.config &&
@@ -412,10 +418,14 @@ export function ServerConnectionCard({
                 onClick={(e) => e.stopPropagation()}
               >
                 <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                  <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: indicatorColor }}
-                  />
+                  {isPendingConnection ? (
+                    <ConnectionStatusIcon className={iconClassName} />
+                  ) : (
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: indicatorColor }}
+                    />
+                  )}
                   <span>
                     {server.connectionStatus === "failed"
                       ? `${connectionStatusLabel} (${server.retryCount})`
@@ -583,6 +593,25 @@ export function ServerConnectionCard({
               )}
             </button>
           </div>
+
+          {server.connectionStatus === "oauth-flow" && (
+            <div
+              className="mt-3 rounded-md border border-purple-300/40 bg-purple-500/10 p-2 text-xs text-muted-foreground"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Complete sign-in in the browser. Inspector will resume
+              automatically.
+            </div>
+          )}
+
+          {server.connectionStatus === "connecting" && (
+            <div
+              className="mt-3 rounded-md border border-blue-300/40 bg-blue-500/10 p-2 text-xs text-muted-foreground"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Authorization complete. Finalizing the MCP connection.
+            </div>
+          )}
 
           <div className="mt-3 flex items-center justify-end">
             <div

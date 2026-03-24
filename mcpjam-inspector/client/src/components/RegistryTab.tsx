@@ -33,6 +33,12 @@ import {
 } from "@/hooks/useRegistryServers";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import {
+  clearPendingQuickConnect,
+  readPendingQuickConnect,
+  writePendingQuickConnect,
+  type PendingQuickConnectState,
+} from "@/lib/quick-connect-pending";
 
 interface RegistryTabProps {
   workspaceId: string | null;
@@ -54,34 +60,38 @@ export function RegistryTab({
   // isAuthenticated is passed through to the hook for Convex mutation gating,
   // but the registry is always browsable without auth.
   const [connectingIds, setConnectingIds] = useState<Set<string>>(new Set());
+  const [pendingQuickConnect, setPendingQuickConnect] =
+    useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
 
-  const { registryServers, categories, isLoading, connect, disconnect } =
-    useRegistryServers({
+  const { registryServers, isLoading, connect, disconnect } = useRegistryServers(
+    {
       workspaceId,
       isAuthenticated,
       liveServers: servers,
       onConnect,
       onDisconnect,
-    });
+    },
+  );
 
   // Auto-redirect to App Builder when a pending server becomes connected.
   // We persist in localStorage to survive OAuth redirects (page remounts).
   useEffect(() => {
     if (!onNavigate) return;
-    const pending = localStorage.getItem("registry-pending-redirect");
-    if (!pending) return;
+    const pending = pendingQuickConnect;
+    if (!pending || pending.sourceTab !== "registry") return;
     const liveServer =
-      servers?.[pending] ??
+      servers?.[pending.serverName] ??
       Object.entries(servers ?? {}).find(
         ([name, server]) =>
           server.connectionStatus === "connected" &&
-          name.startsWith(`${pending} (`),
+          name.startsWith(`${pending.displayName} (`),
       )?.[1];
     if (liveServer?.connectionStatus === "connected") {
-      localStorage.removeItem("registry-pending-redirect");
+      clearPendingQuickConnect();
+      setPendingQuickConnect(null);
       onNavigate("app-builder");
     }
-  }, [servers, onNavigate]);
+  }, [pendingQuickConnect, servers, onNavigate]);
 
   const consolidatedServers = useMemo(
     () => consolidateServers(registryServers),
@@ -91,14 +101,20 @@ export function RegistryTab({
   const handleConnect = async (server: EnrichedRegistryServer) => {
     setConnectingIds((prev) => new Set(prev).add(server._id));
     const serverName = getRegistryServerName(server);
-    localStorage.setItem("registry-pending-redirect", serverName);
+    const nextPendingQuickConnect: PendingQuickConnectState = {
+      serverName,
+      registryServerId: server._id,
+      displayName: server.displayName,
+      sourceTab: "registry",
+      createdAt: Date.now(),
+    };
+    writePendingQuickConnect(nextPendingQuickConnect);
+    setPendingQuickConnect(nextPendingQuickConnect);
     try {
       await connect(server);
     } catch (error) {
-      const pending = localStorage.getItem("registry-pending-redirect");
-      if (pending === serverName || pending === server.displayName) {
-        localStorage.removeItem("registry-pending-redirect");
-      }
+      clearPendingQuickConnect();
+      setPendingQuickConnect(null);
       throw error;
     } finally {
       setConnectingIds((prev) => {
@@ -111,9 +127,13 @@ export function RegistryTab({
 
   const handleDisconnect = async (server: EnrichedRegistryServer) => {
     const serverName = getRegistryServerName(server);
-    const pending = localStorage.getItem("registry-pending-redirect");
-    if (pending === serverName || pending === server.displayName) {
-      localStorage.removeItem("registry-pending-redirect");
+    if (
+      pendingQuickConnect &&
+      (pendingQuickConnect.serverName === serverName ||
+        pendingQuickConnect.displayName === server.displayName)
+    ) {
+      clearPendingQuickConnect();
+      setPendingQuickConnect(null);
     }
     await disconnect(server);
   };
@@ -150,6 +170,7 @@ export function RegistryTab({
               key={consolidated.variants[0]._id}
               consolidated={consolidated}
               connectingIds={connectingIds}
+              pendingQuickConnect={pendingQuickConnect}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
             />
@@ -163,18 +184,28 @@ export function RegistryTab({
 function RegistryServerCard({
   consolidated,
   connectingIds,
+  pendingQuickConnect,
   onConnect,
   onDisconnect,
 }: {
   consolidated: ConsolidatedRegistryServer;
   connectingIds: Set<string>;
+  pendingQuickConnect: PendingQuickConnectState | null;
   onConnect: (server: EnrichedRegistryServer) => void;
   onDisconnect: (server: EnrichedRegistryServer) => void;
 }) {
   const { variants, hasDualType } = consolidated;
   const first = variants[0];
 
-  const isConnecting = variants.some((v) => connectingIds.has(v._id));
+  const isConnecting =
+    variants.some((v) => connectingIds.has(v._id)) ||
+    (pendingQuickConnect?.sourceTab === "registry" &&
+      variants.some(
+        (variant) =>
+          variant._id === pendingQuickConnect.registryServerId ||
+          getRegistryServerName(variant) === pendingQuickConnect.serverName ||
+          variant.displayName === pendingQuickConnect.displayName,
+      ));
   const effectiveStatus: RegistryConnectionStatus = isConnecting
     ? "connecting"
     : first.connectionStatus;

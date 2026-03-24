@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { RegistryTab } from "../RegistryTab";
 import type { EnrichedRegistryServer } from "@/hooks/useRegistryServers";
+import { readPendingQuickConnect } from "@/lib/quick-connect-pending";
 
 // Mock the useRegistryServers hook
 const mockConnect = vi.fn();
@@ -53,18 +54,23 @@ function createMockServer(
 ): EnrichedRegistryServer {
   return {
     _id: "server_1",
-    slug: "test-server",
+    name: "com.test.server",
     displayName: "Test Server",
     description: "A test MCP server for unit tests.",
     publisher: "TestCo",
     category: "Productivity",
-    transport: { type: "http", url: "https://mcp.test.com/sse" },
-    approved: true,
+    scope: "global",
+    transport: {
+      transportType: "http",
+      url: "https://mcp.test.com/sse",
+    },
+    status: "approved",
+    createdBy: "test-user",
     createdAt: Date.now(),
     updatedAt: Date.now(),
     connectionStatus: "not_connected",
     ...overrides,
-  };
+  } as EnrichedRegistryServer;
 }
 
 describe("RegistryTab", () => {
@@ -161,7 +167,7 @@ describe("RegistryTab", () => {
         registryServers: [
           createMockServer({
             transport: {
-              type: "http",
+              transportType: "http",
               url: "https://mcp.test.com/sse",
               useOAuth: true,
             },
@@ -201,7 +207,7 @@ describe("RegistryTab", () => {
         publisher: "MCPJam",
         category: "Project Management",
         transport: {
-          type: "http",
+          transportType: "http",
           url: "https://mcp.linear.app/sse",
           useOAuth: true,
         },
@@ -392,10 +398,16 @@ describe("RegistryTab", () => {
         <RegistryTab {...defaultProps} onNavigate={onNavigate} servers={{}} />,
       );
 
-      // Click connect — stores pending redirect in localStorage
+      // Click connect — stores structured pending state in localStorage
       fireEvent.click(screen.getByText("Connect"));
       await waitFor(() => expect(mockConnect).toHaveBeenCalled());
-      expect(localStorage.getItem("registry-pending-redirect")).toBe("Asana");
+      expect(readPendingQuickConnect()).toEqual({
+        serverName: "Asana",
+        registryServerId: "server_1",
+        displayName: "Asana",
+        sourceTab: "registry",
+        createdAt: expect.any(Number),
+      });
 
       // Simulate server becoming connected via props update
       rerender(
@@ -418,7 +430,7 @@ describe("RegistryTab", () => {
         expect(onNavigate).toHaveBeenCalledWith("app-builder");
       });
       // localStorage should be cleaned up
-      expect(localStorage.getItem("registry-pending-redirect")).toBeNull();
+      expect(readPendingQuickConnect()).toBeNull();
     });
 
     it("survives page remount (OAuth redirect) and still auto-redirects", async () => {
@@ -456,7 +468,7 @@ describe("RegistryTab", () => {
       await waitFor(() => {
         expect(onNavigate).toHaveBeenCalledWith("app-builder");
       });
-      expect(localStorage.getItem("registry-pending-redirect")).toBeNull();
+      expect(readPendingQuickConnect()).toBeNull();
     });
 
     it("redirects when a legacy pending display name matches a suffixed connected variant", async () => {
@@ -495,7 +507,7 @@ describe("RegistryTab", () => {
       await waitFor(() => {
         expect(onNavigate).toHaveBeenCalledWith("app-builder");
       });
-      expect(localStorage.getItem("registry-pending-redirect")).toBeNull();
+      expect(readPendingQuickConnect()).toBeNull();
     });
   });
 
@@ -637,9 +649,13 @@ describe("RegistryTab", () => {
       await waitFor(() => {
         expect(mockConnect).toHaveBeenCalled();
       });
-      expect(localStorage.getItem("registry-pending-redirect")).toBe(
-        "Asana (App)",
-      );
+      expect(readPendingQuickConnect()).toEqual({
+        serverName: "Asana (App)",
+        registryServerId: "asana-app",
+        displayName: "Asana",
+        sourceTab: "registry",
+        createdAt: expect.any(Number),
+      });
     });
   });
 });
