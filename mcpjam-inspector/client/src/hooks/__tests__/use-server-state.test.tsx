@@ -230,9 +230,7 @@ describe("useServerState OAuth callback failures", () => {
       CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
     );
     expect(
-      dispatch.mock.calls.some(
-        ([action]) => action.type === "CONNECT_REQUEST",
-      ),
+      dispatch.mock.calls.some(([action]) => action.type === "CONNECT_REQUEST"),
     ).toBe(false);
   });
 });

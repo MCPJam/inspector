@@ -114,22 +114,19 @@ export function useWorkspaceState({
   );
   const CONVEX_TIMEOUT_MS = 10000;
 
-  const clearPendingClientConfigSync = useCallback(
-    (error?: Error) => {
-      const pending = pendingClientConfigSyncRef.current;
-      if (!pending) {
-        return;
-      }
+  const clearPendingClientConfigSync = useCallback((error?: Error) => {
+    const pending = pendingClientConfigSyncRef.current;
+    if (!pending) {
+      return;
+    }
 
-      clearTimeout(pending.timeoutId);
-      pendingClientConfigSyncRef.current = null;
+    clearTimeout(pending.timeoutId);
+    pendingClientConfigSyncRef.current = null;
 
-      if (error) {
-        pending.reject(error);
-      }
-    },
-    [],
-  );
+    if (error) {
+      pending.reject(error);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {

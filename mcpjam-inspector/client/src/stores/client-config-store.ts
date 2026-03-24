@@ -87,7 +87,9 @@ function computeDirtyState(
     return false;
   }
 
-  return stableStringifyJson(state.draftConfig) !== stableStringifyJson(baseline);
+  return (
+    stableStringifyJson(state.draftConfig) !== stableStringifyJson(baseline)
+  );
 }
 
 function resetFromConfig(
