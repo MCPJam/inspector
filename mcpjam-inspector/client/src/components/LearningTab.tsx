@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useRef } from "react";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -10,7 +10,11 @@ import {
 import { McpLifecycleDiagram } from "@/components/lifecycle/McpLifecycleDiagram";
 import { McpLifecycleGuide } from "@/components/lifecycle/McpLifecycleGuide";
 import { buildMcpLifecycleScenario20250326 } from "@/components/lifecycle/mcp-lifecycle-data";
-import { HTTP_STEP_ORDER } from "@/components/lifecycle/mcp-lifecycle-guide-data";
+import {
+  HTTP_STEP_ORDER,
+  isLastHttpLifecycleStep,
+  nextHttpLifecycleStepId,
+} from "@/components/lifecycle/mcp-lifecycle-guide-data";
 import { LearningLandingPage } from "@/components/LearningLandingPage";
 
 /**
@@ -30,6 +34,8 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
   const [scrollTargetStepId, setScrollTargetStepId] = useState<
     string | undefined
   >(undefined);
+  /** Bumps when programmatically scrolling so repeating the same step still runs scrollIntoView. */
+  const [scrollToStepToken, setScrollToStepToken] = useState(0);
   // Guard to prevent feedback loops during programmatic scroll
   const isProgrammaticScrollRef = useRef(false);
 
@@ -58,12 +64,20 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
     setActiveStepId(stepId);
   }, []);
 
-  // Diagram → Scroll: user clicked an edge label
-  const handleDiagramStepClick = useCallback((stepId: string) => {
+  const scrollToStep = useCallback((stepId: string) => {
     isProgrammaticScrollRef.current = true;
     setActiveStepId(stepId);
     setScrollTargetStepId(stepId);
+    setScrollToStepToken((t) => t + 1);
   }, []);
+
+  // Diagram → Scroll: user clicked an edge label
+  const handleDiagramStepClick = useCallback(
+    (stepId: string) => {
+      scrollToStep(stepId);
+    },
+    [scrollToStep],
+  );
 
   // Called after programmatic scroll animation completes
   const handleScrollComplete = useCallback(() => {
@@ -71,11 +85,24 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
     setScrollTargetStepId(undefined);
   }, []);
 
+  const continueLabel = isLastHttpLifecycleStep(activeStepId)
+    ? "Start over"
+    : "Continue";
+
+  const handleContinue = useCallback(() => {
+    const nextId = nextHttpLifecycleStepId(activeStepId);
+    scrollToStep(nextId);
+  }, [activeStepId, scrollToStep]);
+
+  const handleReset = useCallback(() => {
+    scrollToStep(HTTP_STEP_ORDER[0]);
+  }, [scrollToStep]);
+
   return (
     <div className="flex h-full flex-col">
       {/* Minimal header bar */}
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-3 border-b px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
           <Button
             variant="ghost"
             size="sm"
@@ -85,9 +112,27 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
             <ArrowLeft className="h-3.5 w-3.5" />
           </Button>
           <h2 className="text-sm font-semibold">MCP Protocol Lifecycle</h2>
-          <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
+          <Badge
+            variant="secondary"
+            className="text-[10px] h-4 px-1.5 shrink-0"
+          >
             HTTP
           </Badge>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleReset}
+            className="h-7"
+            title="Jump back to the first step"
+          >
+            <RotateCcw className="mr-1 h-3 w-3" />
+            Reset
+          </Button>
+          <Button size="sm" onClick={handleContinue} className="h-7">
+            {continueLabel}
+          </Button>
         </div>
       </div>
 
@@ -99,6 +144,7 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
               activeStepId={activeStepId}
               onActiveStepChange={handleScrollStepChange}
               scrollToStepId={scrollTargetStepId}
+              scrollToStepToken={scrollToStepToken}
               onScrollComplete={handleScrollComplete}
             />
           </ResizablePanel>
