@@ -203,8 +203,8 @@ describe("mcp-oauth", () => {
         { status: 200 },
       );
       authFetch.mockResolvedValue(metadataResponse);
-      mockSdkAuth.mockImplementation(async () => {
-        const response = await window.fetch(
+      mockSdkAuth.mockImplementation(async (_provider: any, options: any) => {
+        const response = await options.fetchFn(
           "https://example.com/.well-known/oauth-protected-resource/mcp",
         );
         expect(response.ok).toBe(true);
@@ -355,8 +355,7 @@ describe("mcp-oauth", () => {
     });
 
     it("routes Asana-style callback token exchange through Convex for registry servers", async () => {
-      vi.stubEnv("VITE_CONVEX_SITE_URL", "https://example.convex.site");
-      const browserFetch = vi.fn(async (input: RequestInfo | URL) => {
+      authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
           typeof input === "string"
             ? input
@@ -364,7 +363,7 @@ describe("mcp-oauth", () => {
               ? input.toString()
               : input.url;
 
-        if (url === "https://example.convex.site/registry/oauth/token") {
+        if (url.includes("/registry/oauth/token")) {
           return createJsonResponse({
             access_token: "access-token",
             refresh_token: "refresh-token",
@@ -374,7 +373,6 @@ describe("mcp-oauth", () => {
 
         throw new Error(`Unexpected direct fetch to ${url}`);
       });
-      vi.stubGlobal("fetch", browserFetch);
 
       const discoveryState = createAsanaDiscoveryState();
       await seedPendingOAuth("registry-asana", discoveryState);
@@ -402,29 +400,28 @@ describe("mcp-oauth", () => {
       const callbackResult = await handleOAuthCallback("oauth-code");
 
       expect(callbackResult.success).toBe(true);
-      expect(browserFetch).toHaveBeenCalledTimes(1);
-      expect(browserFetch).toHaveBeenCalledWith(
-        "https://example.convex.site/registry/oauth/token",
+      expect(authFetch).toHaveBeenCalledTimes(1);
+      expect(authFetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             registryServerId: "registry-asana",
             grant_type: "authorization_code",
-            grantType: "authorization_code",
             code: "oauth-code",
             code_verifier: "test-verifier",
-            codeVerifier: "test-verifier",
             redirect_uri: `${window.location.origin}/oauth/callback`,
+            grantType: "authorization_code",
             redirectUri: `${window.location.origin}/oauth/callback`,
+            codeVerifier: "test-verifier",
           }),
         }),
       );
     });
 
     it("routes Asana-style refresh token exchange through Convex for registry servers", async () => {
-      vi.stubEnv("VITE_CONVEX_SITE_URL", "https://example.convex.site");
-      const browserFetch = vi.fn(async (input: RequestInfo | URL) => {
+      authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
           typeof input === "string"
             ? input
@@ -432,7 +429,7 @@ describe("mcp-oauth", () => {
               ? input.toString()
               : input.url;
 
-        if (url === "https://example.convex.site/registry/oauth/refresh") {
+        if (url.includes("/registry/oauth/refresh")) {
           return createJsonResponse({
             access_token: "new-access-token",
             refresh_token: "new-refresh-token",
@@ -442,7 +439,6 @@ describe("mcp-oauth", () => {
 
         throw new Error(`Unexpected direct fetch to ${url}`);
       });
-      vi.stubGlobal("fetch", browserFetch);
 
       mockSdkAuth.mockImplementationOnce(async (_provider, options) => {
         const response = await options.fetchFn!(
@@ -478,17 +474,17 @@ describe("mcp-oauth", () => {
       const refreshResult = await refreshOAuthTokens("asana");
 
       expect(refreshResult.success).toBe(true);
-      expect(browserFetch).toHaveBeenCalledTimes(1);
-      expect(browserFetch).toHaveBeenCalledWith(
-        "https://example.convex.site/registry/oauth/refresh",
+      expect(authFetch).toHaveBeenCalledTimes(1);
+      expect(authFetch).toHaveBeenCalledWith(
+        expect.stringMatching(/\.convex\.site\/registry\/oauth\/refresh$/),
         expect.objectContaining({
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             registryServerId: "registry-asana",
             grant_type: "refresh_token",
-            grantType: "refresh_token",
             refresh_token: "stored-refresh-token",
+            grantType: "refresh_token",
             refreshToken: "stored-refresh-token",
           }),
         }),
@@ -496,8 +492,7 @@ describe("mcp-oauth", () => {
     });
 
     it("preserves the original callback error and verifier when registry token exchange fails", async () => {
-      vi.stubEnv("VITE_CONVEX_SITE_URL", "https://example.convex.site");
-      const browserFetch = vi.fn(async (input: RequestInfo | URL) => {
+      authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
           typeof input === "string"
             ? input
@@ -505,7 +500,7 @@ describe("mcp-oauth", () => {
               ? input.toString()
               : input.url;
 
-        if (url === "https://example.convex.site/registry/oauth/token") {
+        if (url.includes("/registry/oauth/token")) {
           return createJsonResponse(
             {
               error: "invalid_client",
@@ -517,7 +512,6 @@ describe("mcp-oauth", () => {
 
         throw new Error(`Unexpected direct fetch to ${url}`);
       });
-      vi.stubGlobal("fetch", browserFetch);
 
       await seedPendingOAuth("registry-asana");
       mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {

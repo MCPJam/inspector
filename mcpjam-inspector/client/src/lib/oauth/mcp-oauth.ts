@@ -243,7 +243,7 @@ function createOAuthFetchInterceptor(registryServerId?: string): typeof fetch {
           "[OAuthDebug] INTERCEPTING token request → routing to Convex",
           endpoint,
         ); // ##TODOClean
-        const response = await originalFetch(`${convexSiteUrl}${endpoint}`, {
+        const response = await authFetch(`${convexSiteUrl}${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(

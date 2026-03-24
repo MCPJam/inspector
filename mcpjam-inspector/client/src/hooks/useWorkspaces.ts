@@ -73,6 +73,38 @@ export interface WorkspaceMember {
   } | null;
 }
 
+interface WorkspaceMembersQueryResult {
+  members: WorkspaceMember[];
+  canManageMembers: boolean;
+}
+
+function isWorkspaceMembersQueryResult(
+  value: unknown,
+): value is WorkspaceMembersQueryResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as WorkspaceMembersQueryResult).members)
+  );
+}
+
+export function normalizeWorkspaceMembersResult(
+  value: WorkspaceMember[] | WorkspaceMembersQueryResult | undefined,
+): WorkspaceMembersQueryResult {
+  if (Array.isArray(value)) {
+    return { members: value, canManageMembers: false };
+  }
+
+  if (isWorkspaceMembersQueryResult(value)) {
+    return {
+      members: value.members,
+      canManageMembers: value.canManageMembers,
+    };
+  }
+
+  return { members: [], canManageMembers: false };
+}
+
 export function filterWorkspacesForOrganization(
   workspaces: RemoteWorkspace[] | undefined,
   organizationId?: string,
@@ -136,20 +168,17 @@ export function useWorkspaceMembers({
 }) {
   const enableQuery = isAuthenticated && !!workspaceId;
 
-  const raw = useQuery(
+  const membersResult = useQuery(
     "workspaces:getWorkspaceMembers" as any,
     enableQuery ? ({ workspaceId } as any) : "skip",
-  ) as
-    | { members: WorkspaceMember[]; canManageMembers: boolean }
-    | WorkspaceMember[]
-    | undefined;
+  ) as WorkspaceMember[] | WorkspaceMembersQueryResult | undefined;
 
-  // Server returns `{ members, canManageMembers }`. Legacy deployments returned a bare array.
-  const members = Array.isArray(raw) ? raw : raw?.members;
-  const canManageMembers = Array.isArray(raw)
-    ? false
-    : (raw?.canManageMembers ?? false);
-  const isLoading = enableQuery && raw === undefined;
+  const isLoading = enableQuery && membersResult === undefined;
+
+  const { members, canManageMembers } = useMemo(
+    () => normalizeWorkspaceMembersResult(membersResult),
+    [membersResult],
+  );
 
   const activeMembers = useMemo(() => {
     if (!members) return [];
@@ -168,6 +197,7 @@ export function useWorkspaceMembers({
     canManageMembers,
     isLoading,
     hasPendingMembers: pendingMembers.length > 0,
+    canManageMembers,
   };
 }
 

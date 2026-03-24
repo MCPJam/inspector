@@ -113,6 +113,17 @@ export function filterByBillingEntitlements(
     .filter((section) => section.items.length > 0);
 }
 
+export function shouldPrefetchSidebarTools(options: {
+  hostedMode: boolean;
+  isAuthenticated: boolean;
+}): boolean {
+  const { hostedMode, isAuthenticated } = options;
+  // Hosted guests can briefly hydrate stale "connected" local servers before
+  // runtime status sync clears them, which causes speculative tools/list calls
+  // against guest server configs. Only signed-in hosted users should prefetch.
+  return !hostedMode || isAuthenticated;
+}
+
 // Define sections with their respective items
 const navigationSections: NavSection[] = [
   {
@@ -340,7 +351,13 @@ export function MCPSidebar({
   // Fetch tools data for connected servers
   useEffect(() => {
     const fetchToolsData = async () => {
-      if (connectedServerNames.length === 0) {
+      if (
+        !shouldPrefetchSidebarTools({
+          hostedMode: HOSTED_MODE,
+          isAuthenticated,
+        }) ||
+        connectedServerNames.length === 0
+      ) {
         setToolsDataMap({});
         return;
       }
@@ -365,7 +382,7 @@ export function MCPSidebar({
     };
 
     fetchToolsData();
-  }, [connectedServerNames.join(",")]);
+  }, [connectedServerNames.join(","), isAuthenticated]);
 
   // Check if any connected server is an app
   const hasAppServer = useMemo(() => {
