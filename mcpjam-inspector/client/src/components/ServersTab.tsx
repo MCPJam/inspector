@@ -253,7 +253,9 @@ export function ServersTab({
           server.connectionStatus === "connected" &&
             workspaceClientCapabilitiesNeedReconnect({
               desiredCapabilities: mergeWorkspaceClientCapabilities(
-                server.config.capabilities as Record<string, unknown> | undefined,
+                server.config.capabilities as
+                  | Record<string, unknown>
+                  | undefined,
                 workspaceDesiredCapabilities,
               ),
               initializedCapabilities: server.initializationInfo

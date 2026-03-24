@@ -194,7 +194,9 @@ export function createMockClientConfigStoreState(
     defaultConfig: null,
     savedConfig: undefined,
     draftConfig,
-    clientCapabilitiesText: stringifyJson(draftConfig?.clientCapabilities ?? {}),
+    clientCapabilitiesText: stringifyJson(
+      draftConfig?.clientCapabilities ?? {},
+    ),
     hostContextText: stringifyJson(draftConfig?.hostContext ?? {}),
     clientCapabilitiesError: null,
     hostContextError: null,
