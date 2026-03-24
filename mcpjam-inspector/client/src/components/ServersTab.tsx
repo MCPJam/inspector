@@ -247,8 +247,8 @@ export function ServersTab({
           server.connectionStatus === "connected" &&
             workspaceClientCapabilitiesNeedReconnect({
               desiredCapabilities: getEffectiveServerClientCapabilities({
-                workspaceClientConfig: workspaces[activeWorkspaceId]
-                  ?.clientConfig,
+                workspaceClientConfig:
+                  workspaces[activeWorkspaceId]?.clientConfig,
                 serverCapabilities: server.config.capabilities as
                   | Record<string, unknown>
                   | undefined,

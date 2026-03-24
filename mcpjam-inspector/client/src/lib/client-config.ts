@@ -116,7 +116,10 @@ export function mergeWorkspaceClientCapabilities(
 }
 
 export function getEffectiveWorkspaceClientCapabilities(
-  workspaceClientConfig?: Pick<WorkspaceClientConfig, "clientCapabilities"> | null,
+  workspaceClientConfig?: Pick<
+    WorkspaceClientConfig,
+    "clientCapabilities"
+  > | null,
 ): ClientCapabilityOptions {
   return normalizeWorkspaceClientCapabilities(
     (workspaceClientConfig?.clientCapabilities as
@@ -127,7 +130,10 @@ export function getEffectiveWorkspaceClientCapabilities(
 }
 
 export function getEffectiveServerClientCapabilities(args: {
-  workspaceClientConfig?: Pick<WorkspaceClientConfig, "clientCapabilities"> | null;
+  workspaceClientConfig?: Pick<
+    WorkspaceClientConfig,
+    "clientCapabilities"
+  > | null;
   workspaceCapabilities?: Record<string, unknown>;
   serverCapabilities?: Record<string, unknown>;
 }): ClientCapabilityOptions {
