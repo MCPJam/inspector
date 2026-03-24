@@ -209,7 +209,8 @@ export function SafeAreaEditor() {
                 onClick={() => {
                   setSafeAreaPreset(option.preset);
                   patchHostContext({
-                    safeAreaInsets: SAFE_AREA_PRESETS[option.preset] ?? safeAreaInsets,
+                    safeAreaInsets:
+                      SAFE_AREA_PRESETS[option.preset] ?? safeAreaInsets,
                   });
                 }}
                 className={cn(

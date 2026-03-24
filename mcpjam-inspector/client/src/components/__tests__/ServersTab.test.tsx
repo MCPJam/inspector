@@ -384,8 +384,10 @@ describe("ServersTab shared detail modal", () => {
   });
 
   it("surfaces reconnect warnings when workspace client capabilities changed", () => {
-    const initializedCapabilities =
-      getDefaultClientCapabilities() as Record<string, unknown>;
+    const initializedCapabilities = getDefaultClientCapabilities() as Record<
+      string,
+      unknown
+    >;
 
     const { rerender } = render(
       <ServersTab

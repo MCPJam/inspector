@@ -182,7 +182,9 @@ describe("ToolPart display mode controls", () => {
 
     renderWithDisplayModes(["inline", "pip", "fullscreen"]);
 
-    const disabledButtons = screen.getAllByRole("button").filter((b) => b.disabled);
+    const disabledButtons = screen
+      .getAllByRole("button")
+      .filter((b) => b.disabled);
     expect(disabledButtons).toHaveLength(2);
     expect(screen.getByLabelText("Inline")).not.toBeDisabled();
     expect(screen.getByLabelText("PiP")).toBeDisabled();

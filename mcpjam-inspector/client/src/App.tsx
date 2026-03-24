@@ -107,9 +107,7 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
-import {
-  buildDefaultWorkspaceClientConfig,
-} from "./lib/client-config";
+import { buildDefaultWorkspaceClientConfig } from "./lib/client-config";
 import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 import type {
   BillingRolloutState,

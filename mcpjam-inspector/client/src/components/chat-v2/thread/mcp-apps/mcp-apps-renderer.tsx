@@ -179,7 +179,9 @@ export function MCPAppsRenderer({
   const sandboxRef = useRef<SandboxedIframeHandle>(null);
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
-  const draftHostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const draftHostContext = useClientConfigStore(
+    (s) => s.draftConfig?.hostContext,
+  );
   const baseHostContext = useMemo(
     () =>
       draftHostContext &&
@@ -232,65 +234,59 @@ export function MCPAppsRenderer({
 
   // Get device capabilities from playground store (SEP-1865)
   const playgroundCapabilities = useUIPlaygroundStore((s) => s.capabilities);
-  const deviceCapabilities = useMemo(
-    () => {
-      const configuredCapabilities =
-        draftHostContext?.deviceCapabilities &&
-        typeof draftHostContext.deviceCapabilities === "object" &&
-        !Array.isArray(draftHostContext.deviceCapabilities)
-          ? (draftHostContext.deviceCapabilities as {
-              hover?: boolean;
-              touch?: boolean;
-            })
-          : undefined;
+  const deviceCapabilities = useMemo(() => {
+    const configuredCapabilities =
+      draftHostContext?.deviceCapabilities &&
+      typeof draftHostContext.deviceCapabilities === "object" &&
+      !Array.isArray(draftHostContext.deviceCapabilities)
+        ? (draftHostContext.deviceCapabilities as {
+            hover?: boolean;
+            touch?: boolean;
+          })
+        : undefined;
 
-      if (configuredCapabilities) {
-        return {
-          hover: configuredCapabilities.hover ?? true,
-          touch: configuredCapabilities.touch ?? false,
-        };
-      }
+    if (configuredCapabilities) {
+      return {
+        hover: configuredCapabilities.hover ?? true,
+        touch: configuredCapabilities.touch ?? false,
+      };
+    }
 
-      return isPlaygroundActive
-        ? playgroundCapabilities
-        : { hover: true, touch: false };
-    },
-    [draftHostContext, isPlaygroundActive, playgroundCapabilities],
-  );
+    return isPlaygroundActive
+      ? playgroundCapabilities
+      : { hover: true, touch: false };
+  }, [draftHostContext, isPlaygroundActive, playgroundCapabilities]);
 
   // Get safe area insets from playground store (SEP-1865)
   const playgroundSafeAreaInsets = useUIPlaygroundStore(
     (s) => s.safeAreaInsets,
   );
-  const safeAreaInsets = useMemo(
-    () => {
-      const configuredSafeAreaInsets =
-        draftHostContext?.safeAreaInsets &&
-        typeof draftHostContext.safeAreaInsets === "object" &&
-        !Array.isArray(draftHostContext.safeAreaInsets)
-          ? (draftHostContext.safeAreaInsets as {
-              top?: number;
-              right?: number;
-              bottom?: number;
-              left?: number;
-            })
-          : undefined;
+  const safeAreaInsets = useMemo(() => {
+    const configuredSafeAreaInsets =
+      draftHostContext?.safeAreaInsets &&
+      typeof draftHostContext.safeAreaInsets === "object" &&
+      !Array.isArray(draftHostContext.safeAreaInsets)
+        ? (draftHostContext.safeAreaInsets as {
+            top?: number;
+            right?: number;
+            bottom?: number;
+            left?: number;
+          })
+        : undefined;
 
-      if (configuredSafeAreaInsets) {
-        return {
-          top: configuredSafeAreaInsets.top ?? 0,
-          right: configuredSafeAreaInsets.right ?? 0,
-          bottom: configuredSafeAreaInsets.bottom ?? 0,
-          left: configuredSafeAreaInsets.left ?? 0,
-        };
-      }
+    if (configuredSafeAreaInsets) {
+      return {
+        top: configuredSafeAreaInsets.top ?? 0,
+        right: configuredSafeAreaInsets.right ?? 0,
+        bottom: configuredSafeAreaInsets.bottom ?? 0,
+        left: configuredSafeAreaInsets.left ?? 0,
+      };
+    }
 
-      return isPlaygroundActive
-        ? playgroundSafeAreaInsets
-        : { top: 0, right: 0, bottom: 0, left: 0 };
-    },
-    [draftHostContext, isPlaygroundActive, playgroundSafeAreaInsets],
-  );
+    return isPlaygroundActive
+      ? playgroundSafeAreaInsets
+      : { top: 0, right: 0, bottom: 0, left: 0 };
+  }, [draftHostContext, isPlaygroundActive, playgroundSafeAreaInsets]);
 
   // Get device type from playground store for platform derivation (SEP-1865)
   const playgroundDeviceType = useUIPlaygroundStore((s) => s.deviceType);
@@ -299,7 +295,8 @@ export function MCPAppsRenderer({
   const isControlled = displayModeProp !== undefined;
   const [internalDisplayMode, setInternalDisplayMode] = useState<DisplayMode>(
     clampDisplayModeToAvailableModes(
-      configuredDisplayMode ?? (isPlaygroundActive ? playgroundDisplayMode : "inline"),
+      configuredDisplayMode ??
+        (isPlaygroundActive ? playgroundDisplayMode : "inline"),
       configuredAvailableDisplayModes,
     ),
   );
