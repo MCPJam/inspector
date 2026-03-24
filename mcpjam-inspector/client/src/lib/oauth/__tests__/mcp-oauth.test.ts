@@ -72,6 +72,24 @@ function createAsanaDiscoveryState(): any {
   };
 }
 
+function createLinearDiscoveryState(): any {
+  return {
+    authorizationServerUrl: "https://mcp.linear.app",
+    resourceMetadataUrl:
+      "https://mcp.linear.app/.well-known/oauth-protected-resource/mcp",
+    resourceMetadata: {
+      resource: "https://mcp.linear.app/mcp",
+      authorization_servers: ["https://mcp.linear.app"],
+    },
+    authorizationServerMetadata: {
+      issuer: "https://mcp.linear.app",
+      authorization_endpoint: "https://mcp.linear.app/authorize",
+      token_endpoint: "https://mcp.linear.app/token",
+      registration_endpoint: "https://mcp.linear.app/register",
+    },
+  };
+}
+
 function createJsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -111,6 +129,9 @@ describe("mcp-oauth", () => {
   async function seedPendingOAuth(
     registryServerId?: string,
     discoveryState: any = createAsanaDiscoveryState(),
+    useRegistryOAuthProxy?: boolean,
+    serverName: string = "asana",
+    serverUrl: string = "https://mcp.asana.com/v2/mcp",
   ) {
     mockSdkAuth.mockImplementationOnce(async (provider) => {
       await provider.saveDiscoveryState?.(discoveryState);
@@ -120,9 +141,10 @@ describe("mcp-oauth", () => {
 
     const { initiateOAuth } = await import("../mcp-oauth");
     const result = await initiateOAuth({
-      serverName: "asana",
-      serverUrl: "https://mcp.asana.com/v2/mcp",
+      serverName,
+      serverUrl,
       registryServerId,
+      useRegistryOAuthProxy,
     });
 
     expect(result).toEqual({ success: true });
@@ -225,9 +247,161 @@ describe("mcp-oauth", () => {
         expect.objectContaining({ method: "GET" }),
       );
     });
+
+    it("preserves JSON bodies for dynamic client registration requests", async () => {
+      authFetch.mockResolvedValueOnce(
+        createJsonResponse({
+          status: 200,
+          statusText: "OK",
+          headers: { "Content-Type": "application/json" },
+          body: {
+            client_id: "linear-client-id",
+            redirect_uris: [`${window.location.origin}/oauth/callback`],
+          },
+        }),
+      );
+      mockSdkAuth.mockImplementationOnce(async (_provider, options) => {
+        const registrationBody = JSON.stringify({
+          client_name: "MCPJam - Linear",
+          redirect_uris: [`${window.location.origin}/oauth/callback`],
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+          token_endpoint_auth_method: "none",
+        });
+
+        const response = await options.fetchFn!(
+          "https://mcp.linear.app/register",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: registrationBody,
+          },
+        );
+        expect(response.ok).toBe(true);
+        return "REDIRECT";
+      });
+
+      const { initiateOAuth } = await import("../mcp-oauth");
+      const result = await initiateOAuth({
+        serverName: "Linear",
+        serverUrl: "https://mcp.linear.app/mcp",
+        registryServerId: "registry-linear",
+      });
+
+      expect(result.success).toBe(true);
+      expect(authFetch).toHaveBeenCalledWith(
+        "/api/mcp/oauth/proxy",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: "https://mcp.linear.app/register",
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: {
+              client_name: "MCPJam - Linear",
+              redirect_uris: [`${window.location.origin}/oauth/callback`],
+              grant_types: ["authorization_code", "refresh_token"],
+              response_types: ["code"],
+              token_endpoint_auth_method: "none",
+            },
+          }),
+        }),
+      );
+    });
   });
 
   describe("persisted discovery state", () => {
+    it("returns safe defaults when stored OAuth config is missing or malformed", async () => {
+      const { readStoredOAuthConfig } = await import("../mcp-oauth");
+
+      expect(readStoredOAuthConfig("missing")).toEqual({
+        registryServerId: undefined,
+        useRegistryOAuthProxy: false,
+      });
+
+      localStorage.setItem("mcp-oauth-config-bad", "{");
+      expect(readStoredOAuthConfig("bad")).toEqual({
+        registryServerId: undefined,
+        useRegistryOAuthProxy: false,
+      });
+    });
+
+    it("reads stored registry routing config", async () => {
+      const { readStoredOAuthConfig } = await import("../mcp-oauth");
+
+      localStorage.setItem(
+        "mcp-oauth-config-linear",
+        JSON.stringify({
+          scopes: ["read", "write"],
+          registryServerId: "registry-linear",
+          useRegistryOAuthProxy: true,
+        }),
+      );
+
+      expect(readStoredOAuthConfig("linear")).toEqual({
+        scopes: ["read", "write"],
+        registryServerId: "registry-linear",
+        useRegistryOAuthProxy: true,
+      });
+    });
+
+    it("detects OAuth token grant requests", async () => {
+      const { isOAuthTokenGrantRequest } = await import("../mcp-oauth");
+
+      expect(
+        isOAuthTokenGrantRequest("POST", {
+          grant_type: "authorization_code",
+        }),
+      ).toBe(true);
+      expect(
+        isOAuthTokenGrantRequest("POST", {
+          grant_type: "refresh_token",
+        }),
+      ).toBe(true);
+      expect(
+        isOAuthTokenGrantRequest("POST", {
+          client_name: "MCPJam - Linear",
+        }),
+      ).toBe(false);
+      expect(
+        isOAuthTokenGrantRequest("GET", {
+          grant_type: "authorization_code",
+        }),
+      ).toBe(false);
+    });
+
+    it("only uses registry OAuth proxy for preregistered registry token exchanges", async () => {
+      const { shouldUseRegistryOAuthProxy } = await import("../mcp-oauth");
+
+      expect(
+        shouldUseRegistryOAuthProxy({
+          registryServerId: "registry-asana",
+          useRegistryOAuthProxy: true,
+          method: "POST",
+          body: { grant_type: "authorization_code" },
+        }),
+      ).toBe(true);
+
+      expect(
+        shouldUseRegistryOAuthProxy({
+          registryServerId: "registry-linear",
+          useRegistryOAuthProxy: false,
+          method: "POST",
+          body: { grant_type: "authorization_code" },
+        }),
+      ).toBe(false);
+
+      expect(
+        shouldUseRegistryOAuthProxy({
+          registryServerId: "registry-asana",
+          useRegistryOAuthProxy: true,
+          method: "POST",
+          body: { client_name: "MCPJam - Asana" },
+        }),
+      ).toBe(false);
+    });
+
     it("round-trips discovery state for the matching server URL", async () => {
       const { MCPOAuthProvider } = await import("../mcp-oauth");
       const discoveryState = createDiscoveryState();
@@ -375,7 +549,7 @@ describe("mcp-oauth", () => {
       });
 
       const discoveryState = createAsanaDiscoveryState();
-      await seedPendingOAuth("registry-asana", discoveryState);
+      await seedPendingOAuth("registry-asana", discoveryState, true);
       mockFetchToken.mockImplementationOnce(async (provider, authServerUrl, options) => {
         expect(authServerUrl).toBe("https://app.asana.com");
         expect(options?.metadata?.token_endpoint).toBe(
@@ -420,6 +594,17 @@ describe("mcp-oauth", () => {
       );
     });
 
+    it("persists preregistered registry routing for fresh Asana OAuth connects", async () => {
+      await seedPendingOAuth("registry-asana", createAsanaDiscoveryState(), true);
+
+      expect(localStorage.getItem("mcp-oauth-config-asana")).toBe(
+        JSON.stringify({
+          registryServerId: "registry-asana",
+          useRegistryOAuthProxy: true,
+        }),
+      );
+    });
+
     it("routes Asana-style refresh token exchange through Convex for registry servers", async () => {
       authFetch.mockImplementationOnce(async (input: RequestInfo | URL) => {
         const url =
@@ -459,7 +644,10 @@ describe("mcp-oauth", () => {
       localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/v2/mcp");
       localStorage.setItem(
         "mcp-oauth-config-asana",
-        JSON.stringify({ registryServerId: "registry-asana" }),
+        JSON.stringify({
+          registryServerId: "registry-asana",
+          useRegistryOAuthProxy: true,
+        }),
       );
       localStorage.setItem(
         "mcp-tokens-asana",
@@ -513,7 +701,7 @@ describe("mcp-oauth", () => {
         throw new Error(`Unexpected direct fetch to ${url}`);
       });
 
-      await seedPendingOAuth("registry-asana");
+      await seedPendingOAuth("registry-asana", undefined, true);
       mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {
         const response = await options!.fetchFn!(
           "https://app.asana.com/-/oauth_token",
@@ -599,6 +787,210 @@ describe("mcp-oauth", () => {
             },
           }),
         }),
+      );
+    });
+
+    it("uses the generic Inspector OAuth proxy for Asana when stored config is missing the preregistered flag", async () => {
+      const browserFetch = vi.fn();
+      vi.stubGlobal("fetch", browserFetch);
+      await seedPendingOAuth(
+        "registry-asana",
+        createAsanaDiscoveryState(),
+        false,
+        "asana",
+        "https://mcp.asana.com/v2/mcp",
+      );
+      authFetch.mockResolvedValueOnce(
+        createJsonResponse({
+          status: 200,
+          statusText: "OK",
+          headers: { "Content-Type": "application/json" },
+          body: {
+            access_token: "asana-access-token",
+            refresh_token: "asana-refresh-token",
+            token_type: "Bearer",
+          },
+        }),
+      );
+      mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {
+        const response = await options!.fetchFn!(
+          "https://app.asana.com/-/oauth_token",
+          {
+            method: "POST",
+            body: new URLSearchParams({
+              grant_type: "authorization_code",
+              code: options!.authorizationCode!,
+              code_verifier: provider.codeVerifier(),
+              redirect_uri: String(provider.redirectUrl),
+            }),
+          },
+        );
+        return await response.json();
+      });
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code");
+
+      expect(callbackResult.success).toBe(true);
+      expect(browserFetch).not.toHaveBeenCalled();
+      expect(authFetch).toHaveBeenCalledWith(
+        "/api/mcp/oauth/proxy",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: "https://app.asana.com/-/oauth_token",
+            method: "POST",
+            headers: {},
+            body: {
+              grant_type: "authorization_code",
+              code: "oauth-code",
+              code_verifier: "test-verifier",
+              redirect_uri: `${window.location.origin}/oauth/callback`,
+            },
+          }),
+        }),
+      );
+      expect(authFetch).not.toHaveBeenCalledWith(
+        expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
+        expect.anything(),
+      );
+    });
+
+    it("uses the generic Inspector OAuth proxy for Linear-style registry callback token exchange", async () => {
+      const browserFetch = vi.fn();
+      vi.stubGlobal("fetch", browserFetch);
+      await seedPendingOAuth(
+        "registry-linear",
+        createLinearDiscoveryState(),
+        false,
+        "linear",
+        "https://mcp.linear.app/mcp",
+      );
+      authFetch.mockResolvedValueOnce(
+        createJsonResponse({
+          status: 200,
+          statusText: "OK",
+          headers: { "Content-Type": "application/json" },
+          body: {
+            access_token: "linear-access-token",
+            refresh_token: "linear-refresh-token",
+            token_type: "Bearer",
+          },
+        }),
+      );
+      mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {
+        const response = await options!.fetchFn!(
+          "https://mcp.linear.app/token",
+          {
+            method: "POST",
+            body: new URLSearchParams({
+              grant_type: "authorization_code",
+              code: options!.authorizationCode!,
+              code_verifier: provider.codeVerifier(),
+              redirect_uri: String(provider.redirectUrl),
+            }),
+          },
+        );
+        return await response.json();
+      });
+
+      const { handleOAuthCallback } = await import("../mcp-oauth");
+      const callbackResult = await handleOAuthCallback("oauth-code");
+
+      expect(callbackResult.success).toBe(true);
+      expect(browserFetch).not.toHaveBeenCalled();
+      expect(authFetch).toHaveBeenCalledWith(
+        "/api/mcp/oauth/proxy",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: "https://mcp.linear.app/token",
+            method: "POST",
+            headers: {},
+            body: {
+              grant_type: "authorization_code",
+              code: "oauth-code",
+              code_verifier: "test-verifier",
+              redirect_uri: `${window.location.origin}/oauth/callback`,
+            },
+          }),
+        }),
+      );
+      expect(authFetch).not.toHaveBeenCalledWith(
+        expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
+        expect.anything(),
+      );
+    });
+
+    it("uses the generic Inspector OAuth proxy for Linear-style registry refresh token exchange", async () => {
+      authFetch.mockResolvedValueOnce(
+        createJsonResponse({
+          status: 200,
+          statusText: "OK",
+          headers: { "Content-Type": "application/json" },
+          body: {
+            access_token: "new-linear-access-token",
+            refresh_token: "new-linear-refresh-token",
+            token_type: "Bearer",
+          },
+        }),
+      );
+
+      mockSdkAuth.mockImplementationOnce(async (_provider, options) => {
+        const response = await options.fetchFn!(
+          "https://mcp.linear.app/token",
+          {
+            method: "POST",
+            body: new URLSearchParams({
+              grant_type: "refresh_token",
+              refresh_token: "stored-refresh-token",
+            }),
+          },
+        );
+        const tokens = await response.json();
+        await _provider.saveTokens(tokens);
+        return "AUTHORIZED";
+      });
+
+      localStorage.setItem("mcp-serverUrl-linear", "https://mcp.linear.app/mcp");
+      localStorage.setItem(
+        "mcp-oauth-config-linear",
+        JSON.stringify({ registryServerId: "registry-linear" }),
+      );
+      localStorage.setItem(
+        "mcp-tokens-linear",
+        JSON.stringify({
+          access_token: "old-linear-access-token",
+          refresh_token: "stored-refresh-token",
+          token_type: "Bearer",
+        }),
+      );
+
+      const { refreshOAuthTokens } = await import("../mcp-oauth");
+      const refreshResult = await refreshOAuthTokens("linear");
+
+      expect(refreshResult.success).toBe(true);
+      expect(authFetch).toHaveBeenCalledWith(
+        "/api/mcp/oauth/proxy",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: "https://mcp.linear.app/token",
+            method: "POST",
+            headers: {},
+            body: {
+              grant_type: "refresh_token",
+              refresh_token: "stored-refresh-token",
+            },
+          }),
+        }),
+      );
+      expect(authFetch).not.toHaveBeenCalledWith(
+        expect.stringMatching(/\.convex\.site\/registry\/oauth\/refresh$/),
+        expect.anything(),
       );
     });
   });

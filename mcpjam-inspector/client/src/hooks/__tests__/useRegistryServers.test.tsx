@@ -124,4 +124,61 @@ describe("useRegistryServers", () => {
 
     expect(onDisconnect).toHaveBeenCalledWith("Asana (App)");
   });
+
+  it("does not create a duplicate workspace connection for an already connected registry server", async () => {
+    const server = createRegistryServer({ clientType: "app" });
+
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "registryServers:listRegistryServers") {
+        return [server];
+      }
+      if (name === "registryServers:getWorkspaceRegistryConnections") {
+        return [
+          {
+            _id: "connection-1",
+            registryServerId: server._id,
+            workspaceId: "workspace-1",
+            serverId: "runtime-server-1",
+            connectedBy: "user-1",
+            connectedAt: Date.now(),
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    const onConnect = vi.fn();
+    const { result } = renderHook(() =>
+      useRegistryServers({
+        workspaceId: "workspace-1",
+        isAuthenticated: true,
+        liveServers: {
+          [getRegistryServerName(server)]: {
+            connectionStatus: "connected",
+          },
+        },
+        onConnect,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.connect(server);
+    });
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(onConnect).toHaveBeenCalledWith({
+      name: "Asana (App)",
+      type: "http",
+      url: "https://mcp.asana.test",
+      useOAuth: true,
+      oauthScopes: undefined,
+      oauthCredentialKey: undefined,
+      clientId: undefined,
+      registryServerId: "server-1",
+    });
+    expect(mockConnectMutation).not.toHaveBeenCalled();
+  });
 });

@@ -3,6 +3,7 @@ import {
   getStoredTokens,
   hasOAuthConfig,
   initiateOAuth,
+  readStoredOAuthConfig,
   refreshOAuthTokens,
   MCPOAuthOptions,
 } from "@/lib/oauth/mcp-oauth";
@@ -53,15 +54,12 @@ export async function ensureAuthorizedForReconnect(
   // This may redirect away; the hook should reflect oauth-flow state
   const storedServerUrl = localStorage.getItem(`mcp-serverUrl-${server.name}`);
   const storedClientInfo = localStorage.getItem(`mcp-client-${server.name}`);
-  const storedOAuthConfig = localStorage.getItem(
-    `mcp-oauth-config-${server.name}`,
-  );
   const storedTokens = getStoredTokens(server.name);
 
   const url = (server.config as any)?.url?.toString?.() || storedServerUrl;
   if (url) {
     // Get stored OAuth configuration
-    const oauthConfig = storedOAuthConfig ? JSON.parse(storedOAuthConfig) : {};
+    const oauthConfig = readStoredOAuthConfig(server.name);
     const clientInfo = storedClientInfo ? JSON.parse(storedClientInfo) : {};
 
     const opts: MCPOAuthOptions = {
@@ -75,6 +73,7 @@ export async function ensureAuthorizedForReconnect(
         server.oauthTokens?.client_secret || clientInfo?.client_secret,
       scopes: oauthConfig.scopes,
       registryServerId: oauthConfig.registryServerId,
+      useRegistryOAuthProxy: oauthConfig.useRegistryOAuthProxy,
     } as MCPOAuthOptions;
     const init = await initiateOAuth(opts);
     if (init.success && init.serverConfig) {

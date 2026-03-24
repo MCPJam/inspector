@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useState, useEffect } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { useQuery, useMutation } from "convex/react";
 import type { ServerFormData } from "@/shared/types.js";
 
@@ -387,6 +387,15 @@ export function useRegistryServers({
   useEffect(() => {
     if (!isAuthenticated || !workspaceId || DEV_MOCK_REGISTRY) return;
     for (const [registryServerId, serverName] of pendingServerIds) {
+      if (connectedRegistryIds.has(registryServerId)) {
+        setPendingServerIds((prev) => {
+          const next = new Map(prev);
+          next.delete(registryServerId);
+          return next;
+        });
+        continue;
+      }
+
       const liveServer = liveServers?.[serverName];
       if (liveServer?.connectionStatus === "connected") {
         setPendingServerIds((prev) => {
@@ -406,6 +415,7 @@ export function useRegistryServers({
     isAuthenticated,
     workspaceId,
     connectMutation,
+    connectedRegistryIds,
   ]);
 
   const connectionsAreLoading =

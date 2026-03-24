@@ -7,6 +7,7 @@ const {
   mockHandleOAuthCallback,
   mockListServers,
   mockUseServerMutations,
+  mockConvexQuery,
   toastSuccess,
 } = vi.hoisted(() => ({
   mockHandleOAuthCallback: vi.fn(),
@@ -16,7 +17,14 @@ const {
     updateServer: vi.fn(),
     deleteServer: vi.fn(),
   })),
+  mockConvexQuery: vi.fn(),
   toastSuccess: vi.fn(),
+}));
+
+vi.mock("convex/react", () => ({
+  useConvex: () => ({
+    query: mockConvexQuery,
+  }),
 }));
 
 vi.mock("@/lib/config", () => ({
@@ -77,6 +85,7 @@ describe("useServerState hosted OAuth callback guards", () => {
     window.history.replaceState({}, "", "/?code=oauth-code");
     mockHandleOAuthCallback.mockReset();
     mockListServers.mockReset();
+    mockConvexQuery.mockReset();
     toastSuccess.mockReset();
     mockListServers.mockResolvedValue({ success: true, servers: [] });
   });
