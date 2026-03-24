@@ -9,14 +9,12 @@ const mockState = vi.hoisted(() => ({
     reset: vi.fn(),
   },
   auth: {
-    user: null as
-      | {
-          id: string;
-          email: string;
-          firstName?: string | null;
-          lastName?: string | null;
-        }
-      | null,
+    user: null as {
+      id: string;
+      email: string;
+      firstName?: string | null;
+      lastName?: string | null;
+    } | null,
   },
   convexAuth: {
     isAuthenticated: false,
