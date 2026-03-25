@@ -1,4 +1,11 @@
-import { AppWindow, GitBranch, Network, type LucideIcon } from "lucide-react";
+import {
+  AppWindow,
+  Blocks,
+  GitBranch,
+  Lightbulb,
+  Network,
+  type LucideIcon,
+} from "lucide-react";
 
 export interface LearningConcept {
   id: string;
@@ -10,6 +17,15 @@ export interface LearningConcept {
 }
 
 export const LEARNING_CONCEPTS: LearningConcept[] = [
+  {
+    id: "why-mcp",
+    title: "Why MCP?",
+    description:
+      "Understand why AI needs a universal protocol — from isolated LLMs through tool calling and agents to the N×M problem MCP solves.",
+    icon: Lightbulb,
+    totalSteps: 7,
+    category: "Concepts",
+  },
   {
     id: "what-is-mcp",
     title: "What is MCP?",
@@ -34,6 +50,15 @@ export const LEARNING_CONCEPTS: LearningConcept[] = [
     description:
       "Learn how MCP servers deliver rich, interactive HTML user interfaces into host apps — ui:// resources, tool linkage, and postMessage.",
     icon: AppWindow,
+    totalSteps: 7,
+    category: "Extensions",
+  },
+  {
+    id: "apps-sdk",
+    title: "OpenAI Apps SDK",
+    description:
+      "Learn how the Apps SDK layers ChatGPT-specific features (window.openai) on top of standard MCP Apps — dual-protocol support, tool metadata, and deployment.",
+    icon: Blocks,
     totalSteps: 7,
     category: "Extensions",
   },

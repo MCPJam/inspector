@@ -9,7 +9,9 @@ import {
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { CustomHeadersSection } from "./shared/CustomHeadersSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
+import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 import type { useServerForm } from "./hooks/use-server-form";
+import { HOSTED_MODE } from "@/lib/config";
 
 interface EditServerFormContentProps {
   formState: ReturnType<typeof useServerForm>;
@@ -20,6 +22,8 @@ export function EditServerFormContent({
   formState,
   isDuplicateServerName,
 }: EditServerFormContentProps) {
+  const hostedUrlPlaceholder = "https://example.com/mcp";
+
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -44,7 +48,29 @@ export function EditServerFormContent({
         <label className="block text-sm font-medium text-foreground">
           Connection Type
         </label>
-        {formState.type === "stdio" ? (
+        {HOSTED_MODE ? (
+          formState.type === "stdio" ? (
+            <HostedConnectionTypeControl transportType="stdio">
+              <Input
+                value={formState.commandInput}
+                onChange={(e) => formState.setCommandInput(e.target.value)}
+                placeholder="npx -y @modelcontextprotocol/server-everything"
+                required
+                className="flex-1 rounded-l-none text-sm border-border"
+              />
+            </HostedConnectionTypeControl>
+          ) : (
+            <HostedConnectionTypeControl transportType="http">
+              <Input
+                value={formState.url}
+                onChange={(e) => formState.setUrl(e.target.value)}
+                placeholder={hostedUrlPlaceholder}
+                required
+                className="flex-1 rounded-l-none text-sm border-border"
+              />
+            </HostedConnectionTypeControl>
+          )
+        ) : formState.type === "stdio" ? (
           <div className="flex">
             <Select
               value={formState.type}

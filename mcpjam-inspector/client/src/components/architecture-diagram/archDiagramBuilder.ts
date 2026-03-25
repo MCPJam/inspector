@@ -249,6 +249,8 @@ export function buildArchNodesAndEdges({
       targetHandle = "left-target";
     }
 
+    const interactiveLabels = def.interactiveLabels !== false;
+
     const edge: Edge = {
       id: def.id,
       source: def.source,
@@ -261,8 +263,11 @@ export function buildArchNodesAndEdges({
         label: def.label,
         status,
         pathType: def.pathType,
+        interactiveLabels,
       },
-      animated: status === "current",
+      animated: def.animated === true || status === "current",
+      selectable: interactiveLabels,
+      interactionWidth: interactiveLabels ? undefined : 0,
       markerEnd: {
         type: "arrowclosed" as const,
         color: strokeColor,

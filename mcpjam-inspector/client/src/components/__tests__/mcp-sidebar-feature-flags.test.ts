@@ -2,7 +2,9 @@ import { describe, it, expect } from "vitest";
 import {
   filterByBillingEntitlements,
   filterByFeatureFlags,
+  getHostedNavigationSections,
 } from "../mcp-sidebar";
+import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
 const FakeIcon = () => null;
 
@@ -139,5 +141,73 @@ describe("filterByBillingEntitlements", () => {
     const titles = result[0].items.map((item) => item.title);
     expect(titles).toContain("Servers");
     expect(titles).not.toContain("Generate Evals");
+  });
+});
+
+describe("getHostedNavigationSections", () => {
+  it("keeps hosted-blocked local tabs visible as disabled hosted-only items", () => {
+    const result = getHostedNavigationSections([
+      {
+        id: "others",
+        items: [
+          { title: "Skills", url: "#skills", icon: FakeIcon },
+          { title: "Tasks", url: "#tasks", icon: FakeIcon },
+          {
+            title: "Generate Evals",
+            url: "#evals",
+            icon: FakeIcon,
+            hiddenByFlag: "ci-evals-enabled",
+            billingFeature: "evals",
+          },
+          { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
+        ],
+      },
+    ]);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].items).toEqual([
+      {
+        title: "Skills",
+        url: "#skills",
+        icon: FakeIcon,
+        disabled: true,
+        disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
+      },
+      {
+        title: "OAuth Debugger",
+        url: "#oauth-flow",
+        icon: FakeIcon,
+      },
+    ]);
+  });
+
+  it("continues hiding Generate Evals in hosted even when ci-evals is enabled", () => {
+    const hostedSections = getHostedNavigationSections([
+      {
+        id: "mcp-apps",
+        items: [
+          {
+            title: "Generate Evals",
+            url: "#evals",
+            icon: FakeIcon,
+            hiddenByFlag: "ci-evals-enabled",
+          },
+          {
+            title: "Evals CI/CD",
+            url: "#ci-evals",
+            icon: FakeIcon,
+            featureFlag: "ci-evals-enabled",
+          },
+        ],
+      },
+    ]);
+
+    const visibleSections = filterByFeatureFlags(hostedSections, {
+      "ci-evals-enabled": true,
+    });
+
+    expect(visibleSections[0].items.map((item) => item.title)).toEqual([
+      "Evals CI/CD",
+    ]);
   });
 });
