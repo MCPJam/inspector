@@ -275,7 +275,7 @@ function RegistryServerCard({
             {isPublisherVerified && (
               <span className="inline-flex shrink-0" title="Verified publisher">
                 <BadgeCheck
-                  className="h-4 w-4 shrink-0 [&>path:first-of-type]:fill-orange-500 [&>path:first-of-type]:stroke-none [&>path:last-of-type]:stroke-white [&>path:last-of-type]:stroke-[2.5] [&>path:last-of-type]:[stroke-linecap:round] [&>path:last-of-type]:[stroke-linejoin:round]"
+                  className="h-4 w-4 shrink-0 [&>path:first-of-type]:fill-[#ae5630] [&>path:first-of-type]:stroke-none [&>path:last-of-type]:stroke-white [&>path:last-of-type]:stroke-[2.5] [&>path:last-of-type]:[stroke-linecap:round] [&>path:last-of-type]:[stroke-linejoin:round]"
                   aria-label="Verified publisher"
                 />
               </span>
@@ -376,7 +376,7 @@ function DualTypeAction({
         {activeVariant.connectionStatus === "connected" ? (
           <Button
             size="sm"
-            className="h-7 text-xs bg-green-600 hover:bg-green-600 text-white cursor-default"
+            className="h-7 text-xs bg-primary/10 hover:bg-primary/10 text-primary border border-primary/20 cursor-default"
             tabIndex={-1}
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
@@ -402,9 +402,9 @@ function DualTypeAction({
             {remainingVariants.map((v) => (
               <DropdownMenuItem key={v._id} onClick={() => onConnect(v)}>
                 {v.clientType === "app" ? (
-                  <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-blue-400" />
+                  <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-primary" />
                 ) : (
-                  <MessageSquareText className="h-3.5 w-3.5 mr-2 text-violet-400" />
+                  <MessageSquareText className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
                 )}
                 Connect as {v.clientType === "app" ? "App" : "Text"}
               </DropdownMenuItem>
@@ -438,9 +438,9 @@ function DualTypeAction({
         {variants.map((v) => (
           <DropdownMenuItem key={v._id} onClick={() => onConnect(v)}>
             {v.clientType === "app" ? (
-              <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-blue-400" />
+              <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-primary" />
             ) : (
-              <MessageSquareText className="h-3.5 w-3.5 mr-2 text-violet-400" />
+              <MessageSquareText className="h-3.5 w-3.5 mr-2 text-muted-foreground" />
             )}
             Connect as {v.clientType === "app" ? "App" : "Text"}
           </DropdownMenuItem>
@@ -455,7 +455,7 @@ function ClientTypeBadge({ clientType }: { clientType?: "text" | "app" }) {
     return (
       <Badge
         variant="outline"
-        className="text-[11px] px-1.5 py-0.5 gap-1 border-blue-500/40 text-blue-400"
+        className="text-[11px] px-1.5 py-0.5 gap-1 border-primary/30 text-primary"
       >
         <MonitorSmartphone className="h-3 w-3" />
         App
@@ -465,7 +465,7 @@ function ClientTypeBadge({ clientType }: { clientType?: "text" | "app" }) {
   return (
     <Badge
       variant="outline"
-      className="text-[11px] px-1.5 py-0.5 gap-1 border-violet-500/40 text-violet-400"
+      className="text-[11px] px-1.5 py-0.5 gap-1 border-muted-foreground/30 text-muted-foreground"
     >
       <MessageSquareText className="h-3 w-3" />
       Text
@@ -478,7 +478,7 @@ function AuthBadge({ useOAuth }: { useOAuth?: boolean }) {
     return (
       <Badge
         variant="outline"
-        className="text-[11px] px-1.5 py-0.5 gap-1 border-emerald-500/40 text-emerald-400"
+        className="text-[11px] px-1.5 py-0.5 gap-1 border-success/30 text-success"
       >
         <KeyRound className="h-3 w-3" />
         OAuth
@@ -488,7 +488,7 @@ function AuthBadge({ useOAuth }: { useOAuth?: boolean }) {
   return (
     <Badge
       variant="outline"
-      className="text-[11px] px-1.5 py-0.5 gap-1 border-amber-500/40 text-amber-400"
+      className="text-[11px] px-1.5 py-0.5 gap-1 border-warning/30 text-warning"
     >
       <ShieldOff className="h-3 w-3" />
       No auth
@@ -511,7 +511,7 @@ function TopRightAction({
         <div className="flex items-center gap-1.5">
           <Button
             size="sm"
-            className="h-7 text-xs bg-green-600 hover:bg-green-600 text-white cursor-default"
+            className="h-7 text-xs bg-primary/10 hover:bg-primary/10 text-primary border border-primary/20 cursor-default"
             tabIndex={-1}
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
