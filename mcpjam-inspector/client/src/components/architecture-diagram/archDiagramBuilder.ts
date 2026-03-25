@@ -7,6 +7,12 @@ import type {
   StepHighlightMap,
 } from "./types";
 import { autoLayoutNodes, type AutoLayoutOptions } from "./autoLayout";
+import {
+  ARCH_ASSET_CODE_WIDTH,
+  ARCH_ASSET_CODE_HEIGHT,
+  ARCH_ASSET_IMAGE_WIDTH,
+  ARCH_ASSET_IMAGE_HEIGHT,
+} from "./constants";
 
 export type LayoutOptions = AutoLayoutOptions;
 
@@ -134,10 +140,43 @@ export function buildArchNodesAndEdges({
           status,
           width: def.width ?? 400,
           height: def.height ?? 200,
+          logos: def.logos,
         },
         draggable: false,
         selectable: false,
         style: { width: def.width ?? 400, height: def.height ?? 200 },
+      };
+    }
+
+    if (def.type === "asset") {
+      const kind = def.assetType ?? "code";
+      const defaultW =
+        kind === "image" ? ARCH_ASSET_IMAGE_WIDTH : ARCH_ASSET_CODE_WIDTH;
+      const defaultH =
+        kind === "image" ? ARCH_ASSET_IMAGE_HEIGHT : ARCH_ASSET_CODE_HEIGHT;
+      const aw = def.width ?? defaultW;
+      const ah = def.height ?? defaultH;
+      return {
+        id: def.id,
+        type: "archAsset",
+        position,
+        data: {
+          label: def.label,
+          subtitle: def.subtitle,
+          icon: def.icon,
+          color: def.color,
+          status,
+          width: aw,
+          height: ah,
+          assetType: kind,
+          code: def.code,
+          codeLang: def.codeLang,
+          imageSrc: def.imageSrc,
+          imageAlt: def.imageAlt,
+          compact: def.compact,
+        },
+        draggable: false,
+        style: { width: aw, height: ah },
       };
     }
 
@@ -153,6 +192,9 @@ export function buildArchNodesAndEdges({
         status,
         width: def.width,
         height: def.height,
+        logos: def.logos,
+        imageSrc: def.imageSrc,
+        imageAlt: def.imageAlt,
       },
       draggable: false,
     };

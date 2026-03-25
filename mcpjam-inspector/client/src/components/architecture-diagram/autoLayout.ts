@@ -1,6 +1,13 @@
 import dagre from "@dagrejs/dagre";
 import type { ArchNodeDef, ArchEdgeDef } from "./types";
-import { ARCH_BLOCK_WIDTH, ARCH_BLOCK_HEIGHT } from "./constants";
+import {
+  ARCH_BLOCK_WIDTH,
+  ARCH_BLOCK_HEIGHT,
+  ARCH_ASSET_CODE_WIDTH,
+  ARCH_ASSET_CODE_HEIGHT,
+  ARCH_ASSET_IMAGE_WIDTH,
+  ARCH_ASSET_IMAGE_HEIGHT,
+} from "./constants";
 
 export interface AutoLayoutOptions {
   direction?: "LR" | "TB" | "RL" | "BT";
@@ -34,8 +41,23 @@ export function autoLayoutNodes(
 
   // Add all nodes to the graph
   for (const node of nodes) {
-    const w = node.type === "group" ? (node.width ?? 400) : ARCH_BLOCK_WIDTH;
-    const h = node.type === "group" ? (node.height ?? 200) : ARCH_BLOCK_HEIGHT;
+    let w: number;
+    let h: number;
+    if (node.type === "group") {
+      w = node.width ?? 400;
+      h = node.height ?? 200;
+    } else if (node.type === "asset") {
+      const kind = node.assetType ?? "code";
+      w =
+        node.width ??
+        (kind === "image" ? ARCH_ASSET_IMAGE_WIDTH : ARCH_ASSET_CODE_WIDTH);
+      h =
+        node.height ??
+        (kind === "image" ? ARCH_ASSET_IMAGE_HEIGHT : ARCH_ASSET_CODE_HEIGHT);
+    } else {
+      w = ARCH_BLOCK_WIDTH;
+      h = ARCH_BLOCK_HEIGHT;
+    }
     g.setNode(node.id, { width: w, height: h });
 
     if (node.parentId) {
