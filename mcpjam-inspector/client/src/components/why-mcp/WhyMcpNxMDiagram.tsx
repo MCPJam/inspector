@@ -1,13 +1,13 @@
 import { memo } from "react";
 import { LayoutGroup, motion } from "framer-motion";
 import { useTheme } from "next-themes";
-import asanaSrc from "@repo/assets/why-mcp/asana.svg";
-import claudeSrc from "@repo/assets/why-mcp/claude.png";
-import githubDarkSrc from "@repo/assets/why-mcp/github-dark.png";
-import githubLightSrc from "@repo/assets/why-mcp/github-light.svg";
-import googleSrc from "@repo/assets/why-mcp/google.png";
-import openaiSrc from "@repo/assets/why-mcp/openai.png";
-import slackSrc from "@repo/assets/why-mcp/slack.png";
+import asanaSrc from "../../assets/why-mcp/asana.svg";
+import claudeSrc from "../../assets/why-mcp/claude.png";
+import githubDarkSrc from "../../assets/why-mcp/github-dark.png";
+import githubLightSrc from "../../assets/why-mcp/github-light.svg";
+import googleSrc from "../../assets/why-mcp/google.png";
+import openaiSrc from "../../assets/why-mcp/openai.png";
+import slackSrc from "../../assets/why-mcp/slack.png";
 import {
   springGentle,
   useDiagramMotion,

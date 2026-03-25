@@ -20,7 +20,7 @@
     "paths": {
       "@/*": ["./src/*"],
       "@/shared/*": ["../shared/*"],
-      "@repo/assets/*": ["../assets/*"]
+      "@repo/assets/*": ["./src/assets/*"]
     }
   },
   "include": ["src", "../shared/**/*.ts"],
