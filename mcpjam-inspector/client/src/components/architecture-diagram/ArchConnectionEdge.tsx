@@ -19,13 +19,10 @@ const statusColor: Record<string, string> = {
 };
 
 const labelStyles: Record<string, string> = {
-  complete:
-    "bg-green-500/10 text-green-700 dark:text-green-400",
-  current:
-    "bg-blue-500/15 text-blue-700 dark:text-blue-400 shadow-sm",
+  complete: "bg-green-500/10 text-green-700 dark:text-green-400",
+  current: "bg-blue-500/15 text-blue-700 dark:text-blue-400 shadow-sm",
   pending: "bg-muted/50 text-muted-foreground/40",
-  neutral:
-    "bg-slate-500/10 text-slate-600 dark:text-slate-300",
+  neutral: "bg-slate-500/10 text-slate-600 dark:text-slate-300",
 };
 
 const pathFunctions = {

@@ -56,9 +56,7 @@ export const MCP_APPS_GUIDE_METADATA: Record<McpAppsStep, McpAppsStepGuide> = {
     tips: [
       "Name tools and describe them clearly for the model; the UI URI is for the host — the model still reasons from descriptions and schemas.",
     ],
-    examples: [
-      '_meta: { ui: { resourceUri: "ui://my-server/dashboard" } }',
-    ],
+    examples: ['_meta: { ui: { resourceUri: "ui://my-server/dashboard" } }'],
   },
 
   ui_resource: {

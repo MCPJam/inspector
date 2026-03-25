@@ -38,45 +38,38 @@ const ALL_NODES = [
   "widget-file",
 ];
 
-const ALL_EDGES = [
-  "e-step1",
-  "e-step2",
-  "e-step3",
-  "e-step4",
-  "e-postmessage",
-];
+const ALL_EDGES = ["e-step1", "e-step2", "e-step3", "e-step4", "e-postmessage"];
 
-export const MCP_APPS_STEP_HIGHLIGHTS: Record<McpAppsStep, StepHighlightMap> =
-  {
-    intro: {
-      activeNodes: ALL_NODES,
-      activeEdges: ALL_EDGES,
-    },
-    host_client: {
-      activeNodes: ["host-group", "ai-client"],
-      activeEdges: [],
-    },
-    tool_definition: {
-      activeNodes: ["tool-code"],
-      activeEdges: ["e-step1"],
-    },
-    ui_resource: {
-      activeNodes: ["resource-code"],
-      activeEdges: ["e-step2"],
-    },
-    widget_component: {
-      activeNodes: ["widget-file"],
-      activeEdges: ["e-step3"],
-    },
-    iframe_view: {
-      activeNodes: ["iframe-view"],
-      activeEdges: ["e-step4", "e-postmessage"],
-    },
-    lifecycle: {
-      activeNodes: ALL_NODES,
-      activeEdges: ALL_EDGES,
-    },
-  };
+export const MCP_APPS_STEP_HIGHLIGHTS: Record<McpAppsStep, StepHighlightMap> = {
+  intro: {
+    activeNodes: ALL_NODES,
+    activeEdges: ALL_EDGES,
+  },
+  host_client: {
+    activeNodes: ["host-group", "ai-client"],
+    activeEdges: [],
+  },
+  tool_definition: {
+    activeNodes: ["tool-code"],
+    activeEdges: ["e-step1"],
+  },
+  ui_resource: {
+    activeNodes: ["resource-code"],
+    activeEdges: ["e-step2"],
+  },
+  widget_component: {
+    activeNodes: ["widget-file"],
+    activeEdges: ["e-step3"],
+  },
+  iframe_view: {
+    activeNodes: ["iframe-view"],
+    activeEdges: ["e-step4", "e-postmessage"],
+  },
+  lifecycle: {
+    activeNodes: ALL_NODES,
+    activeEdges: ALL_EDGES,
+  },
+};
 
 const TOOL_SNIPPET = `server.tool("dashboard", schema, async (input) => ({
   structuredContent: input,

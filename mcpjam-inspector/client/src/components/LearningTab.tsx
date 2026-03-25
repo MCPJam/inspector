@@ -179,7 +179,8 @@ function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
         "e-step4": "iframe_view",
         "e-postmessage": "iframe_view",
       };
-      const stepId = nodeToStep[diagramId] ?? edgeToStep[diagramId] ?? diagramId;
+      const stepId =
+        nodeToStep[diagramId] ?? edgeToStep[diagramId] ?? diagramId;
       if (
         MCP_APPS_STEP_ORDER.includes(
           stepId as (typeof MCP_APPS_STEP_ORDER)[number],

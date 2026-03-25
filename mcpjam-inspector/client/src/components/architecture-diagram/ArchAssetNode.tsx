@@ -2,14 +2,10 @@ import { memo } from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
 import { cn } from "@/lib/utils";
 import type { ArchAssetNodeData } from "./types";
-import {
-  ARCH_ASSET_CODE_WIDTH,
-  ARCH_ASSET_CODE_HEIGHT,
-} from "./constants";
+import { ARCH_ASSET_CODE_WIDTH, ARCH_ASSET_CODE_HEIGHT } from "./constants";
 
 const statusStyles: Record<string, string> = {
-  current:
-    "opacity-100 shadow-lg ring-2 ring-offset-1 ring-offset-background",
+  current: "opacity-100 shadow-lg ring-2 ring-offset-1 ring-offset-background",
   complete: "opacity-100 shadow-sm",
   pending: "opacity-40",
   neutral: "opacity-100",
