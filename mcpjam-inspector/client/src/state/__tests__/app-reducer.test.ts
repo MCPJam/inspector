@@ -165,9 +165,9 @@ describe("appReducer", () => {
 
       expect(result.servers.__learning__).toBeDefined();
       expect(result.servers.__learning__.surface).toBe("learning");
-      expect(result.workspaces[result.activeWorkspaceId].servers.__learning__).toBe(
-        undefined,
-      );
+      expect(
+        result.workspaces[result.activeWorkspaceId].servers.__learning__,
+      ).toBe(undefined);
     });
   });
 
@@ -277,9 +277,9 @@ describe("appReducer", () => {
       });
 
       expect(result.servers.__learning__.connectionStatus).toBe("connected");
-      expect(result.workspaces[result.activeWorkspaceId].servers.__learning__).toBe(
-        undefined,
-      );
+      expect(
+        result.workspaces[result.activeWorkspaceId].servers.__learning__,
+      ).toBe(undefined);
     });
   });
 
@@ -481,7 +481,7 @@ describe("appReducer", () => {
     it("removes runtime-only servers from runtime state without touching the workspace map", () => {
       const state = createInitialState({
         servers: {
-          "__learning__": createServer("__learning__", {
+          __learning__: createServer("__learning__", {
             surface: "learning",
             connectionStatus: "connected",
           }),

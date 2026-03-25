@@ -48,8 +48,8 @@ describe("server-selectors", () => {
       }),
     };
 
-    expect(Object.keys(getRuntimeServersBySurface(servers, "learning"))).toEqual(
-      ["__learning__"],
-    );
+    expect(
+      Object.keys(getRuntimeServersBySurface(servers, "learning")),
+    ).toEqual(["__learning__"]);
   });
 });

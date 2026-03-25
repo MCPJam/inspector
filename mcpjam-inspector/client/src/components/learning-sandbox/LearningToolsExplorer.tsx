@@ -1,8 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type {
-  CallToolResult,
-  Tool,
-} from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, Tool } from "@modelcontextprotocol/sdk/types.js";
 import { BookOpen, Play, Wrench } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -73,9 +70,8 @@ export function LearningToolsExplorer({
     serverId,
     serverUrl,
   });
-  const [toolsData, setToolsData] = useState<ListToolsResultWithMetadata | null>(
-    null,
-  );
+  const [toolsData, setToolsData] =
+    useState<ListToolsResultWithMetadata | null>(null);
   const [selectedToolName, setSelectedToolName] = useState<string>("");
   const [selectedExampleId, setSelectedExampleId] = useState<string | null>(
     learningExampleManifest.tools[0]?.id ?? null,
@@ -163,7 +159,9 @@ export function LearningToolsExplorer({
             availableToolNames.includes(example.targetName),
           )?.targetName ?? availableToolNames[0];
         setSelectedToolName((current) =>
-          current && availableToolNames.includes(current) ? current : preferredTool,
+          current && availableToolNames.includes(current)
+            ? current
+            : preferredTool,
         );
       } catch (fetchError) {
         if (!cancelled) {
@@ -194,9 +192,10 @@ export function LearningToolsExplorer({
       return;
     }
 
-    const example = selectedExample?.targetName === selectedTool.name
-      ? selectedExample
-      : findToolExample(selectedTool.name);
+    const example =
+      selectedExample?.targetName === selectedTool.name
+        ? selectedExample
+        : findToolExample(selectedTool.name);
     const baseFields = generateFormFieldsFromSchema(selectedTool.inputSchema);
     setFormFields(
       example?.defaultParameters
@@ -376,7 +375,8 @@ export function LearningToolsExplorer({
                     <Wrench className="h-4 w-4 text-muted-foreground" />
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
-                    {tool.description || "No description provided by the server."}
+                    {tool.description ||
+                      "No description provided by the server."}
                   </p>
                 </button>
               ))
@@ -490,8 +490,8 @@ export function LearningToolsExplorer({
                 </TabsContent>
                 <TabsContent value="raw" className="space-y-2">
                   <p className="text-xs text-muted-foreground">
-                    Edit the raw tool arguments directly to see how server errors
-                    and validation behave.
+                    Edit the raw tool arguments directly to see how server
+                    errors and validation behave.
                   </p>
                   <div className="h-64 overflow-hidden rounded-lg border border-border/60">
                     <JsonEditor
@@ -531,10 +531,9 @@ export function LearningToolsExplorer({
                       mode === "raw"
                         ? (() => {
                             try {
-                              return JSON.parse(rawParameters || "{}") as Record<
-                                string,
-                                unknown
-                              >;
+                              return JSON.parse(
+                                rawParameters || "{}",
+                              ) as Record<string, unknown>;
                             } catch {
                               return {};
                             }

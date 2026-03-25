@@ -46,9 +46,7 @@ export function useSharedAppState(): AppState {
 export function useSharedAppRuntime(): AppRuntimeContextValue {
   const ctx = useContext(AppRuntimeContext);
   if (!ctx) {
-    throw new Error(
-      "useSharedAppRuntime must be used within AppStateProvider",
-    );
+    throw new Error("useSharedAppRuntime must be used within AppStateProvider");
   }
   return ctx;
 }

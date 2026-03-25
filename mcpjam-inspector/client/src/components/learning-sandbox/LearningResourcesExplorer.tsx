@@ -22,9 +22,7 @@ import { executeToolApi } from "@/lib/apis/mcp-tools-api";
 import { cn } from "@/lib/utils";
 import { LearningSandboxServerInfoPanel } from "./LearningSandboxServerInfoPanel";
 import { LearningSandboxShell } from "./LearningSandboxShell";
-import {
-  learningExampleManifest,
-} from "./learning-example-manifest";
+import { learningExampleManifest } from "./learning-example-manifest";
 
 interface LearningResourcesExplorerProps {
   autoConnect?: boolean;
@@ -110,11 +108,15 @@ export function LearningResourcesExplorer({
         }
 
         setResources(response.resources);
-        const availableUris = response.resources.map((resource) => resource.uri);
+        const availableUris = response.resources.map(
+          (resource) => resource.uri,
+        );
         const preferredUri =
           learningExampleManifest.resources.find((example) =>
             availableUris.includes(example.uri),
-          )?.uri ?? availableUris[0] ?? "";
+          )?.uri ??
+          availableUris[0] ??
+          "";
         setSelectedUri((current) =>
           current && availableUris.includes(current) ? current : preferredUri,
         );
@@ -293,8 +295,8 @@ export function LearningResourcesExplorer({
           description={
             learningServer.isConnecting
               ? "The learning server is still connecting."
-              : learningServer.error ??
-                "The learning server is not connected. Reconnect to continue."
+              : (learningServer.error ??
+                "The learning server is not connected. Reconnect to continue.")
           }
           className="h-full"
         />
@@ -334,7 +336,9 @@ export function LearningResourcesExplorer({
                     Resource reads use the currently selected discovered URI.
                   </p>
                   <div className="rounded-lg border border-border/60 px-3 py-2">
-                    <code className="text-xs">{selectedUri || "No resource selected"}</code>
+                    <code className="text-xs">
+                      {selectedUri || "No resource selected"}
+                    </code>
                   </div>
                 </TabsContent>
                 <TabsContent value="raw" className="space-y-2">
