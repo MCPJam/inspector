@@ -3,13 +3,24 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useUiAppServers } from "../use-ui-app-servers";
 
-const { mockListTools } = vi.hoisted(() => ({
+const { mockListTools, mockIsMCPApp } = vi.hoisted(() => ({
   mockListTools: vi.fn(),
+  mockIsMCPApp: vi.fn(() => false),
 }));
 
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: mockListTools,
 }));
+
+vi.mock("@/lib/mcp-ui/mcp-apps-utils", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/lib/mcp-ui/mcp-apps-utils")
+  >();
+  return {
+    ...actual,
+    isMCPApp: mockIsMCPApp,
+  };
+});
 
 function createServer(
   name: string,
@@ -70,6 +81,29 @@ describe("useUiAppServers", () => {
 
     expect(result.current.appServerNames).toEqual([]);
     expect(result.current.hasAppServer).toBe(false);
+  });
+
+  it("identifies a server as a UI app when isMCPApp returns true", async () => {
+    mockListTools.mockResolvedValue({
+      tools: [],
+      toolsMetadata: { "render-ui": { "ui.resourceUri": "ui://app" } },
+    });
+    mockIsMCPApp.mockReturnValue(true);
+
+    const servers = {
+      "test-server": createServer("test-server"),
+    };
+
+    const { result } = renderHook(() => useUiAppServers(servers));
+
+    await waitFor(() => {
+      expect(result.current.resolvedServerNames).toEqual(["test-server"]);
+    });
+
+    expect(result.current.appServerNames).toEqual(["test-server"]);
+    expect(result.current.hasAppServer).toBe(true);
+
+    mockIsMCPApp.mockReturnValue(false);
   });
 
   it("marks a server as resolved after 5s timeout when listTools hangs", async () => {

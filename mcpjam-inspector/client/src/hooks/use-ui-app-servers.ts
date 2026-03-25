@@ -119,7 +119,7 @@ export function useUiAppServers(servers: Record<string, ServerWithName>) {
       }
       timeoutRefs.current.clear();
     };
-  }, [connectedServerNamesKey]);
+  }, [connectedServerNamesKey, connectedServerNames]);
 
   const appServerNames = useMemo(
     () =>
