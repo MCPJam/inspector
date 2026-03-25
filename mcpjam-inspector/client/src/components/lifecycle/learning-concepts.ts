@@ -2,11 +2,14 @@ import {
   AppWindow,
   Blocks,
   BookOpen,
+  Database,
   GitBranch,
   Globe,
   Lightbulb,
+  MessageSquare,
   Network,
   Terminal,
+  Wrench,
   type LucideIcon,
 } from "lucide-react";
 
@@ -44,6 +47,33 @@ export const LEARNING_CONCEPTS: LearningConcept[] = [
     description:
       "Learn how MCP connections are established, used, and shut down — from initialization through operation to graceful shutdown.",
     icon: GitBranch,
+    totalSteps: 5,
+    category: "Protocol",
+  },
+  {
+    id: "mcp-tools",
+    title: "MCP Tools",
+    description:
+      "Learn how MCP Tools let AI models invoke actions on external systems — discovery, invocation, result types, error handling, and security.",
+    icon: Wrench,
+    totalSteps: 5,
+    category: "Protocol",
+  },
+  {
+    id: "mcp-resources",
+    title: "MCP Resources",
+    description:
+      "Understand MCP Resources — application-controlled data that gives AI context. URIs, templates, subscriptions, and content types.",
+    icon: Database,
+    totalSteps: 5,
+    category: "Protocol",
+  },
+  {
+    id: "mcp-prompts",
+    title: "MCP Prompts",
+    description:
+      "Discover MCP Prompts — user-controlled templates that guide AI interactions. Arguments, messages, and slash commands.",
+    icon: MessageSquare,
     totalSteps: 5,
     category: "Protocol",
   },

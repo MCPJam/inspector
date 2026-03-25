@@ -36,6 +36,9 @@ import { WhyMcpArticle } from "@/components/why-mcp/WhyMcpArticle";
 import { McpVsCliArticle } from "@/components/mcp-vs-cli/McpVsCliArticle";
 import { McpVsApiArticle } from "@/components/mcp-vs-api/McpVsApiArticle";
 import { McpVsSkillsArticle } from "@/components/mcp-vs-skills/McpVsSkillsArticle";
+import { McpToolsArticle } from "@/components/mcp-tools/McpToolsArticle";
+import { McpResourcesArticle } from "@/components/mcp-resources/McpResourcesArticle";
+import { McpPromptsArticle } from "@/components/mcp-prompts/McpPromptsArticle";
 
 /**
  * Sentinel value used as `currentStep` when the lifecycle walkthrough is at step 0.
@@ -332,6 +335,42 @@ export function LearningTab() {
 
   if (selectedConcept === "mcp-lifecycle") {
     return <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />;
+  }
+
+  if (selectedConcept === "mcp-tools") {
+    return (
+      <ArticleShell
+        title="MCP Tools"
+        badge="Protocol"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <McpToolsArticle />
+      </ArticleShell>
+    );
+  }
+
+  if (selectedConcept === "mcp-resources") {
+    return (
+      <ArticleShell
+        title="MCP Resources"
+        badge="Protocol"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <McpResourcesArticle />
+      </ArticleShell>
+    );
+  }
+
+  if (selectedConcept === "mcp-prompts") {
+    return (
+      <ArticleShell
+        title="MCP Prompts"
+        badge="Protocol"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <McpPromptsArticle />
+      </ArticleShell>
+    );
   }
 
   if (selectedConcept === "mcp-vs-cli") {
