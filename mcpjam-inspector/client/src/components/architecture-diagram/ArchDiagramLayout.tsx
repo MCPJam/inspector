@@ -35,6 +35,10 @@ interface ArchDiagramLayoutProps {
   onNodeStepClick?: (stepId: string) => void;
   /** Callback when user clicks an edge in the diagram */
   onEdgeStepClick?: (stepId: string) => void;
+  /** When false, hides zoom/pan controls (e.g. passive inline diagrams). */
+  showControls?: boolean;
+  /** When false, disables pan/zoom so the canvas is view-only. */
+  interactiveViewport?: boolean;
 }
 
 export const ArchDiagramLayout = ({
@@ -44,6 +48,8 @@ export const ArchDiagramLayout = ({
   stepHighlights,
   onNodeStepClick,
   onEdgeStepClick,
+  showControls = true,
+  interactiveViewport = true,
 }: ArchDiagramLayoutProps) => {
   const reactFlowInstance = useReactFlow();
 
@@ -102,17 +108,19 @@ export const ArchDiagramLayout = ({
         nodesDraggable={false}
         nodesConnectable={false}
         elementsSelectable={false}
+        nodesFocusable={interactiveViewport}
+        edgesFocusable={interactiveViewport}
         onNodeClick={handleNodeClick}
         onEdgeClick={handleEdgeClick}
-        panOnScroll={true}
-        zoomOnScroll={true}
-        zoomOnPinch={true}
-        panOnDrag={true}
+        panOnScroll={interactiveViewport}
+        zoomOnScroll={interactiveViewport}
+        zoomOnPinch={interactiveViewport}
+        panOnDrag={interactiveViewport}
         fitView
         fitViewOptions={{ padding: 0.3 }}
       >
         <Background />
-        <Controls showInteractive={false} />
+        {showControls ? <Controls showInteractive={false} /> : null}
       </ReactFlow>
     </div>
   );

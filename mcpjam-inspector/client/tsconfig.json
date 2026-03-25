@@ -19,7 +19,8 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["./src/*"],
-      "@/shared/*": ["../shared/*"]
+      "@/shared/*": ["../shared/*"],
+      "@repo/assets/*": ["../assets/*"]
     }
   },
   "include": ["src", "../shared/**/*.ts"],

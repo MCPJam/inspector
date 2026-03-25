@@ -99,9 +99,9 @@ describe("EditServerFormContent hosted mode", () => {
       within(menu).getAllByTitle(HOSTED_LOCAL_ONLY_TOOLTIP)[0],
     );
     await waitFor(() => {
-      expect(screen.getAllByText(HOSTED_LOCAL_ONLY_TOOLTIP).length).toBeGreaterThan(
-        0,
-      );
+      expect(
+        screen.getAllByText(HOSTED_LOCAL_ONLY_TOOLTIP).length,
+      ).toBeGreaterThan(0);
     });
   });
 

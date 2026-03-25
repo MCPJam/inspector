@@ -55,6 +55,8 @@ export interface ArchEdgeData extends Record<string, unknown> {
   label?: string;
   status: ArchNodeStatus;
   pathType?: "smoothstep" | "bezier" | "straight";
+  /** When false, edge labels are non-interactive (e.g. passive embedded diagrams). */
+  interactiveLabels?: boolean;
 }
 
 /** Data-driven architecture node definition */
@@ -94,6 +96,10 @@ export interface ArchEdgeDef {
   pathType?: "smoothstep" | "bezier" | "straight";
   /** Render arrows on both ends */
   bidirectional?: boolean;
+  /** Dash-draw animation along the edge (React Flow built-in `.animated` styling). */
+  animated?: boolean;
+  /** Default true. Set false for view-only diagrams so edges are not clickable. */
+  interactiveLabels?: boolean;
 }
 
 /** Complete architecture diagram scenario */

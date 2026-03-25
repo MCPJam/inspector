@@ -38,6 +38,7 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       alias: {
+        "@repo/assets": path.resolve(rootDir, "assets"),
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
         // Force React resolution to prevent conflicts with @mcp-ui/client

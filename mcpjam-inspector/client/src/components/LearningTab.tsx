@@ -24,6 +24,8 @@ import {
 } from "@/components/mcp-apps/mcp-apps-guide-data";
 import { useWalkthrough } from "@/hooks/use-walkthrough";
 import { WalkthroughShell } from "@/components/walkthrough/WalkthroughShell";
+import { ArticleShell } from "@/components/learning-article/ArticleShell";
+import { WhyMcpArticle } from "@/components/why-mcp/WhyMcpArticle";
 
 /**
  * Sentinel value used as `currentStep` when the lifecycle walkthrough is at step 0.
@@ -225,6 +227,18 @@ function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
 
 export function LearningTab() {
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
+
+  if (selectedConcept === "why-mcp") {
+    return (
+      <ArticleShell
+        title="Why MCP?"
+        badge="Concepts"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <WhyMcpArticle />
+      </ArticleShell>
+    );
+  }
 
   if (selectedConcept === "what-is-mcp") {
     return <WhatIsMcpWalkthrough onBack={() => setSelectedConcept(null)} />;

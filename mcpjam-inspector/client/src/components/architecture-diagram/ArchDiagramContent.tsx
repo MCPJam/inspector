@@ -17,6 +17,8 @@ interface ArchDiagramContentProps {
   onNodeStepClick?: (stepId: string) => void;
   onEdgeStepClick?: (stepId: string) => void;
   layoutOptions?: LayoutOptions;
+  showControls?: boolean;
+  interactiveViewport?: boolean;
 }
 
 const DiagramContent = memo(
@@ -29,6 +31,8 @@ const DiagramContent = memo(
     onNodeStepClick,
     onEdgeStepClick,
     layoutOptions,
+    showControls,
+    interactiveViewport,
   }: ArchDiagramContentProps) => {
     const { nodes, edges } = useMemo(
       () =>
@@ -58,6 +62,8 @@ const DiagramContent = memo(
         stepHighlights={stepHighlights}
         onNodeStepClick={onNodeStepClick}
         onEdgeStepClick={onEdgeStepClick}
+        showControls={showControls}
+        interactiveViewport={interactiveViewport}
       />
     );
   },
