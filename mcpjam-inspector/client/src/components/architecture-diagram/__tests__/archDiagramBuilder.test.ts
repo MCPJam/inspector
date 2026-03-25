@@ -77,4 +77,46 @@ describe("buildArchNodesAndEdges", () => {
     const n = nodes[0] as { data: { compact: boolean } };
     expect(n.data.compact).toBe(true);
   });
+
+  it("sets animated, selectable, and interactionWidth from edge def flags", () => {
+    const { edges } = buildArchNodesAndEdges({
+      nodes: [
+        {
+          id: "a",
+          label: "A",
+          type: "block",
+          color: "#000",
+          position: { x: 0, y: 0 },
+        },
+        {
+          id: "b",
+          label: "B",
+          type: "block",
+          color: "#000",
+          position: { x: 200, y: 0 },
+        },
+      ],
+      edges: [
+        {
+          id: "e1",
+          source: "a",
+          target: "b",
+          animated: true,
+          interactiveLabels: false,
+        },
+      ],
+    });
+
+    expect(edges).toHaveLength(1);
+    const e = edges[0] as {
+      animated: boolean;
+      selectable: boolean;
+      interactionWidth: number | undefined;
+      data: { interactiveLabels: boolean };
+    };
+    expect(e.animated).toBe(true);
+    expect(e.selectable).toBe(false);
+    expect(e.interactionWidth).toBe(0);
+    expect(e.data.interactiveLabels).toBe(false);
+  });
 });

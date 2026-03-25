@@ -49,6 +49,7 @@ export const ArchConnectionEdge = memo(
 
     const stroke = statusColor[data.status] ?? statusColor.neutral;
     const pathType = data.pathType ?? "smoothstep";
+    const labelInteractive = data.interactiveLabels !== false;
     const getPath = pathFunctions[pathType] ?? getSmoothStepPath;
 
     const pathParams = {
@@ -85,14 +86,16 @@ export const ArchConnectionEdge = memo(
               style={{
                 position: "absolute",
                 transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-                pointerEvents: "all",
+                pointerEvents: labelInteractive ? "all" : "none",
                 zIndex: 10,
               }}
             >
               <div
                 className={cn(
                   "px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap",
-                  "cursor-pointer backdrop-blur-sm transition-all duration-200 hover:scale-[1.02]",
+                  "backdrop-blur-sm transition-all duration-200",
+                  labelInteractive &&
+                    "cursor-pointer hover:scale-[1.02]",
                   labelStyles[data.status],
                 )}
               >
