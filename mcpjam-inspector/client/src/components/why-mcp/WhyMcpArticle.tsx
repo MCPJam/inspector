@@ -1,6 +1,10 @@
 import { Lightbulb, Info, Zap } from "lucide-react";
 import { motion } from "framer-motion";
+import { WhyMcpConnectedDiagram } from "./WhyMcpConnectedDiagram";
+import { WhyMcpGovernanceDiagram } from "./WhyMcpGovernanceDiagram";
+import { WhyMcpNxMDiagram } from "./WhyMcpNxMDiagram";
 import { WhyMcpProblemDiagram } from "./WhyMcpProblemDiagram";
+import { WhyMcpToolCallingDiagram } from "./WhyMcpToolCallingDiagram";
 
 // ---------------------------------------------------------------------------
 // Animation helpers (same pattern as WhatIsMcpGuide)
@@ -103,20 +107,6 @@ function Tip({ children }: { children: React.ReactNode }) {
   );
 }
 
-function CodeBlock({ children }: { children: string }) {
-  return (
-    <motion.div {...sectionChild(5)}>
-      <pre className="rounded-lg border border-border bg-muted/30 p-4 text-[12px] font-mono text-foreground/70 leading-relaxed overflow-x-auto whitespace-pre">
-        {children}
-      </pre>
-    </motion.div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Section wrapper
-// ---------------------------------------------------------------------------
-
 function Section({
   category,
   step,
@@ -210,7 +200,7 @@ export function WhyMcpArticle() {
           Large Language Models are remarkably capable — they can reason, write
           code, analyze data, and hold nuanced conversations. But out of the
           box, they're trapped inside a text-in, text-out loop. They can't
-          check your database, file a Jira ticket, query your monitoring
+          check your database, file an Asana task, query your monitoring
           dashboard, or deploy your code. They can only talk{" "}
           <em>about</em> doing those things.
         </motion.p>
@@ -260,14 +250,9 @@ export function WhyMcpArticle() {
           ]}
         />
 
-        <CodeBlock>{`Without tools:
-  User: "What's the status of order #4521?"
-  Model: "I don't have access to your order system. You'd need to check..."
-
-With tools:
-  User: "What's the status of order #4521?"
-  Model: [calls get_order_status(order_id="4521")]
-       → "Order #4521 shipped yesterday, tracking number XYZ."`}</CodeBlock>
+        <motion.div className="space-y-2" {...sectionChild(5)}>
+          <WhyMcpToolCallingDiagram />
+        </motion.div>
 
         <Tip>
           This is the foundation that makes AI agents possible. An agent is just
@@ -293,6 +278,14 @@ With tools:
           arise: <strong>What should this agent be allowed to do?</strong> And{" "}
           <strong>how do you know what it did?</strong>
         </motion.p>
+
+        <motion.div className="space-y-2" {...sectionChild(3)}>
+          <WhyMcpGovernanceDiagram />
+          <p className="text-center text-[12px] text-muted-foreground/80 leading-relaxed">
+            Nothing reaches your systems unless policy allows it — scoped, logged,
+            and revocable on every path.
+          </p>
+        </motion.div>
 
         <KeyDetails
           items={[
@@ -320,43 +313,14 @@ With tools:
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
         >
-          Without standardization, integrating AI with external tools creates
-          exponential complexity. Supporting <strong>N</strong> different tools
-          across <strong>M</strong> AI platforms requires{" "}
-          <strong>N × M</strong> separate integrations — each with its own
-          API dialect, authentication scheme, and error handling. Every new tool
-          or platform multiplies the maintenance burden.
+          No shared standard means <strong>N × M</strong> integrations—one
+          custom link per platform–tool pair—and that cost explodes as{" "}
+          <strong>N</strong> or <strong>M</strong> grows.
         </motion.p>
 
-        <CodeBlock>{`Without MCP (N×M integrations):
-
-  Claude ──── GitHub adapter
-  Claude ──── Slack adapter
-  Claude ──── Jira adapter
-  GPT ─────── GitHub adapter (different!)
-  GPT ─────── Slack adapter (different!)
-  GPT ─────── Jira adapter (different!)
-
-With MCP (N+M integrations):
-
-  Claude ─┐
-  GPT ────┤── MCP Protocol ──┬── GitHub MCP Server
-  Gemini ─┘                  ├── Slack MCP Server
-                             └── Jira MCP Server`}</CodeBlock>
-
-        <AnalogyCallout>
-          Before USB-C, every device had its own charger, its own cable, its own
-          connector. Every new device or accessory multiplied the mess. USB-C
-          standardized the interface so one cable works everywhere.
-        </AnalogyCallout>
-
-        <KeyDetails
-          items={[
-            "3 platforms × 3 tools = 9 custom adapters. Imagine 20 platforms × 50 tools = 1,000 integrations.",
-            "Each integration has its own API dialect, authentication scheme, and error handling.",
-            "Every new tool or platform doesn't just add work — it multiplies it.",
-          ]}
-        />
+        <motion.div {...sectionChild(3)}>
+          <WhyMcpNxMDiagram />
+        </motion.div>
       </Section>
 
       {/* ----------------------------------------------------------------- */}
@@ -386,54 +350,6 @@ With MCP (N+M integrations):
             "Three components: MCP Host (the AI application), MCP Client (protocol bridge), MCP Server (tool wrapper).",
           ]}
         />
-
-        <motion.div {...sectionChild(5)}>
-          <div className="rounded-lg border border-border bg-muted/30 p-4">
-            <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-3">
-              Architecture
-            </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-[12px]">
-                <thead>
-                  <tr className="border-b border-border/50">
-                    <th className="text-left py-2 pr-4 font-semibold text-foreground/80">
-                      Component
-                    </th>
-                    <th className="text-left py-2 pr-4 font-semibold text-foreground/80">
-                      Role
-                    </th>
-                    <th className="text-left py-2 font-semibold text-foreground/80">
-                      Examples
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="text-foreground/70">
-                  <tr className="border-b border-border/30">
-                    <td className="py-2 pr-4 font-medium">MCP Host</td>
-                    <td className="py-2 pr-4">
-                      The AI application receiving user requests
-                    </td>
-                    <td className="py-2">Claude Desktop, an IDE, a custom agent</td>
-                  </tr>
-                  <tr className="border-b border-border/30">
-                    <td className="py-2 pr-4 font-medium">MCP Client</td>
-                    <td className="py-2 pr-4">
-                      Maintains connection to a server, handles protocol
-                    </td>
-                    <td className="py-2">Built into the host application</td>
-                  </tr>
-                  <tr>
-                    <td className="py-2 pr-4 font-medium">MCP Server</td>
-                    <td className="py-2 pr-4">
-                      Exposes capabilities from an external service
-                    </td>
-                    <td className="py-2">GitHub, Slack, database servers</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </motion.div>
       </Section>
 
       {/* ----------------------------------------------------------------- */}
@@ -483,6 +399,14 @@ With MCP (N+M integrations):
             "CLI, APIs, and Skills remain valuable — MCP complements them by solving the governance and interoperability problems they weren't designed to address.",
           ]}
         />
+
+        <motion.div className="space-y-2" {...sectionChild(5)}>
+          <WhyMcpConnectedDiagram />
+          <p className="text-center text-[12px] text-muted-foreground/80 leading-relaxed">
+            With MCP, the same model reaches real systems through a governed,
+            standardized bridge.
+          </p>
+        </motion.div>
 
         <motion.p
           className="text-sm text-foreground/70 leading-relaxed font-medium italic"
