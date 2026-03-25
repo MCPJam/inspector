@@ -89,6 +89,7 @@ export const ArchConnectionEdge = memo(
                 position: "absolute",
                 transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
                 pointerEvents: "all",
+                zIndex: 10,
               }}
             >
               <div
