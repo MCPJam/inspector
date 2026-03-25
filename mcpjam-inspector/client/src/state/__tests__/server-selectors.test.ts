@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { ServerWithName } from "../app-types";
 import {
   getRuntimeServersBySurface,
+  getWorkspaceVisibleConnectedOrConnectingServers,
   getWorkspaceVisibleConnectedServerNames,
   getWorkspaceVisibleServers,
 } from "../server-selectors";
@@ -26,6 +27,9 @@ describe("server-selectors", () => {
   it("excludes learning runtime servers from workspace-visible collections", () => {
     const servers = {
       workspace: createServer("workspace", { connectionStatus: "connected" }),
+      connecting: createServer("connecting", {
+        connectionStatus: "connecting",
+      }),
       __learning__: createServer("__learning__", {
         connectionStatus: "connected",
         surface: "learning",
@@ -34,6 +38,13 @@ describe("server-selectors", () => {
 
     expect(Object.keys(getWorkspaceVisibleServers(servers))).toEqual([
       "workspace",
+      "connecting",
+    ]);
+    expect(
+      Object.keys(getWorkspaceVisibleConnectedOrConnectingServers(servers)),
+    ).toEqual([
+      "workspace",
+      "connecting",
     ]);
     expect(getWorkspaceVisibleConnectedServerNames(servers)).toEqual([
       "workspace",

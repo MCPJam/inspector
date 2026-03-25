@@ -23,11 +23,11 @@ export function AppStateProvider({
   children,
 }: {
   appState: AppState;
-  runtimeApi?: AppRuntimeContextValue;
+  runtimeApi: AppRuntimeContextValue;
   children: React.ReactNode;
 }) {
   return (
-    <AppRuntimeContext.Provider value={runtimeApi ?? null}>
+    <AppRuntimeContext.Provider value={runtimeApi}>
       <AppStateContext.Provider value={appState}>
         {children}
       </AppStateContext.Provider>

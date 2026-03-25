@@ -131,7 +131,8 @@ export async function testRuntimeServerConnection(
   serverId: string,
 ) {
   if (HOSTED_MODE) {
-    void serverId;
+    // Hosted runtime learning servers validate by explicit config instead of
+    // workspace server id because they are runtime-only and not persisted.
     return safeValidateHostedServerConfig(serverConfig);
   }
 
@@ -140,7 +141,7 @@ export async function testRuntimeServerConnection(
 
 export async function deleteServer(serverId: string) {
   if (HOSTED_MODE) {
-    void serverId;
+    // Hosted mode does not keep per-tab local proxy server processes to tear down.
     return { success: true };
   }
 
@@ -187,7 +188,8 @@ export async function reconnectRuntimeServer(
   serverConfig: MCPServerConfig,
 ) {
   if (HOSTED_MODE) {
-    void serverId;
+    // Hosted runtime learning servers validate by explicit config instead of
+    // workspace server id because they are runtime-only and not persisted.
     return safeValidateHostedServerConfig(serverConfig);
   }
 

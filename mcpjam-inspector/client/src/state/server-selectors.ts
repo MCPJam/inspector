@@ -16,11 +16,13 @@ export function getWorkspaceVisibleServers(
   servers: Record<string, ServerWithName>,
 ): Record<string, ServerWithName> {
   return Object.fromEntries(
-    Object.entries(servers).filter(([, server]) => isWorkspaceVisibleServer(server)),
+    Object.entries(servers).filter(([, server]) =>
+      isWorkspaceVisibleServer(server),
+    ),
   );
 }
 
-export function getWorkspaceVisibleConnectedServers(
+export function getWorkspaceVisibleConnectedOrConnectingServers(
   servers: Record<string, ServerWithName>,
 ): Record<string, ServerWithName> {
   return Object.fromEntries(

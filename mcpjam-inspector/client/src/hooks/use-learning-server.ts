@@ -71,6 +71,8 @@ export function useLearningServer({
 
   const reconnect = useCallback(async () => {
     if (serverEntry?.connectionStatus === "connected") {
+      // Runtime connect internally upgrades to RECONNECT_REQUEST when the
+      // hidden learning server is already connected, so callers can use one API.
       await connect();
       return;
     }

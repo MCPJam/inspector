@@ -3,19 +3,14 @@ import {
   AppState,
   ConnectionStatus,
   ServerWithName,
-  Workspace,
-  type ServerSurface,
 } from "./app-types";
+import { getServerSurface } from "./server-selectors";
 
 const setStatus = (
   server: ServerWithName,
   status: ConnectionStatus,
   patch: Partial<ServerWithName> = {},
 ): ServerWithName => ({ ...server, connectionStatus: status, ...patch });
-
-function getServerSurface(server: ServerWithName | undefined): ServerSurface {
-  return server?.surface ?? "workspace";
-}
 
 function shouldPersistToWorkspace(server: ServerWithName | undefined): boolean {
   return getServerSurface(server) === "workspace";

@@ -42,7 +42,7 @@ import {
 } from "@/lib/client-config";
 import {
   getWorkspaceVisibleConnectedServerNames,
-  getWorkspaceVisibleConnectedServers,
+  getWorkspaceVisibleConnectedOrConnectingServers,
 } from "@/state/server-selectors";
 
 /**
@@ -1830,7 +1830,7 @@ export function useServerState({
     effectiveServers,
     workspaceServers: effectiveServers,
     connectedOrConnectingServerConfigs:
-      getWorkspaceVisibleConnectedServers(effectiveServers),
+      getWorkspaceVisibleConnectedOrConnectingServers(effectiveServers),
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
     selectedMCPConfigs: appState.selectedMultipleServers

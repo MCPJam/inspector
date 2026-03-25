@@ -519,6 +519,8 @@ export default function App() {
     [appState.servers],
   );
   // Keep direct guest requests working with both workspace and runtime servers.
+  // Hosted API context needs both persisted workspace servers and runtime-only
+  // learning servers available by name for ad hoc explicit-config requests.
   const hostedServerConfigs = useMemo(
     () =>
       Object.fromEntries(
