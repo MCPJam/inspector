@@ -172,7 +172,7 @@ describe("MCPClientManager", () => {
         });
 
         expect(authManager.getConnectionStatus("http-server-auth")).toBe(
-          "connected",
+          "connected"
         );
         expect(authManager.getServerReplayConfigs()).toEqual([
           {
@@ -389,7 +389,7 @@ describe("MCPClientManager", () => {
           defaultCapabilities: {
             sampling: {},
           } as any,
-        },
+        }
       );
 
       try {
@@ -404,7 +404,7 @@ describe("MCPClientManager", () => {
         });
 
         const info = managerWithDefaults.getInitializationInfo(
-          "manager-default-caps-test",
+          "manager-default-caps-test"
         );
         expect(info).toBeDefined();
         expect(info!.clientCapabilities).toMatchObject({
@@ -415,9 +415,11 @@ describe("MCPClientManager", () => {
           elicitation: {},
         });
         expect(
-          ((info!.clientCapabilities as Record<string, unknown>).extensions as
-            | Record<string, unknown>
-            | undefined)?.["io.modelcontextprotocol/ui"],
+          (
+            (info!.clientCapabilities as Record<string, unknown>).extensions as
+              | Record<string, unknown>
+              | undefined
+          )?.["io.modelcontextprotocol/ui"]
         ).toEqual({
           mimeTypes: ["text/html;profile=mcp-app"],
         });
@@ -456,9 +458,11 @@ describe("MCPClientManager", () => {
         },
       });
       expect(
-        ((info!.clientCapabilities as Record<string, unknown>).extensions as
-          | Record<string, unknown>
-          | undefined)?.["io.modelcontextprotocol/ui"],
+        (
+          (info!.clientCapabilities as Record<string, unknown>).extensions as
+            | Record<string, unknown>
+            | undefined
+        )?.["io.modelcontextprotocol/ui"]
       ).toBeUndefined();
 
       await manager.disconnectServer("custom-caps-test");

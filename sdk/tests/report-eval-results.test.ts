@@ -455,7 +455,9 @@ describe("reportEvalResults", () => {
   });
 
   it("wraps reporting failures in EvalReportingError and captures once", async () => {
-    const fetchMock = jest.fn().mockResolvedValue(errorResponse(404, "Not Found"));
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValue(errorResponse(404, "Not Found"));
     global.fetch = fetchMock as any;
 
     await expect(

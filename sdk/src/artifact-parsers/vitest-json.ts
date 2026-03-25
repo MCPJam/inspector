@@ -92,9 +92,7 @@ export function parseVitestJsonArtifact(
       for (const assertion of assertions) {
         const status = assertion.status ?? "failed";
         const isSkipped =
-          status === "skipped" ||
-          status === "pending" ||
-          status === "todo";
+          status === "skipped" || status === "pending" || status === "todo";
         if (isSkipped) {
           continue;
         }

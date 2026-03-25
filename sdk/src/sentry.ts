@@ -66,10 +66,10 @@ function normalizeError(error: unknown): Error {
 function isMissingOptionalDependency(error: unknown): boolean {
   return (
     error instanceof Error &&
-    ("code" in error &&
-      ["ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"].includes(
-        (error as Error & { code?: string }).code ?? ""
-      )) &&
+    "code" in error &&
+    ["ERR_MODULE_NOT_FOUND", "MODULE_NOT_FOUND"].includes(
+      (error as Error & { code?: string }).code ?? ""
+    ) &&
     error.message.includes("@sentry/node")
   );
 }
@@ -96,7 +96,9 @@ function hasCapturedError(error: unknown): boolean {
       return true;
     }
     current =
-      "cause" in current ? (current as Error & { cause?: unknown }).cause : null;
+      "cause" in current
+        ? (current as Error & { cause?: unknown }).cause
+        : null;
   }
 
   return false;
@@ -123,7 +125,9 @@ function findEvalReportingError(error: unknown): EvalReportingError | null {
       return current;
     }
     current =
-      "cause" in current ? (current as Error & { cause?: unknown }).cause : null;
+      "cause" in current
+        ? (current as Error & { cause?: unknown }).cause
+        : null;
   }
 
   return null;

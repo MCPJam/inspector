@@ -154,7 +154,7 @@ export class MCPClientManager {
     this.defaultClientName = options.defaultClientName;
     this.defaultCapabilities = mergeClientCapabilities(
       getDefaultClientCapabilities(),
-      options.defaultCapabilities,
+      options.defaultCapabilities
     );
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
@@ -201,9 +201,7 @@ export class MCPClientManager {
    */
   getServerReplayConfigs(): MCPServerReplayConfig[] {
     return Array.from(this.clientStates.entries())
-      .map(([serverId, state]) =>
-        this.buildServerReplayConfig(serverId, state)
-      )
+      .map(([serverId, state]) => this.buildServerReplayConfig(serverId, state))
       .filter(
         (config): config is MCPServerReplayConfig => config !== undefined
       );
@@ -1330,7 +1328,10 @@ export class MCPClientManager {
       return accessToken;
     }
 
-    if (!config.requestInit || !this.hasReplayableRequestInit(config.requestInit)) {
+    if (
+      !config.requestInit ||
+      !this.hasReplayableRequestInit(config.requestInit)
+    ) {
       return undefined;
     }
 
@@ -1420,7 +1421,10 @@ export class MCPClientManager {
       return normalizeClientCapabilities(config.clientCapabilities);
     }
 
-    return mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
+    return mergeClientCapabilities(
+      this.defaultCapabilities,
+      config.capabilities
+    );
   }
 
   private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {

@@ -14,7 +14,7 @@ describe("browser entrypoint", () => {
         extensions: {
           [ui]: { extra: true },
         },
-      } as any,
+      } as any
     );
 
     const extensions = (merged as Record<string, unknown>).extensions as Record<
@@ -31,7 +31,7 @@ describe("browser entrypoint", () => {
   it("treats explicit empty extensions object as a full clear", () => {
     const merged = browser.mergeClientCapabilities(
       browser.getDefaultClientCapabilities(),
-      { extensions: {} } as any,
+      { extensions: {} } as any
     );
     expect((merged as Record<string, unknown>).extensions).toEqual({});
   });
@@ -47,7 +47,7 @@ describe("browser entrypoint", () => {
       },
     });
     expect(
-      (browser as Record<string, unknown>).MCPClientManager,
+      (browser as Record<string, unknown>).MCPClientManager
     ).toBeUndefined();
   });
 });

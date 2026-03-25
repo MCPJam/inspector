@@ -126,7 +126,11 @@ describe("createEvalRunReporter", () => {
       ],
     });
 
-    reporter.add({ caseTitle: "case-1", passed: true, trace: "x".repeat(1024 * 1024) });
+    reporter.add({
+      caseTitle: "case-1",
+      passed: true,
+      trace: "x".repeat(1024 * 1024),
+    });
     await reporter.flush();
     await reporter.finalize();
 
@@ -496,7 +500,9 @@ describe("createEvalRunReporter", () => {
             result: "pending",
           })
         )
-        .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+        .mockResolvedValueOnce(
+          okResponse({ inserted: 1, skipped: 0, total: 1 })
+        )
         .mockResolvedValueOnce({
           ok: false,
           status: 404,

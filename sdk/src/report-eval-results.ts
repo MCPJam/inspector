@@ -46,17 +46,23 @@ type EvalArtifactUploadUrlResponse = {
   uploadUrl: string;
 };
 
-function resolveApiKey(input: Pick<ReportEvalResultsInput, "apiKey">): string | undefined {
+function resolveApiKey(
+  input: Pick<ReportEvalResultsInput, "apiKey">
+): string | undefined {
   return input.apiKey ?? process.env.MCPJAM_API_KEY;
 }
 
-function resolveBaseUrl(input: Pick<ReportEvalResultsInput, "baseUrl">): string {
+function resolveBaseUrl(
+  input: Pick<ReportEvalResultsInput, "baseUrl">
+): string {
   return trimTrailingSlash(
     input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
   );
 }
 
-function getResultCount(results: ReportEvalResultsInput["results"]): number | undefined {
+function getResultCount(
+  results: ReportEvalResultsInput["results"]
+): number | undefined {
   return Array.isArray(results) ? results.length : undefined;
 }
 
