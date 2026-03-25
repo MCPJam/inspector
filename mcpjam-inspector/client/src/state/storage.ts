@@ -22,6 +22,7 @@ function reviveServer(server: any): ServerWithName {
   return {
     ...server,
     config: nextCfg,
+    surface: server.surface === "learning" ? "learning" : "workspace",
     connectionStatus: server.connectionStatus || "disconnected",
     retryCount: server.retryCount || 0,
     lastConnectionTime: server.lastConnectionTime
@@ -29,6 +30,10 @@ function reviveServer(server: any): ServerWithName {
       : new Date(),
     enabled: server.enabled !== false,
   } as ServerWithName;
+}
+
+function shouldPersistServer(server: ServerWithName): boolean {
+  return server.surface !== "learning";
 }
 
 export function loadAppState(): AppState {
@@ -53,9 +58,12 @@ export function loadAppState(): AppState {
                   ? workspace.clientConfig
                   : undefined,
                 servers: Object.fromEntries(
-                  Object.entries(workspace.servers || {}).map(
-                    ([name, server]) => [name, reviveServer(server)],
-                  ),
+                  Object.entries(workspace.servers || {})
+                    .map(
+                      ([name, server]) =>
+                        [name, reviveServer(server)] as const,
+                    )
+                    .filter(([, server]) => shouldPersistServer(server)),
                 ),
                 createdAt: new Date(workspace.createdAt),
                 updatedAt: new Date(workspace.updatedAt),
@@ -77,10 +85,9 @@ export function loadAppState(): AppState {
         try {
           const parsed = JSON.parse(raw);
           migratedServers = Object.fromEntries(
-            Object.entries(parsed.servers || {}).map(([name, server]) => [
-              name,
-              reviveServer(server),
-            ]),
+            Object.entries(parsed.servers || {})
+              .map(([name, server]) => [name, reviveServer(server)] as const)
+              .filter(([, server]) => shouldPersistServer(server)),
           );
         } catch (e) {
           console.error("Failed to migrate old state", e);
@@ -129,14 +136,16 @@ export function saveAppState(state: AppState) {
           {
             ...workspace,
             servers: Object.fromEntries(
-              Object.entries(workspace.servers).map(([name, server]) => {
-                const cfg: any = server.config;
-                const serializedConfig =
-                  cfg && cfg.url instanceof URL
-                    ? { ...cfg, url: cfg.url.toString() }
-                    : cfg;
-                return [name, { ...server, config: serializedConfig }];
-              }),
+              Object.entries(workspace.servers)
+                .filter(([, server]) => shouldPersistServer(server))
+                .map(([name, server]) => {
+                  const cfg: any = server.config;
+                  const serializedConfig =
+                    cfg && cfg.url instanceof URL
+                      ? { ...cfg, url: cfg.url.toString() }
+                      : cfg;
+                  return [name, { ...server, config: serializedConfig }];
+                }),
             ),
           },
         ]),
@@ -153,14 +162,16 @@ export function saveAppState(state: AppState) {
       selectedMultipleServers: state.selectedMultipleServers,
       isMultiSelectMode: state.isMultiSelectMode,
       servers: Object.fromEntries(
-        Object.entries(state.servers).map(([name, server]) => {
+        Object.entries(state.servers)
+          .filter(([, server]) => shouldPersistServer(server))
+          .map(([name, server]) => {
           const cfg: any = server.config;
           const serializedConfig =
             cfg && cfg.url instanceof URL
               ? { ...cfg, url: cfg.url.toString() }
               : cfg;
           return [name, { ...server, config: serializedConfig }];
-        }),
+          }),
       ),
     };
     localStorage.setItem(STORAGE_KEY, JSON.stringify(serializable));

@@ -4,6 +4,7 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   validateHostedServer,
+  validateHostedServerConfig,
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 
@@ -62,6 +63,22 @@ async function safeValidateHostedServer(
   }
 }
 
+async function safeValidateHostedServerConfig(
+  serverConfig: MCPServerConfig,
+): Promise<HostedServerValidateResponse & { error?: string }> {
+  try {
+    return await validateHostedServerConfig(
+      serverConfig,
+      serverConfig.capabilities as Record<string, unknown> | undefined,
+    );
+  } catch (error) {
+    return {
+      success: false,
+      error: normalizeHostedValidationError(error),
+    };
+  }
+}
+
 // Helper to add timeout to authFetch requests
 async function authFetchWithTimeout(
   url: string,
@@ -109,6 +126,18 @@ export async function testConnection(
   return res.json();
 }
 
+export async function testRuntimeServerConnection(
+  serverConfig: MCPServerConfig,
+  serverId: string,
+) {
+  if (HOSTED_MODE) {
+    void serverId;
+    return safeValidateHostedServerConfig(serverConfig);
+  }
+
+  return testConnection(serverConfig, serverId);
+}
+
 export async function deleteServer(serverId: string) {
   if (HOSTED_MODE) {
     void serverId;
@@ -151,6 +180,18 @@ export async function reconnectServer(
     20000, // 20 second timeout
   );
   return res.json();
+}
+
+export async function reconnectRuntimeServer(
+  serverId: string,
+  serverConfig: MCPServerConfig,
+) {
+  if (HOSTED_MODE) {
+    void serverId;
+    return safeValidateHostedServerConfig(serverConfig);
+  }
+
+  return reconnectServer(serverId, serverConfig);
 }
 
 export async function getInitializationInfo(serverId: string) {

@@ -10,6 +10,8 @@ export type ConnectionStatus =
   | "disconnected"
   | "oauth-flow";
 
+export type ServerSurface = "workspace" | "learning";
+
 export type WorkspaceVisibility = "public" | "private";
 
 export interface InitializationInfo {
@@ -34,6 +36,7 @@ export interface InitializationInfo {
 export interface ServerWithName {
   name: string;
   config: MCPServerConfig;
+  surface?: ServerSurface;
   oauthTokens?: OauthTokens;
   oauthFlowProfile?: OAuthTestProfile;
   initializationInfo?: InitializationInfo;
@@ -80,16 +83,23 @@ export type AppAction =
       type: "CONNECT_REQUEST";
       name: string;
       config: MCPServerConfig;
+      surface?: ServerSurface;
       select?: boolean;
     }
   | {
       type: "CONNECT_SUCCESS";
       name: string;
       config: MCPServerConfig;
+      surface?: ServerSurface;
       tokens?: OauthTokens;
     }
   | { type: "CONNECT_FAILURE"; name: string; error: string }
-  | { type: "RECONNECT_REQUEST"; name: string; config: MCPServerConfig }
+  | {
+      type: "RECONNECT_REQUEST";
+      name: string;
+      config: MCPServerConfig;
+      surface?: ServerSurface;
+    }
   | { type: "DISCONNECT"; name: string; error?: string }
   | { type: "REMOVE_SERVER"; name: string }
   | { type: "SYNC_AGENT_STATUS"; servers: AgentServerInfo[] }

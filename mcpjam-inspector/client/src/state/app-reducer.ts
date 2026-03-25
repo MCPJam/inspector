@@ -4,6 +4,7 @@ import {
   ConnectionStatus,
   ServerWithName,
   Workspace,
+  type ServerSurface,
 } from "./app-types";
 
 const setStatus = (
@@ -11,6 +12,14 @@ const setStatus = (
   status: ConnectionStatus,
   patch: Partial<ServerWithName> = {},
 ): ServerWithName => ({ ...server, connectionStatus: status, ...patch });
+
+function getServerSurface(server: ServerWithName | undefined): ServerSurface {
+  return server?.surface ?? "workspace";
+}
+
+function shouldPersistToWorkspace(server: ServerWithName | undefined): boolean {
+  return getServerSurface(server) === "workspace";
+}
 
 export function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
@@ -30,6 +39,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         : ({
             name: action.name,
             config: action.config,
+            surface: action.surface ?? "workspace",
             lastConnectionTime: new Date(),
             connectionStatus: "connecting",
             retryCount: 0,
@@ -55,6 +65,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const baseServer: ServerWithName = existing ?? {
         name: action.name,
         config: action.config,
+        surface: action.surface ?? "workspace",
         lastConnectionTime: new Date(),
         connectionStatus: "disconnected",
         retryCount: 0,
@@ -69,24 +80,30 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         enabled: true,
         // Track whether this server uses OAuth based on whether tokens were provided
         useOAuth: action.tokens != null,
+        surface: getServerSurface(existing ?? baseServer),
       });
+      const persistToWorkspace = shouldPersistToWorkspace(nextServer);
       return {
         ...state,
         servers: {
           ...state.servers,
           [action.name]: nextServer,
         },
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
-            servers: {
-              ...activeWorkspace.servers,
-              [action.name]: nextServer,
-            },
-            updatedAt: new Date(),
-          },
-        },
+        ...(persistToWorkspace
+          ? {
+              workspaces: {
+                ...state.workspaces,
+                [state.activeWorkspaceId]: {
+                  ...activeWorkspace,
+                  servers: {
+                    ...activeWorkspace.servers,
+                    [action.name]: nextServer,
+                  },
+                  updatedAt: new Date(),
+                },
+              },
+            }
+          : {}),
       };
     }
 
@@ -118,6 +135,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const baseServer: ServerWithName = existing ?? {
         name: action.name,
         config: action.config,
+        surface: action.surface ?? "workspace",
         lastConnectionTime: new Date(),
         connectionStatus: "disconnected",
         retryCount: 0,
@@ -158,10 +176,10 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "REMOVE_SERVER": {
+      const existing = state.servers[action.name];
+      const persistToWorkspace = shouldPersistToWorkspace(existing);
       const { [action.name]: _, ...rest } = state.servers;
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
-      const { [action.name]: __, ...restWorkspaceServers } =
-        activeWorkspace.servers;
       return {
         ...state,
         servers: rest,
@@ -170,14 +188,22 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         selectedMultipleServers: state.selectedMultipleServers.filter(
           (n) => n !== action.name,
         ),
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
-            servers: restWorkspaceServers,
-            updatedAt: new Date(),
-          },
-        },
+        ...(persistToWorkspace
+          ? {
+              workspaces: {
+                ...state.workspaces,
+                [state.activeWorkspaceId]: {
+                  ...activeWorkspace,
+                  servers: Object.fromEntries(
+                    Object.entries(activeWorkspace.servers).filter(
+                      ([name]) => name !== action.name,
+                    ),
+                  ),
+                  updatedAt: new Date(),
+                },
+              },
+            }
+          : {}),
       };
     }
 
@@ -223,23 +249,28 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         initializationInfo: action.initInfo,
       };
       const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const persistToWorkspace = shouldPersistToWorkspace(nextServer);
       return {
         ...state,
         servers: {
           ...state.servers,
           [action.name]: nextServer,
         },
-        workspaces: {
-          ...state.workspaces,
-          [state.activeWorkspaceId]: {
-            ...activeWorkspace,
-            servers: {
-              ...activeWorkspace.servers,
-              [action.name]: nextServer,
-            },
-            updatedAt: new Date(),
-          },
-        },
+        ...(persistToWorkspace
+          ? {
+              workspaces: {
+                ...state.workspaces,
+                [state.activeWorkspaceId]: {
+                  ...activeWorkspace,
+                  servers: {
+                    ...activeWorkspace.servers,
+                    [action.name]: nextServer,
+                  },
+                  updatedAt: new Date(),
+                },
+              },
+            }
+          : {}),
       };
     }
 

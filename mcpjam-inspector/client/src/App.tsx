@@ -114,6 +114,10 @@ import type {
   OrganizationEntitlements,
 } from "./hooks/useOrganizationBilling";
 import { useClientConfigStore } from "./stores/client-config-store";
+import {
+  getRuntimeServersBySurface,
+  getWorkspaceVisibleServers,
+} from "./state/server-selectors";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -347,7 +351,9 @@ export default function App() {
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
     handleConnect,
+    connectRuntimeServer,
     handleDisconnect,
+    disconnectRuntimeServer,
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
@@ -365,6 +371,7 @@ export default function App() {
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    getServerEntry,
     activeOrganizationId,
     setActiveOrganizationId,
   } = useAppState({
@@ -503,8 +510,16 @@ export default function App() {
       ),
     [hostedServerIdsByName, appState.servers],
   );
-  // Extract MCPServerConfig objects for guest mode (keyed by server name)
-  const guestServerConfigs = useMemo(
+  const workspaceVisibleServers = useMemo(
+    () => getWorkspaceVisibleServers(appState.servers),
+    [appState.servers],
+  );
+  const runtimeLearningServers = useMemo(
+    () => getRuntimeServersBySurface(appState.servers, "learning"),
+    [appState.servers],
+  );
+  // Keep direct guest requests working with both workspace and runtime servers.
+  const hostedServerConfigs = useMemo(
     () =>
       Object.fromEntries(
         Object.entries(appState.servers).map(([name, s]) => [name, s.config]),
@@ -520,6 +535,16 @@ export default function App() {
       ),
     [appState.servers],
   );
+  const runtimeServerConfigs = useMemo(
+    () =>
+      Object.fromEntries(
+        Object.entries(runtimeLearningServers).map(([name, server]) => [
+          name,
+          server.config,
+        ]),
+      ),
+    [runtimeLearningServers],
+  );
 
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
@@ -530,7 +555,8 @@ export default function App() {
     oauthTokensByServerId,
     guestOauthTokensByServerName,
     isAuthenticated,
-    serverConfigs: guestServerConfigs,
+    serverConfigs: hostedServerConfigs,
+    runtimeServerConfigs,
     enabled: !isHostedChatRoute,
   });
 
@@ -810,7 +836,7 @@ export default function App() {
       ? {
           serverConfigs:
             activeTab === "oauth-flow"
-              ? appState.servers
+              ? workspaceVisibleServers
               : activeTab === "views"
                 ? workspaceServers
                 : connectedOrConnectingServerConfigs,
@@ -963,7 +989,7 @@ export default function App() {
               }
             >
               <OAuthFlowTab
-                serverConfigs={appState.servers}
+                serverConfigs={workspaceVisibleServers}
                 selectedServerName={appState.selectedServer}
                 onSelectServer={setSelectedServer}
                 onSaveServerConfig={saveServerConfigWithoutConnecting}
@@ -1034,7 +1060,14 @@ export default function App() {
         activeWorkspaceId={activeWorkspaceId}
         savedClientConfig={activeWorkspace?.clientConfig}
       />
-      <AppStateProvider appState={effectiveAppState}>
+      <AppStateProvider
+        appState={effectiveAppState}
+        runtimeApi={{
+          connectRuntimeServer,
+          disconnectRuntimeServer,
+          getServerEntry,
+        }}
+      >
         <Toaster />
         <HostedShellGate
           state={

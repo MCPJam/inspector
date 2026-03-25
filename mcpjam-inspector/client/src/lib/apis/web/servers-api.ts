@@ -1,5 +1,8 @@
 import { webPost } from "./base";
-import { buildHostedServerRequest } from "./context";
+import {
+  buildHostedRuntimeServerRequest,
+  buildHostedServerRequest,
+} from "./context";
 
 export interface HostedServerValidateResponse {
   success: boolean;
@@ -36,6 +39,17 @@ export async function validateHostedServer(
   if (clientCapabilities) {
     request.clientCapabilities = clientCapabilities;
   }
+  return webPost<typeof request, HostedServerValidateResponse>(
+    "/api/web/servers/validate",
+    request,
+  );
+}
+
+export async function validateHostedServerConfig(
+  config: unknown,
+  clientCapabilities?: Record<string, unknown>,
+): Promise<HostedServerValidateResponse> {
+  const request = buildHostedRuntimeServerRequest(config, clientCapabilities);
   return webPost<typeof request, HostedServerValidateResponse>(
     "/api/web/servers/validate",
     request,

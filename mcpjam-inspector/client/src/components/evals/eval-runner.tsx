@@ -41,6 +41,7 @@ import type {
   ExpectedToolCall,
 } from "./eval-runner/types";
 import { useSharedAppState } from "@/state/app-state-context";
+import { getWorkspaceVisibleConnectedServers } from "@/state/server-selectors";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface EvalRunnerProps {
@@ -148,10 +149,7 @@ export function EvalRunner({
   );
 
   const connectedServers = useMemo(
-    () =>
-      Object.entries(appState.servers).filter(
-        ([, server]) => server.connectionStatus === "connected",
-      ),
+    () => Object.entries(getWorkspaceVisibleConnectedServers(appState.servers)),
     [appState.servers],
   );
 

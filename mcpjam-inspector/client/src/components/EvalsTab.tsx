@@ -22,6 +22,7 @@ import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
+import { getWorkspaceVisibleConnectedServerNames } from "@/state/server-selectors";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
@@ -58,12 +59,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
   // Get connected server names
   const connectedServerNames = useMemo(
-    () =>
-      new Set(
-        Object.entries(appState.servers)
-          .filter(([, server]) => server.connectionStatus === "connected")
-          .map(([name]) => name),
-      ),
+    () => new Set(getWorkspaceVisibleConnectedServerNames(appState.servers)),
     [appState.servers],
   );
 

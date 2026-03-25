@@ -6,6 +6,7 @@ vi.mock("@/lib/config", () => ({
 }));
 
 import {
+  buildHostedServerRequest,
   setHostedApiContext,
   injectHostedServerMapping,
   resolveHostedServerId,
@@ -79,5 +80,34 @@ describe("injectHostedServerMapping", () => {
     expect(() => resolveHostedServerId("new-server")).toThrow(
       'Hosted server not found for "new-server"',
     );
+  });
+
+  it("uses explicit runtime server configs before workspace server-id resolution", () => {
+    setHostedApiContext({
+      workspaceId: "workspace-1",
+      isAuthenticated: true,
+      clientCapabilities: { roots: {} },
+      serverIdsByName: {
+        "existing-server": "id-existing",
+      },
+      runtimeServerConfigs: {
+        __learning__: {
+          url: "https://learn.mcpjam.com/mcp",
+          requestInit: {
+            headers: {
+              "x-learning-mode": "true",
+            },
+          },
+        },
+      },
+    });
+
+    expect(buildHostedServerRequest("__learning__")).toEqual({
+      serverUrl: "https://learn.mcpjam.com/mcp",
+      serverHeaders: {
+        "x-learning-mode": "true",
+      },
+      clientCapabilities: { roots: {} },
+    });
   });
 });

@@ -125,7 +125,7 @@ export function useAppState({
     isLoadingRemoteWorkspaces,
     effectiveActiveWorkspaceId,
   } = workspaceState;
-  const { handleDisconnect } = serverState;
+  const { handleDisconnect, disconnectRuntimeServer } = serverState;
 
   const handleSwitchWorkspace = useCallback(
     async (workspaceId: string) => {
@@ -140,9 +140,12 @@ export function useAppState({
         name: newWorkspace.name,
       });
 
-      const currentServers = Object.keys(appState.servers);
-      for (const serverName of currentServers) {
-        const server = appState.servers[serverName];
+      for (const [serverName, server] of Object.entries(appState.servers)) {
+        if ((server.surface ?? "workspace") !== "workspace") {
+          await disconnectRuntimeServer(serverName);
+          continue;
+        }
+
         if (server.connectionStatus === "connected") {
           logger.info("Disconnecting server before workspace switch", {
             serverName,
@@ -162,6 +165,7 @@ export function useAppState({
       effectiveWorkspaces,
       appState.servers,
       handleDisconnect,
+      disconnectRuntimeServer,
       logger,
       isAuthenticated,
       dispatch,
@@ -198,6 +202,12 @@ export function useAppState({
         }
       }
 
+      for (const [serverName, server] of Object.entries(appState.servers)) {
+        if ((server.surface ?? "workspace") !== "workspace") {
+          await disconnectRuntimeServer(serverName);
+        }
+      }
+
       if (isAuthenticated) {
         setConvexActiveWorkspaceId(targetWorkspaceId);
       } else {
@@ -209,6 +219,7 @@ export function useAppState({
       effectiveWorkspaces,
       appState.servers,
       handleDisconnect,
+      disconnectRuntimeServer,
       isAuthenticated,
       dispatch,
       setConvexActiveWorkspaceId,
@@ -240,7 +251,9 @@ export function useAppState({
     activeWorkspace: serverState.activeWorkspace,
 
     handleConnect: serverState.handleConnect,
+    connectRuntimeServer: serverState.connectRuntimeServer,
     handleDisconnect: serverState.handleDisconnect,
+    disconnectRuntimeServer: serverState.disconnectRuntimeServer,
     handleReconnect: serverState.handleReconnect,
     handleUpdate: serverState.handleUpdate,
     handleRemoveServer: serverState.handleRemoveServer,
@@ -257,6 +270,7 @@ export function useAppState({
       serverState.handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow:
       serverState.handleRefreshTokensFromOAuthFlow,
+    getServerEntry: serverState.getServerEntry,
 
     handleSwitchWorkspace,
     handleCreateWorkspace: workspaceState.handleCreateWorkspace,
