@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import {
   Package,
   KeyRound,
@@ -11,6 +11,7 @@ import {
   MessageSquareText,
   ChevronDown,
   BadgeCheck,
+  Star,
 } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
@@ -26,12 +27,12 @@ import {
 } from "./ui/dropdown-menu";
 import {
   useRegistryServers,
-  consolidateServers,
   getRegistryServerName,
   type EnrichedRegistryServer,
-  type ConsolidatedRegistryServer,
+  type EnrichedRegistryCatalogCard,
   type RegistryConnectionStatus,
 } from "@/hooks/useRegistryServers";
+import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import {
@@ -64,7 +65,7 @@ export function RegistryTab({
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
 
-  const { registryServers, isLoading, connect, disconnect } =
+  const { catalogCards, isLoading, connect, disconnect, toggleStar } =
     useRegistryServers({
       workspaceId,
       isAuthenticated,
@@ -92,11 +93,6 @@ export function RegistryTab({
       onNavigate("app-builder");
     }
   }, [pendingQuickConnect, servers, onNavigate]);
-
-  const consolidatedServers = useMemo(
-    () => consolidateServers(registryServers),
-    [registryServers],
-  );
 
   const handleConnect = async (server: EnrichedRegistryServer) => {
     setConnectingIds((prev) => new Set(prev).add(server._id));
@@ -142,7 +138,7 @@ export function RegistryTab({
     return <LoadingSkeleton />;
   }
 
-  if (registryServers.length === 0) {
+  if (catalogCards.length === 0) {
     return (
       <EmptyState
         icon={Package}
@@ -165,14 +161,15 @@ export function RegistryTab({
 
         {/* Server cards grid */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {consolidatedServers.map((consolidated) => (
+          {catalogCards.map((card) => (
             <RegistryServerCard
-              key={consolidated.variants[0]._id}
-              consolidated={consolidated}
+              key={card.registryCardKey}
+              card={card}
               connectingIds={connectingIds}
               pendingQuickConnect={pendingQuickConnect}
               onConnect={handleConnect}
               onDisconnect={handleDisconnect}
+              onToggleStar={toggleStar}
             />
           ))}
         </div>
@@ -182,19 +179,21 @@ export function RegistryTab({
 }
 
 function RegistryServerCard({
-  consolidated,
+  card,
   connectingIds,
   pendingQuickConnect,
   onConnect,
   onDisconnect,
+  onToggleStar,
 }: {
-  consolidated: ConsolidatedRegistryServer;
+  card: EnrichedRegistryCatalogCard;
   connectingIds: Set<string>;
   pendingQuickConnect: PendingQuickConnectState | null;
   onConnect: (server: EnrichedRegistryServer) => void;
   onDisconnect: (server: EnrichedRegistryServer) => void;
+  onToggleStar: (registryCardKey: string) => void | Promise<void>;
 }) {
-  const { variants, hasDualType } = consolidated;
+  const { variants, hasDualType } = card;
   const first = variants[0];
   const isPublisherVerified = variants.some(
     (v) => v.publishStatus === "verified",
@@ -250,7 +249,25 @@ function RegistryServerCard({
           </div>
         </div>
         {/* Top-right action */}
-        <div className="flex-shrink-0">
+        <div className="flex-shrink-0 flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2 gap-1 text-muted-foreground hover:text-foreground"
+            onClick={() => void onToggleStar(card.registryCardKey)}
+            aria-label={
+              card.isStarred ? "Remove from starred" : "Star this server"
+            }
+            aria-pressed={card.isStarred}
+          >
+            <Star
+              className={`h-4 w-4 shrink-0 ${card.isStarred ? "fill-amber-400 text-amber-400" : ""}`}
+            />
+            <span className="text-xs tabular-nums">
+              {formatRegistryStarCount(card.starCount)}
+            </span>
+          </Button>
           {hasDualType ? (
             <DualTypeAction
               variants={variants}

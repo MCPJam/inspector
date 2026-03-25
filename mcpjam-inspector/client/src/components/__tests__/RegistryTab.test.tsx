@@ -1,19 +1,42 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { RegistryTab } from "../RegistryTab";
-import type { EnrichedRegistryServer } from "@/hooks/useRegistryServers";
+import type {
+  EnrichedRegistryServer,
+  EnrichedRegistryCatalogCard,
+} from "@/hooks/useRegistryServers";
 import { readPendingQuickConnect } from "@/lib/quick-connect-pending";
 
 // Mock the useRegistryServers hook
 const mockConnect = vi.fn();
 const mockDisconnect = vi.fn();
+const mockToggleStar = vi.fn();
 let mockHookReturn: {
-  registryServers: EnrichedRegistryServer[];
+  catalogCards: EnrichedRegistryCatalogCard[];
   categories: string[];
   isLoading: boolean;
   connect: typeof mockConnect;
   disconnect: typeof mockDisconnect;
+  toggleStar: typeof mockToggleStar;
 };
+
+function toCatalogCard(
+  variants: EnrichedRegistryServer[],
+  key = "card-1",
+): EnrichedRegistryCatalogCard {
+  const hasDualType = variants.length > 1;
+  const ordered = hasDualType
+    ? [...variants].sort((a) => (a.clientType === "app" ? -1 : 1))
+    : variants;
+  return {
+    registryCardKey: key,
+    catalogSortOrder: 0,
+    variants: ordered,
+    starCount: 0,
+    isStarred: false,
+    hasDualType,
+  };
+}
 
 vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
   const actual =
@@ -89,11 +112,12 @@ describe("RegistryTab", () => {
     mockConnect.mockResolvedValue(undefined);
     mockDisconnect.mockResolvedValue(undefined);
     mockHookReturn = {
-      registryServers: [],
+      catalogCards: [],
       categories: [],
       isLoading: false,
       connect: mockConnect,
       disconnect: mockDisconnect,
+      toggleStar: mockToggleStar,
     };
   });
 
@@ -101,11 +125,12 @@ describe("RegistryTab", () => {
     it("renders registry servers when not authenticated", () => {
       const server = createMockServer();
       mockHookReturn = {
-        registryServers: [server],
+        catalogCards: [toCatalogCard([server])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} isAuthenticated={false} />);
@@ -118,11 +143,12 @@ describe("RegistryTab", () => {
 
     it("shows header and description when not authenticated", () => {
       mockHookReturn = {
-        registryServers: [createMockServer()],
+        catalogCards: [toCatalogCard([createMockServer()])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} isAuthenticated={false} />);
@@ -137,11 +163,12 @@ describe("RegistryTab", () => {
   describe("loading state", () => {
     it("shows loading skeleton when data is loading", () => {
       mockHookReturn = {
-        registryServers: [],
+        catalogCards: [],
         categories: [],
         isLoading: true,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       const { container } = render(<RegistryTab {...defaultProps} />);
@@ -162,19 +189,22 @@ describe("RegistryTab", () => {
   describe("auth badges", () => {
     it("shows OAuth badge with key icon for OAuth servers", () => {
       mockHookReturn = {
-        registryServers: [
-          createMockServer({
-            transport: {
-              transportType: "http",
-              url: "https://mcp.test.com/sse",
-              useOAuth: true,
-            },
-          }),
+        catalogCards: [
+          toCatalogCard([
+            createMockServer({
+              transport: {
+                transportType: "http",
+                url: "https://mcp.test.com/sse",
+                useOAuth: true,
+              },
+            }),
+          ]),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -184,11 +214,12 @@ describe("RegistryTab", () => {
 
     it("shows No auth badge for servers without OAuth", () => {
       mockHookReturn = {
-        registryServers: [createMockServer()],
+        catalogCards: [toCatalogCard([createMockServer()])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -211,11 +242,12 @@ describe("RegistryTab", () => {
         },
       });
       mockHookReturn = {
-        registryServers: [server],
+        catalogCards: [toCatalogCard([server])],
         categories: ["Project Management"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -229,11 +261,14 @@ describe("RegistryTab", () => {
 
     it("shows verified star when publishStatus is verified", () => {
       mockHookReturn = {
-        registryServers: [createMockServer({ publishStatus: "verified" })],
+        catalogCards: [
+          toCatalogCard([createMockServer({ publishStatus: "verified" })]),
+        ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -243,13 +278,14 @@ describe("RegistryTab", () => {
 
     it("does not show verified star when publishStatus is not verified", () => {
       mockHookReturn = {
-        registryServers: [
-          createMockServer({ publishStatus: "unverified" }),
+        catalogCards: [
+          toCatalogCard([createMockServer({ publishStatus: "unverified" })]),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -261,11 +297,12 @@ describe("RegistryTab", () => {
 
     it("does not show raw URL by default", () => {
       mockHookReturn = {
-        registryServers: [createMockServer()],
+        catalogCards: [toCatalogCard([createMockServer()])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -277,11 +314,12 @@ describe("RegistryTab", () => {
 
     it("shows Connect button for not_connected servers", () => {
       mockHookReturn = {
-        registryServers: [createMockServer()],
+        catalogCards: [toCatalogCard([createMockServer()])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -291,11 +329,14 @@ describe("RegistryTab", () => {
 
     it("shows Connected badge for connected servers", () => {
       mockHookReturn = {
-        registryServers: [createMockServer({ connectionStatus: "connected" })],
+        catalogCards: [
+          toCatalogCard([createMockServer({ connectionStatus: "connected" })]),
+        ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -305,11 +346,14 @@ describe("RegistryTab", () => {
 
     it("shows Added badge for servers added but not live", () => {
       mockHookReturn = {
-        registryServers: [createMockServer({ connectionStatus: "added" })],
+        catalogCards: [
+          toCatalogCard([createMockServer({ connectionStatus: "added" })]),
+        ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -321,14 +365,21 @@ describe("RegistryTab", () => {
   describe("category filtering", () => {
     it("does not render category filter pills", () => {
       mockHookReturn = {
-        registryServers: [
-          createMockServer({ _id: "1", category: "Productivity" }),
-          createMockServer({ _id: "2", category: "Developer Tools" }),
+        catalogCards: [
+          toCatalogCard(
+            [createMockServer({ _id: "1", category: "Productivity" })],
+            "c1",
+          ),
+          toCatalogCard(
+            [createMockServer({ _id: "2", category: "Developer Tools" })],
+            "c2",
+          ),
         ],
         categories: ["Developer Tools", "Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -356,11 +407,15 @@ describe("RegistryTab", () => {
         category: "Developer Tools",
       });
       mockHookReturn = {
-        registryServers: [prodServer, devServer],
+        catalogCards: [
+          toCatalogCard([prodServer], "c1"),
+          toCatalogCard([devServer], "c2"),
+        ],
         categories: ["Developer Tools", "Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -374,11 +429,12 @@ describe("RegistryTab", () => {
     it("calls connect when Connect button is clicked", async () => {
       const server = createMockServer();
       mockHookReturn = {
-        registryServers: [server],
+        catalogCards: [toCatalogCard([server])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -393,11 +449,12 @@ describe("RegistryTab", () => {
     it("calls disconnect from overflow menu", async () => {
       const server = createMockServer({ connectionStatus: "connected" });
       mockHookReturn = {
-        registryServers: [server],
+        catalogCards: [toCatalogCard([server])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -416,11 +473,12 @@ describe("RegistryTab", () => {
     it("navigates to app-builder when a pending server becomes connected", async () => {
       const server = createMockServer({ displayName: "Asana" });
       mockHookReturn = {
-        registryServers: [server],
+        catalogCards: [toCatalogCard([server])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       const onNavigate = vi.fn();
@@ -469,11 +527,12 @@ describe("RegistryTab", () => {
 
       const server = createMockServer({ displayName: "Linear" });
       mockHookReturn = {
-        registryServers: [server],
+        catalogCards: [toCatalogCard([server])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       const onNavigate = vi.fn();
@@ -509,11 +568,12 @@ describe("RegistryTab", () => {
         clientType: "app" as any,
       });
       mockHookReturn = {
-        registryServers: [server],
+        catalogCards: [toCatalogCard([server])],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       const onNavigate = vi.fn();
@@ -571,27 +631,38 @@ describe("RegistryTab", () => {
 
     it("renders one card per consolidated server (dual-type = 1 card)", () => {
       mockHookReturn = {
-        registryServers: [
-          createFullServer({
-            _id: "asana-text",
-            displayName: "Asana",
-            clientType: "text",
-          }),
-          createFullServer({
-            _id: "asana-app",
-            displayName: "Asana",
-            clientType: "app",
-          }),
-          createFullServer({
-            _id: "linear-1",
-            displayName: "Linear",
-            clientType: "text",
-          }),
+        catalogCards: [
+          toCatalogCard(
+            [
+              createFullServer({
+                _id: "asana-text",
+                displayName: "Asana",
+                clientType: "text",
+              }),
+              createFullServer({
+                _id: "asana-app",
+                displayName: "Asana",
+                clientType: "app",
+              }),
+            ],
+            "asana",
+          ),
+          toCatalogCard(
+            [
+              createFullServer({
+                _id: "linear-1",
+                displayName: "Linear",
+                clientType: "text",
+              }),
+            ],
+            "linear",
+          ),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -605,22 +676,28 @@ describe("RegistryTab", () => {
 
     it("shows both Text and App badges on dual-type card", () => {
       mockHookReturn = {
-        registryServers: [
-          createFullServer({
-            _id: "asana-text",
-            displayName: "Asana",
-            clientType: "text",
-          }),
-          createFullServer({
-            _id: "asana-app",
-            displayName: "Asana",
-            clientType: "app",
-          }),
+        catalogCards: [
+          toCatalogCard(
+            [
+              createFullServer({
+                _id: "asana-text",
+                displayName: "Asana",
+                clientType: "text",
+              }),
+              createFullServer({
+                _id: "asana-app",
+                displayName: "Asana",
+                clientType: "app",
+              }),
+            ],
+            "asana",
+          ),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -631,22 +708,28 @@ describe("RegistryTab", () => {
 
     it("shows dropdown trigger for dual-type card", () => {
       mockHookReturn = {
-        registryServers: [
-          createFullServer({
-            _id: "asana-text",
-            displayName: "Asana",
-            clientType: "text",
-          }),
-          createFullServer({
-            _id: "asana-app",
-            displayName: "Asana",
-            clientType: "app",
-          }),
+        catalogCards: [
+          toCatalogCard(
+            [
+              createFullServer({
+                _id: "asana-text",
+                displayName: "Asana",
+                clientType: "text",
+              }),
+              createFullServer({
+                _id: "asana-app",
+                displayName: "Asana",
+                clientType: "app",
+              }),
+            ],
+            "asana",
+          ),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -658,17 +741,23 @@ describe("RegistryTab", () => {
 
     it("does not show dropdown trigger for single-type card", () => {
       mockHookReturn = {
-        registryServers: [
-          createFullServer({
-            _id: "linear-1",
-            displayName: "Linear",
-            clientType: "text",
-          }),
+        catalogCards: [
+          toCatalogCard(
+            [
+              createFullServer({
+                _id: "linear-1",
+                displayName: "Linear",
+                clientType: "text",
+              }),
+            ],
+            "linear",
+          ),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -678,22 +767,28 @@ describe("RegistryTab", () => {
 
     it("dropdown contains Connect as Text and Connect as App options", async () => {
       mockHookReturn = {
-        registryServers: [
-          createFullServer({
-            _id: "asana-text",
-            displayName: "Asana",
-            clientType: "text",
-          }),
-          createFullServer({
-            _id: "asana-app",
-            displayName: "Asana",
-            clientType: "app",
-          }),
+        catalogCards: [
+          toCatalogCard(
+            [
+              createFullServer({
+                _id: "asana-text",
+                displayName: "Asana",
+                clientType: "text",
+              }),
+              createFullServer({
+                _id: "asana-app",
+                displayName: "Asana",
+                clientType: "app",
+              }),
+            ],
+            "asana",
+          ),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);
@@ -707,22 +802,28 @@ describe("RegistryTab", () => {
 
     it("stores the suffixed runtime name when connecting a dual-type variant", async () => {
       mockHookReturn = {
-        registryServers: [
-          createFullServer({
-            _id: "asana-text",
-            displayName: "Asana",
-            clientType: "text",
-          }),
-          createFullServer({
-            _id: "asana-app",
-            displayName: "Asana",
-            clientType: "app",
-          }),
+        catalogCards: [
+          toCatalogCard(
+            [
+              createFullServer({
+                _id: "asana-text",
+                displayName: "Asana",
+                clientType: "text",
+              }),
+              createFullServer({
+                _id: "asana-app",
+                displayName: "Asana",
+                clientType: "app",
+              }),
+            ],
+            "asana",
+          ),
         ],
         categories: ["Productivity"],
         isLoading: false,
         connect: mockConnect,
         disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
       };
 
       render(<RegistryTab {...defaultProps} />);

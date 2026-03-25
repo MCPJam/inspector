@@ -1,5 +1,6 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as registryHttp from "@/lib/apis/registry-http";
 import {
   getRegistryServerName,
   type RegistryServer,
@@ -12,6 +13,21 @@ const { mockUseQuery, mockConnectMutation, mockDisconnectMutation } =
     mockConnectMutation: vi.fn(),
     mockDisconnectMutation: vi.fn(),
   }));
+
+vi.mock("@/lib/apis/registry-http", () => ({
+  fetchRegistryCatalog: vi.fn(),
+  starRegistryCard: vi.fn(),
+  unstarRegistryCard: vi.fn(),
+  mergeGuestRegistryStars: vi.fn(),
+}));
+
+vi.mock("sonner", () => ({
+  toast: { error: vi.fn() },
+}));
+
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+}));
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),
@@ -55,14 +71,20 @@ describe("useRegistryServers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseQuery.mockImplementation((name: string) => {
-      if (name === "registryServers:listRegistryServers") {
-        return [createRegistryServer()];
-      }
       if (name === "registryServers:getWorkspaceRegistryConnections") {
         return [];
       }
       return undefined;
     });
+    vi.mocked(registryHttp.fetchRegistryCatalog).mockResolvedValue([
+      {
+        registryCardKey: "card-1",
+        catalogSortOrder: 0,
+        variants: [createRegistryServer()],
+        starCount: 0,
+        isStarred: false,
+      },
+    ]);
   });
 
   it("disconnects app variants using the runtime server name", async () => {
@@ -82,6 +104,10 @@ describe("useRegistryServers", () => {
         onDisconnect,
       }),
     );
+
+    await waitFor(() => {
+      expect(result.current.catalogCards.length).toBe(1);
+    });
 
     await act(async () => {
       await result.current.disconnect(server);
@@ -115,6 +141,10 @@ describe("useRegistryServers", () => {
       }),
     );
 
+    await waitFor(() => {
+      expect(result.current.catalogCards.length).toBe(1);
+    });
+
     await act(async () => {
       await expect(result.current.disconnect(server)).resolves.toBeUndefined();
     });
@@ -126,9 +156,6 @@ describe("useRegistryServers", () => {
     const server = createRegistryServer({ clientType: "app" });
 
     mockUseQuery.mockImplementation((name: string) => {
-      if (name === "registryServers:listRegistryServers") {
-        return [server];
-      }
       if (name === "registryServers:getWorkspaceRegistryConnections") {
         return [
           {
@@ -157,6 +184,10 @@ describe("useRegistryServers", () => {
         onConnect,
       }),
     );
+
+    await waitFor(() => {
+      expect(result.current.catalogCards.length).toBe(1);
+    });
 
     await act(async () => {
       await result.current.connect(server);

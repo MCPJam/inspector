@@ -19,22 +19,10 @@ import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
 import { getRedirectUri } from "./constants";
+import { getConvexSiteUrl } from "@/lib/convex-site-url";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
-
-/**
- * Derive the Convex HTTP actions URL (*.convex.site) from the Convex client URL.
- */
-function getConvexSiteUrl(): string | null {
-  const siteUrl = (import.meta as any).env?.VITE_CONVEX_SITE_URL;
-  if (siteUrl) return siteUrl;
-  const cloudUrl = (import.meta as any).env?.VITE_CONVEX_URL;
-  if (cloudUrl && typeof cloudUrl === "string") {
-    return cloudUrl.replace(".convex.cloud", ".convex.site");
-  }
-  return null;
-}
 
 interface StoredOAuthDiscoveryState {
   serverUrl: string;

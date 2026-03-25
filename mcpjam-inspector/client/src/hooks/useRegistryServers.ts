@@ -1,6 +1,19 @@
-import { useMemo, useState, useEffect } from "react";
+import { useMemo, useState, useEffect, useCallback, useRef } from "react";
 import { useQuery, useMutation } from "convex/react";
 import type { ServerFormData } from "@/shared/types.js";
+import type { RegistryServer } from "@/lib/registry-server-types";
+import {
+  fetchRegistryCatalog,
+  starRegistryCard,
+  unstarRegistryCard,
+  mergeGuestRegistryStars,
+  type RegistryCatalogCard,
+} from "@/lib/apis/registry-http";
+import { WebApiError } from "@/lib/apis/web/base";
+import { HOSTED_MODE } from "@/lib/config";
+import { peekStoredGuestToken, clearGuestSession } from "@/lib/guest-session";
+import { resetTokenCache } from "@/lib/apis/web/context";
+import { toast } from "sonner";
 
 /**
  * Dev-only mock registry servers for local UI testing.
@@ -181,65 +194,9 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
   },
 ];
 
-/**
- * Shape of a registry server document from the Convex backend.
- * Matches the `registryServers` table schema.
- */
-export interface RegistryServer {
-  _id: string;
-  // Identity
-  name: string; // Reverse-DNS: "com.acme.internal-tools"
-  displayName: string;
-  description?: string;
-  iconUrl?: string;
-  publishStatus?: "verified" | "unverified";
-  // Client type: "text" for any MCP client, "app" for rich-UI clients
-  clientType?: "text" | "app";
-  // Scope & ownership
-  scope: "global" | "organization";
-  organizationId?: string;
-  // Transport config
-  transport: {
-    transportType: "stdio" | "http";
-    command?: string;
-    args?: string[];
-    env?: Record<string, string>;
-    url?: string;
-    headers?: Record<string, string>;
-    useOAuth?: boolean;
-    oauthScopes?: string[];
-    oauthCredentialKey?: string;
-    clientId?: string;
-    timeout?: number;
-  };
-  // Curation
-  category?: string;
-  tags?: string[];
-  version?: string;
-  publisher?: string;
-  repositoryUrl?: string;
-  sortOrder?: number;
-  // Governance
-  status: "approved" | "pending_review" | "deprecated";
-  meta?: unknown;
-  // Tracking
-  createdBy: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-/**
- * Shape of a registry server connection from `registryServerConnections`.
- */
-export interface RegistryServerConnection {
-  _id: string;
-  registryServerId: string;
-  workspaceId: string;
-  serverId: string; // the actual servers row
-  connectedBy: string;
-  connectedAt: number;
-  configOverridden?: boolean;
-}
+export type { RegistryServer };
+export type { RegistryServerConnection } from "@/lib/registry-server-types";
+import type { RegistryServerConnection } from "@/lib/registry-server-types";
 
 export type RegistryConnectionStatus =
   | "not_connected"
@@ -252,17 +209,28 @@ export interface EnrichedRegistryServer extends RegistryServer {
 }
 
 /**
- * Registry servers grouped by displayName, with variants ordered app-first.
+ * Consolidated registry card from the HTTP catalog API, enriched with workspace connection state.
+ */
+export interface EnrichedRegistryCatalogCard {
+  registryCardKey: string;
+  catalogSortOrder: number;
+  variants: EnrichedRegistryServer[];
+  starCount: number;
+  isStarred: boolean;
+  hasDualType: boolean;
+}
+
+/**
+ * @deprecated Prefer EnrichedRegistryCatalogCard from the catalog HTTP API.
  */
 export interface ConsolidatedRegistryServer {
-  /** All variants ordered: app before text. */
   variants: EnrichedRegistryServer[];
-  /** True when both "text" and "app" variants exist. */
   hasDualType: boolean;
 }
 
 /**
  * Groups registry servers by displayName. Variants are ordered app before text.
+ * Used for dev mock data only; production catalog is consolidated by the backend.
  */
 export function consolidateServers(
   servers: EnrichedRegistryServer[],
@@ -282,7 +250,6 @@ export function consolidateServers(
   const result: ConsolidatedRegistryServer[] = [];
 
   for (const variants of groups.values()) {
-    // App before text
     const ordered = [...variants].sort((a) =>
       a.clientType === "app" ? -1 : 1,
     );
@@ -301,10 +268,78 @@ export function getRegistryServerName(server: RegistryServer): string {
   return server.displayName;
 }
 
+function sortRawCatalogCards(cards: RegistryCatalogCard[]): RegistryCatalogCard[] {
+  return [...cards].sort((a, b) => {
+    if (a.isStarred !== b.isStarred) return a.isStarred ? -1 : 1;
+    return a.catalogSortOrder - b.catalogSortOrder;
+  });
+}
+
+function sortCatalogCards(
+  cards: EnrichedRegistryCatalogCard[],
+): EnrichedRegistryCatalogCard[] {
+  return [...cards].sort((a, b) => {
+    if (a.isStarred !== b.isStarred) return a.isStarred ? -1 : 1;
+    return a.catalogSortOrder - b.catalogSortOrder;
+  });
+}
+
+function enrichCatalogCards(
+  cards: RegistryCatalogCard[],
+  connectedRegistryIds: Set<string>,
+  liveServers?: Record<string, { connectionStatus: string }>,
+): EnrichedRegistryCatalogCard[] {
+  return cards.map((card) => {
+    const variants: EnrichedRegistryServer[] = card.variants.map((server) => {
+      const isAddedToWorkspace = connectedRegistryIds.has(server._id);
+      const liveServer = liveServers?.[getRegistryServerName(server)];
+      let connectionStatus: RegistryConnectionStatus = "not_connected";
+
+      if (liveServer?.connectionStatus === "connected") {
+        connectionStatus = "connected";
+      } else if (liveServer?.connectionStatus === "connecting") {
+        connectionStatus = "connecting";
+      } else if (isAddedToWorkspace) {
+        connectionStatus = "added";
+      }
+
+      return { ...server, connectionStatus };
+    });
+
+    return {
+      registryCardKey: card.registryCardKey,
+      catalogSortOrder: card.catalogSortOrder,
+      variants,
+      starCount: card.starCount,
+      isStarred: card.isStarred,
+      hasDualType: variants.length > 1,
+    };
+  });
+}
+
+function buildMockCatalogCards(): RegistryCatalogCard[] {
+  const enriched: EnrichedRegistryServer[] = MOCK_REGISTRY_SERVERS.map(
+    (s) => ({ ...s, connectionStatus: "not_connected" as const }),
+  );
+  const consolidated = consolidateServers(enriched);
+  return consolidated.map((c, i) => ({
+    registryCardKey: `mock:${c.variants[0].displayName}:${i}`,
+    catalogSortOrder: c.variants[0].sortOrder ?? i,
+    variants: c.variants.map((v) => {
+      const { connectionStatus: _, ...rest } = v;
+      return rest;
+    }),
+    starCount: 0,
+    isStarred: false,
+  }));
+}
+
 function isMissingWorkspaceConnectionError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    error.message.includes("Registry server is not connected to this workspace")
+    error.message.includes(
+      "Registry server is not connected to this workspace",
+    )
   );
 }
 
@@ -322,21 +357,65 @@ export function useRegistryServers({
 }: {
   workspaceId: string | null;
   isAuthenticated: boolean;
-  /** Live MCP connection state from the app, keyed by server name */
   liveServers?: Record<string, { connectionStatus: string }>;
   onConnect: (formData: ServerFormData) => void;
   onDisconnect?: (serverName: string) => void;
 }) {
-  // Fetch all approved registry servers (requires Convex auth identity)
-  const remoteRegistryServers = useQuery(
-    "registryServers:listRegistryServers" as any,
-    !DEV_MOCK_REGISTRY && isAuthenticated ? ({} as any) : "skip",
-  ) as RegistryServer[] | undefined;
-  const registryServers = DEV_MOCK_REGISTRY
-    ? MOCK_REGISTRY_SERVERS
-    : remoteRegistryServers;
+  const [rawCatalog, setRawCatalog] = useState<RegistryCatalogCard[] | null>(
+    () => (DEV_MOCK_REGISTRY ? buildMockCatalogCards() : null),
+  );
 
-  // Fetch workspace-level connections
+  const mergeRanRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAuthenticated) mergeRanRef.current = false;
+  }, [isAuthenticated]);
+
+  const loadCatalog = useCallback(async () => {
+    if (DEV_MOCK_REGISTRY) {
+      setRawCatalog(buildMockCatalogCards());
+      return;
+    }
+    try {
+      const cards = await fetchRegistryCatalog();
+      setRawCatalog(cards);
+    } catch (error) {
+      const message =
+        error instanceof WebApiError
+          ? error.message
+          : "Failed to load registry catalog";
+      toast.error(message);
+      setRawCatalog([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (DEV_MOCK_REGISTRY) return;
+    void loadCatalog();
+  }, [loadCatalog]);
+
+  useEffect(() => {
+    if (!HOSTED_MODE || !isAuthenticated || DEV_MOCK_REGISTRY) return;
+    const guestToken = peekStoredGuestToken();
+    if (!guestToken || mergeRanRef.current) return;
+    mergeRanRef.current = true;
+    void (async () => {
+      try {
+        await mergeGuestRegistryStars(guestToken);
+        clearGuestSession();
+        resetTokenCache();
+        await loadCatalog();
+      } catch (error) {
+        mergeRanRef.current = false;
+        const message =
+          error instanceof WebApiError
+            ? error.message
+            : "Could not merge guest stars";
+        toast.error(message);
+      }
+    })();
+  }, [isAuthenticated, loadCatalog]);
+
   const connections = useQuery(
     "registryServers:getWorkspaceRegistryConnections" as any,
     !DEV_MOCK_REGISTRY && isAuthenticated && workspaceId
@@ -351,48 +430,35 @@ export function useRegistryServers({
     "registryServers:disconnectRegistryServer" as any,
   );
 
-  // Set of registry server IDs that have a persistent connection in this workspace
   const connectedRegistryIds = useMemo(() => {
     if (!connections) return new Set<string>();
     return new Set(connections.map((c) => c.registryServerId));
   }, [connections]);
 
-  // Enrich servers with connection status
-  const enrichedServers = useMemo<EnrichedRegistryServer[]>(() => {
-    if (!registryServers) return [];
+  const catalogCards = useMemo(() => {
+    if (rawCatalog === null) return [];
+    const enriched = enrichCatalogCards(
+      rawCatalog,
+      connectedRegistryIds,
+      liveServers,
+    );
+    return sortCatalogCards(enriched);
+  }, [rawCatalog, connectedRegistryIds, liveServers]);
 
-    return registryServers.map((server) => {
-      const isAddedToWorkspace = connectedRegistryIds.has(server._id);
-      const liveServer = liveServers?.[getRegistryServerName(server)];
-      let connectionStatus: RegistryConnectionStatus = "not_connected";
-
-      if (liveServer?.connectionStatus === "connected") {
-        connectionStatus = "connected";
-      } else if (liveServer?.connectionStatus === "connecting") {
-        connectionStatus = "connecting";
-      } else if (isAddedToWorkspace) {
-        connectionStatus = "added";
-      }
-
-      return { ...server, connectionStatus };
-    });
-  }, [registryServers, connectedRegistryIds, liveServers]);
-
-  // Extract unique categories
   const categories = useMemo(() => {
     const cats = new Set<string>();
-    for (const s of enrichedServers) {
-      if (s.category) cats.add(s.category);
+    for (const card of catalogCards) {
+      for (const v of card.variants) {
+        if (v.category) cats.add(v.category);
+      }
     }
     return Array.from(cats).sort();
-  }, [enrichedServers]);
+  }, [catalogCards]);
 
-  // Track registry server IDs that are pending connection (waiting for OAuth / handshake)
   const [pendingServerIds, setPendingServerIds] = useState<Map<string, string>>(
     new Map(),
-  ); // registryServerId → suffixed server name
+  );
 
-  // Record the Convex connection only after the server actually connects
   useEffect(() => {
     if (!isAuthenticated || !workspaceId || DEV_MOCK_REGISTRY) return;
     for (const [registryServerId, serverName] of pendingServerIds) {
@@ -434,15 +500,92 @@ export function useRegistryServers({
     connections === undefined;
 
   const isLoading =
-    !DEV_MOCK_REGISTRY &&
-    (registryServers === undefined || connectionsAreLoading);
+    !DEV_MOCK_REGISTRY && (rawCatalog === null || connectionsAreLoading);
+
+  const toggleStar = useCallback(
+    async (registryCardKey: string) => {
+      if (DEV_MOCK_REGISTRY) return;
+
+      const priorStarState: {
+        current: { isStarred: boolean; starCount: number } | null;
+      } = { current: null };
+
+      setRawCatalog((prev) => {
+        if (!prev) return prev;
+        const card = prev.find((c) => c.registryCardKey === registryCardKey);
+        if (!card) return prev;
+        priorStarState.current = {
+          isStarred: card.isStarred,
+          starCount: card.starCount,
+        };
+        const nextStarred = !card.isStarred;
+        const nextCount = Math.max(
+          0,
+          card.starCount + (nextStarred ? 1 : -1),
+        );
+        return sortRawCatalogCards(
+          prev.map((c) =>
+            c.registryCardKey === registryCardKey
+              ? {
+                  ...c,
+                  isStarred: nextStarred,
+                  starCount: nextCount,
+                }
+              : c,
+          ),
+        );
+      });
+
+      const snapshot = priorStarState.current;
+      if (!snapshot) return;
+
+      try {
+        const result = snapshot.isStarred
+          ? await unstarRegistryCard(registryCardKey)
+          : await starRegistryCard(registryCardKey);
+        setRawCatalog((prev) => {
+          if (!prev) return prev;
+          return sortRawCatalogCards(
+            prev.map((c) =>
+              c.registryCardKey === registryCardKey
+                ? {
+                    ...c,
+                    isStarred: result.isStarred,
+                    starCount: result.starCount,
+                  }
+                : c,
+            ),
+          );
+        });
+      } catch (error) {
+        setRawCatalog((prev) => {
+          if (!prev) return prev;
+          return sortRawCatalogCards(
+            prev.map((c) =>
+              c.registryCardKey === registryCardKey
+                ? {
+                    ...c,
+                    isStarred: snapshot.isStarred,
+                    starCount: snapshot.starCount,
+                  }
+                : c,
+            ),
+          );
+        });
+        const message =
+          error instanceof WebApiError
+            ? error.message
+            : "Could not update star";
+        toast.error(message);
+      }
+    },
+    [],
+  );
 
   async function connect(server: RegistryServer) {
     const serverName = getRegistryServerName(server);
-    // Track this server as pending — Convex record will be created when it actually connects
     setPendingServerIds((prev) => new Map(prev).set(server._id, serverName));
 
-    // Trigger the local MCP connection
     onConnect({
       name: serverName,
       type: server.transport.transportType,
@@ -459,7 +602,6 @@ export function useRegistryServers({
     const serverName = getRegistryServerName(server);
     let disconnectError: unknown;
 
-    // 1. Remove the connection from Convex (only when authenticated with a workspace)
     if (!DEV_MOCK_REGISTRY && isAuthenticated && workspaceId) {
       try {
         await disconnectMutation({
@@ -473,7 +615,6 @@ export function useRegistryServers({
       }
     }
 
-    // 2. Trigger the local MCP disconnection
     onDisconnect?.(serverName);
 
     if (disconnectError) {
@@ -481,11 +622,20 @@ export function useRegistryServers({
     }
   }
 
+  /** Flat list of enriched servers for legacy callers / tests */
+  const registryServers = useMemo(
+    () => catalogCards.flatMap((c) => c.variants),
+    [catalogCards],
+  );
+
   return {
-    registryServers: enrichedServers,
+    catalogCards,
+    registryServers,
     categories,
     isLoading,
     connect,
     disconnect,
+    toggleStar,
+    refetchCatalog: loadCatalog,
   };
 }
