@@ -151,6 +151,24 @@ describe("appReducer", () => {
 
       expect(result.selectedServer).toBe("other-server");
     });
+
+    it("stores learning runtime servers without making them workspace-visible", () => {
+      const state = createInitialState();
+
+      const result = appReducer(state, {
+        type: "CONNECT_REQUEST",
+        name: "__learning__",
+        config: { url: "https://learn.mcpjam.com/mcp" } as any,
+        select: false,
+        surface: "learning",
+      });
+
+      expect(result.servers.__learning__).toBeDefined();
+      expect(result.servers.__learning__.surface).toBe("learning");
+      expect(
+        result.workspaces[result.activeWorkspaceId].servers.__learning__,
+      ).toBe(undefined);
+    });
   });
 
   describe("CONNECT_SUCCESS", () => {
@@ -200,6 +218,10 @@ describe("appReducer", () => {
       const tokens = {
         access_token: "test-token",
         refresh_token: "refresh-token",
+        client_id: "client-id",
+        client_secret: "client-secret",
+        expires_in: 3600,
+        scope: "scope:read",
       };
 
       const result = appReducer(state, {
@@ -235,6 +257,29 @@ describe("appReducer", () => {
 
       expect(result.servers["new-server"]).toBeDefined();
       expect(result.servers["new-server"].connectionStatus).toBe("connected");
+    });
+
+    it("keeps learning runtime servers out of workspace persistence on success", () => {
+      const state = createInitialState({
+        servers: {
+          __learning__: createServer("__learning__", {
+            connectionStatus: "connecting",
+            surface: "learning",
+          }),
+        },
+      });
+
+      const result = appReducer(state, {
+        type: "CONNECT_SUCCESS",
+        name: "__learning__",
+        config: { url: "https://learn.mcpjam.com/mcp" } as any,
+        surface: "learning",
+      });
+
+      expect(result.servers.__learning__.connectionStatus).toBe("connected");
+      expect(
+        result.workspaces[result.activeWorkspaceId].servers.__learning__,
+      ).toBe(undefined);
     });
   });
 
@@ -432,6 +477,52 @@ describe("appReducer", () => {
 
       expect(result.selectedServer).toBe("none");
     });
+
+    it("removes runtime-only servers from runtime state without touching the workspace map", () => {
+      const state = createInitialState({
+        servers: {
+          __learning__: createServer("__learning__", {
+            surface: "learning",
+            connectionStatus: "connected",
+          }),
+        },
+      });
+
+      const result = appReducer(state, {
+        type: "REMOVE_SERVER",
+        name: "__learning__",
+      });
+
+      expect(result.servers.__learning__).toBeUndefined();
+      expect(
+        result.workspaces[result.activeWorkspaceId].servers.__learning__,
+      ).toBeUndefined();
+    });
+
+    it("removes workspace-only server copies even when runtime state is already gone", () => {
+      const workspaceOnlyServer = createServer("workspace-only");
+      const workspace: Workspace = {
+        id: "workspace-1",
+        name: "Test",
+        servers: { "workspace-only": workspaceOnlyServer },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const state = createInitialState({
+        servers: {},
+        workspaces: { "workspace-1": workspace },
+        activeWorkspaceId: "workspace-1",
+      });
+
+      const result = appReducer(state, {
+        type: "REMOVE_SERVER",
+        name: "workspace-only",
+      });
+
+      expect(result.workspaces["workspace-1"].servers["workspace-only"]).toBe(
+        undefined,
+      );
+    });
   });
 
   describe("SELECT_SERVER", () => {
@@ -581,6 +672,31 @@ describe("appReducer", () => {
       expect(result.servers["test"].initializationInfo).toEqual(initInfo);
     });
 
+    it("does not write learning server init info into workspace state", () => {
+      const state = createInitialState({
+        servers: {
+          __learning__: createServer("__learning__", {
+            surface: "learning",
+            connectionStatus: "connected",
+          }),
+        },
+      });
+      const initInfo = {
+        capabilities: { tools: {} },
+      } as any;
+
+      const result = appReducer(state, {
+        type: "SET_INITIALIZATION_INFO",
+        name: "__learning__",
+        initInfo,
+      });
+
+      expect(result.servers.__learning__.initializationInfo).toEqual(initInfo);
+      expect(
+        result.workspaces[result.activeWorkspaceId].servers.__learning__,
+      ).toBeUndefined();
+    });
+
     it("returns unchanged state if server does not exist", () => {
       const state = createInitialState();
 
@@ -700,6 +816,38 @@ describe("appReducer", () => {
         expect(result.servers["target-server"].connectionStatus).toBe(
           "disconnected",
         );
+      });
+
+      it("does not carry runtime-only servers into the new workspace", () => {
+        const targetWorkspace: Workspace = {
+          id: "target",
+          name: "Target",
+          servers: {
+            "target-server": createServer("target-server"),
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        const state = createInitialState({
+          servers: {
+            __learning__: createServer("__learning__", {
+              surface: "learning",
+              connectionStatus: "connected",
+            }),
+          },
+          workspaces: {
+            ...createInitialState().workspaces,
+            target: targetWorkspace,
+          },
+        });
+
+        const result = appReducer(state, {
+          type: "SWITCH_WORKSPACE",
+          workspaceId: "target",
+        });
+
+        expect(result.servers.__learning__).toBeUndefined();
+        expect(result.servers["target-server"]).toBeDefined();
       });
 
       it("returns unchanged state if workspace does not exist", () => {

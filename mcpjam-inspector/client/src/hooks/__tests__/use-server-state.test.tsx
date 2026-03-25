@@ -27,6 +27,8 @@ vi.mock("@/state/mcp-api", () => ({
   listServers: vi.fn(),
   reconnectServer: vi.fn(),
   getInitializationInfo: vi.fn(),
+  testRuntimeServerConnection: vi.fn(),
+  reconnectRuntimeServer: vi.fn(),
 }));
 
 vi.mock("@/state/oauth-orchestrator", () => ({
@@ -142,6 +144,17 @@ function renderUseServerState(
       },
     }),
   );
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
 }
 
 describe("useServerState OAuth callback failures", () => {
@@ -299,6 +312,94 @@ describe("useServerState OAuth callback failures", () => {
         sampling: {},
         elicitation: {},
       },
+    });
+  });
+
+  it("invalidates in-flight runtime connects before removing the runtime server", async () => {
+    const deferred = createDeferred<any>();
+    const dispatch = vi.fn();
+    const appState = createAppState();
+    appState.servers.__learning__ = {
+      name: "__learning__",
+      config: { url: "https://learn.mcpjam.com/mcp" } as any,
+      lastConnectionTime: new Date(),
+      connectionStatus: "connecting",
+      retryCount: 0,
+      enabled: true,
+      surface: "learning",
+    };
+
+    const { testRuntimeServerConnection, deleteServer } =
+      await import("@/state/mcp-api");
+    vi.mocked(testRuntimeServerConnection).mockReturnValue(deferred.promise);
+    vi.mocked(deleteServer).mockResolvedValue({ success: true } as any);
+
+    const { result } = renderUseServerState(dispatch, appState);
+    const connectPromise = result.current.connectRuntimeServer({
+      name: "__learning__",
+      config: { url: "https://learn.mcpjam.com/mcp" } as any,
+      surface: "learning",
+    });
+
+    await result.current.disconnectRuntimeServer("__learning__");
+    deferred.resolve({
+      success: true,
+      initInfo: {
+        protocolVersion: "2024-11-05",
+        capabilities: {},
+        serverInfo: { name: "learning", version: "1.0.0" },
+      },
+    });
+    await connectPromise;
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "REMOVE_SERVER",
+      name: "__learning__",
+    });
+    expect(
+      dispatch.mock.calls.some(
+        ([action]) =>
+          action.type === "CONNECT_SUCCESS" && action.name === "__learning__",
+      ),
+    ).toBe(false);
+  });
+
+  it("selects only connected servers from the active workspace", () => {
+    const dispatch = vi.fn();
+    const appState = createAppState();
+    const workspaceServer = {
+      ...appState.servers["demo-server"],
+      connectionStatus: "connected" as const,
+    };
+    appState.workspaces.default.servers["demo-server"] = workspaceServer;
+    appState.workspaces.default.servers["other-workspace-server"] = {
+      ...workspaceServer,
+      name: "other-workspace-server",
+    };
+    appState.servers = {
+      "demo-server": workspaceServer,
+      "other-workspace-server": {
+        ...workspaceServer,
+        name: "other-workspace-server",
+      },
+      __learning__: {
+        name: "__learning__",
+        config: { url: "https://learn.mcpjam.com/mcp" } as any,
+        lastConnectionTime: new Date(),
+        connectionStatus: "connected",
+        retryCount: 0,
+        enabled: true,
+        surface: "learning",
+      },
+    };
+    delete appState.workspaces.default.servers["other-workspace-server"];
+
+    const { result } = renderUseServerState(dispatch, appState);
+    result.current.setSelectedMultipleServersToAllServers();
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_MULTI_SELECTED",
+      names: ["demo-server"],
     });
   });
 });

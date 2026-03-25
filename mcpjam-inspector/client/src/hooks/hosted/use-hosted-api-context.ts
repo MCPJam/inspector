@@ -15,6 +15,8 @@ interface UseHostedApiContextOptions {
   isAuthenticated?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
   serverConfigs?: Record<string, unknown>;
+  /** Maps runtime-only server name → MCPServerConfig for hosted ad hoc requests. */
+  runtimeServerConfigs?: Record<string, unknown>;
   enabled?: boolean;
 }
 
@@ -30,6 +32,7 @@ export function useHostedApiContext({
   sandboxToken,
   isAuthenticated,
   serverConfigs,
+  runtimeServerConfigs,
   enabled = true,
 }: UseHostedApiContextOptions): void {
   // useLayoutEffect so the global hosted context is set synchronously before
@@ -59,6 +62,7 @@ export function useHostedApiContext({
       sandboxToken,
       isAuthenticated,
       serverConfigs,
+      runtimeServerConfigs,
     });
 
     return () => {
@@ -77,5 +81,6 @@ export function useHostedApiContext({
     sandboxToken,
     isAuthenticated,
     serverConfigs,
+    runtimeServerConfigs,
   ]);
 }

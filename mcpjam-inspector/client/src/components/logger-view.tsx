@@ -28,6 +28,7 @@ import { setServerLoggingLevel } from "@/state/mcp-api";
 import { toast } from "sonner";
 import { useSharedAppState } from "@/state/app-state-context";
 import type { ServerWithName } from "@/state/app-types";
+import { isWorkspaceVisibleServer } from "@/state/server-selectors";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -43,15 +44,7 @@ import {
 import { Filter, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-type RpcDirection = "in" | "out" | string;
 type TrafficSource = "mcp-server" | "mcp-apps";
-
-interface RpcEventMessage {
-  serverId: string;
-  direction: RpcDirection;
-  message: unknown; // raw JSON-RPC payload (request/response/error)
-  timestamp?: string;
-}
 
 interface RenderableRpcItem {
   id: string;
@@ -179,16 +172,22 @@ export function LoggerView({
   >(
     () =>
       Object.entries(appState.servers)
-        .filter(([, server]) => server.connectionStatus === "connected")
+        .filter(([id, server]) => {
+          if (server.connectionStatus !== "connected") {
+            return false;
+          }
+
+          if (serverIds && serverIds.length > 0) {
+            return serverIds.includes(id);
+          }
+
+          return isWorkspaceVisibleServer(server);
+        })
         .map(([id, server]) => ({ id, server })),
-    [appState.servers],
+    [appState.servers, serverIds],
   );
 
-  const selectableServers = useMemo(() => {
-    if (!serverIds || serverIds.length === 0) return connectedServers;
-    const filter = new Set(serverIds);
-    return connectedServers.filter((server) => filter.has(server.id));
-  }, [connectedServers, serverIds]);
+  const selectableServers = connectedServers;
 
   // Removed unused handleApplyLogLevel
 

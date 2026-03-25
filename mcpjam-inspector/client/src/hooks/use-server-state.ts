@@ -13,6 +13,8 @@ import {
   listServers,
   reconnectServer,
   getInitializationInfo,
+  testRuntimeServerConnection,
+  reconnectRuntimeServer,
 } from "@/state/mcp-api";
 import {
   ensureAuthorizedForReconnect,
@@ -38,6 +40,10 @@ import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   getEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
+import {
+  getWorkspaceVisibleConnectedServerNames,
+  getWorkspaceVisibleConnectedOrConnectingServers,
+} from "@/state/server-selectors";
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
@@ -105,6 +111,14 @@ export interface ServerUpdateResult {
   serverName: string;
 }
 
+interface RuntimeServerConnectOptions {
+  name: string;
+  config: MCPServerConfig;
+  surface?: ServerWithName["surface"];
+  silent?: boolean;
+  select?: boolean;
+}
+
 export function useServerState({
   appState,
   dispatch,
@@ -153,6 +167,9 @@ export function useServerState({
   );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
+  const invalidatePendingServerOps = (name: string) => {
+    nextOpToken(name);
+  };
 
   const activeWorkspace = useMemo(() => {
     const workspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
@@ -280,11 +297,10 @@ export function useServerState({
   };
 
   const setSelectedMultipleServersToAllServers = useCallback(() => {
-    const connectedNames = Object.entries(appState.servers)
-      .filter(([, s]) => s.connectionStatus === "connected")
-      .map(([name]) => name);
+    const connectedNames =
+      getWorkspaceVisibleConnectedServerNames(effectiveServers);
     dispatch({ type: "SET_MULTI_SELECTED", names: connectedNames });
-  }, [appState.servers, dispatch]);
+  }, [dispatch, effectiveServers]);
 
   const syncServerToConvex = useCallback(
     async (
@@ -918,6 +934,84 @@ export function useServerState({
     ],
   );
 
+  const connectRuntimeServer = useCallback(
+    async ({
+      name,
+      config,
+      surface = "learning",
+      silent = true,
+      select = false,
+    }: RuntimeServerConnectOptions) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
+      const existingServer = appState.servers[name];
+      const shouldReconnectRuntime =
+        existingServer?.connectionStatus === "connected";
+
+      dispatch({
+        type: shouldReconnectRuntime ? "RECONNECT_REQUEST" : "CONNECT_REQUEST",
+        name,
+        config,
+        surface,
+        select,
+      });
+      const token = nextOpToken(name);
+
+      try {
+        const effectiveConfig = withWorkspaceClientCapabilities(config);
+        const result = shouldReconnectRuntime
+          ? await reconnectRuntimeServer(name, effectiveConfig)
+          : await testRuntimeServerConnection(effectiveConfig, name);
+        if (isStaleOp(name, token)) return;
+
+        if (result.success) {
+          dispatch({
+            type: "CONNECT_SUCCESS",
+            name,
+            config,
+            surface,
+          });
+          await storeInitInfo(name, result.initInfo);
+          if (!silent) {
+            toast.success(`Connected to ${name}`);
+          }
+          return;
+        }
+
+        const errorMessage = result.error || "Connection test failed";
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name,
+          error: errorMessage,
+        });
+        if (!silent) {
+          toast.error(errorMessage);
+        }
+      } catch (error) {
+        const errorMessage =
+          error instanceof Error ? error.message : "Unknown error";
+        if (isStaleOp(name, token)) return;
+        dispatch({
+          type: "CONNECT_FAILURE",
+          name,
+          error: errorMessage,
+        });
+        if (!silent) {
+          toast.error(errorMessage);
+        }
+      }
+    },
+    [
+      appState.servers,
+      dispatch,
+      notifyIfClientConfigSyncPending,
+      storeInitInfo,
+      withWorkspaceClientCapabilities,
+    ],
+  );
+
   const saveServerConfigWithoutConnecting = useCallback(
     async (
       formData: ServerFormData,
@@ -1315,6 +1409,28 @@ export function useServerState({
     [dispatch, logger],
   );
 
+  const disconnectRuntimeServer = useCallback(
+    async (serverName: string) => {
+      const server = appState.servers[serverName];
+      if (!server) return;
+
+      if ((server.surface ?? "workspace") === "workspace") {
+        await handleDisconnect(serverName);
+        return;
+      }
+
+      invalidatePendingServerOps(serverName);
+      try {
+        await deleteServer(serverName);
+      } catch {
+        // Runtime-only teardown is best effort; local removal always wins.
+      } finally {
+        dispatch({ type: "REMOVE_SERVER", name: serverName });
+      }
+    },
+    [appState.servers, dispatch, handleDisconnect],
+  );
+
   const cleanupServerLocalArtifacts = useCallback((serverName: string) => {
     clearOAuthData(serverName);
     localStorage.removeItem(`mcp-env-${serverName}`);
@@ -1322,6 +1438,7 @@ export function useServerState({
 
   const removeServerFromStateAndCloud = useCallback(
     async (serverName: string) => {
+      invalidatePendingServerOps(serverName);
       cleanupServerLocalArtifacts(serverName);
       dispatch({ type: "REMOVE_SERVER", name: serverName });
       await removeServerFromConvex(serverName);
@@ -1716,13 +1833,8 @@ export function useServerState({
     activeWorkspace,
     effectiveServers,
     workspaceServers: effectiveServers,
-    connectedOrConnectingServerConfigs: Object.fromEntries(
-      Object.entries(effectiveServers).filter(
-        ([, server]) =>
-          server.connectionStatus === "connected" ||
-          server.connectionStatus === "connecting",
-      ),
-    ),
+    connectedOrConnectingServerConfigs:
+      getWorkspaceVisibleConnectedOrConnectingServers(effectiveServers),
     selectedServerEntry: effectiveServers[appState.selectedServer],
     selectedMCPConfig: effectiveServers[appState.selectedServer]?.config,
     selectedMCPConfigs: appState.selectedMultipleServers
@@ -1739,7 +1851,9 @@ export function useServerState({
     ),
     isMultiSelectMode: appState.isMultiSelectMode,
     handleConnect,
+    connectRuntimeServer,
     handleDisconnect,
+    disconnectRuntimeServer,
     handleReconnect,
     handleUpdate,
     handleRemoveServer,
@@ -1752,5 +1866,6 @@ export function useServerState({
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
     handleRefreshTokensFromOAuthFlow,
+    getServerEntry: (name: string) => appState.servers[name],
   };
 }

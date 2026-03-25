@@ -21,6 +21,7 @@ import {
 } from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
+import { getWorkspaceVisibleConnectedServerNames } from "@/state/server-selectors";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 
@@ -49,12 +50,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const selectedTestId = route.type === "test-detail" ? route.testId : null;
 
   const connectedServerNames = useMemo(
-    () =>
-      new Set(
-        Object.entries(appState.servers)
-          .filter(([, server]) => server.connectionStatus === "connected")
-          .map(([name]) => name),
-      ),
+    () => new Set(getWorkspaceVisibleConnectedServerNames(appState.servers)),
     [appState.servers],
   );
 

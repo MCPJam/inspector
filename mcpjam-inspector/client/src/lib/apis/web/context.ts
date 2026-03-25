@@ -20,6 +20,8 @@ export interface HostedApiContext {
   hasSession?: boolean;
   /** Maps server name → MCPServerConfig for guest mode (no Convex). */
   serverConfigs?: Record<string, unknown>;
+  /** Maps runtime-only server name → MCPServerConfig for hosted ad hoc requests. */
+  runtimeServerConfigs?: Record<string, unknown>;
 }
 
 type HostedAccessScope = "workspace_member" | "chat_v2";
@@ -142,6 +144,13 @@ export function buildGuestServerRequest(
   };
 }
 
+export function buildHostedRuntimeServerRequest(
+  config: unknown,
+  clientCapabilities?: Record<string, unknown>,
+): Record<string, unknown> {
+  return buildGuestServerRequest(config, undefined, clientCapabilities);
+}
+
 export function setHostedApiContext(next: HostedApiContext | null): void {
   hostedApiContext = next
     ? {
@@ -256,6 +265,17 @@ export function buildHostedServerRequest(
     return buildGuestServerRequest(
       config,
       oauthToken,
+      hostedApiContext.clientCapabilities,
+    );
+  }
+
+  const runtimeConfig = hostedApiContext.runtimeServerConfigs?.[serverNameOrId];
+  if (runtimeConfig) {
+    assertHostedClientConfigSynced();
+    // Guest-mode token fallback is handled in the branch above. Runtime server
+    // configs are only used for the authenticated hosted path.
+    return buildHostedRuntimeServerRequest(
+      runtimeConfig,
       hostedApiContext.clientCapabilities,
     );
   }
