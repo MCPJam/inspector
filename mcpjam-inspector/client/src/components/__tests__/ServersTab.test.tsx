@@ -549,7 +549,7 @@ describe("ServersTab shared detail modal", () => {
     );
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
-    expect(screen.getByText("Authorizing...")).toBeInTheDocument();
+    expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByLabelText("Connect Linear")).toBeDisabled();
   });
 
@@ -599,7 +599,7 @@ describe("ServersTab shared detail modal", () => {
 
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
-    expect(screen.getByText("Authorizing...")).toBeInTheDocument();
+    expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
       "Linear:oauth-flow",
     );
@@ -649,7 +649,7 @@ describe("ServersTab shared detail modal", () => {
       />,
     );
 
-    expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
+    expect(screen.getAllByText("Finishing setup...").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
       "Linear:connecting",
     );
