@@ -53,23 +53,23 @@ export const MCP_APPS_STEP_HIGHLIGHTS: Record<McpAppsStep, StepHighlightMap> =
       activeEdges: ALL_EDGES,
     },
     host_client: {
-      activeNodes: ["host-group", "ai-client", "iframe-view"],
+      activeNodes: ["host-group", "ai-client"],
       activeEdges: [],
     },
     tool_definition: {
-      activeNodes: ["ai-client", "tool-code"],
+      activeNodes: ["tool-code"],
       activeEdges: ["e-step1"],
     },
     ui_resource: {
-      activeNodes: ["tool-code", "resource-code"],
+      activeNodes: ["resource-code"],
       activeEdges: ["e-step2"],
     },
     widget_component: {
-      activeNodes: ["resource-code", "widget-file"],
+      activeNodes: ["widget-file"],
       activeEdges: ["e-step3"],
     },
     iframe_view: {
-      activeNodes: ["widget-file", "iframe-view"],
+      activeNodes: ["iframe-view"],
       activeEdges: ["e-step4", "e-postmessage"],
     },
     lifecycle: {
