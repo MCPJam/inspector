@@ -1,6 +1,7 @@
 import { memo } from "react";
 import { motion } from "framer-motion";
 import { Brain, Database, Cloud, FileText, Wrench } from "lucide-react";
+import { useDiagramMotion, VIEWPORT_ONCE } from "./diagram-motion";
 
 const EASE = [0.25, 0.1, 0.25, 1] as const;
 
@@ -10,29 +11,35 @@ function GhostSystem({
   label,
   bobDelay,
   enterDelay,
+  reduce,
 }: {
   icon: React.ElementType;
   label: string;
   bobDelay: number;
   enterDelay: number;
+  reduce: boolean;
 }) {
   return (
     <motion.div
       className="flex flex-col items-center gap-1.5"
       initial={{ opacity: 0, scale: 0.8 }}
       whileInView={{ opacity: 1, scale: 1 }}
-      viewport={{ once: true }}
+      viewport={VIEWPORT_ONCE}
       transition={{ delay: enterDelay, duration: 0.5, ease: EASE }}
     >
       <motion.div
         className="w-11 h-11 rounded-lg border border-dashed border-muted-foreground/20 flex items-center justify-center"
-        animate={{ y: [0, -3, 0] }}
-        transition={{
-          duration: 4,
-          delay: bobDelay,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
+        animate={reduce ? undefined : { y: [0, -3, 0] }}
+        transition={
+          reduce
+            ? undefined
+            : {
+                duration: 4,
+                delay: bobDelay,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }
+        }
       >
         <Icon className="w-4 h-4 text-muted-foreground/40" />
       </motion.div>
@@ -44,7 +51,15 @@ function GhostSystem({
 }
 
 /** Animated dashed line that travels outward and fades — a signal that dies. */
-function FadingSignal({ delay, flip }: { delay: number; flip?: boolean }) {
+function FadingSignal({
+  delay,
+  flip,
+  reduce,
+}: {
+  delay: number;
+  flip?: boolean;
+  reduce: boolean;
+}) {
   return (
     <div
       className="flex-1 flex items-center justify-center overflow-hidden"
@@ -56,19 +71,25 @@ function FadingSignal({ delay, flip }: { delay: number; flip?: boolean }) {
           background:
             "linear-gradient(to right, rgba(139,92,246,0.4), rgba(139,92,246,0.08) 60%, transparent)",
         }}
-        animate={{ opacity: [0, 0.8, 0] }}
-        transition={{
-          duration: 2.5,
-          delay,
-          repeat: Infinity,
-          ease: "easeInOut",
-        }}
+        animate={reduce ? { opacity: 0.4 } : { opacity: [0, 0.8, 0] }}
+        transition={
+          reduce
+            ? { duration: 0 }
+            : {
+                duration: 2.5,
+                delay,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }
+        }
       />
     </div>
   );
 }
 
 export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
+  const { reduce } = useDiagramMotion();
+
   return (
     <div className="relative rounded-lg border border-border/50 overflow-hidden">
       {/* Subtle radial background */}
@@ -80,7 +101,7 @@ export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
           className="flex flex-col gap-4"
           initial={{ opacity: 0, x: -12 }}
           whileInView={{ opacity: 1, x: 0 }}
-          viewport={{ once: true }}
+          viewport={VIEWPORT_ONCE}
           transition={{ delay: 0.4, duration: 0.5 }}
         >
           <GhostSystem
@@ -88,38 +109,52 @@ export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
             label="Database"
             bobDelay={0}
             enterDelay={0.5}
+            reduce={reduce}
           />
           <GhostSystem
             icon={Cloud}
             label="APIs"
             bobDelay={0.7}
             enterDelay={0.7}
+            reduce={reduce}
           />
         </motion.div>
 
         {/* Left fading signal */}
-        <FadingSignal delay={0.8} flip />
+        <FadingSignal delay={0.8} flip reduce={reduce} />
 
         {/* Center: LLM node with pulsing ring */}
         <motion.div
           className="relative z-10 shrink-0"
           initial={{ opacity: 0, scale: 0.85 }}
           whileInView={{ opacity: 1, scale: 1 }}
-          viewport={{ once: true }}
+          viewport={VIEWPORT_ONCE}
           transition={{ duration: 0.5, ease: EASE }}
         >
           {/* Subtle pulse ring */}
           <motion.div
             className="absolute -inset-4 rounded-2xl border border-purple-400/15"
-            animate={{ scale: [1, 1.15, 1], opacity: [0.6, 0.2, 0.6] }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+            animate={
+              reduce
+                ? undefined
+                : { scale: [1, 1.15, 1], opacity: [0.6, 0.2, 0.6] }
+            }
+            transition={
+              reduce
+                ? undefined
+                : { duration: 3, repeat: Infinity, ease: "easeInOut" }
+            }
           />
 
           {/* Breathing glow */}
           <motion.div
             className="absolute -inset-3 rounded-2xl bg-purple-500/10 blur-lg"
-            animate={{ opacity: [0.2, 0.5, 0.2] }}
-            transition={{ duration: 3, repeat: Infinity, ease: "easeInOut" }}
+            animate={reduce ? undefined : { opacity: [0.2, 0.5, 0.2] }}
+            transition={
+              reduce
+                ? undefined
+                : { duration: 3, repeat: Infinity, ease: "easeInOut" }
+            }
           />
 
           <div className="relative flex flex-col items-center justify-center w-[76px] h-[76px] rounded-xl border-2 border-purple-400/30 bg-card shadow-sm">
@@ -134,7 +169,7 @@ export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
             className="absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap"
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
-            viewport={{ once: true }}
+            viewport={VIEWPORT_ONCE}
             transition={{ delay: 0.6 }}
           >
             <span className="text-[9px] text-purple-400/40 font-mono tracking-wider">
@@ -144,14 +179,14 @@ export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
         </motion.div>
 
         {/* Right fading signal */}
-        <FadingSignal delay={1.6} />
+        <FadingSignal delay={1.6} reduce={reduce} />
 
         {/* Right systems */}
         <motion.div
           className="flex flex-col gap-4"
           initial={{ opacity: 0, x: 12 }}
           whileInView={{ opacity: 1, x: 0 }}
-          viewport={{ once: true }}
+          viewport={VIEWPORT_ONCE}
           transition={{ delay: 0.4, duration: 0.5 }}
         >
           <GhostSystem
@@ -159,12 +194,14 @@ export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
             label="Files"
             bobDelay={0.3}
             enterDelay={0.9}
+            reduce={reduce}
           />
           <GhostSystem
             icon={Wrench}
             label="Services"
             bobDelay={1.0}
             enterDelay={1.1}
+            reduce={reduce}
           />
         </motion.div>
       </div>

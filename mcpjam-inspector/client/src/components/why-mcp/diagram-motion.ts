@@ -7,12 +7,6 @@ export const springGentle = {
   damping: 24,
 };
 
-export const springBouncy = {
-  type: "spring" as const,
-  stiffness: 400,
-  damping: 20,
-};
-
 export const springSnappy = {
   type: "spring" as const,
   stiffness: 520,
