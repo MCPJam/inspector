@@ -8,6 +8,8 @@ import { readFileSync } from "fs";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+// The linked local SDK package can advertise ./browser before dist/browser.* exists.
+const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
 
 // Read version from package.json
 const packageJson = JSON.parse(
@@ -41,6 +43,7 @@ export default defineConfig(({ mode }) => {
         "@repo/assets": path.resolve(clientDir, "src/assets"),
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
+        "@mcpjam/sdk/browser": sdkBrowserEntry,
         // Force React resolution to prevent conflicts with @mcp-ui/client
         react: path.resolve(clientDir, "../node_modules/react"),
         "react-dom": path.resolve(clientDir, "../node_modules/react-dom"),

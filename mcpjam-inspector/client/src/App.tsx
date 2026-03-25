@@ -27,6 +27,7 @@ import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
+import { RegistryTab } from "./components/RegistryTab";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
@@ -144,6 +145,7 @@ export default function App() {
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
+  const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const {
     getAccessToken,
     signIn,
@@ -653,6 +655,8 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`,
       );
       applyNavigation("servers", { updateHash: true });
+    } else if (activeTab === "registry" && registryEnabled !== true) {
+      applyNavigation("servers", { updateHash: true });
     } else if (
       activeTab === "learning" &&
       (learningEnabled !== true || !isAuthenticated)
@@ -667,6 +671,7 @@ export default function App() {
   }, [
     ciEvalsEnabled,
     clientConfigEnabled,
+    registryEnabled,
     activeTabBillingFeature,
     activeTabBillingLocked,
     learningEnabled,
@@ -886,6 +891,24 @@ export default function App() {
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}
+              onWorkspaceShared={handleWorkspaceShared}
+              onLeaveWorkspace={() => handleLeaveWorkspace(activeWorkspaceId)}
+              isRegistryEnabled={registryEnabled === true}
+              onNavigateToRegistry={
+                registryEnabled === true
+                  ? () => handleNavigate("registry")
+                  : undefined
+              }
+            />
+          )}
+          {activeTab === "registry" && registryEnabled === true && (
+            <RegistryTab
+              workspaceId={convexWorkspaceId}
+              isAuthenticated={isAuthenticated}
+              onConnect={handleConnect}
+              onDisconnect={handleDisconnect}
+              onNavigate={handleNavigate}
+              servers={workspaceServers}
             />
           )}
           {activeTab === "tools" && (

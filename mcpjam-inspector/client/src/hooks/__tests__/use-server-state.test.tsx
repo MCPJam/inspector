@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppState, AppAction } from "@/state/app-types";
 import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
@@ -6,13 +6,25 @@ import type { WorkspaceClientConfig } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useServerState } from "../use-server-state";
 
-const { toastError, toastSuccess, handleOAuthCallbackMock } = vi.hoisted(
-  () => ({
-    toastError: vi.fn(),
-    toastSuccess: vi.fn(),
-    handleOAuthCallbackMock: vi.fn(),
-  }),
-);
+const {
+  toastError,
+  toastSuccess,
+  handleOAuthCallbackMock,
+  initiateOAuthMock,
+  getStoredTokensMock,
+  clearOAuthDataMock,
+  testConnectionMock,
+  mockConvexQuery,
+} = vi.hoisted(() => ({
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+  handleOAuthCallbackMock: vi.fn(),
+  initiateOAuthMock: vi.fn(),
+  getStoredTokensMock: vi.fn(),
+  clearOAuthDataMock: vi.fn(),
+  testConnectionMock: vi.fn(),
+  mockConvexQuery: vi.fn(),
+}));
 
 vi.mock("sonner", () => ({
   toast: {
@@ -21,8 +33,14 @@ vi.mock("sonner", () => ({
   },
 }));
 
+vi.mock("convex/react", () => ({
+  useConvex: () => ({
+    query: mockConvexQuery,
+  }),
+}));
+
 vi.mock("@/state/mcp-api", () => ({
-  testConnection: vi.fn(),
+  testConnection: testConnectionMock,
   deleteServer: vi.fn(),
   listServers: vi.fn(),
   reconnectServer: vi.fn(),
@@ -35,9 +53,9 @@ vi.mock("@/state/oauth-orchestrator", () => ({
 
 vi.mock("@/lib/oauth/mcp-oauth", () => ({
   handleOAuthCallback: handleOAuthCallbackMock,
-  getStoredTokens: vi.fn(),
-  clearOAuthData: vi.fn(),
-  initiateOAuth: vi.fn(),
+  getStoredTokens: getStoredTokensMock,
+  clearOAuthData: clearOAuthDataMock,
+  initiateOAuth: initiateOAuthMock,
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
@@ -164,6 +182,13 @@ describe("useServerState OAuth callback failures", () => {
       pendingSavedConfig: undefined,
       isAwaitingRemoteEcho: false,
     });
+    getStoredTokensMock.mockReturnValue(undefined);
+    testConnectionMock.mockResolvedValue({
+      success: true,
+      initInfo: null,
+    });
+    initiateOAuthMock.mockResolvedValue({ success: true });
+    mockConvexQuery.mockResolvedValue(null);
   });
 
   it("marks the pending server as failed when authorization is denied", async () => {
@@ -300,5 +325,97 @@ describe("useServerState OAuth callback failures", () => {
         elicitation: {},
       },
     });
+  });
+
+  it("resolves preregistered registry OAuth config before initiating Asana connect", async () => {
+    mockConvexQuery.mockResolvedValueOnce({
+      clientId: "asana-client-id",
+      scopes: ["default"],
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "Asana",
+        type: "http",
+        url: "https://mcp.asana.com/v2/mcp",
+        useOAuth: true,
+        registryServerId: "registry-asana",
+        oauthScopes: ["fallback-scope"],
+      });
+    });
+
+    expect(mockConvexQuery).toHaveBeenCalledWith(
+      "registryServers:getRegistryServerOAuthConfig",
+      { registryServerId: "registry-asana" },
+    );
+    expect(initiateOAuthMock).toHaveBeenCalledWith({
+      serverName: "Asana",
+      serverUrl: "https://mcp.asana.com/v2/mcp",
+      clientId: "asana-client-id",
+      clientSecret: undefined,
+      registryServerId: "registry-asana",
+      useRegistryOAuthProxy: true,
+      scopes: ["default"],
+    });
+  });
+
+  it("keeps Linear registry OAuth on the generic path when no preregistered client ID is returned", async () => {
+    mockConvexQuery.mockResolvedValueOnce({
+      scopes: ["read", "write"],
+    });
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "Linear",
+        type: "http",
+        url: "https://mcp.linear.app/mcp",
+        useOAuth: true,
+        registryServerId: "registry-linear",
+        oauthScopes: ["fallback-scope"],
+      });
+    });
+
+    expect(initiateOAuthMock).toHaveBeenCalledWith({
+      serverName: "Linear",
+      serverUrl: "https://mcp.linear.app/mcp",
+      clientId: undefined,
+      clientSecret: undefined,
+      registryServerId: "registry-linear",
+      useRegistryOAuthProxy: false,
+      scopes: ["read", "write"],
+    });
+  });
+
+  it("fails registry OAuth initiation when the dedicated OAuth config query fails", async () => {
+    mockConvexQuery.mockRejectedValueOnce(new Error("registry lookup failed"));
+
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch);
+
+    await act(async () => {
+      await result.current.handleConnect({
+        name: "Asana",
+        type: "http",
+        url: "https://mcp.asana.com/v2/mcp",
+        useOAuth: true,
+        registryServerId: "registry-asana",
+      });
+    });
+
+    expect(initiateOAuthMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "CONNECT_FAILURE",
+      name: "Asana",
+      error: "Failed to resolve registry OAuth config: registry lookup failed",
+    });
+    expect(toastError).toHaveBeenCalledWith(
+      "Network error: Failed to resolve registry OAuth config: registry lookup failed",
+    );
   });
 });

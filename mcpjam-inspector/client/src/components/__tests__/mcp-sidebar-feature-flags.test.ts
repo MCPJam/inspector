@@ -3,6 +3,7 @@ import {
   filterByBillingEntitlements,
   filterByFeatureFlags,
   getHostedNavigationSections,
+  shouldPrefetchSidebarTools,
 } from "../mcp-sidebar";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
@@ -209,5 +210,34 @@ describe("getHostedNavigationSections", () => {
     expect(visibleSections[0].items.map((item) => item.title)).toEqual([
       "Evals CI/CD",
     ]);
+  });
+});
+
+describe("shouldPrefetchSidebarTools", () => {
+  it("skips sidebar tool prefetch for hosted guests", () => {
+    expect(
+      shouldPrefetchSidebarTools({
+        hostedMode: true,
+        isAuthenticated: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("allows sidebar tool prefetch for hosted signed-in users", () => {
+    expect(
+      shouldPrefetchSidebarTools({
+        hostedMode: true,
+        isAuthenticated: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("allows sidebar tool prefetch outside hosted mode", () => {
+    expect(
+      shouldPrefetchSidebarTools({
+        hostedMode: false,
+        isAuthenticated: false,
+      }),
+    ).toBe(true);
   });
 });

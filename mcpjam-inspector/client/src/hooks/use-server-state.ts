@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
+import { useConvex } from "convex/react";
 import { toast } from "sonner";
 import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
 import type {
@@ -57,6 +58,9 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   if (formData.headers && Object.keys(formData.headers).length > 0) {
     oauthConfig.customHeaders = formData.headers;
   }
+  if (formData.registryServerId) {
+    oauthConfig.registryServerId = formData.registryServerId;
+  }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
       `mcp-oauth-config-${formData.name}`,
@@ -84,6 +88,19 @@ interface LoggerLike {
   warn: (message: string, meta?: Record<string, unknown>) => void;
   error: (message: string, meta?: Record<string, unknown>) => void;
   debug: (message: string, meta?: Record<string, unknown>) => void;
+}
+
+interface RegistryOAuthConfigResponse {
+  clientId?: string;
+  scopes?: string[];
+}
+
+interface ResolvedOAuthInitiationInputs {
+  clientId?: string;
+  clientSecret?: string;
+  registryServerId?: string;
+  scopes?: string[];
+  useRegistryOAuthProxy: boolean;
 }
 
 interface UseServerStateParams {
@@ -118,6 +135,7 @@ export function useServerState({
   activeWorkspaceServersFlat,
   logger,
 }: UseServerStateParams) {
+  const convex = useConvex();
   const {
     createServer: convexCreateServer,
     updateServer: convexUpdateServer,
@@ -472,6 +490,51 @@ export function useServerState({
     [dispatch, fetchAndStoreInitInfo],
   );
 
+  const resolveOAuthInitiationInputs = useCallback(
+    async (
+      formData: ServerFormData,
+    ): Promise<ResolvedOAuthInitiationInputs> => {
+      let registryOAuthConfig: RegistryOAuthConfigResponse | null = null;
+
+      if (formData.registryServerId) {
+        try {
+          registryOAuthConfig = (await convex.query(
+            "registryServers:getRegistryServerOAuthConfig" as any,
+            { registryServerId: formData.registryServerId } as any,
+          )) as RegistryOAuthConfigResponse | null;
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+          throw new Error(
+            `Failed to resolve registry OAuth config: ${errorMessage}`,
+          );
+        }
+      }
+
+      const clientId =
+        typeof registryOAuthConfig?.clientId === "string" &&
+        registryOAuthConfig.clientId.trim() !== ""
+          ? registryOAuthConfig.clientId
+          : formData.clientId;
+      const scopes =
+        Array.isArray(registryOAuthConfig?.scopes) &&
+        registryOAuthConfig.scopes.every(
+          (scope): scope is string => typeof scope === "string",
+        )
+          ? registryOAuthConfig.scopes
+          : formData.oauthScopes;
+
+      return {
+        clientId,
+        clientSecret: formData.clientSecret,
+        registryServerId: formData.registryServerId,
+        scopes,
+        useRegistryOAuthProxy: Boolean(clientId && formData.registryServerId),
+      };
+    },
+    [convex],
+  );
+
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
@@ -782,14 +845,17 @@ export function useServerState({
             } as ServerWithName,
           });
 
+          const oauthInputs = await resolveOAuthInitiationInputs(formData);
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
-            clientId: formData.clientId,
-            clientSecret: formData.clientSecret,
+            clientId: oauthInputs.clientId,
+            clientSecret: oauthInputs.clientSecret,
+            registryServerId: oauthInputs.registryServerId,
+            useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
           };
-          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
-            oauthOptions.scopes = formData.oauthScopes;
+          if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
+            oauthOptions.scopes = oauthInputs.scopes;
           }
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
@@ -910,6 +976,7 @@ export function useServerState({
       appState.workspaces,
       appState.activeWorkspaceId,
       notifyIfClientConfigSyncPending,
+      resolveOAuthInitiationInputs,
       syncServerToConvex,
       logger,
       storeInitInfo,

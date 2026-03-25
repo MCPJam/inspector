@@ -16,6 +16,7 @@ import {
   GitBranch,
   GraduationCap,
   Box,
+  LayoutGrid,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -112,6 +113,17 @@ export function filterByBillingEntitlements(
     .filter((section) => section.items.length > 0);
 }
 
+export function shouldPrefetchSidebarTools(options: {
+  hostedMode: boolean;
+  isAuthenticated: boolean;
+}): boolean {
+  const { hostedMode, isAuthenticated } = options;
+  // Hosted guests can briefly hydrate stale "connected" local servers before
+  // runtime status sync clears them, which causes speculative tools/list calls
+  // against guest server configs. Only signed-in hosted users should prefetch.
+  return !hostedMode || isAuthenticated;
+}
+
 // Define sections with their respective items
 const navigationSections: NavSection[] = [
   {
@@ -121,6 +133,12 @@ const navigationSections: NavSection[] = [
         title: "Servers",
         url: "#servers",
         icon: MCPIcon,
+      },
+      {
+        title: "Registry",
+        url: "#registry",
+        icon: LayoutGrid,
+        featureFlag: "registry-enabled",
       },
       {
         title: "Chat",
@@ -313,6 +331,7 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
+  const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -334,7 +353,13 @@ export function MCPSidebar({
   // Fetch tools data for connected servers
   useEffect(() => {
     const fetchToolsData = async () => {
-      if (connectedServerNames.length === 0) {
+      if (
+        !shouldPrefetchSidebarTools({
+          hostedMode: HOSTED_MODE,
+          isAuthenticated,
+        }) ||
+        connectedServerNames.length === 0
+      ) {
         setToolsDataMap({});
         return;
       }
@@ -359,7 +384,7 @@ export function MCPSidebar({
     };
 
     fetchToolsData();
-  }, [connectedServerNames.join(",")]);
+  }, [connectedServerNames.join(","), isAuthenticated]);
 
   // Check if any connected server is an app
   const hasAppServer = useMemo(() => {
@@ -410,12 +435,14 @@ export function MCPSidebar({
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
+      "registry-enabled": registryEnabled === true,
     }),
     [
       ciEvalsEnabled,
       learningEnabled,
       sandboxesEnabled,
       clientConfigEnabled,
+      registryEnabled,
       isAuthenticated,
     ],
   );

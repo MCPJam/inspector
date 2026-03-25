@@ -18,13 +18,13 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
     iconClassName: "h-3 w-3 text-green-500",
   },
   connecting: {
-    label: "Connecting...",
+    label: "Finishing setup...",
     indicatorColor: "#3b82f6",
     Icon: Loader2,
     iconClassName: "h-3 w-3 text-blue-500 animate-spin",
   },
   "oauth-flow": {
-    label: "Authorizing...",
+    label: "Authorizing in browser...",
     indicatorColor: "#a855f7",
     Icon: Loader2,
     iconClassName: "h-3 w-3 text-purple-500 animate-spin",

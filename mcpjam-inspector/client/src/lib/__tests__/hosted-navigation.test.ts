@@ -8,7 +8,7 @@ import {
 
 describe("hosted-navigation", () => {
   it("normalizes hash aliases and strips hash prefix", () => {
-    expect(getNormalizedHashParts("#registry")).toEqual(["servers"]);
+    expect(getNormalizedHashParts("#registry")).toEqual(["registry"]);
     expect(getNormalizedHashParts("#/chat")).toEqual(["chat-v2"]);
     expect(getNormalizedHashParts("prompts")).toEqual(["prompts"]);
   });
@@ -40,7 +40,7 @@ describe("hosted-navigation", () => {
   it("returns canonical section for hash synchronization", () => {
     const resolved = resolveHostedNavigation("#/registry", true);
     expect(resolved.rawSection).toBe("registry");
-    expect(resolved.normalizedSection).toBe("servers");
+    expect(resolved.normalizedSection).toBe("registry");
   });
 
   it("normalizes organization billing subroutes", () => {
