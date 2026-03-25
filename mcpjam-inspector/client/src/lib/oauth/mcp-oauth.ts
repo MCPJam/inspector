@@ -2,7 +2,13 @@
  * Clean OAuth implementation using only the official MCP SDK with CORS proxy support
  */
 
-import { auth } from "@modelcontextprotocol/sdk/client/auth.js";
+import {
+  auth,
+  discoverAuthorizationServerMetadata,
+  discoverOAuthServerInfo,
+  fetchToken,
+  selectResourceURL,
+} from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
@@ -12,6 +18,8 @@ import { generateRandomString } from "./state-machines/shared/helpers";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
 import { captureServerDetailModalOAuthResume } from "@/lib/server-detail-modal-resume";
+import { getRedirectUri } from "./constants";
+import { getConvexSiteUrl } from "@/lib/convex-site-url";
 
 // Store original fetch for restoration
 const originalFetch = window.fetch;
@@ -19,6 +27,18 @@ const originalFetch = window.fetch;
 interface StoredOAuthDiscoveryState {
   serverUrl: string;
   discoveryState: OAuthDiscoveryState;
+}
+
+export interface StoredOAuthConfig {
+  scopes?: string[];
+  customHeaders?: Record<string, string>;
+  registryServerId?: string;
+  useRegistryOAuthProxy?: boolean;
+}
+
+interface OAuthRoutingConfig {
+  registryServerId?: string;
+  useRegistryOAuthProxy?: boolean;
 }
 
 function getDiscoveryStorageKey(serverName: string): string {
@@ -29,28 +49,297 @@ function clearStoredDiscoveryState(serverName: string): void {
   localStorage.removeItem(getDiscoveryStorageKey(serverName));
 }
 
+type OAuthRequestFields = Record<string, string>;
+
+export function readStoredOAuthConfig(
+  serverName: string | null,
+): StoredOAuthConfig {
+  if (!serverName) {
+    return {
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    };
+  }
+
+  try {
+    const raw = localStorage.getItem(`mcp-oauth-config-${serverName}`);
+    if (!raw) {
+      return {
+        registryServerId: undefined,
+        useRegistryOAuthProxy: false,
+      };
+    }
+
+    const parsed = JSON.parse(raw);
+    const config: StoredOAuthConfig = {
+      registryServerId:
+        typeof parsed?.registryServerId === "string"
+          ? parsed.registryServerId
+          : undefined,
+      useRegistryOAuthProxy: parsed?.useRegistryOAuthProxy === true,
+    };
+
+    if (
+      Array.isArray(parsed?.scopes) &&
+      parsed.scopes.every((scope: unknown) => typeof scope === "string")
+    ) {
+      config.scopes = parsed.scopes;
+    }
+
+    if (
+      parsed?.customHeaders &&
+      typeof parsed.customHeaders === "object" &&
+      !Array.isArray(parsed.customHeaders)
+    ) {
+      config.customHeaders = Object.fromEntries(
+        Object.entries(parsed.customHeaders).filter(
+          ([, value]) => typeof value === "string",
+        ) as Array<[string, string]>,
+      );
+    }
+
+    return config;
+  } catch {
+    return {
+      registryServerId: undefined,
+      useRegistryOAuthProxy: false,
+    };
+  }
+}
+
+export function buildStoredOAuthConfig(
+  options: Pick<
+    MCPOAuthOptions,
+    "scopes" | "registryServerId" | "useRegistryOAuthProxy"
+  >,
+): StoredOAuthConfig {
+  const config: StoredOAuthConfig = {
+    registryServerId: options.registryServerId,
+    useRegistryOAuthProxy: options.useRegistryOAuthProxy === true,
+  };
+
+  if (options.scopes && options.scopes.length > 0) {
+    config.scopes = options.scopes;
+  }
+
+  return config;
+}
+
+function parseOAuthRequestFields(
+  body: unknown,
+): OAuthRequestFields | undefined {
+  if (!body) return undefined;
+
+  if (typeof body === "string") {
+    const trimmed = body.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          !Array.isArray(parsed)
+        ) {
+          const entries = Object.entries(parsed).flatMap(([key, value]) => {
+            if (typeof value === "string") {
+              return [[key, value] as const];
+            }
+            if (typeof value === "number" || typeof value === "boolean") {
+              return [[key, String(value)] as const];
+            }
+            return [];
+          });
+          return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+        }
+      } catch {
+        // Fall through to URLSearchParams parsing.
+      }
+    }
+
+    const params = new URLSearchParams(trimmed);
+    const entries = Object.fromEntries(params.entries());
+    return Object.keys(entries).length > 0 ? entries : undefined;
+  }
+
+  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(body).flatMap(([key, value]) => {
+    if (typeof value === "string") {
+      return [[key, value] as const];
+    }
+    if (typeof value === "number" || typeof value === "boolean") {
+      return [[key, String(value)] as const];
+    }
+    return [];
+  });
+
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function getOAuthGrantType(body: unknown): string | undefined {
+  return parseOAuthRequestFields(body)?.grant_type;
+}
+
+export function isOAuthTokenGrantRequest(
+  method: string,
+  body: unknown,
+): body is OAuthRequestFields {
+  if (method !== "POST") {
+    return false;
+  }
+
+  const grantType = getOAuthGrantType(body);
+  return grantType === "authorization_code" || grantType === "refresh_token";
+}
+
+export function shouldUseRegistryOAuthProxy({
+  registryServerId,
+  useRegistryOAuthProxy,
+  method,
+  body,
+}: OAuthRoutingConfig & {
+  method: string;
+  body: unknown;
+}): body is OAuthRequestFields {
+  if (!registryServerId || !useRegistryOAuthProxy) {
+    return false;
+  }
+
+  return isOAuthTokenGrantRequest(method, body);
+}
+
+function toConvexOAuthPayload(
+  registryServerId: string,
+  fields: OAuthRequestFields,
+): Record<string, string> {
+  const payload: Record<string, string> = {
+    registryServerId,
+    ...fields,
+  };
+
+  if (fields.grant_type) {
+    payload.grantType = fields.grant_type;
+  }
+  if (fields.redirect_uri) {
+    payload.redirectUri = fields.redirect_uri;
+  }
+  if (fields.code_verifier) {
+    payload.codeVerifier = fields.code_verifier;
+  }
+  if (fields.refresh_token) {
+    payload.refreshToken = fields.refresh_token;
+  }
+  if (fields.client_id) {
+    payload.clientId = fields.client_id;
+  }
+  if (fields.client_secret) {
+    payload.clientSecret = fields.client_secret;
+  }
+
+  return payload;
+}
+
+async function loadCallbackDiscoveryState(
+  provider: MCPOAuthProvider,
+  serverUrl: string,
+  fetchFn: typeof fetch,
+): Promise<OAuthDiscoveryState> {
+  const cachedState = await provider.discoveryState();
+  if (cachedState?.authorizationServerUrl) {
+    const authorizationServerMetadata =
+      cachedState.authorizationServerMetadata ??
+      (await discoverAuthorizationServerMetadata(
+        cachedState.authorizationServerUrl,
+        { fetchFn },
+      ));
+
+    const discoveryState: OAuthDiscoveryState = {
+      ...cachedState,
+      authorizationServerMetadata,
+    };
+    await provider.saveDiscoveryState(discoveryState);
+    return discoveryState;
+  }
+
+  const discovered = await discoverOAuthServerInfo(serverUrl, { fetchFn });
+  const discoveryState: OAuthDiscoveryState = {
+    authorizationServerUrl: discovered.authorizationServerUrl,
+    resourceMetadata: discovered.resourceMetadata,
+    authorizationServerMetadata: discovered.authorizationServerMetadata,
+  };
+  await provider.saveDiscoveryState(discoveryState);
+  return discoveryState;
+}
+
 /**
- * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS
+ * Custom fetch interceptor that proxies OAuth requests through our server to avoid CORS.
+ * When a registryServerId is provided, token exchange/refresh is routed through
+ * the Convex HTTP registry OAuth endpoints which inject server-side secrets.
  */
-function createOAuthFetchInterceptor(): typeof fetch {
+function createOAuthFetchInterceptor(
+  routingConfig: OAuthRoutingConfig = {},
+): typeof fetch {
   return async function interceptedFetch(
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> {
+    const method = (init?.method || "GET").toUpperCase();
+    const serializedBody = init?.body
+      ? await serializeBody(init.body)
+      : undefined;
     const url =
       typeof input === "string"
         ? input
         : input instanceof URL
           ? input.toString()
           : input.url;
+    const oauthGrantType = getOAuthGrantType(serializedBody);
+    const isRegistryTokenRequest = shouldUseRegistryOAuthProxy({
+      ...routingConfig,
+      method,
+      body: serializedBody,
+    });
 
     // Check if this is an OAuth-related request that needs CORS bypass
     const isOAuthRequest =
       url.includes("/.well-known/") ||
-      url.match(/\/(register|token|authorize)$/);
+      url.match(/\/(register|token|authorize)$/) ||
+      oauthGrantType === "authorization_code" ||
+      oauthGrantType === "refresh_token";
 
     if (!isOAuthRequest) {
       return await originalFetch(input, init);
+    }
+
+    // For registry servers, route token exchange/refresh through Convex HTTP actions
+    if (isRegistryTokenRequest) {
+      const convexSiteUrl = getConvexSiteUrl();
+      if (convexSiteUrl) {
+        const endpoint =
+          serializedBody.grant_type === "refresh_token"
+            ? "/registry/oauth/refresh"
+            : "/registry/oauth/token";
+        const response = await authFetch(`${convexSiteUrl}${endpoint}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            toConvexOAuthPayload(
+              routingConfig.registryServerId!,
+              serializedBody,
+            ),
+          ),
+        });
+        return response;
+      }
     }
 
     // Proxy OAuth requests through our server
@@ -66,17 +355,16 @@ function createOAuthFetchInterceptor(): typeof fetch {
       }
 
       // For OAuth endpoints, serialize and proxy the full request
-      const body = init?.body ? await serializeBody(init.body) : undefined;
       const response = await authFetch(proxyUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           url,
-          method: init?.method || "POST",
+          method,
           headers: init?.headers
             ? Object.fromEntries(new Headers(init.headers as HeadersInit))
             : {},
-          body,
+          body: serializedBody,
         }),
       });
 
@@ -102,7 +390,20 @@ function createOAuthFetchInterceptor(): typeof fetch {
  * Serialize request body for proxying
  */
 async function serializeBody(body: BodyInit): Promise<any> {
-  if (typeof body === "string") return body;
+  if (typeof body === "string") {
+    const trimmed = body.trim();
+    if (
+      (trimmed.startsWith("{") && trimmed.endsWith("}")) ||
+      (trimmed.startsWith("[") && trimmed.endsWith("]"))
+    ) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        // Fall back to form-style parsing below.
+      }
+    }
+    return parseOAuthRequestFields(trimmed) ?? body;
+  }
   if (body instanceof URLSearchParams || body instanceof FormData) {
     return Object.fromEntries(body.entries());
   }
@@ -116,6 +417,10 @@ export interface MCPOAuthOptions {
   scopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  /** Registry record identifier for bookkeeping and optional Convex token exchange */
+  registryServerId?: string;
+  /** True only for registry servers with backend-managed preregistered OAuth credentials */
+  useRegistryOAuthProxy?: boolean;
 }
 
 export interface OAuthResult {
@@ -142,7 +447,7 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   ) {
     this.serverName = serverName;
     this.serverUrl = serverUrl;
-    this.redirectUri = `${window.location.origin}/oauth/callback`;
+    this.redirectUri = getRedirectUri();
     this.customClientId = customClientId;
     this.customClientSecret = customClientSecret;
   }
@@ -307,9 +612,11 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 export async function initiateOAuth(
   options: MCPOAuthOptions,
 ): Promise<OAuthResult> {
-  // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
-  window.fetch = interceptedFetch;
+  // Build fetch interceptor — routes token requests through Convex for registry servers
+  const fetchFn = createOAuthFetchInterceptor({
+    registryServerId: options.registryServerId,
+    useRegistryOAuthProxy: options.useRegistryOAuthProxy,
+  });
 
   try {
     const provider = new MCPOAuthProvider(
@@ -326,11 +633,8 @@ export async function initiateOAuth(
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
 
-    // Store OAuth configuration (scopes) for recovery if connection fails
-    const oauthConfig: any = {};
-    if (options.scopes && options.scopes.length > 0) {
-      oauthConfig.scopes = options.scopes;
-    }
+    // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
+    const oauthConfig = buildStoredOAuthConfig(options);
     localStorage.setItem(
       `mcp-oauth-config-${options.serverName}`,
       JSON.stringify(oauthConfig),
@@ -359,7 +663,7 @@ export async function initiateOAuth(
       );
     }
 
-    const authArgs: any = { serverUrl: options.serverUrl };
+    const authArgs: any = { serverUrl: options.serverUrl, fetchFn };
     if (options.scopes && options.scopes.length > 0) {
       authArgs.scope = options.scopes.join(" ");
     }
@@ -424,13 +728,16 @@ export async function initiateOAuth(
 export async function handleOAuthCallback(
   authorizationCode: string,
 ): Promise<OAuthResult & { serverName?: string }> {
-  // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
-  window.fetch = interceptedFetch;
+  // Get pending server name from localStorage (needed before creating interceptor)
+  const serverName = localStorage.getItem("mcp-oauth-pending");
+
+  // Read registryServerId from stored OAuth config if present
+  const oauthConfig = readStoredOAuthConfig(serverName);
+
+  // Build fetch interceptor — routes token requests through Convex for registry servers
+  const fetchFn = createOAuthFetchInterceptor(oauthConfig);
 
   try {
-    // Get pending server name from localStorage
-    const serverName = localStorage.getItem("mcp-oauth-pending");
     if (!serverName) {
       throw new Error("No pending OAuth flow found");
     }
@@ -456,30 +763,36 @@ export async function handleOAuthCallback(
       customClientId,
       customClientSecret,
     );
-
-    const result = await auth(provider, {
+    const discoveryState = await loadCallbackDiscoveryState(
+      provider,
       serverUrl,
-      authorizationCode,
-    });
+      fetchFn,
+    );
+    const resource = await selectResourceURL(
+      serverUrl,
+      provider,
+      discoveryState.resourceMetadata,
+    );
+    const tokens = await fetchToken(
+      provider,
+      discoveryState.authorizationServerUrl,
+      {
+        metadata: discoveryState.authorizationServerMetadata,
+        resource,
+        authorizationCode,
+        fetchFn,
+      },
+    );
+    await provider.saveTokens(tokens);
 
-    if (result === "AUTHORIZED") {
-      const tokens = provider.tokens();
-      if (tokens) {
-        // Clean up pending state
-        localStorage.removeItem("mcp-oauth-pending");
+    // Clean up pending state
+    localStorage.removeItem("mcp-oauth-pending");
 
-        const serverConfig = createServerConfig(serverUrl, tokens);
-        return {
-          success: true,
-          serverConfig,
-          serverName, // Return server name so caller doesn't need to look it up
-        };
-      }
-    }
-
+    const serverConfig = createServerConfig(serverUrl, tokens);
     return {
-      success: false,
-      error: "Token exchange failed",
+      success: true,
+      serverConfig,
+      serverName, // Return server name so caller doesn't need to look it up
     };
   } catch (error) {
     let errorMessage = "Unknown callback error";
@@ -596,9 +909,9 @@ export async function waitForTokens(
 export async function refreshOAuthTokens(
   serverName: string,
 ): Promise<OAuthResult> {
-  // Install fetch interceptor for OAuth metadata requests
-  const interceptedFetch = createOAuthFetchInterceptor();
-  window.fetch = interceptedFetch;
+  // Build fetch interceptor — routes token requests through Convex for registry servers
+  const oauthConfig = readStoredOAuthConfig(serverName);
+  const fetchFn = createOAuthFetchInterceptor(oauthConfig);
 
   try {
     // Get stored client credentials if any
@@ -634,7 +947,7 @@ export async function refreshOAuthTokens(
       };
     }
 
-    const result = await auth(provider, { serverUrl });
+    const result = await auth(provider, { serverUrl, fetchFn });
 
     if (result === "AUTHORIZED") {
       const tokens = provider.tokens();
