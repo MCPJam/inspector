@@ -20,12 +20,12 @@ const statusColor: Record<string, string> = {
 
 const labelStyles: Record<string, string> = {
   complete:
-    "border-green-500/50 bg-green-50 dark:bg-green-950/20 text-foreground/80",
+    "bg-green-500/10 text-green-700 dark:text-green-400",
   current:
-    "border-blue-500 bg-blue-100 dark:bg-blue-950/30 text-foreground shadow-md shadow-blue-500/10",
-  pending: "border-border bg-muted/30 text-muted-foreground/50",
+    "bg-blue-500/15 text-blue-700 dark:text-blue-400 shadow-sm",
+  pending: "bg-muted/50 text-muted-foreground/40",
   neutral:
-    "border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900/30 text-foreground/70",
+    "bg-slate-500/10 text-slate-600 dark:text-slate-300",
 };
 
 const pathFunctions = {
@@ -76,6 +76,8 @@ export const ArchConnectionEdge = memo(
             stroke,
             strokeWidth: data.status === "current" ? 2.5 : 1.5,
             strokeDasharray: data.status === "current" ? "6,4" : undefined,
+            strokeLinecap: "round",
+            strokeLinejoin: "round",
             opacity: data.status === "pending" ? 0.4 : 1,
             transition: "all 0.3s ease",
           }}
@@ -91,8 +93,8 @@ export const ArchConnectionEdge = memo(
             >
               <div
                 className={cn(
-                  "px-2 py-1 rounded border text-[10px] font-medium whitespace-nowrap",
-                  "cursor-pointer transition-all duration-200 hover:shadow-md hover:scale-[1.02]",
+                  "px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap",
+                  "cursor-pointer backdrop-blur-sm transition-all duration-200 hover:scale-[1.02]",
                   labelStyles[data.status],
                 )}
               >

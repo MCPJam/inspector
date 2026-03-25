@@ -9,10 +9,10 @@ import {
 
 const statusStyles: Record<string, string> = {
   current:
-    "border-2 opacity-100 shadow-lg ring-2 ring-offset-1 ring-offset-background animate-pulse",
-  complete: "border-2 opacity-100 shadow-sm",
-  pending: "border opacity-40",
-  neutral: "border opacity-100",
+    "opacity-100 shadow-lg ring-2 ring-offset-1 ring-offset-background",
+  complete: "opacity-100 shadow-sm",
+  pending: "opacity-40",
+  neutral: "opacity-100",
 };
 
 const SIDES = [
@@ -47,10 +47,13 @@ export const ArchAssetNode = memo(
     const w = data.width ?? ARCH_ASSET_CODE_WIDTH;
     const h = data.height ?? ARCH_ASSET_CODE_HEIGHT;
 
+    // 10% opacity hex suffix for the header background
+    const headerBg = `${data.color}1a`;
+
     return (
       <div
         className={cn(
-          "rounded-lg bg-card flex flex-col overflow-hidden transition-all duration-300",
+          "rounded-xl border-2 border-dashed bg-card flex flex-col overflow-hidden transition-all duration-300",
           statusStyles[data.status],
         )}
         style={{
@@ -58,49 +61,53 @@ export const ArchAssetNode = memo(
           height: h,
           borderColor,
           boxShadow:
-            data.status === "current" ? `0 0 16px ${ringColor}` : undefined,
+            data.status === "current" ? `0 0 20px ${ringColor}` : undefined,
         }}
       >
-        <div className="shrink-0 flex items-start gap-2 px-2.5 pt-2 pb-1.5 border-b border-border/40">
+        {/* Colored header strip */}
+        <div
+          className="flex items-center gap-2 px-4 py-2.5 shrink-0"
+          style={{ backgroundColor: headerBg }}
+        >
           {data.icon && (
-            <data.icon className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
+            <data.icon
+              className="h-4 w-4 shrink-0"
+              style={{ color: borderColor }}
+            />
           )}
-          <div className="min-w-0 text-left">
-            <div className="text-[11px] font-semibold leading-tight">
+          <div className="min-w-0">
+            <div className="text-sm font-semibold leading-tight truncate">
               {data.label}
             </div>
             {data.subtitle && (
-              <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">
+              <div className="text-[10px] text-muted-foreground leading-tight truncate">
                 {data.subtitle}
               </div>
             )}
           </div>
         </div>
 
-        <div className="flex-1 min-h-0 flex flex-col">
-          {data.assetType === "image" && data.imageSrc ? (
-            <div className="flex-1 min-h-0 p-1.5 flex items-center justify-center bg-muted/30">
-              <img
-                src={data.imageSrc}
-                alt={data.imageAlt ?? ""}
-                className="max-w-full max-h-full object-contain rounded"
-              />
-            </div>
-          ) : (
-            <div className="flex-1 min-h-0 bg-muted/50 overflow-hidden rounded-b-md">
-              <pre className="h-full overflow-hidden p-2 m-0">
-                <code
-                  className={cn(
-                    "text-[10px] font-mono leading-snug block whitespace-pre-wrap break-all text-foreground/90",
-                  )}
-                >
-                  {data.code ?? ""}
-                </code>
-              </pre>
-            </div>
-          )}
-        </div>
+        {/* Content body */}
+        {data.assetType === "code" && data.code && (
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <pre className="px-4 py-3 text-[11px] font-mono leading-relaxed text-foreground/70 whitespace-pre overflow-hidden h-full m-0">
+              {data.code}
+            </pre>
+          </div>
+        )}
 
+        {data.assetType === "image" && data.imageSrc && (
+          <div className="flex-1 min-h-0 overflow-hidden p-2">
+            <img
+              src={data.imageSrc}
+              alt={data.imageAlt ?? data.label}
+              className="w-full h-full object-contain rounded-lg"
+              loading="lazy"
+            />
+          </div>
+        )}
+
+        {/* Hidden handles on all sides */}
         {SIDES.map(({ side, position }) => (
           <Handle
             key={`${side}-source`}

@@ -90,30 +90,35 @@ const TOOL_SNIPPET = `server.tool("dashboard", schema, async (input) => ({
 const RESOURCE_SNIPPET = `server.resource(
   "dashboard",
   "ui://my-server/dashboard",
-  {
-    mimeType: "text/html;profile=mcp-app"
-  },
-  async () => ({ contents: [...] })
+  { mimeType: "text/html;profile=mcp-app" },
+  async () => ({
+    contents: [{
+      uri: "ui://my-server/dashboard",
+      mimeType: "text/html;profile=mcp-app",
+      text: "<!DOCTYPE html>..."
+    }]
+  })
 );`;
 
 const NODES: ArchNodeDef[] = [
   {
     id: "host-group",
     label: "Host Application",
+    subtitle: "Claude Desktop, ChatGPT, VS Code, etc.",
     type: "group",
     color: "#6366f1",
     position: { x: 0, y: 0 },
-    width: 300,
-    height: 280,
+    width: 320,
+    height: 360,
   },
   {
     id: "ai-client",
     label: "AI Client",
-    subtitle: "Claude, ChatGPT, etc.",
+    subtitle: "Calls MCP tools",
     icon: Bot,
     type: "block",
     color: "#3b82f6",
-    position: { x: 70, y: 45 },
+    position: { x: 80, y: 55 },
     parentId: "host-group",
   },
   {
@@ -123,7 +128,7 @@ const NODES: ArchNodeDef[] = [
     icon: AppWindow,
     type: "block",
     color: "#8b5cf6",
-    position: { x: 70, y: 170 },
+    position: { x: 80, y: 230 },
     parentId: "host-group",
   },
   {
@@ -136,9 +141,9 @@ const NODES: ArchNodeDef[] = [
     code: TOOL_SNIPPET,
     codeLang: "typescript",
     color: "#f59e0b",
-    position: { x: 400, y: 20 },
-    width: 280,
-    height: 180,
+    position: { x: 500, y: 0 },
+    width: 440,
+    height: 220,
   },
   {
     id: "resource-code",
@@ -149,10 +154,10 @@ const NODES: ArchNodeDef[] = [
     assetType: "code",
     code: RESOURCE_SNIPPET,
     codeLang: "typescript",
-    color: "#f59e0b",
-    position: { x: 400, y: 260 },
-    width: 280,
-    height: 180,
+    color: "#10b981",
+    position: { x: 500, y: 320 },
+    width: 440,
+    height: 260,
   },
   {
     id: "widget-file",
@@ -161,7 +166,9 @@ const NODES: ArchNodeDef[] = [
     icon: FileCode,
     type: "block",
     color: "#10b981",
-    position: { x: 180, y: 360 },
+    position: { x: 100, y: 500 },
+    width: 200,
+    height: 80,
   },
 ];
 
@@ -171,32 +178,45 @@ const EDGES: ArchEdgeDef[] = [
     source: "ai-client",
     target: "tool-code",
     label: "Step 1: Client calls tool",
+    sourceHandle: "right",
+    targetHandle: "left",
+    pathType: "bezier",
   },
   {
     id: "e-step2",
     source: "tool-code",
     target: "resource-code",
     label: "Step 2: Tool links to resource",
+    sourceHandle: "bottom",
+    targetHandle: "top",
+    pathType: "bezier",
   },
   {
     id: "e-step3",
     source: "resource-code",
     target: "widget-file",
     label: "Step 3: Resource serves widget",
-    sourceHandle: "bottom",
-    targetHandle: "top",
+    sourceHandle: "left",
+    targetHandle: "right",
+    pathType: "bezier",
   },
   {
     id: "e-step4",
     source: "widget-file",
     target: "iframe-view",
     label: "Step 4: Widget renders in iframe",
+    sourceHandle: "top",
+    targetHandle: "bottom",
+    pathType: "bezier",
   },
   {
     id: "e-postmessage",
     source: "iframe-view",
     target: "ai-client",
     label: "postMessage (JSON-RPC)",
+    sourceHandle: "top",
+    targetHandle: "bottom",
+    pathType: "bezier",
     bidirectional: true,
   },
 ];
