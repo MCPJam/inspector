@@ -11,6 +11,12 @@ describe("resolveBrowserOAuthRedirectOrigin", () => {
     ).toBe("http://localhost:5173");
   });
 
+  it("keeps 127.0.0.1 origins for local development", () => {
+    expect(
+      resolveBrowserOAuthRedirectOrigin(new URL("http://127.0.0.1:5173/#test")),
+    ).toBe("http://127.0.0.1:5173");
+  });
+
   it("keeps the current origin on the hosted app domain", () => {
     expect(
       resolveBrowserOAuthRedirectOrigin(

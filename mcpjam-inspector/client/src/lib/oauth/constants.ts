@@ -20,6 +20,7 @@ export function resolveBrowserOAuthRedirectOrigin(
   locationLike: Pick<Location, "protocol" | "origin" | "hostname">,
 ): string {
   if (locationLike.protocol !== "http:" && locationLike.protocol !== "https:") {
+    // Defensive fallback for non-browser-like locations. Electron exits earlier.
     return MCPJAM_HOSTED_APP_ORIGIN;
   }
 
