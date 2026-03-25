@@ -1,9 +1,12 @@
 import {
   AppWindow,
   Blocks,
+  BookOpen,
   GitBranch,
+  Globe,
   Lightbulb,
   Network,
+  Terminal,
   type LucideIcon,
 } from "lucide-react";
 
@@ -61,5 +64,32 @@ export const LEARNING_CONCEPTS: LearningConcept[] = [
     icon: Blocks,
     totalSteps: 7,
     category: "Extensions",
+  },
+  {
+    id: "mcp-vs-cli",
+    title: "MCP vs CLI",
+    description:
+      "Compare MCP with CLI tools — when speed matters vs. when governance matters. Understand the tradeoffs for single-user vs. multi-user scenarios.",
+    icon: Terminal,
+    totalSteps: 4,
+    category: "Comparisons",
+  },
+  {
+    id: "mcp-vs-api",
+    title: "MCP vs REST APIs",
+    description:
+      "Understand how MCP relates to REST APIs — stateless vs. stateful, static vs. dynamic discovery, and why MCP wraps APIs rather than replacing them.",
+    icon: Globe,
+    totalSteps: 4,
+    category: "Comparisons",
+  },
+  {
+    id: "mcp-vs-skills",
+    title: "MCP vs Skills",
+    description:
+      "Learn why Skills and MCP are complementary — Skills teach agents how to think, MCP gives them access to act.",
+    icon: BookOpen,
+    totalSteps: 3,
+    category: "Comparisons",
   },
 ];

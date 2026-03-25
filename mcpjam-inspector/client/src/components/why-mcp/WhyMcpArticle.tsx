@@ -1,5 +1,13 @@
-import { Lightbulb, Info, Zap } from "lucide-react";
 import { motion } from "framer-motion";
+import {
+  sectionChild,
+  AnalogyCallout,
+  KeyDetails,
+  Tip,
+  Section,
+  ArticleHero,
+  ArticleOutro,
+} from "@/components/learning-article/article-primitives";
 import { WhyMcpConnectedDiagram } from "./WhyMcpConnectedDiagram";
 import { WhyMcpGovernanceDiagram } from "./WhyMcpGovernanceDiagram";
 import { WhyMcpNxMDiagram } from "./WhyMcpNxMDiagram";
@@ -7,26 +15,7 @@ import { WhyMcpProblemDiagram } from "./WhyMcpProblemDiagram";
 import { WhyMcpToolCallingDiagram } from "./WhyMcpToolCallingDiagram";
 
 // ---------------------------------------------------------------------------
-// Animation helpers (same pattern as WhatIsMcpGuide)
-// ---------------------------------------------------------------------------
-
-const EASE = [0.25, 0.1, 0.25, 1] as const;
-
-function sectionChild(order: number) {
-  return {
-    initial: { opacity: 0, y: 16 } as const,
-    whileInView: { opacity: 1, y: 0 } as const,
-    viewport: { once: true } as const,
-    transition: {
-      delay: order * 0.08,
-      duration: 0.4,
-      ease: EASE,
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Category accents
+// Category accents (article-specific)
 // ---------------------------------------------------------------------------
 
 const CATEGORY_ACCENT = {
@@ -39,161 +28,23 @@ const CATEGORY_ACCENT = {
 type Category = keyof typeof CATEGORY_ACCENT;
 
 // ---------------------------------------------------------------------------
-// Reusable callout sub-components
-// ---------------------------------------------------------------------------
-
-function AnalogyCallout({ children }: { children: React.ReactNode }) {
-  return (
-    <motion.div
-      className="rounded-lg border border-indigo-200/50 dark:border-indigo-800/30 bg-indigo-50/40 dark:bg-indigo-950/10 p-4"
-      {...sectionChild(3)}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <Zap className="h-3.5 w-3.5 text-indigo-500/70" />
-        <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
-          Analogy
-        </span>
-      </div>
-      <p className="text-[13px] text-foreground/80 leading-relaxed">
-        {children}
-      </p>
-    </motion.div>
-  );
-}
-
-function KeyDetails({ items }: { items: string[] }) {
-  return (
-    <motion.div
-      className="rounded-lg border border-blue-200/50 dark:border-blue-800/30 bg-blue-50/40 dark:bg-blue-950/10 p-4"
-      {...sectionChild(4)}
-    >
-      <div className="flex items-center gap-2 mb-2.5">
-        <Info className="h-3.5 w-3.5 text-blue-500/70" />
-        <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
-          Key details
-        </span>
-      </div>
-      <ul className="space-y-2">
-        {items.map((item, i) => (
-          <li
-            key={i}
-            className="flex items-start gap-2 text-[13px] text-foreground/80 leading-relaxed"
-          >
-            <span className="mt-1.5 block h-1 w-1 rounded-full bg-blue-400/60 shrink-0" />
-            {item}
-          </li>
-        ))}
-      </ul>
-    </motion.div>
-  );
-}
-
-function Tip({ children }: { children: React.ReactNode }) {
-  return (
-    <motion.div
-      className="rounded-lg border border-amber-200/50 dark:border-amber-800/30 bg-amber-50/40 dark:bg-amber-950/10 p-4"
-      {...sectionChild(6)}
-    >
-      <div className="flex items-center gap-2 mb-2">
-        <Lightbulb className="h-3.5 w-3.5 text-amber-500/70" />
-        <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
-          Tip
-        </span>
-      </div>
-      <p className="text-[13px] text-foreground/80 leading-relaxed">
-        {children}
-      </p>
-    </motion.div>
-  );
-}
-
-function Section({
-  category,
-  step,
-  title,
-  children,
-}: {
-  category: Category;
-  step: number;
-  title: string;
-  children: React.ReactNode;
-}) {
-  const color = CATEGORY_ACCENT[category];
-
-  return (
-    <motion.section
-      className="relative py-12 first:pt-6"
-      initial={{ opacity: 0, y: 30 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, amount: 0.15 }}
-      transition={{ duration: 0.5, ease: EASE }}
-    >
-      <div className="space-y-5">
-        {/* Category badge + step number */}
-        <motion.div className="flex items-center gap-2" {...sectionChild(0)}>
-          <span
-            className="block h-2 w-2 rounded-full"
-            style={{ backgroundColor: color }}
-          />
-          <span
-            className="text-[11px] font-semibold uppercase tracking-wider"
-            style={{ color }}
-          >
-            {category}
-          </span>
-          <span className="text-[10px] text-muted-foreground/50 font-mono">
-            Section {step}
-          </span>
-        </motion.div>
-
-        {/* Title */}
-        <motion.h2
-          className="text-xl font-semibold tracking-tight text-foreground -mt-1"
-          {...sectionChild(1)}
-        >
-          {title}
-        </motion.h2>
-
-        {children}
-      </div>
-
-      {/* Section divider */}
-      <div className="mt-12 border-b border-border/30" />
-    </motion.section>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Article content
 // ---------------------------------------------------------------------------
 
 export function WhyMcpArticle() {
   return (
     <div className="mx-auto max-w-2xl px-8 pb-16">
-      {/* Hero */}
-      <div className="pt-8 pb-4">
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: EASE }}
-          className="space-y-3"
-        >
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
-            Why We Need MCP
-          </h1>
-          <p className="text-sm text-muted-foreground leading-relaxed">
-            From isolated AI models to a universal standard for tool
-            integration. Understand why LLMs need tools, why agents need
-            governance, and why the industry needs MCP.
-          </p>
-        </motion.div>
-      </div>
+      <ArticleHero
+        title="Why We Need MCP"
+        subtitle="From isolated AI models to a universal standard for tool integration. Understand why LLMs need tools, why agents need governance, and why the industry needs MCP."
+      />
 
       {/* ----------------------------------------------------------------- */}
       {/* Section 1: The Problem */}
       {/* ----------------------------------------------------------------- */}
       <Section
         category="problem"
+        categoryColor={CATEGORY_ACCENT.problem}
         step={1}
         title="The Problem: Smart Models, No Hands"
       >
@@ -234,7 +85,12 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 2: Tool Calling */}
       {/* ----------------------------------------------------------------- */}
-      <Section category="foundation" step={2} title="What is Tool Calling?">
+      <Section
+        category="foundation"
+        categoryColor={CATEGORY_ACCENT.foundation}
+        step={2}
+        title="What is Tool Calling?"
+      >
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
@@ -271,7 +127,12 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 3: Governance */}
       {/* ----------------------------------------------------------------- */}
-      <Section category="challenge" step={3} title="Why Agents Need Governance">
+      <Section
+        category="challenge"
+        categoryColor={CATEGORY_ACCENT.challenge}
+        step={3}
+        title="Why Agents Need Governance"
+      >
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
@@ -309,7 +170,12 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 4: The N×M Problem */}
       {/* ----------------------------------------------------------------- */}
-      <Section category="challenge" step={4} title="The N × M Problem">
+      <Section
+        category="challenge"
+        categoryColor={CATEGORY_ACCENT.challenge}
+        step={4}
+        title="The N × M Problem"
+      >
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
@@ -329,6 +195,7 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       <Section
         category="solution"
+        categoryColor={CATEGORY_ACCENT.solution}
         step={5}
         title="Enter MCP: The Universal Standard"
       >
@@ -360,7 +227,12 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 6: What MCP Exposes */}
       {/* ----------------------------------------------------------------- */}
-      <Section category="solution" step={6} title="What MCP Servers Expose">
+      <Section
+        category="solution"
+        categoryColor={CATEGORY_ACCENT.solution}
+        step={6}
+        title="What MCP Servers Expose"
+      >
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
@@ -386,7 +258,12 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 7: Conclusion */}
       {/* ----------------------------------------------------------------- */}
-      <Section category="solution" step={7} title="The Bottom Line">
+      <Section
+        category="solution"
+        categoryColor={CATEGORY_ACCENT.solution}
+        step={7}
+        title="The Bottom Line"
+      >
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
@@ -423,19 +300,11 @@ export function WhyMcpArticle() {
       </Section>
 
       {/* Outro */}
-      <motion.div
-        className="pt-4 pb-8 text-center"
-        initial={{ opacity: 0 }}
-        whileInView={{ opacity: 1 }}
-        viewport={{ once: true }}
-        transition={{ duration: 0.5 }}
-      >
-        <p className="text-sm text-muted-foreground/60">
-          Next up: explore the{" "}
-          <span className="font-medium text-foreground/70">What is MCP?</span>{" "}
-          walkthrough to see the architecture in action.
-        </p>
-      </motion.div>
+      <ArticleOutro>
+        Next up: explore the{" "}
+        <span className="font-medium text-foreground/70">What is MCP?</span>{" "}
+        walkthrough to see the architecture in action.
+      </ArticleOutro>
     </div>
   );
 }

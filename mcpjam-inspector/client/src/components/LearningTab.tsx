@@ -33,6 +33,9 @@ import { useWalkthrough } from "@/hooks/use-walkthrough";
 import { WalkthroughShell } from "@/components/walkthrough/WalkthroughShell";
 import { ArticleShell } from "@/components/learning-article/ArticleShell";
 import { WhyMcpArticle } from "@/components/why-mcp/WhyMcpArticle";
+import { McpVsCliArticle } from "@/components/mcp-vs-cli/McpVsCliArticle";
+import { McpVsApiArticle } from "@/components/mcp-vs-api/McpVsApiArticle";
+import { McpVsSkillsArticle } from "@/components/mcp-vs-skills/McpVsSkillsArticle";
 
 /**
  * Sentinel value used as `currentStep` when the lifecycle walkthrough is at step 0.
@@ -329,6 +332,42 @@ export function LearningTab() {
 
   if (selectedConcept === "mcp-lifecycle") {
     return <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />;
+  }
+
+  if (selectedConcept === "mcp-vs-cli") {
+    return (
+      <ArticleShell
+        title="MCP vs CLI"
+        badge="Comparisons"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <McpVsCliArticle />
+      </ArticleShell>
+    );
+  }
+
+  if (selectedConcept === "mcp-vs-api") {
+    return (
+      <ArticleShell
+        title="MCP vs REST APIs"
+        badge="Comparisons"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <McpVsApiArticle />
+      </ArticleShell>
+    );
+  }
+
+  if (selectedConcept === "mcp-vs-skills") {
+    return (
+      <ArticleShell
+        title="MCP vs Skills"
+        badge="Comparisons"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <McpVsSkillsArticle />
+      </ArticleShell>
+    );
   }
 
   return <LearningLandingPage onSelect={setSelectedConcept} />;
