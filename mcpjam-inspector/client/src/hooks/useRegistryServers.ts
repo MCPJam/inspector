@@ -229,6 +229,18 @@ export interface ConsolidatedRegistryServer {
 }
 
 /**
+ * App before Text everywhere we list variants (badges, Connect dropdown, primary `variants[0]`).
+ */
+export function sortRegistryVariantsAppBeforeText<
+  T extends { clientType?: "text" | "app" },
+>(variants: T[]): T[] {
+  return [...variants].sort((a, b) => {
+    const rank = (v: T) => (v.clientType === "app" ? 0 : 1);
+    return rank(a) - rank(b);
+  });
+}
+
+/**
  * Groups registry servers by displayName. Variants are ordered app before text.
  * Used for dev mock data only; production catalog is consolidated by the backend.
  */
@@ -250,9 +262,7 @@ export function consolidateServers(
   const result: ConsolidatedRegistryServer[] = [];
 
   for (const variants of groups.values()) {
-    const ordered = [...variants].sort((a) =>
-      a.clientType === "app" ? -1 : 1,
-    );
+    const ordered = sortRegistryVariantsAppBeforeText(variants);
     result.push({ variants: ordered, hasDualType: variants.length > 1 });
   }
 
@@ -290,7 +300,7 @@ function enrichCatalogCards(
   liveServers?: Record<string, { connectionStatus: string }>,
 ): EnrichedRegistryCatalogCard[] {
   return cards.map((card) => {
-    const variants: EnrichedRegistryServer[] = card.variants.map((server) => {
+    const mapped: EnrichedRegistryServer[] = card.variants.map((server) => {
       const isAddedToWorkspace = connectedRegistryIds.has(server._id);
       const liveServer = liveServers?.[getRegistryServerName(server)];
       let connectionStatus: RegistryConnectionStatus = "not_connected";
@@ -305,6 +315,7 @@ function enrichCatalogCards(
 
       return { ...server, connectionStatus };
     });
+    const variants = sortRegistryVariantsAppBeforeText(mapped);
 
     return {
       registryCardKey: card.registryCardKey,

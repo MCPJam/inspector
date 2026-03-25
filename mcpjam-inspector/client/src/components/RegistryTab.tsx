@@ -42,6 +42,9 @@ import {
   type PendingQuickConnectState,
 } from "@/lib/quick-connect-pending";
 
+/** Drop stale registry pending when OAuth was abandoned (browser closed) without a terminal callback. */
+const REGISTRY_PENDING_OAUTH_STALE_MS = 45 * 60 * 1000;
+
 interface RegistryTabProps {
   workspaceId: string | null;
   isAuthenticated: boolean;
@@ -77,7 +80,6 @@ export function RegistryTab({
   // Auto-redirect to App Builder when a pending server becomes connected.
   // We persist in localStorage to survive OAuth redirects (page remounts).
   useEffect(() => {
-    if (!onNavigate) return;
     const pending = pendingQuickConnect;
     if (!pending || pending.sourceTab !== "registry") return;
     const liveServer =
@@ -90,9 +92,44 @@ export function RegistryTab({
     if (liveServer?.connectionStatus === "connected") {
       clearPendingQuickConnect();
       setPendingQuickConnect(null);
-      onNavigate("app-builder");
+      onNavigate?.("app-builder");
     }
   }, [pendingQuickConnect, servers, onNavigate]);
+
+  // `useRegistryServers.connect` returns after dispatching OAuth; pending stays for redirect UX.
+  // Mirror ServersTab: clear when auth fails or the server is disconnected so the card does not
+  // show "Connecting" forever (localStorage would otherwise keep matching pending).
+  useEffect(() => {
+    if (pendingQuickConnect?.sourceTab !== "registry") return;
+
+    const pending = pendingQuickConnect;
+    const pendingServer = servers?.[pending.serverName];
+    const age = Date.now() - pending.createdAt;
+
+    if (pendingServer) {
+      if (
+        pendingServer.connectionStatus === "failed" ||
+        pendingServer.connectionStatus === "disconnected"
+      ) {
+        clearPendingQuickConnect();
+        setPendingQuickConnect(null);
+        return;
+      }
+      if (
+        pendingServer.connectionStatus === "oauth-flow" &&
+        age > REGISTRY_PENDING_OAUTH_STALE_MS
+      ) {
+        clearPendingQuickConnect();
+        setPendingQuickConnect(null);
+      }
+      return;
+    }
+
+    if (age > 48 * 60 * 60 * 1000) {
+      clearPendingQuickConnect();
+      setPendingQuickConnect(null);
+    }
+  }, [pendingQuickConnect, servers]);
 
   const handleConnect = async (server: EnrichedRegistryServer) => {
     setConnectingIds((prev) => new Set(prev).add(server._id));
@@ -331,8 +368,6 @@ function DualTypeAction({
   const activeVariant = connectedVariant ?? addedVariant;
 
   if (activeVariant) {
-    const label =
-      activeVariant.connectionStatus === "connected" ? "Connected" : "Added";
     const disconnectLabel =
       activeVariant.connectionStatus === "connected" ? "Disconnect" : "Remove";
 
@@ -348,16 +383,16 @@ function DualTypeAction({
             tabIndex={-1}
           >
             <CheckCircle2 className="h-3.5 w-3.5" />
-            {label}
+            Connected
           </Button>
         ) : (
           <Button
-            variant="outline"
             size="sm"
-            className="h-7 text-xs cursor-default"
-            tabIndex={-1}
+            className="h-7 text-xs"
+            onClick={() => onConnect(activeVariant)}
+            title="Server is in your workspace — click to connect"
           >
-            {label}
+            Connect
           </Button>
         )}
         <DropdownMenu>
@@ -499,12 +534,12 @@ function TopRightAction({
       return (
         <div className="flex items-center gap-1.5">
           <Button
-            variant="outline"
             size="sm"
-            className="h-7 text-xs cursor-default"
-            tabIndex={-1}
+            className="h-7 text-xs"
+            onClick={onConnect}
+            title="Server is in your workspace — click to connect"
           >
-            Added
+            Connect
           </Button>
           <OverflowMenu onDisconnect={onDisconnect} label="Remove" />
         </div>

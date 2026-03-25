@@ -1,11 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { RegistryTab } from "../RegistryTab";
-import type {
-  EnrichedRegistryServer,
-  EnrichedRegistryCatalogCard,
+import {
+  sortRegistryVariantsAppBeforeText,
+  type EnrichedRegistryServer,
+  type EnrichedRegistryCatalogCard,
 } from "@/hooks/useRegistryServers";
-import { readPendingQuickConnect } from "@/lib/quick-connect-pending";
+import {
+  readPendingQuickConnect,
+  writePendingQuickConnect,
+} from "@/lib/quick-connect-pending";
 
 // Mock the useRegistryServers hook
 const mockConnect = vi.fn();
@@ -26,7 +30,7 @@ function toCatalogCard(
 ): EnrichedRegistryCatalogCard {
   const hasDualType = variants.length > 1;
   const ordered = hasDualType
-    ? [...variants].sort((a) => (a.clientType === "app" ? -1 : 1))
+    ? sortRegistryVariantsAppBeforeText(variants)
     : variants;
   return {
     registryCardKey: key,
@@ -344,7 +348,7 @@ describe("RegistryTab", () => {
       expect(screen.getByText("Connected")).toBeInTheDocument();
     });
 
-    it("shows Added badge for servers added but not live", () => {
+    it("shows Connect for servers in workspace but not live", () => {
       mockHookReturn = {
         catalogCards: [
           toCatalogCard([createMockServer({ connectionStatus: "added" })]),
@@ -358,7 +362,12 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
 
-      expect(screen.getByText("Added")).toBeInTheDocument();
+      const connectBtn = screen.getByRole("button", { name: "Connect" });
+      expect(connectBtn).toBeInTheDocument();
+      expect(connectBtn).toHaveAttribute(
+        "title",
+        "Server is in your workspace — click to connect",
+      );
     });
   });
 
@@ -446,6 +455,26 @@ describe("RegistryTab", () => {
       });
     });
 
+    it("calls connect when Connect is clicked for added-but-not-live server", async () => {
+      const server = createMockServer({ connectionStatus: "added" });
+      mockHookReturn = {
+        catalogCards: [toCatalogCard([server])],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+      await waitFor(() => {
+        expect(mockConnect).toHaveBeenCalledWith(server);
+      });
+    });
+
     it("calls disconnect from overflow menu", async () => {
       const server = createMockServer({ connectionStatus: "connected" });
       mockHookReturn = {
@@ -465,6 +494,96 @@ describe("RegistryTab", () => {
 
       await waitFor(() => {
         expect(mockDisconnect).toHaveBeenCalledWith(server);
+      });
+    });
+  });
+
+  describe("pending quick connect cleanup", () => {
+    it("clears registry pending when server auth fails so the card leaves Connecting", async () => {
+      const server = createMockServer({
+        displayName: "PostHog",
+        clientType: "text",
+        _id: "ph-1",
+      });
+      const serverName = "PostHog (Text)";
+      writePendingQuickConnect({
+        serverName,
+        registryServerId: "ph-1",
+        displayName: "PostHog",
+        sourceTab: "registry",
+        createdAt: Date.now(),
+      });
+      mockHookReturn = {
+        catalogCards: [toCatalogCard([server], "posthog")],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
+      };
+
+      render(
+        <RegistryTab
+          {...defaultProps}
+          servers={{
+            [serverName]: {
+              name: serverName,
+              connectionStatus: "failed",
+              config: {} as any,
+              lastConnectionTime: new Date(),
+              retryCount: 0,
+            },
+          }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(readPendingQuickConnect()).toBeNull();
+      });
+      expect(screen.queryByText("Connecting")).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+    });
+
+    it("clears registry pending when oauth-flow exceeds the stale window", async () => {
+      const server = createMockServer({
+        displayName: "PostHog",
+        clientType: "text",
+        _id: "ph-1",
+      });
+      const serverName = "PostHog (Text)";
+      writePendingQuickConnect({
+        serverName,
+        registryServerId: "ph-1",
+        displayName: "PostHog",
+        sourceTab: "registry",
+        createdAt: Date.now() - 46 * 60 * 1000,
+      });
+      mockHookReturn = {
+        catalogCards: [toCatalogCard([server], "posthog")],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+        toggleStar: mockToggleStar,
+      };
+
+      render(
+        <RegistryTab
+          {...defaultProps}
+          servers={{
+            [serverName]: {
+              name: serverName,
+              connectionStatus: "oauth-flow",
+              config: {} as any,
+              lastConnectionTime: new Date(),
+              retryCount: 0,
+            },
+          }}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(readPendingQuickConnect()).toBeNull();
       });
     });
   });
@@ -798,6 +917,11 @@ describe("RegistryTab", () => {
       const itemTexts = items.map((el) => el.textContent);
       expect(itemTexts.some((t) => t?.includes("Text"))).toBe(true);
       expect(itemTexts.some((t) => t?.includes("App"))).toBe(true);
+      const appIdx = itemTexts.findIndex((t) => t?.includes("App"));
+      const textIdx = itemTexts.findIndex((t) => t?.includes("Text"));
+      expect(appIdx).toBeGreaterThanOrEqual(0);
+      expect(textIdx).toBeGreaterThanOrEqual(0);
+      expect(appIdx).toBeLessThan(textIdx);
     });
 
     it("stores the suffixed runtime name when connecting a dual-type variant", async () => {

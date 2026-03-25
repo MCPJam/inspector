@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   consolidateServers,
+  sortRegistryVariantsAppBeforeText,
   type EnrichedRegistryServer,
 } from "../useRegistryServers";
 
@@ -31,6 +32,30 @@ function makeServer(
     ...overrides,
   };
 }
+
+describe("sortRegistryVariantsAppBeforeText", () => {
+  it("orders app before text regardless of input order", () => {
+    const text = makeServer({
+      _id: "asana-text",
+      displayName: "Asana",
+      clientType: "text",
+    });
+    const app = makeServer({
+      _id: "asana-app",
+      displayName: "Asana",
+      clientType: "app",
+    });
+
+    expect(sortRegistryVariantsAppBeforeText([text, app]).map((v) => v._id)).toEqual([
+      "asana-app",
+      "asana-text",
+    ]);
+    expect(sortRegistryVariantsAppBeforeText([app, text]).map((v) => v._id)).toEqual([
+      "asana-app",
+      "asana-text",
+    ]);
+  });
+});
 
 describe("consolidateServers", () => {
   it("returns single-type servers unchanged", () => {
