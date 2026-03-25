@@ -159,7 +159,7 @@ export function RegistryTab({
         <div>
           <h2 className="text-lg font-semibold">Registry</h2>
           <p className="text-sm text-muted-foreground">
-            Pre-configured MCP servers you can connect with one click.
+            Pre-configured MCP servers you can connect quickly.
           </p>
         </div>
 

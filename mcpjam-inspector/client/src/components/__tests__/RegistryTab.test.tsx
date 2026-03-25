@@ -130,7 +130,7 @@ describe("RegistryTab", () => {
       expect(screen.getByText("Registry")).toBeInTheDocument();
       expect(
         screen.getByText(
-          "Pre-configured MCP servers you can connect with one click.",
+          "Pre-configured MCP servers you can connect quickly.",
         ),
       ).toBeInTheDocument();
     });
