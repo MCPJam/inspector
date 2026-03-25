@@ -39,6 +39,7 @@ import { McpVsSkillsArticle } from "@/components/mcp-vs-skills/McpVsSkillsArticl
 import { McpToolsArticle } from "@/components/mcp-tools/McpToolsArticle";
 import { McpResourcesArticle } from "@/components/mcp-resources/McpResourcesArticle";
 import { McpPromptsArticle } from "@/components/mcp-prompts/McpPromptsArticle";
+import { useLearningProgress } from "@/hooks/use-learning-progress";
 
 /**
  * Sentinel value used as `currentStep` when the lifecycle walkthrough is at step 0.
@@ -50,7 +51,13 @@ const WALKTHROUGH_START_SENTINEL = "__walkthrough_start__";
 // MCP Lifecycle Walkthrough
 // ---------------------------------------------------------------------------
 
-function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
+function McpLifecycleWalkthrough({
+  onBack,
+  onComplete,
+}: {
+  onBack: () => void;
+  onComplete: () => void;
+}) {
   const scenario = useMemo(
     () => buildMcpLifecycleScenario20250326({ transport: "http" }),
     [],
@@ -79,6 +86,7 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
       title="MCP Protocol Lifecycle"
       badge="HTTP"
       onBack={onBack}
+      onComplete={onComplete}
       continueLabel={wt.continueLabel}
       onContinue={wt.handleContinue}
       onReset={wt.handleReset}
@@ -107,7 +115,13 @@ function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
 // "What is MCP?" Walkthrough
 // ---------------------------------------------------------------------------
 
-function WhatIsMcpWalkthrough({ onBack }: { onBack: () => void }) {
+function WhatIsMcpWalkthrough({
+  onBack,
+  onComplete,
+}: {
+  onBack: () => void;
+  onComplete: () => void;
+}) {
   const wt = useWalkthrough({
     stepOrder: WHAT_IS_MCP_STEP_ORDER,
     isLastStep: isLastWhatIsMcpStep,
@@ -144,6 +158,7 @@ function WhatIsMcpWalkthrough({ onBack }: { onBack: () => void }) {
       title="What is MCP?"
       badge="Fundamentals"
       onBack={onBack}
+      onComplete={onComplete}
       continueLabel={wt.continueLabel}
       onContinue={wt.handleContinue}
       onReset={wt.handleReset}
@@ -170,7 +185,13 @@ function WhatIsMcpWalkthrough({ onBack }: { onBack: () => void }) {
 // MCP Apps walkthrough
 // ---------------------------------------------------------------------------
 
-function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
+function McpAppsWalkthrough({
+  onBack,
+  onComplete,
+}: {
+  onBack: () => void;
+  onComplete: () => void;
+}) {
   const wt = useWalkthrough({
     stepOrder: MCP_APPS_STEP_ORDER,
     isLastStep: isLastMcpAppsStep,
@@ -212,6 +233,7 @@ function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
       title="MCP Apps"
       badge="Extensions"
       onBack={onBack}
+      onComplete={onComplete}
       continueLabel={wt.continueLabel}
       onContinue={wt.handleContinue}
       onReset={wt.handleReset}
@@ -238,7 +260,13 @@ function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
 // Apps SDK walkthrough
 // ---------------------------------------------------------------------------
 
-function AppsSdkWalkthrough({ onBack }: { onBack: () => void }) {
+function AppsSdkWalkthrough({
+  onBack,
+  onComplete,
+}: {
+  onBack: () => void;
+  onComplete: () => void;
+}) {
   const wt = useWalkthrough({
     stepOrder: APPS_SDK_STEP_ORDER,
     isLastStep: isLastAppsSdkStep,
@@ -280,6 +308,7 @@ function AppsSdkWalkthrough({ onBack }: { onBack: () => void }) {
       title="OpenAI Apps SDK"
       badge="Extensions"
       onBack={onBack}
+      onComplete={onComplete}
       continueLabel={wt.continueLabel}
       onContinue={wt.handleContinue}
       onReset={wt.handleReset}
@@ -308,13 +337,18 @@ function AppsSdkWalkthrough({ onBack }: { onBack: () => void }) {
 
 export function LearningTab() {
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
+  const { isCompleted, markComplete, toggleComplete, completionCount } =
+    useLearningProgress();
+
+  const goBack = useCallback(() => setSelectedConcept(null), []);
 
   if (selectedConcept === "why-mcp") {
     return (
       <ArticleShell
         title="Why MCP?"
         badge="Concepts"
-        onBack={() => setSelectedConcept(null)}
+        onBack={goBack}
+        onComplete={() => markComplete("why-mcp")}
       >
         <WhyMcpArticle />
       </ArticleShell>
@@ -322,19 +356,39 @@ export function LearningTab() {
   }
 
   if (selectedConcept === "what-is-mcp") {
-    return <WhatIsMcpWalkthrough onBack={() => setSelectedConcept(null)} />;
+    return (
+      <WhatIsMcpWalkthrough
+        onBack={goBack}
+        onComplete={() => markComplete("what-is-mcp")}
+      />
+    );
   }
 
   if (selectedConcept === "mcp-apps") {
-    return <McpAppsWalkthrough onBack={() => setSelectedConcept(null)} />;
+    return (
+      <McpAppsWalkthrough
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-apps")}
+      />
+    );
   }
 
   if (selectedConcept === "apps-sdk") {
-    return <AppsSdkWalkthrough onBack={() => setSelectedConcept(null)} />;
+    return (
+      <AppsSdkWalkthrough
+        onBack={goBack}
+        onComplete={() => markComplete("apps-sdk")}
+      />
+    );
   }
 
   if (selectedConcept === "mcp-lifecycle") {
-    return <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />;
+    return (
+      <McpLifecycleWalkthrough
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-lifecycle")}
+      />
+    );
   }
 
   if (selectedConcept === "mcp-tools") {
@@ -342,7 +396,8 @@ export function LearningTab() {
       <ArticleShell
         title="MCP Tools"
         badge="Protocol"
-        onBack={() => setSelectedConcept(null)}
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-tools")}
       >
         <McpToolsArticle />
       </ArticleShell>
@@ -354,7 +409,8 @@ export function LearningTab() {
       <ArticleShell
         title="MCP Resources"
         badge="Protocol"
-        onBack={() => setSelectedConcept(null)}
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-resources")}
       >
         <McpResourcesArticle />
       </ArticleShell>
@@ -366,7 +422,8 @@ export function LearningTab() {
       <ArticleShell
         title="MCP Prompts"
         badge="Protocol"
-        onBack={() => setSelectedConcept(null)}
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-prompts")}
       >
         <McpPromptsArticle />
       </ArticleShell>
@@ -378,7 +435,8 @@ export function LearningTab() {
       <ArticleShell
         title="MCP vs CLI"
         badge="Comparisons"
-        onBack={() => setSelectedConcept(null)}
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-vs-cli")}
       >
         <McpVsCliArticle />
       </ArticleShell>
@@ -390,7 +448,8 @@ export function LearningTab() {
       <ArticleShell
         title="MCP vs REST APIs"
         badge="Comparisons"
-        onBack={() => setSelectedConcept(null)}
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-vs-api")}
       >
         <McpVsApiArticle />
       </ArticleShell>
@@ -402,12 +461,20 @@ export function LearningTab() {
       <ArticleShell
         title="MCP vs Skills"
         badge="Comparisons"
-        onBack={() => setSelectedConcept(null)}
+        onBack={goBack}
+        onComplete={() => markComplete("mcp-vs-skills")}
       >
         <McpVsSkillsArticle />
       </ArticleShell>
     );
   }
 
-  return <LearningLandingPage onSelect={setSelectedConcept} />;
+  return (
+    <LearningLandingPage
+      onSelect={setSelectedConcept}
+      isCompleted={isCompleted}
+      onToggleComplete={toggleComplete}
+      completionCount={completionCount}
+    />
+  );
 }
