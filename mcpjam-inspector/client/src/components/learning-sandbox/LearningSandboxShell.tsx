@@ -69,7 +69,9 @@ export function LearningSandboxShell({
           <div className="h-full min-h-0 overflow-auto bg-background">
             <div className="mx-auto flex h-full max-w-7xl flex-col gap-4 p-4">
               <div className="space-y-1">
-                <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+                <h2 className="text-lg font-semibold text-foreground">
+                  {title}
+                </h2>
                 <p className="text-sm text-muted-foreground">{description}</p>
               </div>
               {serverInfo}

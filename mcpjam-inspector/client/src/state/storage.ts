@@ -60,8 +60,7 @@ export function loadAppState(): AppState {
                 servers: Object.fromEntries(
                   Object.entries(workspace.servers || {})
                     .map(
-                      ([name, server]) =>
-                        [name, reviveServer(server)] as const,
+                      ([name, server]) => [name, reviveServer(server)] as const,
                     )
                     .filter(([, server]) => shouldPersistServer(server)),
                 ),
@@ -165,12 +164,12 @@ export function saveAppState(state: AppState) {
         Object.entries(state.servers)
           .filter(([, server]) => shouldPersistServer(server))
           .map(([name, server]) => {
-          const cfg: any = server.config;
-          const serializedConfig =
-            cfg && cfg.url instanceof URL
-              ? { ...cfg, url: cfg.url.toString() }
-              : cfg;
-          return [name, { ...server, config: serializedConfig }];
+            const cfg: any = server.config;
+            const serializedConfig =
+              cfg && cfg.url instanceof URL
+                ? { ...cfg, url: cfg.url.toString() }
+                : cfg;
+            return [name, { ...server, config: serializedConfig }];
           }),
       ),
     };

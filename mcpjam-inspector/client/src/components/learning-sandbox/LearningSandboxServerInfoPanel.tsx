@@ -18,7 +18,9 @@ interface LearningSandboxServerInfoPanelProps {
   onDisconnect?: () => void | Promise<void>;
 }
 
-function formatStatusVariant(status: string): "default" | "outline" | "secondary" {
+function formatStatusVariant(
+  status: string,
+): "default" | "outline" | "secondary" {
   if (status === "connected") {
     return "default";
   }
@@ -60,12 +62,20 @@ export function LearningSandboxServerInfoPanel({
           <div className="flex flex-wrap items-center gap-2">
             <Badge variant={formatStatusVariant(status)}>{status}</Badge>
             {onReconnect ? (
-              <Button size="sm" variant="outline" onClick={() => void onReconnect()}>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void onReconnect()}
+              >
                 Reconnect
               </Button>
             ) : null}
             {onDisconnect ? (
-              <Button size="sm" variant="ghost" onClick={() => void onDisconnect()}>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => void onDisconnect()}
+              >
                 Disconnect
               </Button>
             ) : null}
@@ -88,7 +98,9 @@ export function LearningSandboxServerInfoPanel({
         </div>
         <div className="h-44 overflow-hidden rounded-md border border-border/60">
           <JsonEditor
-            value={initInfo ?? { status, error: serverEntry?.lastError ?? null }}
+            value={
+              initInfo ?? { status, error: serverEntry?.lastError ?? null }
+            }
             readOnly
             showToolbar={false}
             height="100%"

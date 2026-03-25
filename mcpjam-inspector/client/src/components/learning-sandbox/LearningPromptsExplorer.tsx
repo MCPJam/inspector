@@ -39,7 +39,10 @@ type PromptField = {
   value: string;
 };
 
-function buildPromptFields(prompt: MCPPrompt | null, example?: LearningPromptExample | null) {
+function buildPromptFields(
+  prompt: MCPPrompt | null,
+  example?: LearningPromptExample | null,
+) {
   const defaultArguments = example?.defaultArguments ?? {};
   return (prompt?.arguments ?? []).map((argument) => ({
     name: argument.name,
@@ -126,7 +129,9 @@ export function LearningPromptsExplorer({
         const preferredPrompt =
           learningExampleManifest.prompts.find((example) =>
             availablePromptNames.includes(example.targetName),
-          )?.targetName ?? availablePromptNames[0] ?? "";
+          )?.targetName ??
+          availablePromptNames[0] ??
+          "";
         setSelectedPromptName((current) =>
           current && availablePromptNames.includes(current)
             ? current
@@ -198,13 +203,7 @@ export function LearningPromptsExplorer({
     } finally {
       setLoadingPrompt(false);
     }
-  }, [
-    fields,
-    learningServer.serverId,
-    mode,
-    rawArguments,
-    selectedPromptName,
-  ]);
+  }, [fields, learningServer.serverId, mode, rawArguments, selectedPromptName]);
 
   const sidebar = (
     <div className="h-full border-r border-border bg-background">
@@ -313,8 +312,8 @@ export function LearningPromptsExplorer({
           description={
             learningServer.isConnecting
               ? "The learning server is still connecting."
-              : learningServer.error ??
-                "The learning server is not connected. Reconnect to continue."
+              : (learningServer.error ??
+                "The learning server is not connected. Reconnect to continue.")
           }
           className="h-full"
         />
@@ -331,7 +330,9 @@ export function LearningPromptsExplorer({
             <CardHeader className="px-4 pb-0">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div className="space-y-1">
-                  <CardTitle className="text-sm">{selectedPrompt.name}</CardTitle>
+                  <CardTitle className="text-sm">
+                    {selectedPrompt.name}
+                  </CardTitle>
                   <CardDescription className="text-xs">
                     {selectedExample?.objective ??
                       selectedPrompt.description ??
@@ -358,40 +359,41 @@ export function LearningPromptsExplorer({
                   <TabsTrigger value="raw">Raw JSON</TabsTrigger>
                 </TabsList>
                 <TabsContent value="guided" className="space-y-3">
-                  {(fields.length === 0 ? [{ name: "No arguments", required: false, value: "" }] : fields).map(
-                    (field) => (
-                      <div key={field.name} className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono text-xs">{field.name}</span>
-                          {field.required ? (
-                            <Badge variant="outline">required</Badge>
-                          ) : null}
-                        </div>
-                        {field.description ? (
-                          <p className="text-xs text-muted-foreground">
-                            {field.description}
-                          </p>
+                  {(fields.length === 0
+                    ? [{ name: "No arguments", required: false, value: "" }]
+                    : fields
+                  ).map((field) => (
+                    <div key={field.name} className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs">{field.name}</span>
+                        {field.required ? (
+                          <Badge variant="outline">required</Badge>
                         ) : null}
-                        {field.name === "No arguments" ? null : (
-                          <Input
-                            value={field.value}
-                            onChange={(event) =>
-                              setFields((current) =>
-                                current.map((currentField) =>
-                                  currentField.name === field.name
-                                    ? {
-                                        ...currentField,
-                                        value: event.target.value,
-                                      }
-                                    : currentField,
-                                ),
-                              )
-                            }
-                          />
-                        )}
                       </div>
-                    ),
-                  )}
+                      {field.description ? (
+                        <p className="text-xs text-muted-foreground">
+                          {field.description}
+                        </p>
+                      ) : null}
+                      {field.name === "No arguments" ? null : (
+                        <Input
+                          value={field.value}
+                          onChange={(event) =>
+                            setFields((current) =>
+                              current.map((currentField) =>
+                                currentField.name === field.name
+                                  ? {
+                                      ...currentField,
+                                      value: event.target.value,
+                                    }
+                                  : currentField,
+                              ),
+                            )
+                          }
+                        />
+                      )}
+                    </div>
+                  ))}
                 </TabsContent>
                 <TabsContent value="raw" className="space-y-2">
                   <p className="text-xs text-muted-foreground">

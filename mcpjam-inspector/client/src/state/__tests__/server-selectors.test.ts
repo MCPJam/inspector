@@ -42,10 +42,7 @@ describe("server-selectors", () => {
     ]);
     expect(
       Object.keys(getWorkspaceVisibleConnectedOrConnectingServers(servers)),
-    ).toEqual([
-      "workspace",
-      "connecting",
-    ]);
+    ).toEqual(["workspace", "connecting"]);
     expect(getWorkspaceVisibleConnectedServerNames(servers)).toEqual([
       "workspace",
     ]);
@@ -59,8 +56,8 @@ describe("server-selectors", () => {
       }),
     };
 
-    expect(Object.keys(getRuntimeServersBySurface(servers, "learning"))).toEqual(
-      ["__learning__"],
-    );
+    expect(
+      Object.keys(getRuntimeServersBySurface(servers, "learning")),
+    ).toEqual(["__learning__"]);
   });
 });
