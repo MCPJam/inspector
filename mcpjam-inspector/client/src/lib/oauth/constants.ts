@@ -2,13 +2,41 @@
  * OAuth Constants for MCPJam Inspector
  */
 
+export const MCPJAM_HOSTED_APP_ORIGIN = "https://app.mcpjam.com";
+const LOCALHOST_HOSTNAMES = new Set(["localhost", "127.0.0.1"]);
+
 /**
  * Static Client ID Metadata Document URL for MCPJam Inspector
  * This URL hosts the client metadata per draft-parecki-oauth-client-id-metadata-document-03
  * Used when authorization servers support Client ID Metadata Documents
+ *
+ * Note: the metadata document is hosted on `www`, but its registered browser
+ * redirect URIs point at the hosted app on `app.mcpjam.com`.
  */
 export const MCPJAM_CLIENT_ID =
   "https://www.mcpjam.com/.well-known/oauth/client-metadata.json";
+
+export function resolveBrowserOAuthRedirectOrigin(
+  locationLike: Pick<Location, "protocol" | "origin" | "hostname">,
+): string {
+  if (locationLike.protocol !== "http:" && locationLike.protocol !== "https:") {
+    // Defensive fallback for non-browser-like locations. Electron exits earlier.
+    return MCPJAM_HOSTED_APP_ORIGIN;
+  }
+
+  if (LOCALHOST_HOSTNAMES.has(locationLike.hostname)) {
+    return locationLike.origin;
+  }
+
+  if (
+    locationLike.hostname === "app.mcpjam.com" ||
+    locationLike.hostname.endsWith(".app.mcpjam.com")
+  ) {
+    return locationLike.origin;
+  }
+
+  return MCPJAM_HOSTED_APP_ORIGIN;
+}
 
 export function getRedirectUri(): string {
   // Check if running in Electron with custom protocol support
@@ -16,17 +44,8 @@ export function getRedirectUri(): string {
     return "mcpjam://oauth/callback";
   }
 
-  // In browser, detect current port
   if (typeof window !== "undefined") {
-    const port = window.location.port;
-
-    // Production (no port or port 443)
-    if (!port || port === "443") {
-      return "https://www.mcpjam.com/oauth/callback";
-    }
-
-    // Local development - use detected port
-    return `http://localhost:${port}/oauth/callback`;
+    return `${resolveBrowserOAuthRedirectOrigin(window.location)}/oauth/callback`;
   }
 
   // Default fallback
