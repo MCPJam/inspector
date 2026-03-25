@@ -22,6 +22,13 @@ import {
   isLastMcpAppsStep,
   nextMcpAppsStepId,
 } from "@/components/mcp-apps/mcp-apps-guide-data";
+import { AppsSdkDiagram } from "@/components/apps-sdk/AppsSdkDiagram";
+import { AppsSdkGuide } from "@/components/apps-sdk/AppsSdkGuide";
+import { APPS_SDK_STEP_ORDER } from "@/components/apps-sdk/apps-sdk-data";
+import {
+  isLastAppsSdkStep,
+  nextAppsSdkStepId,
+} from "@/components/apps-sdk/apps-sdk-guide-data";
 import { useWalkthrough } from "@/hooks/use-walkthrough";
 import { WalkthroughShell } from "@/components/walkthrough/WalkthroughShell";
 import { ArticleShell } from "@/components/learning-article/ArticleShell";
@@ -222,6 +229,74 @@ function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// Apps SDK walkthrough
+// ---------------------------------------------------------------------------
+
+function AppsSdkWalkthrough({ onBack }: { onBack: () => void }) {
+  const wt = useWalkthrough({
+    stepOrder: APPS_SDK_STEP_ORDER,
+    isLastStep: isLastAppsSdkStep,
+    nextStepId: nextAppsSdkStepId,
+  });
+
+  const handleDiagramStepClick = useCallback(
+    (diagramId: string) => {
+      const nodeToStep: Record<string, string> = {
+        "host-group": "host_model",
+        "ai-model": "host_model",
+        "iframe-view": "iframe_view",
+        "tool-code": "tool_definition",
+        "result-code": "tool_result",
+        "widget-file": "widget_component",
+      };
+      const edgeToStep: Record<string, string> = {
+        "e-step1": "tool_definition",
+        "e-step2": "tool_result",
+        "e-step3": "widget_component",
+        "e-step4": "iframe_view",
+        "e-postmessage": "iframe_view",
+      };
+      const stepId =
+        nodeToStep[diagramId] ?? edgeToStep[diagramId] ?? diagramId;
+      if (
+        APPS_SDK_STEP_ORDER.includes(
+          stepId as (typeof APPS_SDK_STEP_ORDER)[number],
+        )
+      ) {
+        wt.scrollToStep(stepId);
+      }
+    },
+    [wt.scrollToStep],
+  );
+
+  return (
+    <WalkthroughShell
+      title="OpenAI Apps SDK"
+      badge="Extensions"
+      onBack={onBack}
+      continueLabel={wt.continueLabel}
+      onContinue={wt.handleContinue}
+      onReset={wt.handleReset}
+      guidePanel={
+        <AppsSdkGuide
+          activeStepId={wt.activeStepId}
+          onActiveStepChange={wt.handleScrollStepChange}
+          scrollToStepId={wt.scrollTargetStepId}
+          scrollToStepToken={wt.scrollToStepToken}
+          onScrollComplete={wt.handleScrollComplete}
+        />
+      }
+      diagramPanel={
+        <AppsSdkDiagram
+          currentStep={wt.currentStep}
+          onStepClick={handleDiagramStepClick}
+        />
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // LearningTab — routes to the selected concept
 // ---------------------------------------------------------------------------
 
@@ -246,6 +321,10 @@ export function LearningTab() {
 
   if (selectedConcept === "mcp-apps") {
     return <McpAppsWalkthrough onBack={() => setSelectedConcept(null)} />;
+  }
+
+  if (selectedConcept === "apps-sdk") {
+    return <AppsSdkWalkthrough onBack={() => setSelectedConcept(null)} />;
   }
 
   if (selectedConcept === "mcp-lifecycle") {

@@ -1,5 +1,6 @@
 import {
   AppWindow,
+  Blocks,
   GitBranch,
   Lightbulb,
   Network,
@@ -49,6 +50,15 @@ export const LEARNING_CONCEPTS: LearningConcept[] = [
     description:
       "Learn how MCP servers deliver rich, interactive HTML user interfaces into host apps — ui:// resources, tool linkage, and postMessage.",
     icon: AppWindow,
+    totalSteps: 7,
+    category: "Extensions",
+  },
+  {
+    id: "apps-sdk",
+    title: "OpenAI Apps SDK",
+    description:
+      "Learn how the Apps SDK layers ChatGPT-specific features (window.openai) on top of standard MCP Apps — dual-protocol support, tool metadata, and deployment.",
+    icon: Blocks,
     totalSteps: 7,
     category: "Extensions",
   },
