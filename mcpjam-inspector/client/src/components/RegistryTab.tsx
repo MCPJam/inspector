@@ -10,6 +10,7 @@ import {
   MonitorSmartphone,
   MessageSquareText,
   ChevronDown,
+  BadgeCheck,
 } from "lucide-react";
 import { Card } from "./ui/card";
 import { Button } from "./ui/button";
@@ -195,6 +196,9 @@ function RegistryServerCard({
 }) {
   const { variants, hasDualType } = consolidated;
   const first = variants[0];
+  const isPublisherVerified = variants.some(
+    (v) => v.publishStatus === "verified",
+  );
 
   const isConnecting =
     variants.some((v) => connectingIds.has(v._id)) ||
@@ -232,22 +236,16 @@ function RegistryServerCard({
             <span className="text-xs text-muted-foreground">
               {first.publisher}
             </span>
-            {first.publisher === "MCPJam" && (
-              <svg
-                className="h-4 w-4 flex-shrink-0"
-                viewBox="0 0 24 24"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
+            {isPublisherVerified && (
+              <span
+                className="inline-flex shrink-0"
+                title="Verified publisher"
               >
-                <circle cx="12" cy="12" r="10" fill="#e87a4a" />
-                <path
-                  d="M8 12.5l2.5 2.5L16 9.5"
-                  stroke="white"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                <BadgeCheck
+                  className="h-4 w-4 shrink-0 [&>path:first-of-type]:fill-orange-500 [&>path:first-of-type]:stroke-none [&>path:last-of-type]:stroke-white [&>path:last-of-type]:stroke-[2.5] [&>path:last-of-type]:[stroke-linecap:round] [&>path:last-of-type]:[stroke-linejoin:round]"
+                  aria-label="Verified publisher"
                 />
-              </svg>
+              </span>
             )}
           </div>
         </div>

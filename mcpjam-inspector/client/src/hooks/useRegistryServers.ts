@@ -17,6 +17,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Connect to Asana to manage tasks, projects, and team workflows directly from your MCP client.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Project Management",
     iconUrl: "https://cdn.simpleicons.org/asana",
     scope: "global",
@@ -39,6 +40,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Interact with Linear issues, projects, and cycles. Create, update, and search issues with natural language.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Project Management",
     iconUrl: "https://cdn.simpleicons.org/linear",
     scope: "global",
@@ -61,6 +63,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Access and manage Notion pages, databases, and content. Search, create, and update your workspace.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Productivity",
     iconUrl:
       "https://upload.wikimedia.org/wikipedia/commons/4/45/Notion_app_logo.png",
@@ -84,6 +87,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Send messages, search conversations, and manage Slack channels directly through MCP.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Communication",
     iconUrl: "https://cdn.worldvectorlogo.com/logos/slack-new-logo.svg",
     scope: "global",
@@ -105,6 +109,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Manage repositories, pull requests, issues, and code reviews. Automate your GitHub workflows.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Developer Tools",
     scope: "global",
     transport: {
@@ -125,6 +130,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Create and manage Jira issues, sprints, and boards. Track project progress with natural language.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Project Management",
     scope: "global",
     transport: {
@@ -144,6 +150,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Search, read, and organize files in Google Drive. Access documents, spreadsheets, and presentations.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Productivity",
     scope: "global",
     transport: {
@@ -163,6 +170,7 @@ const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
     description:
       "Query payments, subscriptions, and customer data. Monitor your Stripe business metrics.",
     publisher: "MCPJam",
+    publishStatus: "verified",
     category: "Finance",
     scope: "global",
     transport: { transportType: "http", url: "https://mcp.stripe.com/sse" },
@@ -184,6 +192,7 @@ export interface RegistryServer {
   displayName: string;
   description?: string;
   iconUrl?: string;
+  publishStatus?: "verified" | "unverified";
   // Client type: "text" for any MCP client, "app" for rich-UI clients
   clientType?: "text" | "app";
   // Scope & ownership

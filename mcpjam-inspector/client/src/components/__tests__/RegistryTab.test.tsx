@@ -227,6 +227,38 @@ describe("RegistryTab", () => {
       expect(screen.getByText("MCPJam")).toBeInTheDocument();
     });
 
+    it("shows verified star when publishStatus is verified", () => {
+      mockHookReturn = {
+        registryServers: [createMockServer({ publishStatus: "verified" })],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByLabelText("Verified publisher")).toBeInTheDocument();
+    });
+
+    it("does not show verified star when publishStatus is not verified", () => {
+      mockHookReturn = {
+        registryServers: [
+          createMockServer({ publishStatus: "unverified" }),
+        ],
+        categories: ["Productivity"],
+        isLoading: false,
+        connect: mockConnect,
+        disconnect: mockDisconnect,
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(
+        screen.queryByLabelText("Verified publisher"),
+      ).not.toBeInTheDocument();
+    });
+
     it("does not show raw URL by default", () => {
       mockHookReturn = {
         registryServers: [createMockServer()],
