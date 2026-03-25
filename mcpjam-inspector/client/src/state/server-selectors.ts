@@ -35,6 +35,18 @@ export function getWorkspaceVisibleConnectedOrConnectingServers(
   );
 }
 
+export function getWorkspaceVisibleConnectedServers(
+  servers: Record<string, ServerWithName>,
+): Record<string, ServerWithName> {
+  return Object.fromEntries(
+    Object.entries(servers).filter(
+      ([, server]) =>
+        isWorkspaceVisibleServer(server) &&
+        server.connectionStatus === "connected",
+    ),
+  );
+}
+
 export function getWorkspaceVisibleConnectedServerNames(
   servers: Record<string, ServerWithName>,
 ): string[] {

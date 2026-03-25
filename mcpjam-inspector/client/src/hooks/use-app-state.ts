@@ -194,17 +194,15 @@ export function useAppState({
         return;
       }
 
-      const workspaceServers = Object.keys(workspace.servers || {});
-      for (const serverName of workspaceServers) {
-        const runtimeServer = appState.servers[serverName];
-        if (runtimeServer?.connectionStatus === "connected") {
-          await handleDisconnect(serverName);
-        }
-      }
-
+      const workspaceServerNames = new Set(Object.keys(workspace.servers || {}));
       for (const [serverName, server] of Object.entries(appState.servers)) {
         if ((server.surface ?? "workspace") !== "workspace") {
           await disconnectRuntimeServer(serverName);
+        } else if (
+          workspaceServerNames.has(serverName) &&
+          server.connectionStatus === "connected"
+        ) {
+          await handleDisconnect(serverName);
         }
       }
 

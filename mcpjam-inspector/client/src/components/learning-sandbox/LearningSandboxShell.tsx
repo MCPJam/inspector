@@ -101,7 +101,7 @@ export function LearningSandboxShell({
             </ResizablePanel>
           </>
         ) : (
-          <CollapsedPanelStrip onOpen={toggleLogger} />
+          <CollapsedPanelStrip side="right" onOpen={toggleLogger} />
         )}
       </ResizablePanelGroup>
     </div>

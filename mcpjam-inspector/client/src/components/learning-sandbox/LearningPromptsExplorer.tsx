@@ -52,6 +52,20 @@ function buildPromptFields(
   }));
 }
 
+function findPromptExample(
+  promptName: string | null,
+): LearningPromptExample | null {
+  if (!promptName) {
+    return null;
+  }
+
+  return (
+    learningExampleManifest.prompts.find(
+      (example) => example.targetName === promptName,
+    ) ?? null
+  );
+}
+
 export function LearningPromptsExplorer({
   autoConnect = true,
   serverId,
@@ -84,11 +98,16 @@ export function LearningPromptsExplorer({
     [prompts, selectedPromptName],
   );
   const selectedExample = useMemo(
-    () =>
-      learningExampleManifest.prompts.find(
-        (example) => example.id === selectedExampleId,
-      ) ?? null,
-    [selectedExampleId],
+    () => {
+      const matchingSelectedExample = learningExampleManifest.prompts.find(
+        (example) =>
+          example.id === selectedExampleId &&
+          example.targetName === selectedPromptName,
+      );
+
+      return matchingSelectedExample ?? findPromptExample(selectedPromptName);
+    },
+    [selectedExampleId, selectedPromptName],
   );
   const displayValue = useMemo(() => {
     const content =

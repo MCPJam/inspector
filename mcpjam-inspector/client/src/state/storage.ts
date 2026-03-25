@@ -109,13 +109,23 @@ export function loadAppState(): AppState {
 
     const activeWorkspace = workspaces[activeWorkspaceId];
     const parsed = raw ? JSON.parse(raw) : {};
+    const hydratedServers = activeWorkspace?.servers || {};
+    const selectedServer =
+      parsed.selectedServer && hydratedServers[parsed.selectedServer]
+        ? parsed.selectedServer
+        : "none";
+    const selectedMultipleServers = Array.isArray(parsed.selectedMultipleServers)
+      ? parsed.selectedMultipleServers.filter(
+          (name: string) => hydratedServers[name],
+        )
+      : [];
 
     return {
       workspaces,
       activeWorkspaceId,
-      servers: activeWorkspace?.servers || {},
-      selectedServer: parsed.selectedServer || "none",
-      selectedMultipleServers: parsed.selectedMultipleServers || [],
+      servers: hydratedServers,
+      selectedServer,
+      selectedMultipleServers,
       isMultiSelectMode: parsed.isMultiSelectMode || false,
     } as AppState;
   } catch (e) {

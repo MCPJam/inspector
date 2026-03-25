@@ -272,6 +272,8 @@ export function buildHostedServerRequest(
   const runtimeConfig = hostedApiContext.runtimeServerConfigs?.[serverNameOrId];
   if (runtimeConfig) {
     assertHostedClientConfigSynced();
+    // Guest-mode token fallback is handled in the branch above. Runtime server
+    // configs are only used for the authenticated hosted path.
     return buildHostedRuntimeServerRequest(
       runtimeConfig,
       hostedApiContext.clientCapabilities,

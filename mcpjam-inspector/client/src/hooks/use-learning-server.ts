@@ -32,6 +32,16 @@ export interface LearningServerHandle {
   disconnect: () => Promise<void>;
 }
 
+function getConfigUrl(
+  config: MCPServerConfig | ServerWithName["config"] | undefined,
+): string | undefined {
+  const url = (config as { url?: unknown } | undefined)?.url;
+  if (url instanceof URL) {
+    return url.toString();
+  }
+  return typeof url === "string" ? url : undefined;
+}
+
 export function useLearningServer({
   autoConnect = true,
   disconnectOnUnmount = true,
@@ -51,6 +61,12 @@ export function useLearningServer({
   );
   const serverEntry = appState.servers[serverId] ?? getServerEntry(serverId);
   const status = serverEntry?.connectionStatus ?? "disconnected";
+  const requestedUrl = getConfigUrl(serverConfig);
+  const activeUrl = getConfigUrl(serverEntry?.config);
+  const hasServerUrlChanged =
+    requestedUrl !== undefined &&
+    activeUrl !== undefined &&
+    requestedUrl !== activeUrl;
 
   const connect = useCallback(
     () =>
@@ -88,12 +104,19 @@ export function useLearningServer({
       return;
     }
 
+    if ((status === "connected" || status === "connecting") && activeUrl) {
+      if (hasServerUrlChanged) {
+        void reconnect();
+      }
+      return;
+    }
+
     if (status === "connected" || status === "connecting") {
       return;
     }
 
     void connect();
-  }, [autoConnect, connect, status]);
+  }, [activeUrl, autoConnect, connect, hasServerUrlChanged, reconnect, status]);
 
   useEffect(
     () => () => {

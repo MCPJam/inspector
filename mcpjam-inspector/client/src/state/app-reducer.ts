@@ -171,10 +171,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     }
 
     case "REMOVE_SERVER": {
-      const existing = state.servers[action.name];
+      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
+      const existing =
+        state.servers[action.name] ?? activeWorkspace?.servers[action.name];
       const persistToWorkspace = shouldPersistToWorkspace(existing);
       const { [action.name]: _, ...rest } = state.servers;
-      const activeWorkspace = state.workspaces[state.activeWorkspaceId];
       return {
         ...state,
         servers: rest,
@@ -308,8 +309,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
       const targetWorkspace = state.workspaces[action.workspaceId];
       if (!targetWorkspace) return state;
 
-      // Mark all servers as disconnected when switching workspaces
-      // since we disconnect them before switching
+      // Only workspace-owned servers hydrate into the next workspace. Runtime
+      // surfaces are torn down before switching and do not carry across.
       const disconnectedServers = Object.fromEntries(
         Object.entries(targetWorkspace.servers).map(([name, server]) => [
           name,

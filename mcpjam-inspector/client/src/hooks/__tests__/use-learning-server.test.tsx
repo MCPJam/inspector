@@ -1,49 +1,20 @@
 import { renderHook, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
-import type { AppState } from "@/state/app-types";
 import { AppStateProvider } from "@/state/app-state-context";
+import { createServer } from "@/test/factories";
+import { createMockAppState, createMockRuntimeApi } from "@/test/mocks";
 import {
   DEFAULT_LEARNING_SERVER_URL,
   useLearningServer,
 } from "../use-learning-server";
 
-function createAppState(overrides?: Partial<AppState>): AppState {
-  return {
-    servers: {},
-    selectedServer: "none",
-    selectedMultipleServers: [],
-    isMultiSelectMode: false,
-    workspaces: {
-      default: {
-        id: "default",
-        name: "Default",
-        servers: {},
-        createdAt: new Date("2024-01-01T00:00:00.000Z"),
-        updatedAt: new Date("2024-01-01T00:00:00.000Z"),
-        isDefault: true,
-      },
-    },
-    activeWorkspaceId: "default",
-    ...overrides,
-  };
-}
-
 describe("useLearningServer", () => {
   it("auto-connects the hidden runtime server through the shared runtime API", async () => {
-    const connectRuntimeServer = vi.fn().mockResolvedValue(undefined);
-    const disconnectRuntimeServer = vi.fn().mockResolvedValue(undefined);
-    const getServerEntry = vi.fn();
+    const runtimeApi = createMockRuntimeApi();
 
     const wrapper = ({ children }: { children: ReactNode }) => (
-      <AppStateProvider
-        appState={createAppState()}
-        runtimeApi={{
-          connectRuntimeServer,
-          disconnectRuntimeServer,
-          getServerEntry,
-        }}
-      >
+      <AppStateProvider appState={createMockAppState()} runtimeApi={runtimeApi}>
         {children}
       </AppStateProvider>
     );
@@ -51,7 +22,7 @@ describe("useLearningServer", () => {
     renderHook(() => useLearningServer(), { wrapper });
 
     await waitFor(() => {
-      expect(connectRuntimeServer).toHaveBeenCalledWith({
+      expect(runtimeApi.connectRuntimeServer).toHaveBeenCalledWith({
         name: "__learning__",
         config: {
           url: DEFAULT_LEARNING_SERVER_URL,
@@ -64,18 +35,10 @@ describe("useLearningServer", () => {
   });
 
   it("disconnects the runtime server on unmount by default", async () => {
-    const connectRuntimeServer = vi.fn().mockResolvedValue(undefined);
-    const disconnectRuntimeServer = vi.fn().mockResolvedValue(undefined);
+    const runtimeApi = createMockRuntimeApi();
 
     const wrapper = ({ children }: { children: ReactNode }) => (
-      <AppStateProvider
-        appState={createAppState()}
-        runtimeApi={{
-          connectRuntimeServer,
-          disconnectRuntimeServer,
-          getServerEntry: vi.fn(),
-        }}
-      >
+      <AppStateProvider appState={createMockAppState()} runtimeApi={runtimeApi}>
         {children}
       </AppStateProvider>
     );
@@ -88,7 +51,9 @@ describe("useLearningServer", () => {
     unmount();
 
     await waitFor(() => {
-      expect(disconnectRuntimeServer).toHaveBeenCalledWith("__learning__");
+      expect(runtimeApi.disconnectRuntimeServer).toHaveBeenCalledWith(
+        "__learning__",
+      );
     });
   });
 
@@ -97,30 +62,24 @@ describe("useLearningServer", () => {
       protocolVersion: "2024-11-05",
       capabilities: { tools: {} },
     };
-    const appState = createAppState({
+    const appState = createMockAppState({
       servers: {
-        __learning__: {
+        __learning__: createServer({
           name: "__learning__",
           config: { url: DEFAULT_LEARNING_SERVER_URL } as any,
           connectionStatus: "connected",
-          lastConnectionTime: new Date("2024-01-01T00:00:00.000Z"),
-          retryCount: 0,
           enabled: true,
           surface: "learning",
           initializationInfo: initInfo,
-        },
+        }),
       },
+    });
+    const runtimeApi = createMockRuntimeApi({
+      getServerEntry: (name) => appState.servers[name],
     });
 
     const wrapper = ({ children }: { children: ReactNode }) => (
-      <AppStateProvider
-        appState={appState}
-        runtimeApi={{
-          connectRuntimeServer: vi.fn(),
-          disconnectRuntimeServer: vi.fn(),
-          getServerEntry: (name) => appState.servers[name],
-        }}
-      >
+      <AppStateProvider appState={appState} runtimeApi={runtimeApi}>
         {children}
       </AppStateProvider>
     );
@@ -133,5 +92,60 @@ describe("useLearningServer", () => {
     expect(result.current.isConnected).toBe(true);
     expect(result.current.status).toBe("connected");
     expect(result.current.initInfo).toEqual(initInfo);
+  });
+
+  it("reconnects when the requested learning server URL changes", async () => {
+    let appState = createMockAppState({
+      servers: {
+        __learning__: createServer({
+          name: "__learning__",
+          config: { url: DEFAULT_LEARNING_SERVER_URL } as any,
+          connectionStatus: "connected",
+          enabled: true,
+          surface: "learning",
+        }),
+      },
+    });
+    const runtimeApi = createMockRuntimeApi({
+      getServerEntry: (name) => appState.servers[name],
+    });
+
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <AppStateProvider appState={appState} runtimeApi={runtimeApi}>
+        {children}
+      </AppStateProvider>
+    );
+
+    const { rerender } = renderHook(
+      ({ serverUrl }) => useLearningServer({ serverUrl }),
+      {
+        initialProps: { serverUrl: DEFAULT_LEARNING_SERVER_URL },
+        wrapper,
+      },
+    );
+
+    vi.mocked(runtimeApi.connectRuntimeServer).mockClear();
+    appState = createMockAppState({
+      servers: {
+        __learning__: createServer({
+          name: "__learning__",
+          config: { url: DEFAULT_LEARNING_SERVER_URL } as any,
+          connectionStatus: "connected",
+          enabled: true,
+          surface: "learning",
+        }),
+      },
+    });
+    rerender({ serverUrl: "https://learn.mcpjam.com/alternate" });
+
+    await waitFor(() => {
+      expect(runtimeApi.connectRuntimeServer).toHaveBeenCalledWith({
+        name: "__learning__",
+        config: { url: "https://learn.mcpjam.com/alternate" },
+        surface: "learning",
+        silent: true,
+        select: false,
+      });
+    });
   });
 });

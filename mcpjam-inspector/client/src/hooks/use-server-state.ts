@@ -167,6 +167,9 @@ export function useServerState({
   );
   const isStaleOp = (name: string, token: number) =>
     (opTokenRef.current.get(name) ?? 0) !== token;
+  const invalidatePendingServerOps = (name: string) => {
+    nextOpToken(name);
+  };
 
   const activeWorkspace = useMemo(() => {
     const workspace = effectiveWorkspaces[effectiveActiveWorkspaceId];
@@ -295,10 +298,10 @@ export function useServerState({
 
   const setSelectedMultipleServersToAllServers = useCallback(() => {
     const connectedNames = getWorkspaceVisibleConnectedServerNames(
-      appState.servers,
+      effectiveServers,
     );
     dispatch({ type: "SET_MULTI_SELECTED", names: connectedNames });
-  }, [appState.servers, dispatch]);
+  }, [dispatch, effectiveServers]);
 
   const syncServerToConvex = useCallback(
     async (
@@ -1417,6 +1420,7 @@ export function useServerState({
         return;
       }
 
+      invalidatePendingServerOps(serverName);
       try {
         await deleteServer(serverName);
       } catch {
@@ -1435,6 +1439,7 @@ export function useServerState({
 
   const removeServerFromStateAndCloud = useCallback(
     async (serverName: string) => {
+      invalidatePendingServerOps(serverName);
       cleanupServerLocalArtifacts(serverName);
       dispatch({ type: "REMOVE_SERVER", name: serverName });
       await removeServerFromConvex(serverName);

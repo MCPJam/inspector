@@ -60,6 +60,22 @@ function normalizeToolMap(tools: Tool[]): Record<string, Tool> {
   return Object.fromEntries(tools.map((tool) => [tool.name, tool]));
 }
 
+function parseRawToolInput(rawParameters: string): Record<string, unknown> {
+  try {
+    return JSON.parse(rawParameters || "{}") as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
+interface ExecutedToolCallSnapshot {
+  toolName: string;
+  toolInput: Record<string, unknown>;
+  toolMetadata?: Record<string, unknown>;
+  resourceUri?: string;
+  toolOutput: CallToolResult;
+}
+
 export function LearningToolsExplorer({
   autoConnect = true,
   serverId,
@@ -84,6 +100,8 @@ export function LearningToolsExplorer({
   const [mode, setMode] = useState<"guided" | "raw">("guided");
   const [result, setResult] = useState<CallToolResult | null>(null);
   const [auxiliaryResult, setAuxiliaryResult] = useState<unknown>(null);
+  const [executedCallSnapshot, setExecutedCallSnapshot] =
+    useState<ExecutedToolCallSnapshot | null>(null);
   const [toolRunVersion, setToolRunVersion] = useState(0);
 
   const toolMap = useMemo(
@@ -108,14 +126,6 @@ export function LearningToolsExplorer({
       (selectedTool?._meta as Record<string, unknown> | undefined)
     );
   }, [selectedTool?._meta, selectedToolName, toolsData?.toolsMetadata]);
-  const uiType = useMemo(
-    () => detectUIType(selectedToolMetadata, result),
-    [result, selectedToolMetadata],
-  );
-  const uiResourceUri = useMemo(
-    () => getUIResourceUri(uiType, selectedToolMetadata),
-    [selectedToolMetadata, uiType],
-  );
   const displayValue = useMemo(() => {
     if (result) {
       const display = extractDisplayFromToolResult(result);
@@ -208,6 +218,10 @@ export function LearningToolsExplorer({
     );
   }, [selectedExample, selectedTool]);
 
+  useEffect(() => {
+    setExecutedCallSnapshot(null);
+  }, [formFields, mode, rawParameters, selectedToolMetadata, selectedToolName]);
+
   const handleFieldChange = useCallback((name: string, value: unknown) => {
     setFormFields((current) =>
       current.map((field) =>
@@ -233,11 +247,12 @@ export function LearningToolsExplorer({
     setError("");
     setAuxiliaryResult(null);
     setResult(null);
+    setExecutedCallSnapshot(null);
 
     try {
       const parameters =
         mode === "raw"
-          ? JSON.parse(rawParameters || "{}")
+          ? parseRawToolInput(rawParameters)
           : buildParametersFromFields(formFields);
       const response = await executeToolApi(
         learningServer.serverId,
@@ -252,6 +267,17 @@ export function LearningToolsExplorer({
 
       if (response.status === "completed") {
         setResult(response.result);
+        const toolMetadata = selectedToolMetadata;
+        setExecutedCallSnapshot({
+          toolName: selectedToolName,
+          toolInput: parameters,
+          toolMetadata,
+          resourceUri: getUIResourceUri(
+            detectUIType(toolMetadata, response.result),
+            toolMetadata,
+          ) ?? undefined,
+          toolOutput: response.result,
+        });
       } else if (response.status === "task_created") {
         setAuxiliaryResult({
           status: response.status,
@@ -282,6 +308,7 @@ export function LearningToolsExplorer({
     learningServer.serverId,
     mode,
     rawParameters,
+    selectedToolMetadata,
     selectedToolName,
   ]);
 
@@ -521,28 +548,16 @@ export function LearningToolsExplorer({
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4 px-4">
-              {uiResourceUri && result ? (
+              {executedCallSnapshot?.resourceUri ? (
                 <div className="overflow-hidden rounded-lg border border-border/60 bg-muted/20">
                   <MCPAppsRenderer
                     serverId={learningServer.serverId}
-                    toolCallId={`${selectedTool.name}-${toolRunVersion}`}
-                    toolName={selectedTool.name}
-                    toolInput={
-                      mode === "raw"
-                        ? (() => {
-                            try {
-                              return JSON.parse(
-                                rawParameters || "{}",
-                              ) as Record<string, unknown>;
-                            } catch {
-                              return {};
-                            }
-                          })()
-                        : buildParametersFromFields(formFields)
-                    }
-                    toolOutput={result}
-                    resourceUri={uiResourceUri}
-                    toolMetadata={selectedToolMetadata}
+                    toolCallId={`${executedCallSnapshot.toolName}-${toolRunVersion}`}
+                    toolName={executedCallSnapshot.toolName}
+                    toolInput={executedCallSnapshot.toolInput}
+                    toolOutput={executedCallSnapshot.toolOutput}
+                    resourceUri={executedCallSnapshot.resourceUri}
+                    toolMetadata={executedCallSnapshot.toolMetadata}
                     toolsMetadata={toolsData?.toolsMetadata}
                     onCallTool={handleWidgetToolCall}
                     minimalMode

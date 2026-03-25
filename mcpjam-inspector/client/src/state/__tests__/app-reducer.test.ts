@@ -498,6 +498,31 @@ describe("appReducer", () => {
         result.workspaces[result.activeWorkspaceId].servers.__learning__,
       ).toBeUndefined();
     });
+
+    it("removes workspace-only server copies even when runtime state is already gone", () => {
+      const workspaceOnlyServer = createServer("workspace-only");
+      const workspace: Workspace = {
+        id: "workspace-1",
+        name: "Test",
+        servers: { "workspace-only": workspaceOnlyServer },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      const state = createInitialState({
+        servers: {},
+        workspaces: { "workspace-1": workspace },
+        activeWorkspaceId: "workspace-1",
+      });
+
+      const result = appReducer(state, {
+        type: "REMOVE_SERVER",
+        name: "workspace-only",
+      });
+
+      expect(result.workspaces["workspace-1"].servers["workspace-only"]).toBe(
+        undefined,
+      );
+    });
   });
 
   describe("SELECT_SERVER", () => {
@@ -791,6 +816,38 @@ describe("appReducer", () => {
         expect(result.servers["target-server"].connectionStatus).toBe(
           "disconnected",
         );
+      });
+
+      it("does not carry runtime-only servers into the new workspace", () => {
+        const targetWorkspace: Workspace = {
+          id: "target",
+          name: "Target",
+          servers: {
+            "target-server": createServer("target-server"),
+          },
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        };
+        const state = createInitialState({
+          servers: {
+            "__learning__": createServer("__learning__", {
+              surface: "learning",
+              connectionStatus: "connected",
+            }),
+          },
+          workspaces: {
+            ...createInitialState().workspaces,
+            target: targetWorkspace,
+          },
+        });
+
+        const result = appReducer(state, {
+          type: "SWITCH_WORKSPACE",
+          workspaceId: "target",
+        });
+
+        expect(result.servers.__learning__).toBeUndefined();
+        expect(result.servers["target-server"]).toBeDefined();
       });
 
       it("returns unchanged state if workspace does not exist", () => {

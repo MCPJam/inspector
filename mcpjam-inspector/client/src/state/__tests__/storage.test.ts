@@ -60,6 +60,15 @@ describe("storage runtime server filtering", () => {
               enabled: true,
               surface: "workspace",
             },
+            __learning__: {
+              name: "__learning__",
+              config: { url: new URL("https://learn.mcpjam.com/mcp") } as any,
+              connectionStatus: "connected",
+              lastConnectionTime: new Date("2024-01-01T00:00:00.000Z"),
+              retryCount: 0,
+              enabled: true,
+              surface: "learning",
+            },
           },
         },
       },
@@ -86,9 +95,17 @@ describe("storage runtime server filtering", () => {
       STORAGE_KEY,
       JSON.stringify({
         selectedServer: "__learning__",
-        selectedMultipleServers: [],
+        selectedMultipleServers: ["workspace", "__learning__"],
         isMultiSelectMode: false,
         servers: {
+          workspace: {
+            name: "workspace",
+            config: { url: "https://example.com/workspace" },
+            connectionStatus: "connected",
+            retryCount: 0,
+            enabled: true,
+            surface: "workspace",
+          },
           __learning__: {
             name: "__learning__",
             config: { url: "https://learn.mcpjam.com/mcp" },
@@ -110,6 +127,14 @@ describe("storage runtime server filtering", () => {
             createdAt: "2024-01-01T00:00:00.000Z",
             updatedAt: "2024-01-01T00:00:00.000Z",
             servers: {
+              workspace: {
+                name: "workspace",
+                config: { url: "https://example.com/workspace" },
+                connectionStatus: "connected",
+                retryCount: 0,
+                enabled: true,
+                surface: "workspace",
+              },
               __learning__: {
                 name: "__learning__",
                 config: { url: "https://learn.mcpjam.com/mcp" },
@@ -128,5 +153,7 @@ describe("storage runtime server filtering", () => {
 
     expect(result.servers.__learning__).toBeUndefined();
     expect(result.workspaces.default.servers.__learning__).toBeUndefined();
+    expect(result.selectedServer).toBe("none");
+    expect(result.selectedMultipleServers).toEqual(["workspace"]);
   });
 });
