@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
@@ -46,12 +46,6 @@ export function AuthenticationSection({
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
 
-  useEffect(() => {
-    if (authType !== "oauth") {
-      setShowAdvancedOAuth(false);
-    }
-  }, [authType]);
-
   return (
     <div className="space-y-4">
       <div className="border border-border rounded-lg overflow-hidden">
@@ -59,7 +53,12 @@ export function AuthenticationSection({
           <label className="block text-sm font-medium text-foreground">
             Authentication
           </label>
-          <Select value={authType} onValueChange={onAuthTypeChange}>
+          <Select value={authType} onValueChange={(value: "oauth" | "bearer" | "none") => {
+              if (value !== "oauth") {
+                setShowAdvancedOAuth(false);
+              }
+              onAuthTypeChange(value);
+            }}>
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
