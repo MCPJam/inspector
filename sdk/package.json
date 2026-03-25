@@ -66,7 +66,7 @@
     "typescript-eslint": "^8.53.1"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "^4.0.83",
+    "@ai-sdk/amazon-bedrock": "^3.0.89",
     "@ai-sdk/anthropic": "^2.0.17",
     "@ai-sdk/azure": "^2.0.79",
     "@ai-sdk/deepseek": "^1.0.5",
