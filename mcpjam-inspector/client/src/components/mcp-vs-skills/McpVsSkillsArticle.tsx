@@ -1,23 +1,9 @@
-import { motion } from "framer-motion";
 import {
-  sectionChild,
-  AnalogyCallout,
-  KeyDetails,
   Section,
   ArticleHero,
   ArticleOutro,
 } from "@/components/learning-article/article-primitives";
 import { ComparisonTable } from "@/components/learning-article/ComparisonTable";
-
-// ---------------------------------------------------------------------------
-// Category accent
-// ---------------------------------------------------------------------------
-
-const COLOR = "#10b981"; // emerald
-
-// ---------------------------------------------------------------------------
-// Article content
-// ---------------------------------------------------------------------------
 
 export function McpVsSkillsArticle() {
   return (
@@ -27,25 +13,15 @@ export function McpVsSkillsArticle() {
         subtitle="Skills teach agents how to think. MCP gives them access to act. Learn why they're complementary, not competing, and how the best setups use both."
       />
 
-      {/* ----------------------------------------------------------------- */}
       {/* Section 1: The Comparison */}
-      {/* ----------------------------------------------------------------- */}
-      <Section
-        category="comparison"
-        categoryColor={COLOR}
-        step={1}
-        title="Skills: Teaching Agents How to Think"
-      >
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed"
-          {...sectionChild(2)}
-        >
+      <Section step={1} title="Skills: Teaching Agents How to Think">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           Skills (also known as prompt files, <code>.cursorrules</code>,{" "}
           <code>CLAUDE.md</code>, etc.) are markdown documents that encode
           knowledge and best practices for AI agents. They teach agents{" "}
           <em>how</em> to perform tasks effectively — but they don't give agents
           access to external systems.
-        </motion.p>
+        </p>
 
         <ComparisonTable
           headers={["Aspect", "Skills", "MCP"]}
@@ -89,63 +65,35 @@ export function McpVsSkillsArticle() {
         />
       </Section>
 
-      {/* ----------------------------------------------------------------- */}
       {/* Section 2: Complementary, Not Competing */}
-      {/* ----------------------------------------------------------------- */}
-      <Section
-        category="comparison"
-        categoryColor={COLOR}
-        step={2}
-        title="Complementary, Not Competing"
-      >
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed"
-          {...sectionChild(2)}
-        >
+      <Section step={2} title="Complementary, Not Competing">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           Skills make agents smarter about <em>how</em> to use tools. MCP gives
           agents <em>access</em> to tools. The best setups use both: a skill
           teaching the agent best practices for GitHub workflows, combined with
-          an MCP server that gives it authenticated access to GitHub.
-        </motion.p>
+          an MCP server that gives it authenticated access to GitHub. A skill is
+          a playbook. MCP is the field.
+        </p>
 
-        <AnalogyCallout>
-          A skill is a playbook. MCP is the field. The playbook tells the agent
-          what to do — MCP lets it actually do it.
-        </AnalogyCallout>
-
-        <KeyDetails
-          items={[
-            'Skills encode domain expertise — "when deploying, always run migrations first."',
-            "MCP provides the actual connection to run those migrations through authenticated tool calls.",
-            "Without skills, agents have access but lack judgment. Without MCP, agents have judgment but can't act.",
-          ]}
-        />
+        <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <li>Skills encode domain expertise — "when deploying, always run migrations first."</li>
+          <li>MCP provides the actual connection to run those migrations through authenticated tool calls.</li>
+          <li>Without skills, agents have access but lack judgment. Without MCP, agents have judgment but can't act.</li>
+        </ul>
       </Section>
 
-      {/* ----------------------------------------------------------------- */}
       {/* Section 3: The Bottom Line */}
-      {/* ----------------------------------------------------------------- */}
-      <Section
-        category="comparison"
-        categoryColor={COLOR}
-        step={3}
-        title="The Bottom Line"
-      >
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed"
-          {...sectionChild(2)}
-        >
+      <Section step={3} title="The Bottom Line">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           There's a lot of helpful data behind auth. MCP gives agents access to
           that data. Skills tell them what to do with it.
-        </motion.p>
+        </p>
 
-        <KeyDetails
-          items={[
-            "Use skills to teach agents domain expertise and best practices.",
-            "Use MCP to give agents authenticated, scoped access to external systems.",
-            "The most effective agent setups combine both — knowledge and access working together.",
-          ]}
-        />
+        <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <li>Use skills to teach agents domain expertise and best practices.</li>
+          <li>Use MCP to give agents authenticated, scoped access to external systems.</li>
+          <li>The most effective agent setups combine both — knowledge and access working together.</li>
+        </ul>
       </Section>
 
       <ArticleOutro>

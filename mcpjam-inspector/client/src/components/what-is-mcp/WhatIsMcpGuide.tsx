@@ -1,5 +1,4 @@
 import { useRef, useEffect, useCallback } from "react";
-import { Lightbulb, Info, Zap } from "lucide-react";
 import { motion } from "framer-motion";
 import { useScrollSpy } from "@/hooks/use-scroll-spy";
 import { WHAT_IS_MCP_STEP_ORDER, type WhatIsMcpStep } from "./what-is-mcp-data";
@@ -21,36 +20,6 @@ interface WhatIsMcpGuideProps {
 }
 
 // ---------------------------------------------------------------------------
-// Animation helpers
-// ---------------------------------------------------------------------------
-
-const EASE = [0.25, 0.1, 0.25, 1] as const;
-
-function sectionChild(order: number) {
-  return {
-    initial: { opacity: 0, y: 16 } as const,
-    whileInView: { opacity: 1, y: 0 } as const,
-    viewport: { once: true } as const,
-    transition: {
-      delay: order * 0.08,
-      duration: 0.4,
-      ease: EASE,
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Category accents
-// ---------------------------------------------------------------------------
-
-const CATEGORY_ACCENT = {
-  overview: "#6366f1", // indigo
-  architecture: "#3b82f6", // blue
-  capabilities: "#10b981", // green
-  ecosystem: "#f59e0b", // amber
-} as const;
-
-// ---------------------------------------------------------------------------
 // Sub-components
 // ---------------------------------------------------------------------------
 
@@ -70,10 +39,6 @@ function StepSection({
     | undefined;
   if (!guide) return null;
 
-  const categoryColor =
-    CATEGORY_ACCENT[guide.category as keyof typeof CATEGORY_ACCENT] ??
-    "#94a3b8";
-
   return (
     <motion.section
       id={`section-${stepId}`}
@@ -83,13 +48,13 @@ function StepSection({
       initial={{ opacity: 0, y: 30 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.15 }}
-      transition={{ duration: 0.5, ease: EASE }}
+      transition={{ duration: 0.5 }}
     >
-      {/* Active indicator — category-colored left border */}
+      {/* Active indicator — neutral left border */}
       <motion.div
         className="absolute left-0 top-4 bottom-4 w-[3px] rounded-full"
         animate={{
-          backgroundColor: isActive ? categoryColor : "transparent",
+          backgroundColor: isActive ? "hsl(var(--foreground) / 0.15)" : "transparent",
           scaleY: isActive ? 1 : 0.3,
           opacity: isActive ? 1 : 0,
         }}
@@ -97,128 +62,66 @@ function StepSection({
       />
 
       <div className="pl-5 space-y-5">
-        {/* Category badge + step number */}
-        <motion.div className="flex items-center gap-2" {...sectionChild(0)}>
-          <span
-            className="block h-2 w-2 rounded-full"
-            style={{ backgroundColor: categoryColor }}
-          />
-          <span
-            className="text-[11px] font-semibold uppercase tracking-wider"
-            style={{ color: categoryColor }}
-          >
-            {guide.category}
-          </span>
-          <span className="text-[10px] text-muted-foreground/50 font-mono">
+        {/* Step counter */}
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground font-mono">
             Step {index + 1}
           </span>
-        </motion.div>
+        </div>
 
         {/* Title */}
-        <motion.h2
-          className="text-xl font-semibold tracking-tight text-foreground -mt-1"
-          {...sectionChild(1)}
-        >
+        <h2 className="text-xl font-semibold tracking-tight text-foreground -mt-1">
           {guide.title}
-        </motion.h2>
+        </h2>
 
         {/* Summary */}
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed max-w-prose"
-          {...sectionChild(2)}
-        >
+        <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
           {guide.summary}
-        </motion.p>
+        </p>
 
-        {/* Analogy callout */}
+        {/* Analogy */}
         {guide.analogy && (
-          <motion.div
-            className="rounded-lg border border-indigo-200/50 dark:border-indigo-800/30 bg-indigo-50/40 dark:bg-indigo-950/10 p-4"
-            {...sectionChild(3)}
-          >
-            <div className="flex items-center gap-2 mb-2">
-              <Zap className="h-3.5 w-3.5 text-indigo-500/70" />
-              <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider">
-                Analogy
-              </span>
-            </div>
-            <p className="text-[13px] text-foreground/80 leading-relaxed">
+          <aside className="border-l-2 border-border pl-4">
+            <p className="text-[13px] text-foreground/80 leading-relaxed italic">
               {guide.analogy}
             </p>
-          </motion.div>
+          </aside>
         )}
 
         {/* Teachable moments */}
         {guide.teachableMoments.length > 0 && (
-          <motion.div
-            className="rounded-lg border border-blue-200/50 dark:border-blue-800/30 bg-blue-50/40 dark:bg-blue-950/10 p-4"
-            {...sectionChild(4)}
-          >
-            <div className="flex items-center gap-2 mb-2.5">
-              <Info className="h-3.5 w-3.5 text-blue-500/70" />
-              <span className="text-[11px] font-semibold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
-                Key details
-              </span>
-            </div>
-            <ul className="space-y-2">
-              {guide.teachableMoments.map((moment, i) => (
-                <li
-                  key={i}
-                  className="flex items-start gap-2 text-[13px] text-foreground/80 leading-relaxed"
-                >
-                  <span className="mt-1.5 block h-1 w-1 rounded-full bg-blue-400/60 shrink-0" />
-                  {moment}
-                </li>
-              ))}
-            </ul>
-          </motion.div>
+          <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+            {guide.teachableMoments.map((moment, i) => (
+              <li key={i}>{moment}</li>
+            ))}
+          </ul>
         )}
 
         {/* Examples */}
         {guide.examples && guide.examples.length > 0 && (
-          <motion.div {...sectionChild(5)}>
-            <div className="rounded-lg border border-border bg-muted/30 p-4">
-              <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2.5">
-                Examples
-              </div>
-              <ul className="space-y-1.5">
-                {guide.examples.map((example, i) => (
-                  <li
-                    key={i}
-                    className="text-[12px] font-mono text-foreground/70 leading-relaxed"
-                  >
-                    {example}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </motion.div>
+          <div className="rounded-lg border border-border bg-muted/30 p-4">
+            <ul className="space-y-1.5">
+              {guide.examples.map((example, i) => (
+                <li
+                  key={i}
+                  className="text-[12px] font-mono text-foreground/70 leading-relaxed"
+                >
+                  {example}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
         {/* Tips */}
         {guide.tips.length > 0 && (
-          <motion.div
-            className="rounded-lg border border-amber-200/50 dark:border-amber-800/30 bg-amber-50/40 dark:bg-amber-950/10 p-4"
-            {...sectionChild(6)}
-          >
-            <div className="flex items-center gap-2 mb-2.5">
-              <Lightbulb className="h-3.5 w-3.5 text-amber-500/70" />
-              <span className="text-[11px] font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider">
-                Tips
-              </span>
-            </div>
-            <ul className="space-y-2">
+          <aside className="border-l-2 border-border pl-4">
+            <ul className="space-y-1 text-[13px] text-foreground/80 leading-relaxed">
               {guide.tips.map((tip, i) => (
-                <li
-                  key={i}
-                  className="flex items-start gap-2 text-[13px] text-foreground/80 leading-relaxed"
-                >
-                  <span className="mt-1.5 block h-1 w-1 rounded-full bg-amber-400/60 shrink-0" />
-                  {tip}
-                </li>
+                <li key={i}>{tip}</li>
               ))}
             </ul>
-          </motion.div>
+          </aside>
         )}
       </div>
 
@@ -279,12 +182,7 @@ export function WhatIsMcpGuide({
     >
       {/* Hero */}
       <div className="px-8 pt-8 pb-4">
-        <motion.div
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: EASE }}
-          className="space-y-3"
-        >
+        <div className="space-y-3">
           <h1 className="text-2xl font-bold tracking-tight text-foreground">
             What is MCP?
           </h1>
@@ -296,7 +194,7 @@ export function WhatIsMcpGuide({
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to jump to the next step.
           </p>
-        </motion.div>
+        </div>
       </div>
 
       {/* Step sections */}
@@ -312,19 +210,13 @@ export function WhatIsMcpGuide({
         ))}
 
         {/* Outro */}
-        <motion.div
-          className="pt-8 pb-4 text-center"
-          initial={{ opacity: 0 }}
-          whileInView={{ opacity: 1 }}
-          viewport={{ once: true }}
-          transition={{ duration: 0.5 }}
-        >
+        <div className="pt-8 pb-4 text-center">
           <p className="text-sm text-muted-foreground/60">
             That&apos;s the MCP architecture overview. Use{" "}
             <span className="font-medium text-foreground/70">Start over</span>{" "}
             in the header or click any node in the diagram to jump back.
           </p>
-        </motion.div>
+        </div>
       </div>
     </div>
   );

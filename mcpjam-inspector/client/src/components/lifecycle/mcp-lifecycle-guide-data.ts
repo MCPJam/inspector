@@ -265,12 +265,6 @@ export interface McpLifecycleStepSlim {
   direction: "client-to-server" | "server-to-client";
 }
 
-export const PHASE_ACCENT = {
-  initialization: "#3b82f6",
-  operation: "#10b981",
-  shutdown: "#f59e0b",
-} as const;
-
 export const LIFECYCLE_GUIDE_SLIM: Record<
   (typeof HTTP_STEP_ORDER)[number],
   McpLifecycleStepSlim
