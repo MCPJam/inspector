@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
@@ -45,6 +45,12 @@ export function AuthenticationSection({
   clientSecretError,
 }: AuthenticationSectionProps) {
   const [showAdvancedOAuth, setShowAdvancedOAuth] = useState(false);
+
+  useEffect(() => {
+    if (authType !== "oauth") {
+      setShowAdvancedOAuth(false);
+    }
+  }, [authType]);
 
   return (
     <div className="space-y-4">
