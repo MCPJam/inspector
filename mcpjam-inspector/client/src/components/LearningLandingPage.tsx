@@ -1,4 +1,5 @@
 import { ChevronDown, ChevronRight, Clock } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -23,6 +24,21 @@ const TOTAL_MODULES = LEARNING_GROUPS.reduce(
   (sum: number, g: LearningGroup) => sum + g.modules.length,
   0,
 );
+
+const TOTAL_TRACKS = LEARNING_GROUPS.length;
+
+const TOTAL_ESTIMATED_MINUTES = LEARNING_GROUPS.reduce(
+  (sum, g: LearningGroup) =>
+    sum + g.modules.reduce((s, m) => s + m.estimatedMinutes, 0),
+  0,
+);
+
+const FIRST_GROUP = LEARNING_GROUPS[0];
+const FIRST_LESSON = FIRST_GROUP.modules[0];
+
+/** Keeps syllabus readable on ultrawide / full-screen layouts */
+const LEARNING_LANDING_MAX =
+  "mx-auto w-full max-w-2xl px-4 sm:max-w-3xl sm:px-6";
 
 /** Running module number across all groups */
 function getModuleNumber(groupIndex: number, moduleIndex: number): number {
@@ -82,12 +98,14 @@ function ModuleRow({
 function GroupSection({
   group,
   groupIndex,
+  defaultOpen,
   isCompleted,
   onSelect,
   onToggleComplete,
 }: {
   group: LearningGroup;
   groupIndex: number;
+  defaultOpen?: boolean;
   isCompleted: (id: string) => boolean;
   onSelect: (id: string) => void;
   onToggleComplete: (id: string) => void;
@@ -99,11 +117,14 @@ function GroupSection({
   const allDone = completedInGroup === total;
 
   return (
-    <Collapsible defaultOpen={false} className="mb-4">
+    <Collapsible defaultOpen={defaultOpen ?? false} className="group mb-4">
       {/* Group header */}
       <CollapsibleTrigger className="flex w-full cursor-pointer items-baseline justify-between rounded-md px-3 pb-1.5 pt-2 hover:bg-muted/50">
         <div className="flex items-center gap-2">
-          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform [[data-state=closed]_&]:-rotate-90" />
+          <ChevronDown
+            aria-hidden
+            className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]:-rotate-90"
+          />
           <div className="text-left">
             <h3 className="text-xs font-semibold text-foreground">
               {group.title}
@@ -149,35 +170,64 @@ export function LearningLandingPage({
   const progressPercent = Math.round((completionCount / TOTAL_MODULES) * 100);
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
-      <div className="border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">Learning</h2>
-        <p className="mt-0.5 text-xs text-muted-foreground">
-          Master MCP from fundamentals to advanced topics
-        </p>
+      <div className="shrink-0 border-b">
+        <div className={`py-3 ${LEARNING_LANDING_MAX}`}>
+          <h2 className="text-sm font-semibold">Learning</h2>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Master MCP from fundamentals to advanced topics
+          </p>
+          <p className="mt-1.5 text-[11px] text-muted-foreground/90">
+            {TOTAL_TRACKS} tracks · {TOTAL_MODULES} lessons · ~
+            {TOTAL_ESTIMATED_MINUTES} min total
+          </p>
 
-        {/* Overall progress */}
-        <div className="mt-3 flex items-center gap-3">
-          <Progress value={progressPercent} className="h-1.5 flex-1" />
-          <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
-            {completionCount} of {TOTAL_MODULES} completed
-          </span>
+          {/* Overall progress */}
+          <div className="mt-3 flex items-center gap-3">
+            <Progress value={progressPercent} className="h-1.5 flex-1" />
+            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+              {completionCount} of {TOTAL_MODULES} completed
+            </span>
+          </div>
+          {completionCount === 0 ? (
+            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
+              <p className="m-0 w-fit max-w-full text-[11px] leading-relaxed text-muted-foreground">
+                Start with{" "}
+                <span className="font-medium text-foreground/90">
+                  {FIRST_GROUP.title}
+                </span>{" "}
+                — expand the first track below, or open your first lesson now.
+              </p>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-8 shrink-0"
+                onClick={() => onSelect(FIRST_LESSON.id)}
+              >
+                Open “{FIRST_LESSON.title}”
+              </Button>
+            </div>
+          ) : null}
         </div>
       </div>
 
       {/* Grouped checklist */}
-      <div className="flex-1 overflow-auto p-2">
-        {LEARNING_GROUPS.map((group: LearningGroup, gi: number) => (
-          <GroupSection
-            key={group.title}
-            group={group}
-            groupIndex={gi}
-            isCompleted={isCompleted}
-            onSelect={onSelect}
-            onToggleComplete={onToggleComplete}
-          />
-        ))}
+      <div className="min-h-0 flex-1 overflow-auto">
+        <div className={`pb-10 pt-2 ${LEARNING_LANDING_MAX}`}>
+          {LEARNING_GROUPS.map((group: LearningGroup, gi: number) => (
+            <GroupSection
+              key={group.title}
+              group={group}
+              groupIndex={gi}
+              defaultOpen={completionCount === 0 && gi === 0}
+              isCompleted={isCompleted}
+              onSelect={onSelect}
+              onToggleComplete={onToggleComplete}
+            />
+          ))}
+        </div>
       </div>
     </div>
   );

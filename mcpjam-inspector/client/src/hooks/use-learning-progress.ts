@@ -17,9 +17,8 @@ function saveCompleted(ids: Set<string>) {
 }
 
 export function useLearningProgress() {
-  const [completedModules, setCompletedModules] = useState<Set<string>>(
-    loadCompleted,
-  );
+  const [completedModules, setCompletedModules] =
+    useState<Set<string>>(loadCompleted);
 
   // Sync across tabs
   useEffect(() => {
@@ -60,7 +59,16 @@ export function useLearningProgress() {
     });
   }, []);
 
-  const completionCount = useMemo(() => completedModules.size, [completedModules]);
+  const completionCount = useMemo(
+    () => completedModules.size,
+    [completedModules],
+  );
 
-  return { completedModules, isCompleted, markComplete, toggleComplete, completionCount };
+  return {
+    completedModules,
+    isCompleted,
+    markComplete,
+    toggleComplete,
+    completionCount,
+  };
 }
