@@ -53,12 +53,15 @@ export function AuthenticationSection({
           <label className="block text-sm font-medium text-foreground">
             Authentication
           </label>
-          <Select value={authType} onValueChange={(value: "oauth" | "bearer" | "none") => {
+          <Select
+            value={authType}
+            onValueChange={(value: "oauth" | "bearer" | "none") => {
               if (value !== "oauth") {
                 setShowAdvancedOAuth(false);
               }
               onAuthTypeChange(value);
-            }}>
+            }}
+          >
             <SelectTrigger className="w-full">
               <SelectValue />
             </SelectTrigger>
@@ -127,7 +130,9 @@ export function AuthenticationSection({
                       type="checkbox"
                       id="useCustomClientId"
                       checked={useCustomClientId}
-                      onChange={(e) => onUseCustomClientIdChange(e.target.checked)}
+                      onChange={(e) =>
+                        onUseCustomClientIdChange(e.target.checked)
+                      }
                       className="rounded"
                     />
                     <label
@@ -171,7 +176,9 @@ export function AuthenticationSection({
                         className={`h-10 ${clientSecretError ? "border-red-500" : ""}`}
                       />
                       {clientSecretError && (
-                        <p className="text-xs text-red-500">{clientSecretError}</p>
+                        <p className="text-xs text-red-500">
+                          {clientSecretError}
+                        </p>
                       )}
                       <p className="text-xs text-muted-foreground">
                         Optional for public clients using PKCE

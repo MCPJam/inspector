@@ -88,9 +88,7 @@ export function NavMain({ items, onItemClick }: NavMainProps) {
               );
             }
 
-            return (
-              <SidebarMenuItem key={item.title}>{button}</SidebarMenuItem>
-            );
+            return <SidebarMenuItem key={item.title}>{button}</SidebarMenuItem>;
           })}
         </SidebarMenu>
       </SidebarGroupContent>

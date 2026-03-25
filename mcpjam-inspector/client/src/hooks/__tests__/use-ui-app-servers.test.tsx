@@ -13,9 +13,8 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 }));
 
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/lib/mcp-ui/mcp-apps-utils")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/lib/mcp-ui/mcp-apps-utils")>();
   return {
     ...actual,
     isMCPApp: mockIsMCPApp,
