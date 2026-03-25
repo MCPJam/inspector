@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { motion } from "framer-motion";
 import {
   Table,
   TableHeader,
@@ -8,24 +7,15 @@ import {
   TableHead,
   TableCell,
 } from "@/components/ui/table";
-import { sectionChild } from "./article-primitives";
 
 interface ComparisonTableProps {
   headers: string[];
   rows: { cells: (string | ReactNode)[] }[];
-  order?: number;
 }
 
-export function ComparisonTable({
-  headers,
-  rows,
-  order = 3,
-}: ComparisonTableProps) {
+export function ComparisonTable({ headers, rows }: ComparisonTableProps) {
   return (
-    <motion.div
-      className="rounded-lg border border-border/50 overflow-hidden"
-      {...sectionChild(order)}
-    >
+    <div className="rounded-lg border border-border/50 overflow-hidden">
       <Table className="text-[13px]">
         <TableHeader>
           <TableRow className="hover:bg-transparent">
@@ -56,6 +46,6 @@ export function ComparisonTable({
           ))}
         </TableBody>
       </Table>
-    </motion.div>
+    </div>
   );
 }

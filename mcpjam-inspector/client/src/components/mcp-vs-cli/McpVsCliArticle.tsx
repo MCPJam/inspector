@@ -1,23 +1,10 @@
-import { motion } from "framer-motion";
 import {
-  sectionChild,
-  KeyDetails,
-  Tip,
+  Aside,
   Section,
   ArticleHero,
   ArticleOutro,
 } from "@/components/learning-article/article-primitives";
 import { ComparisonTable } from "@/components/learning-article/ComparisonTable";
-
-// ---------------------------------------------------------------------------
-// Category accent
-// ---------------------------------------------------------------------------
-
-const COLOR = "#10b981"; // emerald
-
-// ---------------------------------------------------------------------------
-// Article content
-// ---------------------------------------------------------------------------
 
 export function McpVsCliArticle() {
   return (
@@ -27,24 +14,14 @@ export function McpVsCliArticle() {
         subtitle="CLI tools are the engineer's Swiss army knife. Understand when speed and simplicity win, when governance and multi-user safety matter, and how to choose between them."
       />
 
-      {/* ----------------------------------------------------------------- */}
       {/* Section 1: The Comparison */}
-      {/* ----------------------------------------------------------------- */}
-      <Section
-        category="comparison"
-        categoryColor={COLOR}
-        step={1}
-        title="CLI: The Engineer's Swiss Army Knife"
-      >
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed"
-          {...sectionChild(2)}
-        >
+      <Section step={1} title="CLI: The Engineer's Swiss Army Knife">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           CLI tools are fast, efficient, and battle-tested. For AI agents,
           wrapping CLI commands is often the simplest integration path. But the
           tradeoffs become clear as you move from single-user scripts to
           multi-user production systems.
-        </motion.p>
+        </p>
 
         <ComparisonTable
           headers={["Aspect", "CLI", "MCP"]}
@@ -95,91 +72,73 @@ export function McpVsCliArticle() {
         />
       </Section>
 
-      {/* ----------------------------------------------------------------- */}
       {/* Section 2: When CLI Wins */}
-      {/* ----------------------------------------------------------------- */}
-      <Section
-        category="comparison"
-        categoryColor={COLOR}
-        step={2}
-        title="When CLI Wins"
-      >
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed"
-          {...sectionChild(2)}
-        >
+      <Section step={2} title="When CLI Wins">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           A developer automating their own workflow. You're the only user, you
           trust the environment, and you want maximum speed and minimum cost.
           CLI wrappers give the agent exactly what it needs with near-zero
           overhead.
-        </motion.p>
+        </p>
 
-        <KeyDetails
-          items={[
-            "Single-user automation where you control the environment.",
-            "Token efficiency matters — CLI tip docs are tiny compared to full MCP tool schemas.",
-            "The agent is running locally in your shell session with your ambient credentials.",
-          ]}
-        />
+        <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <li>Single-user automation where you control the environment.</li>
+          <li>
+            Token efficiency matters — CLI tip docs are tiny compared to full
+            MCP tool schemas.
+          </li>
+          <li>
+            The agent is running locally in your shell session with your ambient
+            credentials.
+          </li>
+        </ul>
       </Section>
 
-      {/* ----------------------------------------------------------------- */}
       {/* Section 3: When MCP Wins */}
-      {/* ----------------------------------------------------------------- */}
-      <Section
-        category="comparison"
-        categoryColor={COLOR}
-        step={3}
-        title="When MCP Wins"
-      >
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed"
-          {...sectionChild(2)}
-        >
+      <Section step={3} title="When MCP Wins">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           Your agent acts on behalf of other users or customers. You need
           per-user auth, audit trails, and tenant isolation. A bug in CLI
           credential management could mean sending Acme's data to Globex's Jira
           — that's a data breach, not a bug.
-        </motion.p>
+        </p>
 
-        <KeyDetails
-          items={[
-            "Multi-user production systems where the agent acts on behalf of others.",
-            "Per-user authorization, audit trails, and tenant isolation are requirements.",
-            "Credential leakage in a shared CLI environment becomes a security incident.",
-          ]}
-        />
+        <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <li>
+            Multi-user production systems where the agent acts on behalf of
+            others.
+          </li>
+          <li>
+            Per-user authorization, audit trails, and tenant isolation are
+            requirements.
+          </li>
+          <li>
+            Credential leakage in a shared CLI environment becomes a security
+            incident.
+          </li>
+        </ul>
       </Section>
 
-      {/* ----------------------------------------------------------------- */}
       {/* Section 4: The Bottom Line */}
-      {/* ----------------------------------------------------------------- */}
-      <Section
-        category="comparison"
-        categoryColor={COLOR}
-        step={4}
-        title="The Bottom Line"
-      >
-        <motion.p
-          className="text-sm text-muted-foreground leading-relaxed"
-          {...sectionChild(2)}
-        >
+      <Section step={4} title="The Bottom Line">
+        <p className="text-sm text-muted-foreground leading-relaxed">
           CLI and MCP aren't competing — they serve different trust models.
-        </motion.p>
+        </p>
 
-        <KeyDetails
-          items={[
-            "CLI is about efficiency for single-user automation.",
-            "MCP is about governance for multi-user production systems.",
-            "Many teams use both: CLI for local dev workflows, MCP for customer-facing agents.",
-          ]}
-        />
+        <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <li>CLI is about efficiency for single-user automation.</li>
+          <li>MCP is about governance for multi-user production systems.</li>
+          <li>
+            Many teams use both: CLI for local dev workflows, MCP for
+            customer-facing agents.
+          </li>
+        </ul>
 
-        <Tip>
+        <Aside>
           Start with CLI if you're the only user. Move to MCP when your agent
           starts acting on behalf of others — that's when governance stops being
           optional.
-        </Tip>
+        </Aside>
       </Section>
 
       <ArticleOutro>

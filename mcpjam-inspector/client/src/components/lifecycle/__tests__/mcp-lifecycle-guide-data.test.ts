@@ -3,7 +3,6 @@ import {
   HTTP_STEP_ORDER,
   LIFECYCLE_GUIDE_METADATA,
   LIFECYCLE_GUIDE_SLIM,
-  PHASE_ACCENT,
   getLifecycleStepGuide,
   getLifecycleStepIndex,
   isLastHttpLifecycleStep,
@@ -158,13 +157,5 @@ describe("LIFECYCLE_GUIDE_SLIM", () => {
     for (const step of HTTP_STEP_ORDER) {
       expect(LIFECYCLE_GUIDE_SLIM[step].codeSnippet).toBeTruthy();
     }
-  });
-});
-
-describe("PHASE_ACCENT", () => {
-  it("has colors for all three phases", () => {
-    expect(PHASE_ACCENT.initialization).toBeTruthy();
-    expect(PHASE_ACCENT.operation).toBeTruthy();
-    expect(PHASE_ACCENT.shutdown).toBeTruthy();
   });
 });
