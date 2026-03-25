@@ -49,6 +49,8 @@ import {
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
+import { useLearnMore } from "@/hooks/use-learn-more";
+import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
@@ -341,6 +343,7 @@ export function MCPSidebar({
   const [hasVisitedAppBuilder, setHasVisitedAppBuilder] = useState(() => {
     return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
   });
+  const learnMore = useLearnMore();
 
   // Get list of connected server names
   const connectedServerNames = useMemo(() => {
@@ -410,6 +413,11 @@ export function MCPSidebar({
       if (section === "skills") {
         posthog.capture("skills_tab_opened");
       }
+      // Auto-show learn more modal on first visit to a tab
+      if (learnMore.shouldAutoShowModal(section)) {
+        learnMore.openExpandedModal(section);
+        learnMore.markTabVisited(section);
+      }
       onNavigate(section);
     } else {
       window.open(url, "_blank");
@@ -455,6 +463,7 @@ export function MCPSidebar({
   );
 
   return (
+    <>
     <Sidebar collapsible="icon" {...props}>
       <SidebarHeader>
         <button
@@ -502,6 +511,10 @@ export function MCPSidebar({
               appBuilderBubble={
                 section.id === "mcp-apps" ? appBuilderBubble : null
               }
+              learnMore={{
+                hasVisited: learnMore.hasVisitedTab,
+                onExpand: learnMore.openExpandedModal,
+              }}
             />
             {/* Add subtle divider between sections (except after the last section) */}
             {sectionIndex < visibleNavigationSections.length - 1 && (
@@ -514,5 +527,11 @@ export function MCPSidebar({
         <SidebarUser activeOrganizationId={activeOrganizationId} />
       </SidebarFooter>
     </Sidebar>
+    <LearnMoreExpandedPanel
+      tabId={learnMore.expandedTabId}
+      sourceRect={learnMore.sourceRect}
+      onClose={learnMore.closeExpandedModal}
+    />
+  </>
   );
 }
