@@ -1,6 +1,11 @@
-import { ChevronRight, Clock } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+  CollapsibleContent,
+} from "@/components/ui/collapsible";
 import {
   LEARNING_GROUPS,
   type LearningGroup,
@@ -94,14 +99,19 @@ function GroupSection({
   const allDone = completedInGroup === total;
 
   return (
-    <div className="mb-4">
+    <Collapsible defaultOpen={false} className="mb-4">
       {/* Group header */}
-      <div className="flex items-baseline justify-between px-3 pb-1.5 pt-2">
-        <div>
-          <h3 className="text-xs font-semibold text-foreground">
-            {group.title}
-          </h3>
-          <p className="text-[11px] text-muted-foreground">{group.subtitle}</p>
+      <CollapsibleTrigger className="flex w-full cursor-pointer items-baseline justify-between rounded-md px-3 pb-1.5 pt-2 hover:bg-muted/50">
+        <div className="flex items-center gap-2">
+          <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform [[data-state=closed]_&]:-rotate-90" />
+          <div className="text-left">
+            <h3 className="text-xs font-semibold text-foreground">
+              {group.title}
+            </h3>
+            <p className="text-[11px] text-muted-foreground">
+              {group.subtitle}
+            </p>
+          </div>
         </div>
         <span
           className={`text-[11px] font-medium tabular-nums ${allDone ? "text-primary" : "text-muted-foreground"}`}
@@ -109,22 +119,24 @@ function GroupSection({
           {completedInGroup}/{total}
           {allDone && " \u2713"}
         </span>
-      </div>
+      </CollapsibleTrigger>
 
       {/* Module rows */}
-      <div className="flex flex-col">
-        {group.modules.map((concept: LearningConcept, mi: number) => (
-          <ModuleRow
-            key={concept.id}
-            concept={concept}
-            number={getModuleNumber(groupIndex, mi)}
-            completed={isCompleted(concept.id)}
-            onSelect={onSelect}
-            onToggleComplete={onToggleComplete}
-          />
-        ))}
-      </div>
-    </div>
+      <CollapsibleContent>
+        <div className="flex flex-col">
+          {group.modules.map((concept: LearningConcept, mi: number) => (
+            <ModuleRow
+              key={concept.id}
+              concept={concept}
+              number={getModuleNumber(groupIndex, mi)}
+              completed={isCompleted(concept.id)}
+              onSelect={onSelect}
+              onToggleComplete={onToggleComplete}
+            />
+          ))}
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
   );
 }
 
