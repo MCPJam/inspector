@@ -131,6 +131,42 @@ describe("reportEvalResults", () => {
     );
   });
 
+  it("forwards serverReplayConfigs in one-shot reports", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "SDK smoke",
+      serverReplayConfigs: [
+        {
+          serverId: "remote",
+          url: "https://example.com/mcp",
+          accessToken: "at_123",
+        },
+      ],
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "remote",
+        url: "https://example.com/mcp",
+        accessToken: "at_123",
+      },
+    ]);
+  });
+
   it("adds external run and iteration ids for one-shot idempotency", async () => {
     const fetchMock = jest.fn().mockResolvedValue(
       okResponse({
@@ -220,6 +256,57 @@ describe("reportEvalResults", () => {
     expect(fetchMock.mock.calls[3][0]).toBe(
       "https://example.com/sdk/v1/evals/runs/finalize"
     );
+  });
+
+  it("forwards serverReplayConfigs when starting chunked runs", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+
+    const largeTrace = "x".repeat(1024 * 1024);
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "chunked-replay",
+      serverReplayConfigs: [
+        {
+          serverId: "remote",
+          url: "https://example.com/mcp",
+          refreshToken: "rt_123",
+          clientId: "cid_123",
+        },
+      ],
+      results: [{ caseTitle: "case-1", passed: true, trace: largeTrace }],
+    });
+
+    const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "remote",
+        url: "https://example.com/mcp",
+        refreshToken: "rt_123",
+        clientId: "cid_123",
+      },
+    ]);
   });
 
   it("uploads widget snapshots before reporting results", async () => {
@@ -397,6 +484,9 @@ describe("reportEvalResults", () => {
         suiteName: "direct-failure",
       })
     );
+    expect(mockCaptureEvalReportingFailure.mock.calls[0][1]).not.toHaveProperty(
+      "serverReplayConfigs"
+    );
   });
 
   it("returns null in safe mode when strict is false and captures once", async () => {
@@ -426,6 +516,9 @@ describe("reportEvalResults", () => {
         resultCount: 1,
         suiteName: "safe-mode",
       })
+    );
+    expect(mockCaptureEvalReportingFailure.mock.calls[0][1]).not.toHaveProperty(
+      "serverReplayConfigs"
     );
   });
 });

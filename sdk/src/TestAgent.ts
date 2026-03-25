@@ -24,7 +24,10 @@ import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
 import type { EvalAgent, PromptOptions } from "./EvalAgent.js";
 import type { Tool, AiSdkTool } from "./mcp-client-manager/types.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
-import type { EvalWidgetSnapshotInput } from "./eval-reporting-types.js";
+import type {
+  EvalWidgetSnapshotInput,
+  MCPServerReplayConfig,
+} from "./eval-reporting-types.js";
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
@@ -723,6 +726,13 @@ export class TestAgent implements EvalAgent {
    */
   getMaxSteps(): number {
     return this.maxSteps;
+  }
+
+  /**
+   * Get replayable server configs from the attached MCP client manager.
+   */
+  getServerReplayConfigs(): MCPServerReplayConfig[] | undefined {
+    return this.mcpClientManager?.getServerReplayConfigs();
   }
 
   /**

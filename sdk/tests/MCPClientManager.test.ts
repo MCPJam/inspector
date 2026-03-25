@@ -174,11 +174,60 @@ describe("MCPClientManager", () => {
         expect(authManager.getConnectionStatus("http-server-auth")).toBe(
           "connected",
         );
+        expect(authManager.getServerReplayConfigs()).toEqual([
+          {
+            serverId: "http-server-auth",
+            url: isolated.url,
+            accessToken: "test-bearer-token",
+            preferSSE: true,
+          },
+        ]);
       } finally {
         await authManager.disconnectAllServers();
         await isolated.stop();
       }
     }, 15000);
+
+    it("skips non-replayable HTTP configs with custom request state", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("custom-http", {
+        config: {
+          url: "https://example.com/mcp",
+          accessToken: "at_test",
+          requestInit: {
+            headers: {
+              "X-Custom": "1",
+            },
+          },
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("extracts bearer auth from requestInit headers for replay configs", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("header-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {
+              Authorization: "Bearer at_from_headers",
+            },
+          },
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([
+        {
+          serverId: "header-http",
+          url: "https://example.com/mcp",
+          accessToken: "at_from_headers",
+        },
+      ]);
+    });
   });
 
   describe("HTTP server (streamable)", () => {

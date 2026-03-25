@@ -71,11 +71,22 @@ export type EvalResultInput = {
   widgetSnapshots?: EvalWidgetSnapshotInput[];
 };
 
+export type MCPServerReplayConfig = {
+  serverId: string;
+  url: string;
+  preferSSE?: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  clientId?: string;
+  clientSecret?: string;
+};
+
 export type MCPJamReportingConfig = {
   enabled?: boolean;
   apiKey?: string;
   baseUrl?: string;
   serverNames?: string[];
+  serverReplayConfigs?: MCPServerReplayConfig[];
   suiteName?: string;
   suiteDescription?: string;
   notes?: string;

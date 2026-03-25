@@ -90,6 +90,56 @@ describe("createEvalRunReporter", () => {
     ).toEqual([`${externalRunId}-3`]);
   });
 
+  it("forwards serverReplayConfigs when starting a chunked run", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "chunked-reporter",
+      serverReplayConfigs: [
+        {
+          serverId: "remote",
+          url: "https://example.com/mcp",
+          accessToken: "at_123",
+        },
+      ],
+    });
+
+    reporter.add({ caseTitle: "case-1", passed: true, trace: "x".repeat(1024 * 1024) });
+    await reporter.flush();
+    await reporter.finalize();
+
+    const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "remote",
+        url: "https://example.com/mcp",
+        accessToken: "at_123",
+      },
+    ]);
+  });
+
   describe("getAddedCount", () => {
     it("tracks total added results", () => {
       const reporter = createEvalRunReporter({

@@ -154,6 +154,7 @@ export type {
   EvalWidgetPermissions,
   EvalWidgetSnapshotInput,
   EvalResultInput,
+  MCPServerReplayConfig,
   MCPJamReportingConfig,
   ReportEvalResultsInput,
   ReportEvalResultsOutput,

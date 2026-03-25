@@ -14,6 +14,7 @@ import type {
 } from "./EvalTest.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { suiteTestResultsToEvalResultInputs } from "./eval-result-mapping.js";
+import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 
 /**
  * Configuration for an EvalSuite
@@ -156,13 +157,18 @@ export class EvalSuite {
 
     // Aggregate results
     this.lastRunResult = this.aggregateResults(testResults);
-    await this.autoSaveSuiteRunIfConfigured(testResults, suiteReportingConfig);
+    await this.autoSaveSuiteRunIfConfigured(
+      testResults,
+      suiteReportingConfig,
+      agent
+    );
     return this.lastRunResult;
   }
 
   private async autoSaveSuiteRunIfConfigured(
     testResults: Map<string, EvalRunResult>,
-    config?: MCPJamReportingConfig
+    config: MCPJamReportingConfig | undefined,
+    agent: EvalAgent
   ): Promise<void> {
     if (config?.enabled === false) {
       return;
@@ -181,6 +187,7 @@ export class EvalSuite {
       suiteName: config?.suiteName ?? this.name,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,
+      serverReplayConfigs: resolveServerReplayConfigs(agent, config),
       notes: config?.notes,
       passCriteria: config?.passCriteria,
       externalRunId: config?.externalRunId,

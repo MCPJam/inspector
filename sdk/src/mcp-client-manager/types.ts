@@ -8,6 +8,7 @@ import type { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type {
   ElicitRequest,
   ElicitResult,
@@ -150,6 +151,7 @@ export interface ManagedClientState {
   timeout: number;
   client?: Client;
   transport?: Transport;
+  authProvider?: RefreshTokenOAuthProvider;
   promise?: Promise<Client>;
 }
 
