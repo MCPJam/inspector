@@ -26,10 +26,23 @@ export function McpResourcesArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Resources are application-controlled: the host decides what context to attach, not the model.</li>
-          <li>Each resource is identified by a unique URI (e.g., <code>file:///logs/app.log</code>, <code>postgres://db/schema</code>).</li>
-          <li>Resources can contain text (UTF-8 strings) or binary data (base64-encoded).</li>
-          <li>Common examples: file contents, database schemas, API responses, live system data, screenshots.</li>
+          <li>
+            Resources are application-controlled: the host decides what context
+            to attach, not the model.
+          </li>
+          <li>
+            Each resource is identified by a unique URI (e.g.,{" "}
+            <code>file:///logs/app.log</code>, <code>postgres://db/schema</code>
+            ).
+          </li>
+          <li>
+            Resources can contain text (UTF-8 strings) or binary data
+            (base64-encoded).
+          </li>
+          <li>
+            Common examples: file contents, database schemas, API responses,
+            live system data, screenshots.
+          </li>
         </ul>
       </Section>
 
@@ -48,11 +61,28 @@ export function McpResourcesArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li><code>resources/list</code>: returns concrete resources the server currently exposes, each with a URI, name, and optional description and MIME type.</li>
-          <li><code>resources/templates/list</code>: returns URI templates with parameters, like <code>{"file:///{path}"}</code> or <code>{"db:///{table}/{id}"}</code>.</li>
-          <li>Templates use RFC 6570 URI Template syntax for parameter substitution.</li>
-          <li>Both endpoints support pagination via cursors for servers with many items.</li>
-          <li>Servers can emit <code>notifications/resources/list_changed</code> when available resources change.</li>
+          <li>
+            <code>resources/list</code>: returns concrete resources the server
+            currently exposes, each with a URI, name, and optional description
+            and MIME type.
+          </li>
+          <li>
+            <code>resources/templates/list</code>: returns URI templates with
+            parameters, like <code>{"file:///{path}"}</code> or{" "}
+            <code>{"db:///{table}/{id}"}</code>.
+          </li>
+          <li>
+            Templates use RFC 6570 URI Template syntax for parameter
+            substitution.
+          </li>
+          <li>
+            Both endpoints support pagination via cursors for servers with many
+            items.
+          </li>
+          <li>
+            Servers can emit <code>notifications/resources/list_changed</code>{" "}
+            when available resources change.
+          </li>
         </ul>
 
         <Aside>
@@ -75,10 +105,21 @@ export function McpResourcesArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Text resources: returned as {"{ uri, mimeType, text }"} — ideal for source code, logs, JSON, Markdown.</li>
-          <li>Binary resources: returned as {"{ uri, mimeType, blob }"} with base64-encoded data — for images, PDFs, audio.</li>
-          <li>A server must return at least one content item per read request.</li>
-          <li>The URI in the response may differ from the request URI (e.g., after following a redirect or resolving a template).</li>
+          <li>
+            Text resources: returned as {"{ uri, mimeType, text }"} — ideal for
+            source code, logs, JSON, Markdown.
+          </li>
+          <li>
+            Binary resources: returned as {"{ uri, mimeType, blob }"} with
+            base64-encoded data — for images, PDFs, audio.
+          </li>
+          <li>
+            A server must return at least one content item per read request.
+          </li>
+          <li>
+            The URI in the response may differ from the request URI (e.g., after
+            following a redirect or resolving a template).
+          </li>
         </ul>
       </Section>
 
@@ -93,11 +134,27 @@ export function McpResourcesArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Common URI schemes: <code>https://</code> (web APIs), <code>file://</code> (local files), <code>git://</code> (repositories), <code>postgres://</code> (databases).</li>
-          <li>Servers can define custom schemes like <code>myapp://settings</code> or <code>project://build-config</code>.</li>
-          <li>Subscriptions: clients call <code>resources/subscribe</code> with a URI to get notified when that resource changes.</li>
-          <li>When a subscribed resource changes, the server sends <code>notifications/resources/updated</code>.</li>
-          <li>Clients can call <code>resources/unsubscribe</code> to stop receiving updates.</li>
+          <li>
+            Common URI schemes: <code>https://</code> (web APIs),{" "}
+            <code>file://</code> (local files), <code>git://</code>{" "}
+            (repositories), <code>postgres://</code> (databases).
+          </li>
+          <li>
+            Servers can define custom schemes like <code>myapp://settings</code>{" "}
+            or <code>project://build-config</code>.
+          </li>
+          <li>
+            Subscriptions: clients call <code>resources/subscribe</code> with a
+            URI to get notified when that resource changes.
+          </li>
+          <li>
+            When a subscribed resource changes, the server sends{" "}
+            <code>notifications/resources/updated</code>.
+          </li>
+          <li>
+            Clients can call <code>resources/unsubscribe</code> to stop
+            receiving updates.
+          </li>
         </ul>
       </Section>
 
@@ -112,10 +169,22 @@ export function McpResourcesArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Use resources when: loading data into context, providing reference information, sharing file or database contents.</li>
-          <li>Use tools when: the operation has side effects, modifies state, or requires model-driven decision-making.</li>
-          <li>Resources are read by the application to build context. Tools are called by the model to take action.</li>
-          <li>Example: a database schema is a resource (context). Running a query is a tool (action).</li>
+          <li>
+            Use resources when: loading data into context, providing reference
+            information, sharing file or database contents.
+          </li>
+          <li>
+            Use tools when: the operation has side effects, modifies state, or
+            requires model-driven decision-making.
+          </li>
+          <li>
+            Resources are read by the application to build context. Tools are
+            called by the model to take action.
+          </li>
+          <li>
+            Example: a database schema is a resource (context). Running a query
+            is a tool (action).
+          </li>
         </ul>
 
         <Aside>

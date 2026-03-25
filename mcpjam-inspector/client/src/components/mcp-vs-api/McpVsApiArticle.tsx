@@ -85,9 +85,18 @@ export function McpVsApiArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>REST: 3 separate integrations, 3 auth schemes, manual context threading between calls.</li>
-          <li>MCP: 1 protocol, context flows automatically across tool calls within the conversation.</li>
-          <li>Each new tool added to MCP is N + 1, not N × M — the integration cost stays linear.</li>
+          <li>
+            REST: 3 separate integrations, 3 auth schemes, manual context
+            threading between calls.
+          </li>
+          <li>
+            MCP: 1 protocol, context flows automatically across tool calls
+            within the conversation.
+          </li>
+          <li>
+            Each new tool added to MCP is N + 1, not N × M — the integration
+            cost stays linear.
+          </li>
         </ul>
       </Section>
 
@@ -101,9 +110,18 @@ export function McpVsApiArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Use REST APIs directly when integrating a single well-known API into a specific app.</li>
-          <li>Use MCP when agents need to compose multiple tools with shared context.</li>
-          <li>MCP reduces integration cost from N × M to N + M as your tool surface grows.</li>
+          <li>
+            Use REST APIs directly when integrating a single well-known API into
+            a specific app.
+          </li>
+          <li>
+            Use MCP when agents need to compose multiple tools with shared
+            context.
+          </li>
+          <li>
+            MCP reduces integration cost from N × M to N + M as your tool
+            surface grows.
+          </li>
         </ul>
 
         <Aside>

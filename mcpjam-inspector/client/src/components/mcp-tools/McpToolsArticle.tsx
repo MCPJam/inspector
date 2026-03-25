@@ -27,9 +27,17 @@ export function McpToolsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Each tool has a name, description, and JSON Schema for its inputs.</li>
-          <li>Servers declare tool support during capability negotiation at connection initialization.</li>
-          <li>The host application can add human-in-the-loop confirmation before execution.</li>
+          <li>
+            Each tool has a name, description, and JSON Schema for its inputs.
+          </li>
+          <li>
+            Servers declare tool support during capability negotiation at
+            connection initialization.
+          </li>
+          <li>
+            The host application can add human-in-the-loop confirmation before
+            execution.
+          </li>
         </ul>
       </Section>
 
@@ -45,10 +53,23 @@ export function McpToolsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Discovery: clients call <code>tools/list</code> to get all available tools with their schemas.</li>
-          <li>Invocation: clients call <code>tools/call</code> with {"{ name, arguments }"} and receive a result.</li>
-          <li>Pagination: <code>tools/list</code> supports a cursor parameter for servers with many tools.</li>
-          <li>Dynamic updates: servers can notify clients via <code>notifications/tools/list_changed</code> when tools are added or removed.</li>
+          <li>
+            Discovery: clients call <code>tools/list</code> to get all available
+            tools with their schemas.
+          </li>
+          <li>
+            Invocation: clients call <code>tools/call</code> with{" "}
+            {"{ name, arguments }"} and receive a result.
+          </li>
+          <li>
+            Pagination: <code>tools/list</code> supports a cursor parameter for
+            servers with many tools.
+          </li>
+          <li>
+            Dynamic updates: servers can notify clients via{" "}
+            <code>notifications/tools/list_changed</code> when tools are added
+            or removed.
+          </li>
         </ul>
 
         <Aside>
@@ -65,15 +86,31 @@ export function McpToolsArticle() {
           When a tool executes, it returns a structured result containing an
           array of content items. MCP supports multiple content types in a
           single response, letting tools return rich, multi-modal results — a
-          status message, a screenshot, and a link to a file, all in one response.
+          status message, a screenshot, and a link to a file, all in one
+          response.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Text content: plain text or structured data like JSON, Markdown, or logs.</li>
-          <li>Image content: base64-encoded images with a MIME type (e.g., PNG, JPEG) for charts or screenshots.</li>
-          <li>Audio content: base64-encoded audio with a MIME type for voice or sound data.</li>
-          <li>Embedded resources: inline resource data (text or binary) that can be referenced by URI.</li>
-          <li>isError flag: when true, indicates the tool executed but encountered a domain error — the result contains the error message.</li>
+          <li>
+            Text content: plain text or structured data like JSON, Markdown, or
+            logs.
+          </li>
+          <li>
+            Image content: base64-encoded images with a MIME type (e.g., PNG,
+            JPEG) for charts or screenshots.
+          </li>
+          <li>
+            Audio content: base64-encoded audio with a MIME type for voice or
+            sound data.
+          </li>
+          <li>
+            Embedded resources: inline resource data (text or binary) that can
+            be referenced by URI.
+          </li>
+          <li>
+            isError flag: when true, indicates the tool executed but encountered
+            a domain error — the result contains the error message.
+          </li>
         </ul>
       </Section>
 
@@ -92,10 +129,22 @@ export function McpToolsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Protocol errors: JSON-RPC error responses for invalid tool names, malformed arguments, or server failures.</li>
-          <li>Tool execution errors: normal results with <code>isError: true</code> — the model sees the error and can adapt.</li>
-          <li>The model can retry, try a different tool, or ask the user for clarification based on execution errors.</li>
-          <li>Servers should never surface raw exceptions — always return structured, meaningful error messages.</li>
+          <li>
+            Protocol errors: JSON-RPC error responses for invalid tool names,
+            malformed arguments, or server failures.
+          </li>
+          <li>
+            Tool execution errors: normal results with{" "}
+            <code>isError: true</code> — the model sees the error and can adapt.
+          </li>
+          <li>
+            The model can retry, try a different tool, or ask the user for
+            clarification based on execution errors.
+          </li>
+          <li>
+            Servers should never surface raw exceptions — always return
+            structured, meaningful error messages.
+          </li>
         </ul>
 
         <Aside>
@@ -115,11 +164,26 @@ export function McpToolsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Input validation: always validate arguments against the schema before execution. Never trust model-generated input.</li>
-          <li>Access controls: enforce authentication, authorization, and rate limiting on every tool call.</li>
-          <li>Human-in-the-loop: for destructive or irreversible operations, require user confirmation before execution.</li>
-          <li>Least privilege: tools should request minimal permissions. A read-only tool should never have write access.</li>
-          <li>Annotations: use readOnlyHint, destructiveHint, and idempotentHint to communicate a tool's safety profile to the client.</li>
+          <li>
+            Input validation: always validate arguments against the schema
+            before execution. Never trust model-generated input.
+          </li>
+          <li>
+            Access controls: enforce authentication, authorization, and rate
+            limiting on every tool call.
+          </li>
+          <li>
+            Human-in-the-loop: for destructive or irreversible operations,
+            require user confirmation before execution.
+          </li>
+          <li>
+            Least privilege: tools should request minimal permissions. A
+            read-only tool should never have write access.
+          </li>
+          <li>
+            Annotations: use readOnlyHint, destructiveHint, and idempotentHint
+            to communicate a tool's safety profile to the client.
+          </li>
         </ul>
       </Section>
 

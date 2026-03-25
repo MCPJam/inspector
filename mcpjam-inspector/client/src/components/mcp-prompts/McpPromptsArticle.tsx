@@ -27,10 +27,22 @@ export function McpPromptsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Prompts are user-controlled: the user selects which prompt to use, not the model or the application.</li>
-          <li>Each prompt has a name, optional description, and optional arguments for customization.</li>
-          <li>Prompts return an array of PromptMessages with role (user or assistant) and content.</li>
-          <li>Host applications typically expose prompts as slash commands or menu items in the UI.</li>
+          <li>
+            Prompts are user-controlled: the user selects which prompt to use,
+            not the model or the application.
+          </li>
+          <li>
+            Each prompt has a name, optional description, and optional arguments
+            for customization.
+          </li>
+          <li>
+            Prompts return an array of PromptMessages with role (user or
+            assistant) and content.
+          </li>
+          <li>
+            Host applications typically expose prompts as slash commands or menu
+            items in the UI.
+          </li>
         </ul>
       </Section>
 
@@ -46,11 +58,27 @@ export function McpPromptsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Discovery: <code>prompts/list</code> returns all available prompts with their names, descriptions, and argument schemas.</li>
-          <li>Retrieval: <code>prompts/get</code> with {"{ name, arguments }"} returns the fully resolved prompt messages.</li>
-          <li>Arguments are key-value string pairs that customize the prompt's content (e.g., {"{ language: 'python' }"}).</li>
-          <li>Pagination: <code>prompts/list</code> supports cursors for servers with many prompts.</li>
-          <li>Dynamic updates: servers can emit <code>notifications/prompts/list_changed</code> when prompts are added or removed.</li>
+          <li>
+            Discovery: <code>prompts/list</code> returns all available prompts
+            with their names, descriptions, and argument schemas.
+          </li>
+          <li>
+            Retrieval: <code>prompts/get</code> with {"{ name, arguments }"}{" "}
+            returns the fully resolved prompt messages.
+          </li>
+          <li>
+            Arguments are key-value string pairs that customize the prompt's
+            content (e.g., {"{ language: 'python' }"}).
+          </li>
+          <li>
+            Pagination: <code>prompts/list</code> supports cursors for servers
+            with many prompts.
+          </li>
+          <li>
+            Dynamic updates: servers can emit{" "}
+            <code>notifications/prompts/list_changed</code> when prompts are
+            added or removed.
+          </li>
         </ul>
       </Section>
 
@@ -65,11 +93,23 @@ export function McpPromptsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Text content: plain text messages that set up the conversation context or provide instructions.</li>
-          <li>Image content: base64-encoded images that give the model visual context (e.g., a screenshot to review).</li>
+          <li>
+            Text content: plain text messages that set up the conversation
+            context or provide instructions.
+          </li>
+          <li>
+            Image content: base64-encoded images that give the model visual
+            context (e.g., a screenshot to review).
+          </li>
           <li>Audio content: base64-encoded audio for voice-related tasks.</li>
-          <li>Embedded resources: references to MCP resources by URI, pulling live data directly into the prompt.</li>
-          <li>Multi-message prompts: a prompt can return multiple messages to simulate a conversation prefix or provide examples.</li>
+          <li>
+            Embedded resources: references to MCP resources by URI, pulling live
+            data directly into the prompt.
+          </li>
+          <li>
+            Multi-message prompts: a prompt can return multiple messages to
+            simulate a conversation prefix or provide examples.
+          </li>
         </ul>
 
         <Aside>
@@ -91,10 +131,22 @@ export function McpPromptsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Arguments are defined with name, description, and required fields in the prompt's definition.</li>
-          <li>All argument values are strings, keeping the interface simple and predictable.</li>
-          <li>Auto-completion: clients can call <code>completion/complete</code> to get suggested values for an argument.</li>
-          <li>Example: a "deploy" prompt might have a required "environment" argument with auto-complete suggestions of "staging", "production".</li>
+          <li>
+            Arguments are defined with name, description, and required fields in
+            the prompt's definition.
+          </li>
+          <li>
+            All argument values are strings, keeping the interface simple and
+            predictable.
+          </li>
+          <li>
+            Auto-completion: clients can call <code>completion/complete</code>{" "}
+            to get suggested values for an argument.
+          </li>
+          <li>
+            Example: a "deploy" prompt might have a required "environment"
+            argument with auto-complete suggestions of "staging", "production".
+          </li>
         </ul>
 
         <Aside>
@@ -117,11 +169,26 @@ export function McpPromptsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Tools are model-controlled: the AI decides when to invoke them to perform actions.</li>
-          <li>Resources are application-controlled: the host decides what data to include as context.</li>
-          <li>Prompts are user-controlled: the human selects which template to use.</li>
-          <li>A well-designed MCP server often uses all three: tools for actions, resources for data, and prompts for guided workflows.</li>
-          <li>Example: a GitHub MCP server exposes tools (create PR), resources (repo contents), and prompts (code review template).</li>
+          <li>
+            Tools are model-controlled: the AI decides when to invoke them to
+            perform actions.
+          </li>
+          <li>
+            Resources are application-controlled: the host decides what data to
+            include as context.
+          </li>
+          <li>
+            Prompts are user-controlled: the human selects which template to
+            use.
+          </li>
+          <li>
+            A well-designed MCP server often uses all three: tools for actions,
+            resources for data, and prompts for guided workflows.
+          </li>
+          <li>
+            Example: a GitHub MCP server exposes tools (create PR), resources
+            (repo contents), and prompts (code review template).
+          </li>
         </ul>
 
         <Aside>

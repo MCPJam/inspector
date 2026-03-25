@@ -54,7 +54,9 @@ function StepSection({
       <motion.div
         className="absolute left-0 top-4 bottom-4 w-[3px] rounded-full"
         animate={{
-          backgroundColor: isActive ? "hsl(var(--foreground) / 0.15)" : "transparent",
+          backgroundColor: isActive
+            ? "hsl(var(--foreground) / 0.15)"
+            : "transparent",
           scaleY: isActive ? 1 : 0.3,
           opacity: isActive ? 1 : 0,
         }}

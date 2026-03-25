@@ -83,8 +83,14 @@ export function McpVsCliArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>Single-user automation where you control the environment.</li>
-          <li>Token efficiency matters — CLI tip docs are tiny compared to full MCP tool schemas.</li>
-          <li>The agent is running locally in your shell session with your ambient credentials.</li>
+          <li>
+            Token efficiency matters — CLI tip docs are tiny compared to full
+            MCP tool schemas.
+          </li>
+          <li>
+            The agent is running locally in your shell session with your ambient
+            credentials.
+          </li>
         </ul>
       </Section>
 
@@ -98,9 +104,18 @@ export function McpVsCliArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Multi-user production systems where the agent acts on behalf of others.</li>
-          <li>Per-user authorization, audit trails, and tenant isolation are requirements.</li>
-          <li>Credential leakage in a shared CLI environment becomes a security incident.</li>
+          <li>
+            Multi-user production systems where the agent acts on behalf of
+            others.
+          </li>
+          <li>
+            Per-user authorization, audit trails, and tenant isolation are
+            requirements.
+          </li>
+          <li>
+            Credential leakage in a shared CLI environment becomes a security
+            incident.
+          </li>
         </ul>
       </Section>
 
@@ -113,7 +128,10 @@ export function McpVsCliArticle() {
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>CLI is about efficiency for single-user automation.</li>
           <li>MCP is about governance for multi-user production systems.</li>
-          <li>Many teams use both: CLI for local dev workflows, MCP for customer-facing agents.</li>
+          <li>
+            Many teams use both: CLI for local dev workflows, MCP for
+            customer-facing agents.
+          </li>
         </ul>
 
         <Aside>

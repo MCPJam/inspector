@@ -31,9 +31,18 @@ export function WhyMcpArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>LLMs can reason, write, and analyze — but they cannot act on external systems.</li>
-          <li>The gap between "talking about doing something" and "actually doing it" is the core limitation.</li>
-          <li>To make AI useful in engineering workflows, models need the ability to act — not just think.</li>
+          <li>
+            LLMs can reason, write, and analyze — but they cannot act on
+            external systems.
+          </li>
+          <li>
+            The gap between "talking about doing something" and "actually doing
+            it" is the core limitation.
+          </li>
+          <li>
+            To make AI useful in engineering workflows, models need the ability
+            to act — not just think.
+          </li>
         </ul>
 
         <div className="space-y-2">
@@ -57,9 +66,18 @@ export function WhyMcpArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>You describe available tools to the model (name, description, input schema).</li>
-          <li>The model decides when to call a tool and outputs a structured call — not free-form text.</li>
-          <li>Your application executes that function and returns the result to the model.</li>
+          <li>
+            You describe available tools to the model (name, description, input
+            schema).
+          </li>
+          <li>
+            The model decides when to call a tool and outputs a structured call
+            — not free-form text.
+          </li>
+          <li>
+            Your application executes that function and returns the result to
+            the model.
+          </li>
           <li>The model incorporates the real data into its response.</li>
         </ul>
 
@@ -92,10 +110,22 @@ export function WhyMcpArticle() {
         </div>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Scoped access: the agent should only see tools relevant to its task. Least privilege: read-only access when writes aren't needed.</li>
-          <li>Per-user authorization: an agent acting on behalf of User A shouldn't have User B's permissions.</li>
-          <li>Audit trails: a queryable log of every tool call, who triggered it, and what happened.</li>
-          <li>Revocability: the ability to cut off access instantly if something goes wrong.</li>
+          <li>
+            Scoped access: the agent should only see tools relevant to its task.
+            Least privilege: read-only access when writes aren't needed.
+          </li>
+          <li>
+            Per-user authorization: an agent acting on behalf of User A
+            shouldn't have User B's permissions.
+          </li>
+          <li>
+            Audit trails: a queryable log of every tool call, who triggered it,
+            and what happened.
+          </li>
+          <li>
+            Revocability: the ability to cut off access instantly if something
+            goes wrong.
+          </li>
         </ul>
 
         <Aside>
@@ -130,9 +160,18 @@ export function WhyMcpArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>MCP reduces N × M to N + M. Build one MCP server for your tool, and it works with every MCP-compatible client.</li>
-          <li>Communication happens over JSON-RPC, using either stdio (local tools) or HTTP with Server-Sent Events (remote services).</li>
-          <li>Three components: MCP Host (the AI application), MCP Client (protocol bridge), MCP Server (tool wrapper).</li>
+          <li>
+            MCP reduces N × M to N + M. Build one MCP server for your tool, and
+            it works with every MCP-compatible client.
+          </li>
+          <li>
+            Communication happens over JSON-RPC, using either stdio (local
+            tools) or HTTP with Server-Sent Events (remote services).
+          </li>
+          <li>
+            Three components: MCP Host (the AI application), MCP Client
+            (protocol bridge), MCP Server (tool wrapper).
+          </li>
         </ul>
       </Section>
 
@@ -143,9 +182,21 @@ export function WhyMcpArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li><strong>Tools:</strong> Actions the model can invoke — create_issue, send_message, run_query. Model-controlled: the AI decides when to use them.</li>
-          <li><strong>Resources:</strong> Read-only data the model can access — file contents, database schemas, documentation. Application-controlled: the host decides what to include.</li>
-          <li><strong>Prompts:</strong> Reusable templates that help the model interact with tools effectively. User-controlled: the user selects which prompt to use.</li>
+          <li>
+            <strong>Tools:</strong> Actions the model can invoke — create_issue,
+            send_message, run_query. Model-controlled: the AI decides when to
+            use them.
+          </li>
+          <li>
+            <strong>Resources:</strong> Read-only data the model can access —
+            file contents, database schemas, documentation.
+            Application-controlled: the host decides what to include.
+          </li>
+          <li>
+            <strong>Prompts:</strong> Reusable templates that help the model
+            interact with tools effectively. User-controlled: the user selects
+            which prompt to use.
+          </li>
         </ul>
 
         <Aside>
@@ -166,8 +217,15 @@ export function WhyMcpArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>Tool calling gives models the ability to act.</li>
-          <li>MCP standardizes how those actions are defined, discovered, authorized, and audited.</li>
-          <li>CLI, APIs, and Skills remain valuable — MCP complements them by solving the governance and interoperability problems they weren't designed to address.</li>
+          <li>
+            MCP standardizes how those actions are defined, discovered,
+            authorized, and audited.
+          </li>
+          <li>
+            CLI, APIs, and Skills remain valuable — MCP complements them by
+            solving the governance and interoperability problems they weren't
+            designed to address.
+          </li>
         </ul>
 
         <div className="space-y-2">

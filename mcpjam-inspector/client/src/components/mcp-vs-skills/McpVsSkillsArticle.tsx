@@ -76,9 +76,18 @@ export function McpVsSkillsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Skills encode domain expertise — "when deploying, always run migrations first."</li>
-          <li>MCP provides the actual connection to run those migrations through authenticated tool calls.</li>
-          <li>Without skills, agents have access but lack judgment. Without MCP, agents have judgment but can't act.</li>
+          <li>
+            Skills encode domain expertise — "when deploying, always run
+            migrations first."
+          </li>
+          <li>
+            MCP provides the actual connection to run those migrations through
+            authenticated tool calls.
+          </li>
+          <li>
+            Without skills, agents have access but lack judgment. Without MCP,
+            agents have judgment but can't act.
+          </li>
         </ul>
       </Section>
 
@@ -90,9 +99,17 @@ export function McpVsSkillsArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Use skills to teach agents domain expertise and best practices.</li>
-          <li>Use MCP to give agents authenticated, scoped access to external systems.</li>
-          <li>The most effective agent setups combine both — knowledge and access working together.</li>
+          <li>
+            Use skills to teach agents domain expertise and best practices.
+          </li>
+          <li>
+            Use MCP to give agents authenticated, scoped access to external
+            systems.
+          </li>
+          <li>
+            The most effective agent setups combine both — knowledge and access
+            working together.
+          </li>
         </ul>
       </Section>
 
