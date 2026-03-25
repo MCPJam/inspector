@@ -248,17 +248,6 @@ function toConvexOAuthPayload(
   return payload;
 }
 
-function logOAuthErrorResponse(prefix: string, response: Response): void {
-  response
-    .clone()
-    .text()
-    .then((body) => {
-      console.log(prefix, response.status, body || "(empty)"); // ##TODOClean
-    })
-    .catch((error) => {
-      console.log(prefix, response.status, "failed to read body", error); // ##TODOClean
-    });
-}
 
 async function loadCallbackDiscoveryState(
   provider: MCPOAuthProvider,
@@ -333,22 +322,6 @@ function createOAuthFetchInterceptor(
     }
 
     // For registry servers, route token exchange/refresh through Convex HTTP actions
-    console.log(
-      "[OAuthDebug] interceptedFetch:",
-      url,
-      "registryServerId:",
-      routingConfig.registryServerId,
-      "useRegistryOAuthProxy:",
-      routingConfig.useRegistryOAuthProxy,
-      "method:",
-      method,
-      "grantType:",
-      oauthGrantType,
-      "isOAuth:",
-      isOAuthRequest,
-      "isRegistryTokenRequest:",
-      isRegistryTokenRequest,
-    ); // ##TODOClean
     if (isRegistryTokenRequest) {
       const convexSiteUrl = getConvexSiteUrl();
       if (convexSiteUrl) {
@@ -356,10 +329,6 @@ function createOAuthFetchInterceptor(
           serializedBody.grant_type === "refresh_token"
             ? "/registry/oauth/refresh"
             : "/registry/oauth/token";
-        console.log(
-          "[OAuthDebug] INTERCEPTING token request → routing to Convex",
-          endpoint,
-        ); // ##TODOClean
         const response = await authFetch(`${convexSiteUrl}${endpoint}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -370,18 +339,6 @@ function createOAuthFetchInterceptor(
             ),
           ),
         });
-        console.log(
-          "[OAuthDebug] Convex OAuth route status:",
-          response.status,
-          "endpoint:",
-          endpoint,
-        ); // ##TODOClean
-        if (!response.ok) {
-          logOAuthErrorResponse(
-            "[OAuthDebug] Convex OAuth route error:",
-            response,
-          );
-        }
         return response;
       }
     }
@@ -414,7 +371,6 @@ function createOAuthFetchInterceptor(
 
       // If the proxy call itself failed (e.g., auth error), return that response directly
       if (!response.ok) {
-        logOAuthErrorResponse("[OAuthDebug] OAuth proxy error:", response);
         return response;
       }
 
@@ -606,11 +562,6 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
-    console.log(
-      "[OAuthDebug] SET mcp-oauth-pending =",
-      this.serverName,
-      "(redirectToAuthorization)",
-    ); // ##TODOClean
     // Store current hash to restore after OAuth callback
     if (window.location.hash) {
       localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
@@ -620,17 +571,10 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   async saveCodeVerifier(codeVerifier: string) {
     localStorage.setItem(`mcp-verifier-${this.serverName}`, codeVerifier);
-    console.log("[OAuthDebug] SAVED verifier for", this.serverName); // ##TODOClean
   }
 
   codeVerifier(): string {
     const verifier = localStorage.getItem(`mcp-verifier-${this.serverName}`);
-    console.log(
-      "[OAuthDebug] READ verifier for",
-      this.serverName,
-      "exists:",
-      !!verifier,
-    ); // ##TODOClean
     if (!verifier) {
       throw new Error("Code verifier not found");
     }
@@ -640,13 +584,6 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ) {
-    console.log(
-      "[OAuthDebug] invalidateCredentials:",
-      scope,
-      "for",
-      this.serverName,
-      new Error().stack,
-    ); // ##TODOClean
     switch (scope) {
       case "all":
         localStorage.removeItem(`mcp-tokens-${this.serverName}`);
@@ -696,15 +633,6 @@ export async function initiateOAuth(
       options.serverUrl,
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
-    console.log(
-      "[OAuthDebug] SET mcp-oauth-pending =",
-      options.serverName,
-      "registryServerId:",
-      options.registryServerId,
-      "clientId:",
-      options.clientId,
-      "(initiateOAuth)",
-    ); // ##TODOClean
 
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig(options);
@@ -803,19 +731,9 @@ export async function handleOAuthCallback(
 ): Promise<OAuthResult & { serverName?: string }> {
   // Get pending server name from localStorage (needed before creating interceptor)
   const serverName = localStorage.getItem("mcp-oauth-pending");
-  console.log(
-    "[OAuthDebug] handleOAuthCallback: mcp-oauth-pending =",
-    serverName,
-  ); // ##TODOClean
 
   // Read registryServerId from stored OAuth config if present
   const oauthConfig = readStoredOAuthConfig(serverName);
-  console.log(
-    "[OAuthDebug] handleOAuthCallback: registryServerId =",
-    oauthConfig.registryServerId,
-    "oauthConfig =",
-    localStorage.getItem(`mcp-oauth-config-${serverName}`),
-  ); // ##TODOClean
 
   // Build fetch interceptor — routes token requests through Convex for registry servers
   const fetchFn = createOAuthFetchInterceptor(oauthConfig);
@@ -856,13 +774,6 @@ export async function handleOAuthCallback(
       provider,
       discoveryState.resourceMetadata,
     );
-    console.log(
-      "[OAuthDebug] callback token exchange target:",
-      discoveryState.authorizationServerMetadata?.token_endpoint ??
-        `${discoveryState.authorizationServerUrl}/token`,
-      "resource:",
-      resource?.toString() ?? "(none)",
-    ); // ##TODOClean
     const tokens = await fetchToken(
       provider,
       discoveryState.authorizationServerUrl,
@@ -876,9 +787,6 @@ export async function handleOAuthCallback(
     await provider.saveTokens(tokens);
 
     // Clean up pending state
-    console.log(
-      "[OAuthDebug] REMOVE mcp-oauth-pending (handleOAuthCallback success)",
-    ); // ##TODOClean
     localStorage.removeItem("mcp-oauth-pending");
 
     const serverConfig = createServerConfig(serverUrl, tokens);
@@ -1093,7 +1001,6 @@ export async function refreshOAuthTokens(
  * Clears all OAuth data for a server
  */
 export function clearOAuthData(serverName: string): void {
-  console.log("[OAuthDebug] clearOAuthData:", serverName, new Error().stack); // ##TODOClean
   localStorage.removeItem(`mcp-tokens-${serverName}`);
   localStorage.removeItem(`mcp-client-${serverName}`);
   localStorage.removeItem(`mcp-verifier-${serverName}`);

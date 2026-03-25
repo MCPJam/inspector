@@ -236,9 +236,6 @@ export default function App() {
       }
 
       clearHostedOAuthPendingState();
-      console.log(
-        "[OAuthDebug] REMOVE mcp-oauth-pending (App.tsx handleOAuthError)",
-      ); // ##TODOClean
       localStorage.removeItem("mcp-oauth-pending");
       localStorage.removeItem("mcp-oauth-return-hash");
       const returnHash = resolveHostedOAuthReturnHash(callbackContext);

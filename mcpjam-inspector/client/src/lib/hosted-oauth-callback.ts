@@ -198,10 +198,6 @@ export function getHostedOAuthCallbackContext(): HostedOAuthCallbackContext | nu
   }
 
   const serverName = localStorage.getItem("mcp-oauth-pending")?.trim() ?? "";
-  console.log(
-    "[OAuthDebug] hosted-oauth-callback: mcp-oauth-pending =",
-    serverName || "(empty)",
-  ); // ##TODOClean
   if (!serverName) {
     return null;
   }

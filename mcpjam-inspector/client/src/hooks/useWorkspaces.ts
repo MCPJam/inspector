@@ -197,7 +197,6 @@ export function useWorkspaceMembers({
     canManageMembers,
     isLoading,
     hasPendingMembers: pendingMembers.length > 0,
-    canManageMembers,
   };
 }
 
