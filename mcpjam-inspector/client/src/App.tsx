@@ -17,6 +17,8 @@ import { ViewsTab } from "./components/ViewsTab";
 import { SandboxesTab } from "./components/SandboxesTab";
 import { SettingsTab } from "./components/SettingsTab";
 import { WorkspaceSettingsTab } from "./components/WorkspaceSettingsTab";
+import { ClientConfigTab } from "./components/client-config/ClientConfigTab";
+import { WorkspaceClientConfigSync } from "./components/client-config/WorkspaceClientConfigSync";
 import { TracingTab } from "./components/TracingTab";
 import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
@@ -66,7 +68,12 @@ import {
 } from "./components/hosted/SandboxChatPage";
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
-import { resolveHostedNavigation } from "./lib/hosted-navigation";
+import {
+  getInvalidOrganizationRouteNavigationTarget,
+  getWorkspaceSwitchNavigationTarget,
+  resolveHostedNavigation,
+  type OrganizationRouteSection,
+} from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
   formatBillingFeatureName,
@@ -101,10 +108,12 @@ import {
   writeHostedOAuthResumeMarker,
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
+import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
 import type {
   BillingRolloutState,
   OrganizationEntitlements,
 } from "./hooks/useOrganizationBilling";
+import { useClientConfigStore } from "./stores/client-config-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
   const params = new URLSearchParams(window.location.search);
@@ -123,6 +132,8 @@ function getHostedOAuthCallbackErrorMessage(): string {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [activeOrganizationSection, setActiveOrganizationSection] =
+    useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
@@ -132,6 +143,7 @@ export default function App() {
     "billing-entitlements-ui",
   );
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
+  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const {
     getAccessToken,
     signIn,
@@ -347,6 +359,7 @@ export default function App() {
     handleSwitchWorkspace,
     handleCreateWorkspace,
     handleUpdateWorkspace,
+    handleUpdateClientConfig,
     handleDeleteWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
@@ -354,32 +367,25 @@ export default function App() {
     handleRefreshTokensFromOAuthFlow,
     activeOrganizationId,
     setActiveOrganizationId,
-  } = useAppState();
+  } = useAppState({
+    currentUserId: workOsUser?.id ?? null,
+  });
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  const currentHash = window.location.hash || "#servers";
+  const currentHashRoute = useMemo(
+    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
+    [currentHash],
+  );
   const activeOrganizationName = sortedOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
-
-  useEffect(() => {
-    if (!isAuthenticated || !activeOrganizationId || isLoadingOrganizations) {
-      return;
-    }
-
-    const activeOrganizationExists = sortedOrganizations.some(
-      (org) => org._id === activeOrganizationId,
-    );
-    if (!activeOrganizationExists) {
-      setActiveOrganizationId(undefined);
-    }
-  }, [
-    activeOrganizationId,
-    isAuthenticated,
-    isLoadingOrganizations,
-    setActiveOrganizationId,
-    sortedOrganizations,
-  ]);
+  const hasRouteOrganization = !!currentHashRoute.organizationId
+    ? sortedOrganizations.some(
+        (org) => org._id === currentHashRoute.organizationId,
+      )
+    : false;
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -423,9 +429,23 @@ export default function App() {
 
   // Get the Convex workspace ID from the active workspace
   const activeWorkspace = workspaces[activeWorkspaceId];
+  const isClientConfigSyncPending = useClientConfigStore(
+    (state) =>
+      state.isAwaitingRemoteEcho &&
+      state.pendingWorkspaceId === activeWorkspaceId,
+  );
+  const hostedClientCapabilities = getEffectiveWorkspaceClientCapabilities(
+    activeWorkspace?.clientConfig,
+  ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  const billingOrganizationId =
+  const rawBillingOrganizationId =
     activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
+  const billingOrganizationId =
+    !isLoadingOrganizations &&
+    rawBillingOrganizationId &&
+    sortedOrganizations.some((org) => org._id === rawBillingOrganizationId)
+      ? rawBillingOrganizationId
+      : null;
   const billingEntitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,
     isAuthenticated && billingOrganizationId
@@ -500,9 +520,12 @@ export default function App() {
       ),
     [appState.servers],
   );
+
   useHostedApiContext({
     workspaceId: convexWorkspaceId,
     serverIdsByName: hostedServerIdsByName,
+    clientCapabilities: hostedClientCapabilities,
+    clientConfigSyncPending: isClientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
     guestOauthTokensByServerName,
@@ -578,6 +601,11 @@ export default function App() {
       if (resolved.organizationId) {
         setActiveOrganizationId(resolved.organizationId);
       }
+      if (resolved.organizationSection) {
+        setActiveOrganizationSection(resolved.organizationSection);
+      } else if (resolved.normalizedTab !== "organizations") {
+        setActiveOrganizationSection("overview");
+      }
       if (resolved.shouldSelectAllServers) {
         setSelectedMultipleServersToAllServers();
       }
@@ -609,7 +637,7 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isHostedChatRoute]);
+  }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
 
   // Redirect away from tabs hidden by the ci-evals feature flag.
   // Use strict equality to avoid redirecting while the flag is still loading (undefined).
@@ -630,9 +658,15 @@ export default function App() {
       (learningEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
+    } else if (
+      activeTab === "client-config" &&
+      (clientConfigEnabled !== true || !isAuthenticated)
+    ) {
+      applyNavigation("servers", { updateHash: true });
     }
   }, [
     ciEvalsEnabled,
+    clientConfigEnabled,
     activeTabBillingFeature,
     activeTabBillingLocked,
     learningEnabled,
@@ -645,6 +679,57 @@ export default function App() {
   const handleNavigate = (section: string) => {
     applyNavigation(section, { updateHash: true });
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+
+    const navigationTarget = getInvalidOrganizationRouteNavigationTarget({
+      routeTab: currentHashRoute.normalizedTab,
+      routeOrganizationId: currentHashRoute.organizationId,
+      isLoadingOrganizations,
+      hasRouteOrganization,
+    });
+    if (!navigationTarget) {
+      return;
+    }
+
+    setActiveOrganizationId(undefined);
+    setActiveOrganizationSection("overview");
+    applyNavigation(navigationTarget, { updateHash: true });
+  }, [
+    applyNavigation,
+    currentHashRoute.normalizedTab,
+    currentHashRoute.organizationId,
+    hasRouteOrganization,
+    isAuthenticated,
+    isLoadingOrganizations,
+    setActiveOrganizationId,
+  ]);
+
+  const handleSidebarSwitchWorkspace = useCallback(
+    async (workspaceId: string) => {
+      const nextWorkspace = workspaces[workspaceId];
+      await handleSwitchWorkspace(workspaceId);
+
+      const navigationTarget = getWorkspaceSwitchNavigationTarget({
+        activeTab,
+        activeOrganizationId,
+        nextWorkspaceOrganizationId: nextWorkspace?.organizationId,
+      });
+      if (navigationTarget) {
+        applyNavigation(navigationTarget, { updateHash: true });
+      }
+    },
+    [
+      activeOrganizationId,
+      activeTab,
+      applyNavigation,
+      handleSwitchWorkspace,
+      workspaces,
+    ],
+  );
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
@@ -751,7 +836,7 @@ export default function App() {
         servers={workspaceServers}
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
-        onSwitchWorkspace={handleSwitchWorkspace}
+        onSwitchWorkspace={handleSidebarSwitchWorkspace}
         onCreateWorkspace={handleCreateWorkspace}
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
@@ -903,6 +988,13 @@ export default function App() {
               serverName={appState.selectedServer}
             />
           )}
+          {activeTab === "client-config" && (
+            <ClientConfigTab
+              activeWorkspaceId={activeWorkspaceId}
+              workspace={activeWorkspace}
+              onSaveClientConfig={handleUpdateClientConfig}
+            />
+          )}
           {activeTab === "workspace-settings" && (
             <WorkspaceSettingsTab
               activeWorkspaceId={activeWorkspaceId}
@@ -920,7 +1012,13 @@ export default function App() {
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (
-            <OrganizationsTab organizationId={activeOrganizationId} />
+            <OrganizationsTab
+              organizationId={currentHashRoute.organizationId}
+              section={
+                currentHashRoute.organizationSection ??
+                activeOrganizationSection
+              }
+            />
           )}
         </div>
       </SidebarInset>
@@ -932,6 +1030,10 @@ export default function App() {
       themeMode={initialThemeMode}
       themePreset={initialThemePreset}
     >
+      <WorkspaceClientConfigSync
+        activeWorkspaceId={activeWorkspaceId}
+        savedClientConfig={activeWorkspace?.clientConfig}
+      />
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
         <HostedShellGate

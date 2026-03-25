@@ -1,4 +1,4 @@
-import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ServerFormData } from "@/shared/types.js";
 
 export function toMCPConfig(formData: ServerFormData): MCPServerConfig {

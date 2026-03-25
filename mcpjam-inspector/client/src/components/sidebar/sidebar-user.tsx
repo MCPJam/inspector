@@ -61,6 +61,9 @@ export function SidebarUser({
     ? sortedOrganizations.find((org) => org._id === activeOrganizationId)?.name
     : undefined;
   const subtitle = activeOrgName || email;
+  const navigateToOrganization = (organizationId: string) => {
+    window.location.hash = `organizations/${organizationId}`;
+  };
 
   const handleSignOut = () => {
     const isElectron = (window as any).isElectron;
@@ -190,9 +193,7 @@ export function SidebarUser({
                   return (
                     <DropdownMenuItem
                       key={org._id}
-                      onClick={() =>
-                        (window.location.hash = `organizations/${org._id}`)
-                      }
+                      onClick={() => navigateToOrganization(org._id)}
                       className="cursor-pointer"
                     >
                       <Avatar className="size-6 rounded">
@@ -207,7 +208,7 @@ export function SidebarUser({
                           className="size-4 text-muted-foreground hover:text-foreground"
                           onClick={(e) => {
                             e.stopPropagation();
-                            window.location.hash = `organizations/${org._id}`;
+                            navigateToOrganization(org._id);
                           }}
                         />
                       ) : null}

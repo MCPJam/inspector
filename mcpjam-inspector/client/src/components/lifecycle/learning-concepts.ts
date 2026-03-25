@@ -1,4 +1,4 @@
-import { GitBranch, type LucideIcon } from "lucide-react";
+import { AppWindow, GitBranch, Network, type LucideIcon } from "lucide-react";
 
 export interface LearningConcept {
   id: string;
@@ -11,6 +11,15 @@ export interface LearningConcept {
 
 export const LEARNING_CONCEPTS: LearningConcept[] = [
   {
+    id: "what-is-mcp",
+    title: "What is MCP?",
+    description:
+      "Understand the Model Context Protocol architecture — how host applications, clients, servers, and resources connect to give AI access to the world.",
+    icon: Network,
+    totalSteps: 8,
+    category: "Fundamentals",
+  },
+  {
     id: "mcp-lifecycle",
     title: "MCP Lifecycle",
     description:
@@ -18,5 +27,14 @@ export const LEARNING_CONCEPTS: LearningConcept[] = [
     icon: GitBranch,
     totalSteps: 5,
     category: "Protocol",
+  },
+  {
+    id: "mcp-apps",
+    title: "MCP Apps",
+    description:
+      "Learn how MCP servers deliver rich, interactive HTML user interfaces into host apps — ui:// resources, tool linkage, and postMessage.",
+    icon: AppWindow,
+    totalSteps: 7,
+    category: "Extensions",
   },
 ];

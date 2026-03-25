@@ -1,7 +1,7 @@
 import { defineConfig } from "tsup";
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/skill-reference.ts"],
+  entry: ["src/index.ts", "src/browser.ts", "src/skill-reference.ts"],
   external: ["@sentry/node"],
   format: ["cjs", "esm"],
   dts: true,

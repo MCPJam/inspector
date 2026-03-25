@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { usePostHog } from "posthog-js/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { detectPlatform } from "@/lib/PosthogUtils";
 
 /**
  * Automatically identify users in PostHog when they log in/out
@@ -35,6 +36,12 @@ export function usePostHogIdentify() {
     } else {
       // User logged out - reset PostHog
       posthog.reset();
+      // Re-register static props after reset so anonymous events still have them
+      posthog.register({
+        environment: import.meta.env.MODE,
+        platform: detectPlatform(),
+        version: __APP_VERSION__,
+      });
     }
   }, [posthog, isAuthenticated, user]);
 }

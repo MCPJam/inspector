@@ -47,6 +47,7 @@ xrayPayload.post("/", async (c) => {
         selectedServerIds,
         WEB_CALL_TIMEOUT_MS,
         body.oauthTokens,
+        body.clientCapabilities,
       ),
       async (manager) => {
         return buildXRayPayload(

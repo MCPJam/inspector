@@ -83,9 +83,11 @@ describe("useWorkspaceQueries", () => {
     );
 
     expect(result.current.isLoading).toBe(true);
+    expect(result.current.allWorkspaces).toBeUndefined();
     expect(result.current.workspaces).toBeUndefined();
     expect(result.current.sortedWorkspaces).toEqual([]);
     expect(result.current.hasWorkspaces).toBe(false);
+    expect(result.current.hasAnyWorkspaces).toBe(false);
     expect(mockUseQuery).toHaveBeenCalledWith("workspaces:getMyWorkspaces", {});
   });
 });

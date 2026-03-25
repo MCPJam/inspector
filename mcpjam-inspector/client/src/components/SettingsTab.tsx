@@ -16,7 +16,7 @@ import { updateThemeMode } from "@/lib/theme-utils";
 import { Plus, Pencil, Trash2 } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
 
-import type { CustomProvider } from "@mcpjam/sdk";
+import type { CustomProvider } from "@mcpjam/sdk/browser";
 
 interface ProviderConfig {
   id: string;

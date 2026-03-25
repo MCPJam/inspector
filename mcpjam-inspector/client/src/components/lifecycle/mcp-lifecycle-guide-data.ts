@@ -226,6 +226,32 @@ export function getLifecycleStepIndex(step: McpLifecycleStep20250326): number {
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
 }
 
+/**
+ * Next HTTP lifecycle step for the walkthrough Continue control.
+ * Unknown or missing `current` → first step; last step → wraps to first.
+ */
+export function nextHttpLifecycleStepId(
+  current: string | undefined,
+): McpLifecycleStep20250326 {
+  if (!current) {
+    return HTTP_STEP_ORDER[0];
+  }
+  const idx = HTTP_STEP_ORDER.indexOf(current as McpLifecycleStep20250326);
+  if (idx < 0) {
+    return HTTP_STEP_ORDER[0];
+  }
+  if (idx >= HTTP_STEP_ORDER.length - 1) {
+    return HTTP_STEP_ORDER[0];
+  }
+  return HTTP_STEP_ORDER[idx + 1];
+}
+
+export function isLastHttpLifecycleStep(current: string | undefined): boolean {
+  if (!current) return false;
+  const idx = HTTP_STEP_ORDER.indexOf(current as McpLifecycleStep20250326);
+  return idx === HTTP_STEP_ORDER.length - 1;
+}
+
 // ---------------------------------------------------------------------------
 // Slim data model — minimalist content for the animated guide wizard
 // ---------------------------------------------------------------------------

@@ -6,6 +6,8 @@ import {
   PHASE_ACCENT,
   getLifecycleStepGuide,
   getLifecycleStepIndex,
+  isLastHttpLifecycleStep,
+  nextHttpLifecycleStepId,
 } from "../mcp-lifecycle-guide-data";
 
 describe("LIFECYCLE_GUIDE_METADATA", () => {
@@ -65,6 +67,42 @@ describe("LIFECYCLE_GUIDE_METADATA", () => {
         }
       }
     }
+  });
+});
+
+describe("nextHttpLifecycleStepId", () => {
+  it("returns the first step when current is undefined", () => {
+    expect(nextHttpLifecycleStepId(undefined)).toBe("initialize_request");
+  });
+
+  it("returns the first step when current is unknown", () => {
+    expect(nextHttpLifecycleStepId("not_a_step")).toBe("initialize_request");
+  });
+
+  it("advances along HTTP_STEP_ORDER", () => {
+    expect(nextHttpLifecycleStepId("initialize_request")).toBe(
+      "initialize_result",
+    );
+    expect(nextHttpLifecycleStepId("operation_request")).toBe(
+      "operation_response",
+    );
+  });
+
+  it("wraps from the last step to the first", () => {
+    expect(nextHttpLifecycleStepId("operation_response")).toBe(
+      "initialize_request",
+    );
+  });
+});
+
+describe("isLastHttpLifecycleStep", () => {
+  it("is false when current is undefined", () => {
+    expect(isLastHttpLifecycleStep(undefined)).toBe(false);
+  });
+
+  it("is true only on the final HTTP step", () => {
+    expect(isLastHttpLifecycleStep("operation_request")).toBe(false);
+    expect(isLastHttpLifecycleStep("operation_response")).toBe(true);
   });
 });
 

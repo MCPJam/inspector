@@ -37,6 +37,7 @@ interface ServerDetailModalProps {
   isOpen: boolean;
   onClose: () => void;
   server: ServerWithName;
+  needsReconnect?: boolean;
   defaultTab?: ServerDetailTab;
   onSubmit: (
     formData: ServerFormData,
@@ -54,6 +55,7 @@ export function ServerDetailModal({
   isOpen,
   onClose,
   server,
+  needsReconnect = false,
   defaultTab = "overview",
   onSubmit,
   onDisconnect,
@@ -383,7 +385,10 @@ export function ServerDetailModal({
                       Connect to view server overview
                     </div>
                   ) : (
-                    <ServerInfoContent server={server} />
+                    <ServerInfoContent
+                      server={server}
+                      needsReconnect={needsReconnect}
+                    />
                   )}
                 </div>
               </TabsContent>

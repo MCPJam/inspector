@@ -13,9 +13,13 @@ import { ScrollableJsonView } from "@/components/ui/json-editor";
 
 interface ServerInfoContentProps {
   server: ServerWithName;
+  needsReconnect?: boolean;
 }
 
-export function ServerInfoContent({ server }: ServerInfoContentProps) {
+export function ServerInfoContent({
+  server,
+  needsReconnect = false,
+}: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
 
@@ -193,6 +197,12 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
 
   return (
     <div className="space-y-4">
+      {needsReconnect ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
+          Saved client capabilities differ from this server's last initialize
+          payload. Reconnect the server to apply the workspace client profile.
+        </div>
+      ) : null}
       {serverName && (
         <div>
           <div className="text-sm font-medium text-muted-foreground mb-1">

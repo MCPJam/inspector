@@ -6,7 +6,7 @@ import {
   isMCPJamProvidedModel,
   Model,
 } from "@/shared/types";
-import type { CustomProvider } from "@mcpjam/sdk";
+import type { CustomProvider } from "@mcpjam/sdk/browser";
 
 export function parseModelAliases(
   aliasString: string,

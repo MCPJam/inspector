@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const validateHostedServerMock = vi.fn();
 
@@ -83,6 +83,7 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(validateHostedServerMock).toHaveBeenCalledWith(
       "server-4",
       "access-token",
+      undefined,
     );
     expect(result).toEqual({ success: true, status: "ok" });
   });

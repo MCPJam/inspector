@@ -64,9 +64,12 @@ export function WorkspaceSettingsTab({
   const canManageWorkspaceSettings =
     !isAuthenticated || !convexWorkspaceId ? true : canManageMembers;
   const canDeleteWorkspace =
-    !isAuthenticated || !convexWorkspaceId
+    workspace?.canDeleteWorkspace ??
+    (!isAuthenticated || !convexWorkspaceId
       ? true
-      : currentMember?.role === "owner" || currentMember?.role === "admin";
+      : currentMember?.role === "owner" ||
+        currentMember?.role === "admin" ||
+        currentMember?.workspaceRole === "admin");
 
   return (
     <div className="h-full overflow-y-auto">
@@ -159,7 +162,7 @@ export function WorkspaceSettingsTab({
                 {isDefault
                   ? "Switch to another workspace first"
                   : !canDeleteWorkspace
-                    ? "Only organization admins can delete this workspace"
+                    ? "Only workspace admins can delete this workspace"
                     : "Permanently delete this workspace and all its data"}
               </span>
             </div>

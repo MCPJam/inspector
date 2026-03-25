@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 
@@ -10,14 +10,113 @@ const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
 
+function createPlanCatalog() {
+  return {
+    catalogVersion: "2026-03-19",
+    currency: "usd",
+    plans: {
+      free: {
+        plan: "free",
+        displayName: "Free",
+        isSelfServe: false,
+        prices: { monthly: null, annual: null },
+        features: {
+          evals: false,
+          sandboxes: false,
+          cicd: false,
+          customDomains: false,
+          auditLog: false,
+          sso: false,
+          prioritySupport: false,
+        },
+        limits: {
+          maxMembers: 5,
+          maxWorkspaces: 3,
+          maxServersPerWorkspace: 10,
+          maxSandboxesPerWorkspace: 0,
+          maxEvalRunsPerMonth: 0,
+        },
+      },
+      starter: {
+        plan: "starter",
+        displayName: "Starter",
+        isSelfServe: true,
+        prices: { monthly: 2900, annual: 29000 },
+        features: {
+          evals: true,
+          sandboxes: true,
+          cicd: true,
+          customDomains: false,
+          auditLog: false,
+          sso: false,
+          prioritySupport: false,
+        },
+        limits: {
+          maxMembers: 25,
+          maxWorkspaces: 10,
+          maxServersPerWorkspace: 25,
+          maxSandboxesPerWorkspace: 5,
+          maxEvalRunsPerMonth: 500,
+        },
+      },
+      team: {
+        plan: "team",
+        displayName: "Team",
+        isSelfServe: true,
+        prices: { monthly: 7900, annual: 79000 },
+        features: {
+          evals: true,
+          sandboxes: true,
+          cicd: true,
+          customDomains: true,
+          auditLog: false,
+          sso: false,
+          prioritySupport: true,
+        },
+        limits: {
+          maxMembers: 100,
+          maxWorkspaces: 50,
+          maxServersPerWorkspace: 100,
+          maxSandboxesPerWorkspace: null,
+          maxEvalRunsPerMonth: null,
+        },
+      },
+      enterprise: {
+        plan: "enterprise",
+        displayName: "Enterprise",
+        isSelfServe: false,
+        prices: { monthly: null, annual: null },
+        features: {
+          evals: true,
+          sandboxes: true,
+          cicd: true,
+          customDomains: true,
+          auditLog: true,
+          sso: true,
+          prioritySupport: true,
+        },
+        limits: {
+          maxMembers: null,
+          maxWorkspaces: null,
+          maxServersPerWorkspace: null,
+          maxSandboxesPerWorkspace: null,
+          maxEvalRunsPerMonth: null,
+        },
+      },
+    },
+  };
+}
+
 function createBillingHookState(overrides: Record<string, unknown>) {
   return {
     billingStatus: undefined,
     entitlements: undefined,
     rolloutState: undefined,
+    planCatalog: createPlanCatalog(),
     isLoadingBilling: false,
     isLoadingEntitlements: false,
     isLoadingRollout: false,
+    isLoadingPlanCatalog: false,
     isStartingCheckout: false,
     isOpeningPortal: false,
     error: null,
@@ -79,7 +178,10 @@ describe("OrganizationsTab billing", () => {
     vi.clearAllMocks();
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
-    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) => {
+      if (flag === "billing-entitlements-ui") return true;
+      return true;
+    });
     mockUseAuth.mockReturnValue({
       user: { email: "owner@example.com" },
       signIn: vi.fn(),
@@ -118,7 +220,7 @@ describe("OrganizationsTab billing", () => {
     });
   });
 
-  it("shows Upgrade CTA for free plan", () => {
+  it("shows a View plans entry point in the overview billing card", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: {
@@ -139,7 +241,7 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" />);
 
-    expect(screen.getByText("Billing")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Billing" })).toBeInTheDocument();
     expect(screen.getByText("Subscription status")).toBeInTheDocument();
     expect(screen.getByText("Not subscribed")).toBeInTheDocument();
     expect(screen.getByText("Current period ends")).toBeInTheDocument();
@@ -147,11 +249,48 @@ describe("OrganizationsTab billing", () => {
     expect(screen.getByText("Billing account")).toBeInTheDocument();
     expect(screen.getByText("Not connected")).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Upgrade plan" }),
+      screen.getByRole("button", { name: "View plans" }),
     ).toBeInTheDocument();
   });
 
-  it("shows Manage subscription CTA for starter plan", () => {
+  it("hides the overview billing card when the billing UI flag is off", () => {
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "starter",
+          billingInterval: "monthly",
+          billingConfigured: true,
+          subscriptionStatus: "active",
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: 1_705_000_000_000,
+          stripePriceId: "price_123",
+        },
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(
+      screen.queryByRole("tab", { name: "Billing" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Billing account")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "View plans" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Manage subscription" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Upgrade plan" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the billing subview summary and plan cards", () => {
     const periodEnd = 1_705_000_000_000;
     const formattedPeriodEnd = new Intl.DateTimeFormat(undefined, {
       month: "short",
@@ -177,19 +316,21 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByText("Subscription status")).toBeInTheDocument();
+    expect(screen.getByText("Plans & Billing")).toBeInTheDocument();
+    expect(screen.getAllByText("Current plan").length).toBeGreaterThan(0);
     expect(screen.getByText("active")).toBeInTheDocument();
-    expect(screen.getByText("Billing account")).toBeInTheDocument();
-    expect(screen.getByText("Connected")).toBeInTheDocument();
     expect(screen.getByText(formattedPeriodEnd)).toBeInTheDocument();
+    expect(screen.getAllByText("Starter").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Team").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Enterprise").length).toBeGreaterThan(0);
     expect(
       screen.getByRole("button", { name: "Manage subscription" }),
     ).toBeInTheDocument();
   });
 
-  it("disables billing action for non-owners", () => {
+  it("disables billing actions for admins while keeping the page visible", () => {
     mockUseOrganizationMembers.mockReturnValue({
       activeMembers: [
         {
@@ -247,12 +388,186 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    render(<OrganizationsTab organizationId="org-1" />);
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByRole("button", { name: "Upgrade plan" })).toBeDisabled();
     expect(
-      screen.getByText("Only organization owners can manage billing."),
+      screen.getByText(
+        "Only organization owners can manage billing changes. Admins can review plan details here.",
+      ),
     ).toBeInTheDocument();
+    for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
+      expect(button).toBeDisabled();
+    }
+    expect(screen.getByRole("button", { name: "Contact us" })).toBeEnabled();
+  });
+
+  it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "starter",
+          billingInterval: "monthly",
+          billingConfigured: true,
+          subscriptionStatus: "active",
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: "price_123",
+        },
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Upgrade" })).toHaveLength(1);
+  });
+
+  it("updates pricing when the billing interval toggle changes", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "free",
+          billingInterval: null,
+          billingConfigured: true,
+          subscriptionStatus: null,
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: false,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: null,
+        },
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByText("$29")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
+    expect(screen.getByText("$24.17")).toBeInTheDocument();
+  });
+
+  it("starts checkout for Starter from the billing subview", async () => {
+    const startCheckout = vi
+      .fn()
+      .mockResolvedValue("https://stripe.test/checkout");
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "free",
+          billingInterval: null,
+          billingConfigured: true,
+          subscriptionStatus: null,
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: false,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: null,
+        },
+        startCheckout,
+      }),
+    );
+
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]);
+
+    await waitFor(() => {
+      expect(startCheckout).toHaveBeenCalledWith(
+        expect.stringContaining("#organizations/org-1/billing"),
+        "starter",
+        "monthly",
+      );
+    });
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://stripe.test/checkout",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
+  });
+
+  it("opens the billing portal from the billing header for paid owners", async () => {
+    const openPortal = vi.fn().mockResolvedValue("https://stripe.test/portal");
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "starter",
+          billingInterval: "monthly",
+          billingConfigured: true,
+          subscriptionStatus: "active",
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: "price_123",
+        },
+        openPortal,
+      }),
+    );
+
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Manage subscription" }),
+    );
+
+    await waitFor(() => {
+      expect(openPortal).toHaveBeenCalledWith(
+        expect.stringContaining("#organizations/org-1/billing"),
+      );
+    });
+    expect(openSpy).toHaveBeenCalledWith(
+      "https://stripe.test/portal",
+      "_blank",
+      "noopener,noreferrer",
+    );
+    openSpy.mockRestore();
+  });
+
+  it("suppresses purchase actions when billing is unconfigured", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: {
+          organizationId: "org-1",
+          organizationName: "Org One",
+          plan: "free",
+          billingInterval: null,
+          billingConfigured: false,
+          subscriptionStatus: null,
+          canManageBilling: false,
+          isOwner: true,
+          hasCustomer: false,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: null,
+        },
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      screen.getByText(
+        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
+      ),
+    ).toBeInTheDocument();
+    for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
+      expect(button).toBeDisabled();
+    }
+    expect(screen.getByRole("button", { name: "Contact us" })).toBeEnabled();
   });
 
   it("locks audit log behind enterprise after enforcement becomes active", () => {

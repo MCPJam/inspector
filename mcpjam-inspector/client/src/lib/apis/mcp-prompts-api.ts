@@ -1,4 +1,4 @@
-import type { MCPPrompt } from "@mcpjam/sdk";
+import type { MCPPrompt } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import {
   getHostedPrompt,

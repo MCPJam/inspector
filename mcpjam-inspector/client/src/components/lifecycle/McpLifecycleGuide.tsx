@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import { ArrowRight, Lightbulb, Info } from "lucide-react";
 import { motion } from "framer-motion";
+import { useScrollSpy } from "@/hooks/use-scroll-spy";
 import {
   HTTP_STEP_ORDER,
   LIFECYCLE_GUIDE_METADATA,
@@ -17,6 +18,8 @@ interface McpLifecycleGuideProps {
   activeStepId: string | undefined;
   onActiveStepChange: (stepId: string) => void;
   scrollToStepId: string | undefined;
+  /** Incremented when scrolling to the same step again (e.g. Reset on step 1). */
+  scrollToStepToken?: number;
   onScrollComplete: () => void;
 }
 
@@ -37,69 +40,6 @@ function sectionChild(order: number) {
       ease: EASE,
     },
   };
-}
-
-// ---------------------------------------------------------------------------
-// useScrollSpy — IntersectionObserver-based scroll tracking
-// ---------------------------------------------------------------------------
-
-function useScrollSpy(
-  sectionIds: readonly string[],
-  scrollContainerRef: React.RefObject<HTMLElement | null>,
-  onActiveChange: (id: string) => void,
-  enabled: boolean,
-) {
-  const sectionRefs = useRef<Map<string, HTMLElement>>(new Map());
-  const rafId = useRef(0);
-
-  const registerSection = useCallback((id: string, el: HTMLElement | null) => {
-    if (el) sectionRefs.current.set(id, el);
-    else sectionRefs.current.delete(id);
-  }, []);
-
-  useEffect(() => {
-    if (!enabled || !scrollContainerRef.current) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        cancelAnimationFrame(rafId.current);
-        rafId.current = requestAnimationFrame(() => {
-          let bestEntry: IntersectionObserverEntry | null = null;
-          for (const entry of entries) {
-            if (entry.isIntersecting) {
-              if (
-                !bestEntry ||
-                entry.intersectionRatio > bestEntry.intersectionRatio
-              ) {
-                bestEntry = entry;
-              }
-            }
-          }
-          if (bestEntry) {
-            const id = bestEntry.target.getAttribute("data-step-id");
-            if (id) onActiveChange(id);
-          }
-        });
-      },
-      {
-        root: scrollContainerRef.current,
-        rootMargin: "-10% 0px -60% 0px",
-        threshold: [0, 0.25, 0.5, 0.75, 1],
-      },
-    );
-
-    for (const id of sectionIds) {
-      const el = sectionRefs.current.get(id);
-      if (el) observer.observe(el);
-    }
-
-    return () => {
-      cancelAnimationFrame(rafId.current);
-      observer.disconnect();
-    };
-  }, [sectionIds, enabled, onActiveChange, scrollContainerRef]);
-
-  return { registerSection };
 }
 
 // ---------------------------------------------------------------------------
@@ -335,6 +275,7 @@ export function McpLifecycleGuide({
   activeStepId,
   onActiveStepChange,
   scrollToStepId,
+  scrollToStepToken = 0,
   onScrollComplete,
 }: McpLifecycleGuideProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -369,7 +310,7 @@ export function McpLifecycleGuide({
       }, 600);
       return () => clearTimeout(timer);
     }
-  }, [scrollToStepId, onScrollComplete]);
+  }, [scrollToStepId, scrollToStepToken, onScrollComplete]);
 
   return (
     <div
@@ -389,8 +330,10 @@ export function McpLifecycleGuide({
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
             Walk through the five steps of an HTTP-based MCP connection — from
-            the initial handshake to normal operations and shutdown. Scroll
-            through each step and watch the diagram follow along.
+            the initial handshake to normal operations and shutdown. Scroll to
+            move through the guide and sync the diagram, or use{" "}
+            <span className="font-medium text-foreground/80">Continue</span> in
+            the header to jump to the next step.
           </p>
         </motion.div>
       </div>
@@ -416,8 +359,9 @@ export function McpLifecycleGuide({
           transition={{ duration: 0.5 }}
         >
           <p className="text-sm text-muted-foreground/60">
-            That&apos;s the complete HTTP MCP lifecycle. Click any step in the
-            diagram to jump back.
+            That&apos;s the complete HTTP MCP lifecycle. Use{" "}
+            <span className="font-medium text-foreground/70">Start over</span>{" "}
+            in the header or click any step in the diagram to jump back.
           </p>
         </motion.div>
       </div>

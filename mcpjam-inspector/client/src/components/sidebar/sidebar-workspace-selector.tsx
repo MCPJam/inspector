@@ -12,12 +12,16 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn, getInitials } from "@/lib/utils";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { useConvexAuth } from "convex/react";
-import { useProfilePicture } from "@/hooks/useProfilePicture";
 import type { Workspace } from "@/state/app-types";
 import { resolveWorkspaceIcon } from "@/components/workspace/WorkspaceEmojiPicker";
 
@@ -31,6 +35,32 @@ interface SidebarWorkspaceSelectorProps {
   onNavigateToSettings?: () => void;
 }
 
+interface WorkspaceDeleteState {
+  canDelete: boolean;
+  reason: string;
+}
+
+function getWorkspaceDeleteState({
+  workspace,
+  isAuthenticated,
+}: {
+  workspace: Workspace;
+  isAuthenticated: boolean;
+}): WorkspaceDeleteState {
+  if (!isAuthenticated || !workspace.sharedWorkspaceId) {
+    return { canDelete: true, reason: "Delete workspace" };
+  }
+
+  if (workspace.canDeleteWorkspace !== false) {
+    return { canDelete: true, reason: "Delete workspace" };
+  }
+
+  return {
+    canDelete: false,
+    reason: "Only workspace admins can delete this workspace",
+  };
+}
+
 export function SidebarWorkspaceSelector({
   activeWorkspaceId,
   workspaces,
@@ -42,7 +72,6 @@ export function SidebarWorkspaceSelector({
 }: SidebarWorkspaceSelectorProps) {
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
-  const { profilePictureUrl } = useProfilePicture();
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
@@ -162,16 +191,16 @@ export function SidebarWorkspaceSelector({
                     <span className="truncate block">{workspace.name}</span>
                   </div>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    onDeleteWorkspace(workspace.id);
-                  }}
-                  className="opacity-0 group-hover/item:opacity-100 hover:text-destructive transition-opacity p-1"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {!workspace.isDefault && (
+                  <WorkspaceDeleteButton
+                    workspace={workspace}
+                    deleteState={getWorkspaceDeleteState({
+                      workspace,
+                      isAuthenticated,
+                    })}
+                    onDeleteWorkspace={onDeleteWorkspace}
+                  />
+                )}
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
@@ -195,6 +224,52 @@ export function SidebarWorkspaceSelector({
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
+  );
+}
+
+function WorkspaceDeleteButton({
+  workspace,
+  deleteState,
+  onDeleteWorkspace,
+}: {
+  workspace: Workspace;
+  deleteState: WorkspaceDeleteState;
+  onDeleteWorkspace: (workspaceId: string) => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="flex"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+          }}
+        >
+          <button
+            type="button"
+            disabled={!deleteState.canDelete}
+            aria-label={`Delete workspace ${workspace.name}`}
+            title={deleteState.reason}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              if (!deleteState.canDelete) return;
+              onDeleteWorkspace(workspace.id);
+            }}
+            className={cn(
+              "opacity-0 group-hover/item:opacity-100 transition-opacity p-1",
+              deleteState.canDelete
+                ? "hover:text-destructive"
+                : "cursor-not-allowed text-muted-foreground/70",
+            )}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right">{deleteState.reason}</TooltipContent>
+    </Tooltip>
   );
 }
 

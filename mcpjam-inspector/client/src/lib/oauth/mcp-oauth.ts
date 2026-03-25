@@ -7,7 +7,7 @@ import type {
   OAuthClientProvider,
   OAuthDiscoveryState,
 } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { HttpServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig } from "@mcpjam/sdk/browser";
 import { generateRandomString } from "./state-machines/shared/helpers";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";

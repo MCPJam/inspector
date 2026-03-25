@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AppBuilderTab } from "../AppBuilderTab";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
@@ -423,8 +423,8 @@ describe("AppBuilderTab", () => {
     });
   });
 
-  describe("theme sync", () => {
-    it("syncs theme from preferences to globals", async () => {
+  describe("display context source of truth", () => {
+    it("does not mirror theme into playground globals", async () => {
       const serverConfig = createServerConfig();
 
       render(
@@ -432,11 +432,15 @@ describe("AppBuilderTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockUIPlaygroundStore.updateGlobal).toHaveBeenCalledWith(
-          "theme",
-          "light",
-        );
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "test-server",
+        });
       });
+
+      expect(mockUIPlaygroundStore.updateGlobal).not.toHaveBeenCalledWith(
+        "theme",
+        "light",
+      );
     });
   });
 
