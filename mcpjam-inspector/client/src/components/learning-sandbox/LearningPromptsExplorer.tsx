@@ -97,18 +97,15 @@ export function LearningPromptsExplorer({
     () => prompts.find((prompt) => prompt.name === selectedPromptName) ?? null,
     [prompts, selectedPromptName],
   );
-  const selectedExample = useMemo(
-    () => {
-      const matchingSelectedExample = learningExampleManifest.prompts.find(
-        (example) =>
-          example.id === selectedExampleId &&
-          example.targetName === selectedPromptName,
-      );
+  const selectedExample = useMemo(() => {
+    const matchingSelectedExample = learningExampleManifest.prompts.find(
+      (example) =>
+        example.id === selectedExampleId &&
+        example.targetName === selectedPromptName,
+    );
 
-      return matchingSelectedExample ?? findPromptExample(selectedPromptName);
-    },
-    [selectedExampleId, selectedPromptName],
-  );
+    return matchingSelectedExample ?? findPromptExample(selectedPromptName);
+  }, [selectedExampleId, selectedPromptName]);
   const displayValue = useMemo(() => {
     const content =
       promptContent &&

@@ -272,10 +272,11 @@ export function LearningToolsExplorer({
           toolName: selectedToolName,
           toolInput: parameters,
           toolMetadata,
-          resourceUri: getUIResourceUri(
-            detectUIType(toolMetadata, response.result),
-            toolMetadata,
-          ) ?? undefined,
+          resourceUri:
+            getUIResourceUri(
+              detectUIType(toolMetadata, response.result),
+              toolMetadata,
+            ) ?? undefined,
           toolOutput: response.result,
         });
       } else if (response.status === "task_created") {

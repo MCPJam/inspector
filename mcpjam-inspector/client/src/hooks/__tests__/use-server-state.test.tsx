@@ -329,9 +329,8 @@ describe("useServerState OAuth callback failures", () => {
       surface: "learning",
     };
 
-    const { testRuntimeServerConnection, deleteServer } = await import(
-      "@/state/mcp-api"
-    );
+    const { testRuntimeServerConnection, deleteServer } =
+      await import("@/state/mcp-api");
     vi.mocked(testRuntimeServerConnection).mockReturnValue(deferred.promise);
     vi.mocked(deleteServer).mockResolvedValue({ success: true } as any);
 
@@ -383,7 +382,7 @@ describe("useServerState OAuth callback failures", () => {
         ...workspaceServer,
         name: "other-workspace-server",
       },
-      "__learning__": {
+      __learning__: {
         name: "__learning__",
         config: { url: "https://learn.mcpjam.com/mcp" } as any,
         lastConnectionTime: new Date(),

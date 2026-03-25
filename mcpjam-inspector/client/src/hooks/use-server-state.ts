@@ -297,9 +297,8 @@ export function useServerState({
   };
 
   const setSelectedMultipleServersToAllServers = useCallback(() => {
-    const connectedNames = getWorkspaceVisibleConnectedServerNames(
-      effectiveServers,
-    );
+    const connectedNames =
+      getWorkspaceVisibleConnectedServerNames(effectiveServers);
     dispatch({ type: "SET_MULTI_SELECTED", names: connectedNames });
   }, [dispatch, effectiveServers]);
 

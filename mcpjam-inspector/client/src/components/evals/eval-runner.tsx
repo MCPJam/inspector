@@ -149,8 +149,7 @@ export function EvalRunner({
   );
 
   const connectedServers = useMemo(
-    () =>
-      Object.entries(getWorkspaceVisibleConnectedServers(appState.servers)),
+    () => Object.entries(getWorkspaceVisibleConnectedServers(appState.servers)),
     [appState.servers],
   );
 

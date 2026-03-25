@@ -114,7 +114,9 @@ export function loadAppState(): AppState {
       parsed.selectedServer && hydratedServers[parsed.selectedServer]
         ? parsed.selectedServer
         : "none";
-    const selectedMultipleServers = Array.isArray(parsed.selectedMultipleServers)
+    const selectedMultipleServers = Array.isArray(
+      parsed.selectedMultipleServers,
+    )
       ? parsed.selectedMultipleServers.filter(
           (name: string) => hydratedServers[name],
         )

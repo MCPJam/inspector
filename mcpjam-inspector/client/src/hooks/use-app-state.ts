@@ -194,7 +194,9 @@ export function useAppState({
         return;
       }
 
-      const workspaceServerNames = new Set(Object.keys(workspace.servers || {}));
+      const workspaceServerNames = new Set(
+        Object.keys(workspace.servers || {}),
+      );
       for (const [serverName, server] of Object.entries(appState.servers)) {
         if ((server.surface ?? "workspace") !== "workspace") {
           await disconnectRuntimeServer(serverName);

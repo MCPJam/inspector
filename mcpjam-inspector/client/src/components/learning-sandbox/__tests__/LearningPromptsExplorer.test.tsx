@@ -21,7 +21,9 @@ vi.mock("@/lib/apis/mcp-prompts-api", () => ({
 }));
 
 vi.mock("../LearningSandboxShell", () => ({
-  LearningSandboxShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  LearningSandboxShell: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
 }));
 
 vi.mock("../LearningSandboxServerInfoPanel", () => ({

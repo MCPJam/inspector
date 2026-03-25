@@ -830,7 +830,7 @@ describe("appReducer", () => {
         };
         const state = createInitialState({
           servers: {
-            "__learning__": createServer("__learning__", {
+            __learning__: createServer("__learning__", {
               surface: "learning",
               connectionStatus: "connected",
             }),

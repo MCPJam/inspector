@@ -21,7 +21,9 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 }));
 
 vi.mock("../LearningSandboxShell", () => ({
-  LearningSandboxShell: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  LearningSandboxShell: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
 }));
 
 vi.mock("../LearningSandboxServerInfoPanel", () => ({
@@ -126,9 +128,7 @@ describe("LearningToolsExplorer", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Run tool" }));
 
-    expect(
-      await screen.findByTestId("mcp-app-renderer"),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId("mcp-app-renderer")).toBeInTheDocument();
 
     fireEvent.change(screen.getByTestId("json-editor-edit"), {
       target: { value: '{"greeting":"changed"}' },
