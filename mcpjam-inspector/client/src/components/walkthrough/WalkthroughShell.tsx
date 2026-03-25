@@ -12,6 +12,7 @@ interface WalkthroughShellProps {
   title: string;
   badge: string;
   onBack: () => void;
+  onComplete?: () => void;
   continueLabel: string;
   onContinue: () => void;
   onReset: () => void;
@@ -24,6 +25,7 @@ export function WalkthroughShell({
   title,
   badge,
   onBack,
+  onComplete,
   continueLabel,
   onContinue,
   onReset,
@@ -31,6 +33,7 @@ export function WalkthroughShell({
   diagramPanel,
   defaultGuideSize = 50,
 }: WalkthroughShellProps) {
+  const isLastStep = continueLabel === "Start over";
   return (
     <div className="flex h-full flex-col">
       {/* Header bar */}
@@ -63,7 +66,14 @@ export function WalkthroughShell({
             <RotateCcw className="mr-1 h-3 w-3" />
             Reset
           </Button>
-          <Button size="sm" onClick={onContinue} className="h-7">
+          <Button
+            size="sm"
+            onClick={() => {
+              if (isLastStep && onComplete) onComplete();
+              onContinue();
+            }}
+            className="h-7"
+          >
             {continueLabel}
           </Button>
         </div>
