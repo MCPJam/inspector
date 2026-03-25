@@ -1,6 +1,10 @@
 import { defineConfig } from "vitest/config";
 import path from "path";
 
+const rootDir = path.resolve(__dirname, "..");
+// The linked local SDK package can advertise ./browser before dist/browser.* exists.
+const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
+
 export default defineConfig({
   test: {
     globals: true,
@@ -22,6 +26,7 @@ export default defineConfig({
       "@repo/assets": path.resolve(__dirname, "../assets"),
       "@/shared": path.resolve(__dirname, "../shared"),
       "@": path.resolve(__dirname, "./src"),
+      "@mcpjam/sdk/browser": sdkBrowserEntry,
     },
   },
 });
