@@ -34,14 +34,32 @@ export const ArchGroupNode = memo(
           backgroundColor: `${borderColor}08`,
         }}
       >
-        <div
-          className="absolute top-3 left-4 text-[11px] font-semibold uppercase tracking-wider"
-          style={{ color: borderColor }}
-        >
-          {data.label}
+        <div className="absolute top-3 left-4 flex items-center gap-2">
+          {data.logos && data.logos.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              {data.logos.map((logo, i) => (
+                <img
+                  key={i}
+                  src={logo.src}
+                  alt={logo.alt}
+                  className="h-5 w-5 object-contain"
+                  loading="lazy"
+                />
+              ))}
+            </div>
+          )}
+          <span
+            className="text-[11px] font-semibold uppercase tracking-wider"
+            style={{ color: borderColor }}
+          >
+            {data.label}
+          </span>
         </div>
         {data.subtitle && (
-          <div className="absolute top-7 left-4 text-[10px] text-muted-foreground">
+          <div
+            className="absolute text-[10px] text-muted-foreground"
+            style={{ top: data.logos?.length ? 28 : 28, left: 16 }}
+          >
             {data.subtitle}
           </div>
         )}

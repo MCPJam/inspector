@@ -13,6 +13,11 @@ export interface ArchBlockNodeData extends Record<string, unknown> {
   status: ArchNodeStatus;
   width?: number;
   height?: number;
+  /** Small brand marks above the label (e.g. Claude + OpenAI); takes precedence over icon/image in compact layout */
+  logos?: Array<{ src: string; alt: string }>;
+  /** Optional image rendered below the label (replaces icon when set) */
+  imageSrc?: string;
+  imageAlt?: string;
 }
 
 /** Data for a group/container node */
@@ -23,6 +28,8 @@ export interface ArchGroupNodeData extends Record<string, unknown> {
   status: ArchNodeStatus;
   width: number;
   height: number;
+  /** Small logo images displayed in the header area */
+  logos?: Array<{ src: string; alt: string }>;
 }
 
 /** Data for a node that embeds a code snippet or image */
@@ -39,6 +46,7 @@ export interface ArchAssetNodeData extends Record<string, unknown> {
   codeLang?: string;
   imageSrc?: string;
   imageAlt?: string;
+  compact?: boolean;
 }
 
 /** Edge data */
@@ -67,6 +75,9 @@ export interface ArchNodeDef {
   codeLang?: string;
   imageSrc?: string;
   imageAlt?: string;
+  compact?: boolean;
+  /** Small logo images (group header or compact block) */
+  logos?: Array<{ src: string; alt: string }>;
 }
 
 /** Data-driven architecture edge definition */

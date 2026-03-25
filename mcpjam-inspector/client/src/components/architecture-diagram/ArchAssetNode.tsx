@@ -65,27 +65,29 @@ export const ArchAssetNode = memo(
         }}
       >
         {/* Colored header strip */}
-        <div
-          className="flex items-center gap-2 px-4 py-2.5 shrink-0"
-          style={{ backgroundColor: headerBg }}
-        >
-          {data.icon && (
-            <data.icon
-              className="h-4 w-4 shrink-0"
-              style={{ color: borderColor }}
-            />
-          )}
-          <div className="min-w-0">
-            <div className="text-sm font-semibold leading-tight truncate">
-              {data.label}
-            </div>
-            {data.subtitle && (
-              <div className="text-[10px] text-muted-foreground leading-tight truncate">
-                {data.subtitle}
-              </div>
+        {!data.compact && (
+          <div
+            className="flex items-center gap-2 px-4 py-2.5 shrink-0"
+            style={{ backgroundColor: headerBg }}
+          >
+            {data.icon && (
+              <data.icon
+                className="h-4 w-4 shrink-0"
+                style={{ color: borderColor }}
+              />
             )}
+            <div className="min-w-0">
+              <div className="text-sm font-semibold leading-tight truncate">
+                {data.label}
+              </div>
+              {data.subtitle && (
+                <div className="text-[10px] text-muted-foreground leading-tight truncate">
+                  {data.subtitle}
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Content body */}
         {data.assetType === "code" && data.code && (

@@ -58,4 +58,26 @@ describe("buildArchNodesAndEdges", () => {
     expect(n.data.width).toBe(100);
     expect(n.data.height).toBe(50);
   });
+
+  it("passes compact flag through to archAsset node data", () => {
+    const { nodes } = buildArchNodesAndEdges({
+      nodes: [
+        {
+          id: "logo",
+          label: "Logo",
+          type: "asset",
+          assetType: "image",
+          color: "#999",
+          imageSrc: "/logo.png",
+          width: 80,
+          height: 100,
+          compact: true,
+          position: { x: 0, y: 0 },
+        },
+      ],
+      edges: [],
+    });
+    const n = nodes[0] as { data: { compact: boolean } };
+    expect(n.data.compact).toBe(true);
+  });
 });
