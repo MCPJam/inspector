@@ -6,10 +6,7 @@ export function LearningPromptsExplorer() {
   const { serverName, config, connectionStatus } = useLearningServer();
 
   return (
-    <LearningConnectionGate
-      connectionStatus={connectionStatus}
-      label="Prompts"
-    >
+    <LearningConnectionGate connectionStatus={connectionStatus} label="Prompts">
       <PromptsTab serverConfig={config} serverName={serverName} />
     </LearningConnectionGate>
   );

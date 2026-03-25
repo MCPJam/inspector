@@ -4,8 +4,7 @@ import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const LEARNING_SERVER_ID = "__learning__";
 
-const DEFAULT_LEARNING_SERVER_URL =
-  "https://learning-server.mcpjam.com/mcp";
+const DEFAULT_LEARNING_SERVER_URL = "https://learning-server.mcpjam.com/mcp";
 
 function getLearningServerUrl(): string {
   try {

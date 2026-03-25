@@ -26,8 +26,7 @@ import {
 const LEARNING_WORKSPACE_ID = "learning";
 
 function buildInitialLearningState(parentState: AppState): AppState {
-  const parentWorkspace =
-    parentState.workspaces[parentState.activeWorkspaceId];
+  const parentWorkspace = parentState.workspaces[parentState.activeWorkspaceId];
   return {
     workspaces: {
       [LEARNING_WORKSPACE_ID]: {
@@ -56,11 +55,7 @@ function buildInitialLearningState(parentState: AppState): AppState {
  * workspace with its own `useReducer(appReducer, ...)`, and exposes a runtime
  * API for connecting/disconnecting the learning server.
  */
-export function LearningStateProvider({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export function LearningStateProvider({ children }: { children: ReactNode }) {
   const parentState = useSharedAppState();
   const [state, dispatch] = useReducer(
     appReducer,
@@ -72,86 +67,83 @@ export function LearningStateProvider({
   const opTokenRef = useRef(0);
 
   const connectRuntimeServer: AppRuntimeContextValue["connectRuntimeServer"] =
-    useCallback(
-      async ({ name, config, silent }) => {
-        const token = ++opTokenRef.current;
+    useCallback(async ({ name, config, silent }) => {
+      const token = ++opTokenRef.current;
 
-        dispatch({
-          type: "CONNECT_REQUEST",
-          name,
-          config,
-          select: true,
-        });
+      dispatch({
+        type: "CONNECT_REQUEST",
+        name,
+        config,
+        select: true,
+      });
 
-        // In hosted mode, register the config so buildHostedServerRequest can resolve it.
-        if (HOSTED_MODE) {
-          registerRuntimeServerConfig(name, config);
-        }
+      // In hosted mode, register the config so buildHostedServerRequest can resolve it.
+      if (HOSTED_MODE) {
+        registerRuntimeServerConfig(name, config);
+      }
 
-        try {
-          const result = await testRuntimeServerConnection(config, name);
+      try {
+        const result = await testRuntimeServerConnection(config, name);
 
-          // Stale — a newer op has started.
-          if (opTokenRef.current !== token) return;
+        // Stale — a newer op has started.
+        if (opTokenRef.current !== token) return;
 
-          if (result.success === false) {
-            dispatch({
-              type: "CONNECT_FAILURE",
-              name,
-              error: result.error ?? "Connection failed",
-            });
-            if (!silent) {
-              console.warn(
-                `[LearningStateProvider] connect failed for ${name}:`,
-                result.error,
-              );
-            }
-            return;
-          }
-
+        if (result.success === false) {
           dispatch({
-            type: "CONNECT_SUCCESS",
+            type: "CONNECT_FAILURE",
             name,
-            config,
+            error: result.error ?? "Connection failed",
           });
-
-          // Store initialization info if returned inline.
-          if (result.initInfo) {
-            dispatch({
-              type: "SET_INITIALIZATION_INFO",
-              name,
-              initInfo: result.initInfo,
-            });
-          } else {
-            // Fallback fetch for local mode.
-            try {
-              const infoRes = await getInitializationInfo(name);
-              if (opTokenRef.current === token && infoRes.initInfo) {
-                dispatch({
-                  type: "SET_INITIALIZATION_INFO",
-                  name,
-                  initInfo: infoRes.initInfo,
-                });
-              }
-            } catch {
-              // Non-critical — init info is optional.
-            }
-          }
-        } catch (err) {
-          if (opTokenRef.current !== token) return;
-          const msg =
-            err instanceof Error ? err.message : "Unknown connection error";
-          dispatch({ type: "CONNECT_FAILURE", name, error: msg });
           if (!silent) {
             console.warn(
-              `[LearningStateProvider] connect error for ${name}:`,
-              msg,
+              `[LearningStateProvider] connect failed for ${name}:`,
+              result.error,
             );
           }
+          return;
         }
-      },
-      [],
-    );
+
+        dispatch({
+          type: "CONNECT_SUCCESS",
+          name,
+          config,
+        });
+
+        // Store initialization info if returned inline.
+        if (result.initInfo) {
+          dispatch({
+            type: "SET_INITIALIZATION_INFO",
+            name,
+            initInfo: result.initInfo,
+          });
+        } else {
+          // Fallback fetch for local mode.
+          try {
+            const infoRes = await getInitializationInfo(name);
+            if (opTokenRef.current === token && infoRes.initInfo) {
+              dispatch({
+                type: "SET_INITIALIZATION_INFO",
+                name,
+                initInfo: infoRes.initInfo,
+              });
+            }
+          } catch {
+            // Non-critical — init info is optional.
+          }
+        }
+      } catch (err) {
+        if (opTokenRef.current !== token) return;
+        const msg =
+          err instanceof Error ? err.message : "Unknown connection error";
+        dispatch({ type: "CONNECT_FAILURE", name, error: msg });
+        if (!silent) {
+          console.warn(
+            `[LearningStateProvider] connect error for ${name}:`,
+            msg,
+          );
+        }
+      }
+    }, []);
 
   const disconnectRuntimeServer: AppRuntimeContextValue["disconnectRuntimeServer"] =
     useCallback(async (name: string) => {

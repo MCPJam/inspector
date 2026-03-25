@@ -379,7 +379,12 @@ function InteractiveSandboxShell({
             {labels[moduleId] ?? "Try MCP"}
           </span>
           <div className="flex-1" />
-          <Button variant="secondary" size="sm" className="h-7" onClick={onComplete}>
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-7"
+            onClick={onComplete}
+          >
             Mark complete
           </Button>
         </div>

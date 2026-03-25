@@ -6,10 +6,7 @@ export function LearningToolsExplorer() {
   const { serverName, config, connectionStatus } = useLearningServer();
 
   return (
-    <LearningConnectionGate
-      connectionStatus={connectionStatus}
-      label="Tools"
-    >
+    <LearningConnectionGate connectionStatus={connectionStatus} label="Tools">
       <ToolsTab serverConfig={config} serverName={serverName} />
     </LearningConnectionGate>
   );
