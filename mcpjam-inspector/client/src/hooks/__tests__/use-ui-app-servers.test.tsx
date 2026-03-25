@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook, waitFor, act } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useUiAppServers } from "../use-ui-app-servers";
@@ -70,5 +70,31 @@ describe("useUiAppServers", () => {
 
     expect(result.current.appServerNames).toEqual([]);
     expect(result.current.hasAppServer).toBe(false);
+  });
+
+  it("marks a server as resolved after 5s timeout when listTools hangs", async () => {
+    vi.useFakeTimers();
+
+    // listTools never resolves
+    mockListTools.mockReturnValue(new Promise(() => {}));
+
+    const servers = {
+      "test-server": createServer("test-server"),
+    };
+
+    const { result } = renderHook(() => useUiAppServers(servers));
+
+    // Not resolved yet
+    expect(result.current.resolvedServerNames).toEqual([]);
+
+    // Advance past the 5s timeout
+    await act(async () => {
+      vi.advanceTimersByTime(5_000);
+    });
+
+    expect(result.current.resolvedServerNames).toEqual(["test-server"]);
+    expect(result.current.appServerNames).toEqual([]);
+
+    vi.useRealTimers();
   });
 });
