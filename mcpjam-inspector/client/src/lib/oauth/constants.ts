@@ -19,10 +19,7 @@ export const MCPJAM_CLIENT_ID =
 export function resolveBrowserOAuthRedirectOrigin(
   locationLike: Pick<Location, "protocol" | "origin" | "hostname">,
 ): string {
-  if (
-    locationLike.protocol !== "http:" &&
-    locationLike.protocol !== "https:"
-  ) {
+  if (locationLike.protocol !== "http:" && locationLike.protocol !== "https:") {
     return MCPJAM_HOSTED_APP_ORIGIN;
   }
 
