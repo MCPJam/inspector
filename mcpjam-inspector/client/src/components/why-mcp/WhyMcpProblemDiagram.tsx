@@ -44,13 +44,7 @@ function GhostSystem({
 }
 
 /** Animated dashed line that travels outward and fades — a signal that dies. */
-function FadingSignal({
-  delay,
-  flip,
-}: {
-  delay: number;
-  flip?: boolean;
-}) {
+function FadingSignal({ delay, flip }: { delay: number; flip?: boolean }) {
   return (
     <div
       className="flex-1 flex items-center justify-center overflow-hidden"
@@ -89,8 +83,18 @@ export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
           viewport={{ once: true }}
           transition={{ delay: 0.4, duration: 0.5 }}
         >
-          <GhostSystem icon={Database} label="Database" bobDelay={0} enterDelay={0.5} />
-          <GhostSystem icon={Cloud} label="APIs" bobDelay={0.7} enterDelay={0.7} />
+          <GhostSystem
+            icon={Database}
+            label="Database"
+            bobDelay={0}
+            enterDelay={0.5}
+          />
+          <GhostSystem
+            icon={Cloud}
+            label="APIs"
+            bobDelay={0.7}
+            enterDelay={0.7}
+          />
         </motion.div>
 
         {/* Left fading signal */}
@@ -150,8 +154,18 @@ export const WhyMcpProblemDiagram = memo(function WhyMcpProblemDiagram() {
           viewport={{ once: true }}
           transition={{ delay: 0.4, duration: 0.5 }}
         >
-          <GhostSystem icon={FileText} label="Files" bobDelay={0.3} enterDelay={0.9} />
-          <GhostSystem icon={Wrench} label="Services" bobDelay={1.0} enterDelay={1.1} />
+          <GhostSystem
+            icon={FileText}
+            label="Files"
+            bobDelay={0.3}
+            enterDelay={0.9}
+          />
+          <GhostSystem
+            icon={Wrench}
+            label="Services"
+            bobDelay={1.0}
+            enterDelay={1.1}
+          />
         </motion.div>
       </div>
     </div>

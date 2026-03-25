@@ -1,4 +1,10 @@
-import { AppWindow, GitBranch, Lightbulb, Network, type LucideIcon } from "lucide-react";
+import {
+  AppWindow,
+  GitBranch,
+  Lightbulb,
+  Network,
+  type LucideIcon,
+} from "lucide-react";
 
 export interface LearningConcept {
   id: string;

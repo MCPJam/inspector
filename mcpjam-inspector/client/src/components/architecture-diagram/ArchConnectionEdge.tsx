@@ -94,8 +94,7 @@ export const ArchConnectionEdge = memo(
                 className={cn(
                   "px-2.5 py-1 rounded-md text-[11px] font-medium whitespace-nowrap",
                   "backdrop-blur-sm transition-all duration-200",
-                  labelInteractive &&
-                    "cursor-pointer hover:scale-[1.02]",
+                  labelInteractive && "cursor-pointer hover:scale-[1.02]",
                   labelStyles[data.status],
                 )}
               >

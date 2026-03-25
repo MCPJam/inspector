@@ -29,10 +29,7 @@ export function ArticleShell({
           <ArrowLeft className="h-3.5 w-3.5" />
         </Button>
         <h2 className="text-sm font-semibold">{title}</h2>
-        <Badge
-          variant="secondary"
-          className="text-[10px] h-4 px-1.5 shrink-0"
-        >
+        <Badge variant="secondary" className="text-[10px] h-4 px-1.5 shrink-0">
           {badge}
         </Badge>
       </div>

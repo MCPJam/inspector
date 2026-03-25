@@ -192,17 +192,21 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 1: The Problem */}
       {/* ----------------------------------------------------------------- */}
-      <Section category="problem" step={1} title="The Problem: Smart Models, No Hands">
+      <Section
+        category="problem"
+        step={1}
+        title="The Problem: Smart Models, No Hands"
+      >
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
         >
           Large Language Models are remarkably capable — they can reason, write
           code, analyze data, and hold nuanced conversations. But out of the
-          box, they're trapped inside a text-in, text-out loop. They can't
-          check your database, file an Asana task, query your monitoring
-          dashboard, or deploy your code. They can only talk{" "}
-          <em>about</em> doing those things.
+          box, they're trapped inside a text-in, text-out loop. They can't check
+          your database, file an Asana task, query your monitoring dashboard, or
+          deploy your code. They can only talk <em>about</em> doing those
+          things.
         </motion.p>
 
         <AnalogyCallout>
@@ -221,8 +225,8 @@ export function WhyMcpArticle() {
         <motion.div className="space-y-2" {...sectionChild(5)}>
           <WhyMcpProblemDiagram />
           <p className="text-center text-[12px] text-muted-foreground/80 leading-relaxed">
-            LLMs can reason about databases, APIs, and services — but they
-            can't reach them.
+            LLMs can reason about databases, APIs, and services — but they can't
+            reach them.
           </p>
         </motion.div>
       </Section>
@@ -238,7 +242,9 @@ export function WhyMcpArticle() {
           Tool calling (sometimes called "function calling") is the mechanism
           that lets an AI model invoke external functions during a conversation.
           Instead of just generating text, the model can decide:{" "}
-          <em>"I need to call a function to get real data before I respond."</em>
+          <em>
+            "I need to call a function to get real data before I respond."
+          </em>
         </motion.p>
 
         <KeyDetails
@@ -265,11 +271,7 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 3: Governance */}
       {/* ----------------------------------------------------------------- */}
-      <Section
-        category="challenge"
-        step={3}
-        title="Why Agents Need Governance"
-      >
+      <Section category="challenge" step={3} title="Why Agents Need Governance">
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
@@ -282,8 +284,8 @@ export function WhyMcpArticle() {
         <motion.div className="space-y-2" {...sectionChild(3)}>
           <WhyMcpGovernanceDiagram />
           <p className="text-center text-[12px] text-muted-foreground/80 leading-relaxed">
-            Nothing reaches your systems unless policy allows it — scoped, logged,
-            and revocable on every path.
+            Nothing reaches your systems unless policy allows it — scoped,
+            logged, and revocable on every path.
           </p>
         </motion.div>
 
@@ -297,11 +299,10 @@ export function WhyMcpArticle() {
         />
 
         <Tip>
-          The core question:{" "}
-          <strong>"Who is your agent acting for?"</strong> A developer
-          automating their own workflow has different requirements than an agent
-          acting on behalf of thousands of customers. The latter demands
-          protocol-level governance that ad-hoc solutions can't provide.
+          The core question: <strong>"Who is your agent acting for?"</strong> A
+          developer automating their own workflow has different requirements
+          than an agent acting on behalf of thousands of customers. The latter
+          demands protocol-level governance that ad-hoc solutions can't provide.
         </Tip>
       </Section>
 
@@ -326,7 +327,11 @@ export function WhyMcpArticle() {
       {/* ----------------------------------------------------------------- */}
       {/* Section 5: Enter MCP */}
       {/* ----------------------------------------------------------------- */}
-      <Section category="solution" step={5} title="Enter MCP: The Universal Standard">
+      <Section
+        category="solution"
+        step={5}
+        title="Enter MCP: The Universal Standard"
+      >
         <motion.p
           className="text-sm text-muted-foreground leading-relaxed"
           {...sectionChild(2)}
@@ -372,9 +377,9 @@ export function WhyMcpArticle() {
         />
 
         <Tip>
-          Ready to go deeper? The{" "}
-          <strong>"What is MCP?"</strong> walkthrough explores the full
-          host → client → server architecture with an interactive diagram.
+          Ready to go deeper? The <strong>"What is MCP?"</strong> walkthrough
+          explores the full host → client → server architecture with an
+          interactive diagram.
         </Tip>
       </Section>
 
@@ -427,9 +432,7 @@ export function WhyMcpArticle() {
       >
         <p className="text-sm text-muted-foreground/60">
           Next up: explore the{" "}
-          <span className="font-medium text-foreground/70">
-            What is MCP?
-          </span>{" "}
+          <span className="font-medium text-foreground/70">What is MCP?</span>{" "}
           walkthrough to see the architecture in action.
         </p>
       </motion.div>

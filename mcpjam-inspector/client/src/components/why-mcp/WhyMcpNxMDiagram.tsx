@@ -8,7 +8,11 @@ import githubLightSrc from "@repo/assets/why-mcp/github-light.svg";
 import googleSrc from "@repo/assets/why-mcp/google.png";
 import openaiSrc from "@repo/assets/why-mcp/openai.png";
 import slackSrc from "@repo/assets/why-mcp/slack.png";
-import { springGentle, useDiagramMotion, VIEWPORT_ONCE } from "./diagram-motion";
+import {
+  springGentle,
+  useDiagramMotion,
+  VIEWPORT_ONCE,
+} from "./diagram-motion";
 
 type NodeSpec = {
   x: number;
@@ -40,9 +44,15 @@ const RIGHT: NodeSpec[] = [
 ];
 
 const PAIRS: [number, number][] = [
-  [0, 0], [0, 1], [0, 2],
-  [1, 0], [1, 1], [1, 2],
-  [2, 0], [2, 1], [2, 2],
+  [0, 0],
+  [0, 1],
+  [0, 2],
+  [1, 0],
+  [1, 1],
+  [1, 2],
+  [2, 0],
+  [2, 1],
+  [2, 2],
 ];
 
 const HUB = { x: 50, y: 52 };
@@ -82,7 +92,11 @@ function MeshLines({ reduce }: { reduce: boolean }) {
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
             viewport={VIEWPORT_ONCE}
-            transition={{ duration: 0.42, delay: reduce ? 0 : i * 0.035, ease: "easeOut" }}
+            transition={{
+              duration: 0.42,
+              delay: reduce ? 0 : i * 0.035,
+              ease: "easeOut",
+            }}
           />
         );
       })}
@@ -104,7 +118,11 @@ function HubLines() {
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={VIEWPORT_ONCE}
-          transition={{ duration: 0.45, delay: 0.05 + i * 0.06, ease: "easeOut" }}
+          transition={{
+            duration: 0.45,
+            delay: 0.05 + i * 0.06,
+            ease: "easeOut",
+          }}
         />
       ))}
       {RIGHT.map((t, i) => (
@@ -118,7 +136,11 @@ function HubLines() {
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}
           viewport={VIEWPORT_ONCE}
-          transition={{ duration: 0.45, delay: 0.1 + i * 0.06, ease: "easeOut" }}
+          transition={{
+            duration: 0.45,
+            delay: 0.1 + i * 0.06,
+            ease: "easeOut",
+          }}
         />
       ))}
     </g>
@@ -138,12 +160,12 @@ function HubNode({ reduce }: { reduce: boolean }) {
         y={HUB.y + 3}
         textAnchor="middle"
         className="pointer-events-none fill-blue-600 text-[8px] font-mono font-bold dark:fill-blue-400"
-        animate={
+        animate={reduce ? {} : { y: [HUB.y + 3, HUB.y + 1, HUB.y + 3] }}
+        transition={
           reduce
-            ? {}
-            : { y: [HUB.y + 3, HUB.y + 1, HUB.y + 3] }
+            ? { duration: 0 }
+            : { duration: 3, repeat: Infinity, ease: "easeInOut" }
         }
-        transition={reduce ? { duration: 0 } : { duration: 3, repeat: Infinity, ease: "easeInOut" }}
       >
         MCP
       </motion.text>

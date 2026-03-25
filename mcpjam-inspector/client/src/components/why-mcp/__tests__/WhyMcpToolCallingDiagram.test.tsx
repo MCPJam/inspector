@@ -8,9 +8,7 @@ describe("WhyMcpToolCallingDiagram", () => {
     expect(
       screen.getByText(/What.*s the status of order #4521/i),
     ).toBeInTheDocument();
-    expect(
-      screen.getByText(/get_order_status\(order_id=/),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/get_order_status\(order_id=/)).toBeInTheDocument();
     expect(screen.getAllByText(/4521/).length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText(/shipped yesterday/i)).toBeInTheDocument();
     expect(

@@ -1,6 +1,13 @@
 import { memo } from "react";
 import { motion } from "framer-motion";
-import { Bot, Database, FileText, GitBranch, MessageSquare, ShieldCheck } from "lucide-react";
+import {
+  Bot,
+  Database,
+  FileText,
+  GitBranch,
+  MessageSquare,
+  ShieldCheck,
+} from "lucide-react";
 import { useDiagramMotion, VIEWPORT_ONCE } from "./diagram-motion";
 
 const EASE = [0.25, 0.1, 0.25, 1] as const;
@@ -13,7 +20,15 @@ const tools = [
 ] as const;
 
 /** Agent proposes — same weight as peripheral nodes in the problem diagram, slightly warmer. */
-function AgentNode({ reduce, bobDelay, enterDelay }: { reduce: boolean; bobDelay: number; enterDelay: number }) {
+function AgentNode({
+  reduce,
+  bobDelay,
+  enterDelay,
+}: {
+  reduce: boolean;
+  bobDelay: number;
+  enterDelay: number;
+}) {
   return (
     <motion.div
       className="flex flex-col items-center gap-1.5"
@@ -28,12 +43,19 @@ function AgentNode({ reduce, bobDelay, enterDelay }: { reduce: boolean; bobDelay
         transition={
           reduce
             ? undefined
-            : { duration: 4, delay: bobDelay, repeat: Infinity, ease: "easeInOut" }
+            : {
+                duration: 4,
+                delay: bobDelay,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }
         }
       >
         <Bot className="h-4 w-4 text-amber-700/50 dark:text-amber-400/55" />
       </motion.div>
-      <span className="text-[9px] font-medium text-amber-900/55 dark:text-amber-200/55">Agent</span>
+      <span className="text-[9px] font-medium text-amber-900/55 dark:text-amber-200/55">
+        Agent
+      </span>
     </motion.div>
   );
 }
@@ -66,12 +88,19 @@ function ConnectedTool({
         transition={
           reduce
             ? undefined
-            : { duration: 4, delay: bobDelay, repeat: Infinity, ease: "easeInOut" }
+            : {
+                duration: 4,
+                delay: bobDelay,
+                repeat: Infinity,
+                ease: "easeInOut",
+              }
         }
       >
         <Icon className="h-4 w-4 text-amber-800/70 dark:text-amber-300/75" />
       </motion.div>
-      <span className="text-[9px] font-medium text-amber-900/65 dark:text-amber-200/70">{label}</span>
+      <span className="text-[9px] font-medium text-amber-900/65 dark:text-amber-200/70">
+        {label}
+      </span>
     </motion.div>
   );
 }
@@ -143,7 +172,9 @@ export const WhyMcpGovernanceDiagram = memo(function WhyMcpGovernanceDiagram() {
                   : { scale: [1, 1.12, 1], opacity: [0.55, 0.18, 0.55] }
               }
               transition={
-                reduce ? undefined : { duration: 3, repeat: Infinity, ease: "easeInOut" }
+                reduce
+                  ? undefined
+                  : { duration: 3, repeat: Infinity, ease: "easeInOut" }
               }
             />
 
@@ -151,7 +182,9 @@ export const WhyMcpGovernanceDiagram = memo(function WhyMcpGovernanceDiagram() {
               className="absolute -inset-3 rounded-2xl bg-amber-500/10 blur-lg dark:bg-amber-500/15"
               animate={reduce ? undefined : { opacity: [0.18, 0.42, 0.18] }}
               transition={
-                reduce ? undefined : { duration: 3, repeat: Infinity, ease: "easeInOut" }
+                reduce
+                  ? undefined
+                  : { duration: 3, repeat: Infinity, ease: "easeInOut" }
               }
             />
 
