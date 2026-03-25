@@ -4,7 +4,7 @@
  */
 
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
-import { fromIni, fromTemporaryCredentials, fromNodeProviderChain } from "@aws-sdk/credential-providers";
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
@@ -256,31 +256,8 @@ export function createModelFromString(
     }
 
     case "bedrock": {
-      const bedrockProfile = process.env.BEDROCK_PROFILE;
-      const bedrockRoleArn = process.env.BEDROCK_ROLE_ARN;
-      const bedrockSourceProfile = process.env.BEDROCK_SOURCE_PROFILE;
-      const bedrockRegion = process.env.AWS_REGION;
-
-      let credentialProvider;
-      if (bedrockRoleArn) {
-        const sourceCredentials = fromIni({
-          profile: bedrockSourceProfile ?? bedrockProfile,
-        });
-        credentialProvider = fromTemporaryCredentials({
-          masterCredentials: sourceCredentials,
-          params: {
-            RoleArn: bedrockRoleArn,
-            RoleSessionName: "bedrock-session",
-          },
-        });
-      } else if (bedrockProfile || process.env.AWS_PROFILE) {
-        credentialProvider = fromIni({ profile: bedrockProfile || process.env.AWS_PROFILE });
-      } else {
-        credentialProvider = fromNodeProviderChain();
-      }
-
+      const credentialProvider = fromNodeProviderChain();
       const bedrock = createAmazonBedrock({
-        ...(bedrockRegion && { region: bedrockRegion }),
         credentialProvider,
       });
       return bedrock(model) as ProviderLanguageModel;
