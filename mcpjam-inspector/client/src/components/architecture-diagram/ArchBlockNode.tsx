@@ -51,9 +51,7 @@ export const ArchBlockNode = memo(
 
     // Hero strip needs enough vertical space; wide-but-short nodes use compact layout
     const hasLargeImage = Boolean(
-      data.imageSrc &&
-        isLarge &&
-        h >= ARCH_BLOCK_HERO_IMAGE_MIN_HEIGHT,
+      data.imageSrc && isLarge && h >= ARCH_BLOCK_HERO_IMAGE_MIN_HEIGHT,
     );
 
     return (

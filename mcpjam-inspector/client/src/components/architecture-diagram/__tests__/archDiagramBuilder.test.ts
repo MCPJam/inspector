@@ -1,9 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { buildArchNodesAndEdges } from "../archDiagramBuilder";
-import {
-  ARCH_ASSET_CODE_WIDTH,
-  ARCH_ASSET_CODE_HEIGHT,
-} from "../constants";
+import { ARCH_ASSET_CODE_WIDTH, ARCH_ASSET_CODE_HEIGHT } from "../constants";
 
 describe("buildArchNodesAndEdges", () => {
   it("maps asset defs to archAsset nodes with dimensions and code payload", () => {
