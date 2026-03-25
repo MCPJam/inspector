@@ -15,6 +15,13 @@ import {
   isLastWhatIsMcpStep,
   nextWhatIsMcpStepId,
 } from "@/components/what-is-mcp/what-is-mcp-guide-data";
+import { McpAppsDiagram } from "@/components/mcp-apps/McpAppsDiagram";
+import { McpAppsGuide } from "@/components/mcp-apps/McpAppsGuide";
+import { MCP_APPS_STEP_ORDER } from "@/components/mcp-apps/mcp-apps-data";
+import {
+  isLastMcpAppsStep,
+  nextMcpAppsStepId,
+} from "@/components/mcp-apps/mcp-apps-guide-data";
 import { useWalkthrough } from "@/hooks/use-walkthrough";
 import { WalkthroughShell } from "@/components/walkthrough/WalkthroughShell";
 
@@ -145,6 +152,73 @@ function WhatIsMcpWalkthrough({ onBack }: { onBack: () => void }) {
 }
 
 // ---------------------------------------------------------------------------
+// MCP Apps walkthrough
+// ---------------------------------------------------------------------------
+
+function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
+  const wt = useWalkthrough({
+    stepOrder: MCP_APPS_STEP_ORDER,
+    isLastStep: isLastMcpAppsStep,
+    nextStepId: nextMcpAppsStepId,
+  });
+
+  const handleDiagramStepClick = useCallback(
+    (diagramId: string) => {
+      const nodeToStep: Record<string, string> = {
+        "host-group": "host_client",
+        "ai-client": "host_client",
+        "iframe-view": "iframe_view",
+        "tool-code": "tool_definition",
+        "resource-code": "ui_resource",
+        "widget-file": "widget_component",
+      };
+      const edgeToStep: Record<string, string> = {
+        "e-step1": "tool_definition",
+        "e-step2": "ui_resource",
+        "e-step3": "widget_component",
+        "e-step4": "iframe_view",
+        "e-postmessage": "iframe_view",
+      };
+      const stepId = nodeToStep[diagramId] ?? edgeToStep[diagramId] ?? diagramId;
+      if (
+        MCP_APPS_STEP_ORDER.includes(
+          stepId as (typeof MCP_APPS_STEP_ORDER)[number],
+        )
+      ) {
+        wt.scrollToStep(stepId);
+      }
+    },
+    [wt.scrollToStep],
+  );
+
+  return (
+    <WalkthroughShell
+      title="MCP Apps"
+      badge="Extensions"
+      onBack={onBack}
+      continueLabel={wt.continueLabel}
+      onContinue={wt.handleContinue}
+      onReset={wt.handleReset}
+      guidePanel={
+        <McpAppsGuide
+          activeStepId={wt.activeStepId}
+          onActiveStepChange={wt.handleScrollStepChange}
+          scrollToStepId={wt.scrollTargetStepId}
+          scrollToStepToken={wt.scrollToStepToken}
+          onScrollComplete={wt.handleScrollComplete}
+        />
+      }
+      diagramPanel={
+        <McpAppsDiagram
+          currentStep={wt.currentStep}
+          onStepClick={handleDiagramStepClick}
+        />
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
 // LearningTab — routes to the selected concept
 // ---------------------------------------------------------------------------
 
@@ -153,6 +227,10 @@ export function LearningTab() {
 
   if (selectedConcept === "what-is-mcp") {
     return <WhatIsMcpWalkthrough onBack={() => setSelectedConcept(null)} />;
+  }
+
+  if (selectedConcept === "mcp-apps") {
+    return <McpAppsWalkthrough onBack={() => setSelectedConcept(null)} />;
   }
 
   if (selectedConcept === "mcp-lifecycle") {

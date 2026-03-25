@@ -4,6 +4,7 @@ export * from "./archDiagramBuilder";
 export * from "./autoLayout";
 export { ArchBlockNode } from "./ArchBlockNode";
 export { ArchGroupNode } from "./ArchGroupNode";
+export { ArchAssetNode } from "./ArchAssetNode";
 export { ArchConnectionEdge } from "./ArchConnectionEdge";
 export { ArchDiagramLayout } from "./ArchDiagramLayout";
 export { ArchDiagramContent } from "./ArchDiagramContent";

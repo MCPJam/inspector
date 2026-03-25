@@ -25,6 +25,22 @@ export interface ArchGroupNodeData extends Record<string, unknown> {
   height: number;
 }
 
+/** Data for a node that embeds a code snippet or image */
+export interface ArchAssetNodeData extends Record<string, unknown> {
+  label: string;
+  subtitle?: string;
+  icon?: LucideIcon;
+  color: string;
+  status: ArchNodeStatus;
+  width: number;
+  height: number;
+  assetType: "code" | "image";
+  code?: string;
+  codeLang?: string;
+  imageSrc?: string;
+  imageAlt?: string;
+}
+
 /** Edge data */
 export interface ArchEdgeData extends Record<string, unknown> {
   stepId?: string;
@@ -40,12 +56,17 @@ export interface ArchNodeDef {
   subtitle?: string;
   icon?: LucideIcon;
   color: string;
-  type: "block" | "group";
+  type: "block" | "group" | "asset";
   /** When omitted, auto-layout computes the position */
   position?: { x: number; y: number };
   parentId?: string;
   width?: number;
   height?: number;
+  assetType?: "code" | "image";
+  code?: string;
+  codeLang?: string;
+  imageSrc?: string;
+  imageAlt?: string;
 }
 
 /** Data-driven architecture edge definition */

@@ -10,12 +10,14 @@ import {
 import "@xyflow/react/dist/style.css";
 import { ArchBlockNode } from "./ArchBlockNode";
 import { ArchGroupNode } from "./ArchGroupNode";
+import { ArchAssetNode } from "./ArchAssetNode";
 import { ArchConnectionEdge } from "./ArchConnectionEdge";
 import type { StepHighlightMap } from "./types";
 
 const nodeTypes = {
   archBlock: ArchBlockNode,
   archGroup: ArchGroupNode,
+  archAsset: ArchAssetNode,
 };
 
 const edgeTypes = {
