@@ -384,6 +384,7 @@ describe("ServersTab shared detail modal", () => {
     isLoadingWorkspaces: false,
     onWorkspaceShared: vi.fn(),
     onLeaveWorkspace: vi.fn(),
+    isRegistryEnabled: true,
     onNavigateToRegistry: vi.fn(),
   };
 
@@ -982,6 +983,32 @@ describe("ServersTab shared detail modal", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides quick connect and browse registry when the registry flag is disabled", () => {
+    mockIsAuthenticated = true;
+    mockCatalogCards = [createLinearCatalogCard()];
+
+    render(
+      <ServersTab
+        {...defaultProps}
+        isRegistryEnabled={false}
+        onNavigateToRegistry={undefined}
+        workspaceServers={{}}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("servers-quick-connect-section"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("servers-tab-browse-registry-header-fallback"),
+    ).not.toBeInTheDocument();
+    expect(mockUseRegistryServers).toHaveBeenCalledWith(
+      expect.objectContaining({
+        enabled: false,
+      }),
+    );
+  });
+
   it("passes the shared workspace id to registry queries instead of the local workspace key", () => {
     mockIsAuthenticated = true;
     mockCatalogCards = [createLinearCatalogCard()];
@@ -1000,6 +1027,7 @@ describe("ServersTab shared detail modal", () => {
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
+        enabled: true,
         workspaceId: "ws_shared_123",
       }),
     );
@@ -1020,6 +1048,7 @@ describe("ServersTab shared detail modal", () => {
 
     expect(mockUseRegistryServers).toHaveBeenCalledWith(
       expect.objectContaining({
+        enabled: true,
         workspaceId: null,
       }),
     );

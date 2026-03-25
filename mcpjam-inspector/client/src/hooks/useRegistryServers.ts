@@ -360,12 +360,14 @@ function isMissingWorkspaceConnectionError(error: unknown): boolean {
  * Pattern follows useWorkspaceMutations / useServerMutations in useWorkspaces.ts.
  */
 export function useRegistryServers({
+  enabled = true,
   workspaceId,
   isAuthenticated,
   liveServers,
   onConnect,
   onDisconnect,
 }: {
+  enabled?: boolean;
   workspaceId: string | null;
   isAuthenticated: boolean;
   liveServers?: Record<string, { connectionStatus: string }>;
@@ -401,11 +403,13 @@ export function useRegistryServers({
   }, []);
 
   useEffect(() => {
+    if (!enabled) return;
     if (DEV_MOCK_REGISTRY) return;
     void loadCatalog();
-  }, [loadCatalog]);
+  }, [enabled, loadCatalog]);
 
   useEffect(() => {
+    if (!enabled) return;
     if (!HOSTED_MODE || !isAuthenticated || DEV_MOCK_REGISTRY) return;
     const guestToken = peekStoredGuestToken();
     if (!guestToken || mergeRanRef.current) return;
@@ -425,11 +429,11 @@ export function useRegistryServers({
         toast.error(message);
       }
     })();
-  }, [isAuthenticated, loadCatalog]);
+  }, [enabled, isAuthenticated, loadCatalog]);
 
   const connections = useQuery(
     "registryServers:getWorkspaceRegistryConnections" as any,
-    !DEV_MOCK_REGISTRY && isAuthenticated && workspaceId
+    enabled && !DEV_MOCK_REGISTRY && isAuthenticated && workspaceId
       ? ({ workspaceId } as any)
       : "skip",
   ) as RegistryServerConnection[] | undefined;
@@ -447,6 +451,7 @@ export function useRegistryServers({
   }, [connections]);
 
   const catalogCards = useMemo(() => {
+    if (!enabled) return [];
     if (rawCatalog === null) return [];
     const enriched = enrichCatalogCards(
       rawCatalog,
@@ -454,9 +459,10 @@ export function useRegistryServers({
       liveServers,
     );
     return sortCatalogCards(enriched);
-  }, [rawCatalog, connectedRegistryIds, liveServers]);
+  }, [enabled, rawCatalog, connectedRegistryIds, liveServers]);
 
   const categories = useMemo(() => {
+    if (!enabled) return [];
     const cats = new Set<string>();
     for (const card of catalogCards) {
       for (const v of card.variants) {
@@ -464,13 +470,14 @@ export function useRegistryServers({
       }
     }
     return Array.from(cats).sort();
-  }, [catalogCards]);
+  }, [enabled, catalogCards]);
 
   const [pendingServerIds, setPendingServerIds] = useState<Map<string, string>>(
     new Map(),
   );
 
   useEffect(() => {
+    if (!enabled) return;
     if (!isAuthenticated || !workspaceId || DEV_MOCK_REGISTRY) return;
     for (const [registryServerId, serverName] of pendingServerIds) {
       if (connectedRegistryIds.has(registryServerId)) {
@@ -500,18 +507,20 @@ export function useRegistryServers({
     pendingServerIds,
     isAuthenticated,
     workspaceId,
+    enabled,
     connectMutation,
     connectedRegistryIds,
   ]);
 
   const connectionsAreLoading =
+    enabled &&
     !DEV_MOCK_REGISTRY &&
     isAuthenticated &&
     !!workspaceId &&
     connections === undefined;
 
   const isLoading =
-    !DEV_MOCK_REGISTRY && (rawCatalog === null || connectionsAreLoading);
+    enabled && !DEV_MOCK_REGISTRY && (rawCatalog === null || connectionsAreLoading);
 
   const toggleStar = useCallback(
     async (registryCardKey: string) => {
@@ -635,8 +644,8 @@ export function useRegistryServers({
 
   /** Flat list of enriched servers for legacy callers / tests */
   const registryServers = useMemo(
-    () => catalogCards.flatMap((c) => c.variants),
-    [catalogCards],
+    () => (enabled ? catalogCards.flatMap((c) => c.variants) : []),
+    [enabled, catalogCards],
   );
 
   return {

@@ -375,6 +375,7 @@ interface ServersTabProps {
   isLoadingWorkspaces?: boolean;
   onWorkspaceShared?: (sharedWorkspaceId: string) => void;
   onLeaveWorkspace?: () => void;
+  isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
 }
 
@@ -389,6 +390,7 @@ export function ServersTab({
   activeWorkspaceId,
   isLoadingWorkspaces,
   onWorkspaceShared,
+  isRegistryEnabled = false,
   onNavigateToRegistry,
 }: ServersTabProps) {
   const posthog = usePostHog();
@@ -403,6 +405,7 @@ export function ServersTab({
     isLoading: isRegistryCatalogLoading,
     connect: connectRegistryServer,
   } = useRegistryServers({
+    enabled: isRegistryEnabled,
     workspaceId: registryWorkspaceId,
     isAuthenticated,
     liveServers: workspaceServers,
@@ -632,12 +635,15 @@ export function ServersTab({
   }, [totalServerCards]);
 
   const shouldShowQuickConnect =
-    isRegistryCatalogLoading ||
-    quickConnectCatalogAvailableCount > 0 ||
-    isPendingQuickConnectVisible;
+    isRegistryEnabled &&
+    (isRegistryCatalogLoading ||
+      quickConnectCatalogAvailableCount > 0 ||
+      isPendingQuickConnectVisible);
 
   const shouldShowBrowseRegistryOnly =
-    !shouldShowQuickConnect && quickConnectCatalogAvailableCount > 0;
+    isRegistryEnabled &&
+    !shouldShowQuickConnect &&
+    quickConnectCatalogAvailableCount > 0;
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;

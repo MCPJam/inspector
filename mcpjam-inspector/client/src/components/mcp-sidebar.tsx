@@ -138,6 +138,7 @@ const navigationSections: NavSection[] = [
         title: "Registry",
         url: "#registry",
         icon: LayoutGrid,
+        featureFlag: "registry-enabled",
       },
       {
         title: "Chat",
@@ -330,6 +331,7 @@ export function MCPSidebar({
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
+  const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -433,12 +435,14 @@ export function MCPSidebar({
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
+      "registry-enabled": registryEnabled === true,
     }),
     [
       ciEvalsEnabled,
       learningEnabled,
       sandboxesEnabled,
       clientConfigEnabled,
+      registryEnabled,
       isAuthenticated,
     ],
   );
