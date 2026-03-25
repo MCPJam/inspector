@@ -21,6 +21,7 @@ import {
   Edit,
   ExternalLink,
   Cable,
+  Rocket,
   Trash2,
   AlertCircle,
   Share2,
@@ -75,6 +76,8 @@ interface ServerConnectionCardProps {
   onRemove?: (serverName: string) => void;
   serverTunnelUrl?: string | null;
   hostedServerId?: string;
+  onOpenAppBuilder?: (serverName: string) => void;
+  isUiCapabilityResolved?: boolean;
   onOpenDetailModal?: (
     server: ServerWithName,
     defaultTab: ServerDetailTab,
@@ -89,6 +92,8 @@ export function ServerConnectionCard({
   onRemove,
   serverTunnelUrl,
   hostedServerId,
+  onOpenAppBuilder,
+  isUiCapabilityResolved = true,
   onOpenDetailModal,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
@@ -121,8 +126,11 @@ export function ServerConnectionCard({
   const isConnected = server.connectionStatus === "connected";
   const isTunnelEnabled = !HOSTED_MODE;
   const canManageTunnels = isAuthenticated;
-  const showTunnelActions = isConnected && isTunnelEnabled;
+  const showTunnelActions =
+    isConnected && isUiCapabilityResolved && isTunnelEnabled;
   const hasTunnel = Boolean(tunnelUrl);
+  const showAppBuilderAction =
+    isConnected && isUiCapabilityResolved && onOpenAppBuilder != null;
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
@@ -589,6 +597,15 @@ export function ServerConnectionCard({
               className="flex items-center gap-2"
               onClick={(e) => e.stopPropagation()}
             >
+              {showAppBuilderAction && (
+                <button
+                  onClick={() => onOpenAppBuilder(server.name)}
+                  className="inline-flex items-center gap-1.5 rounded-full border border-border/70 bg-muted/30 px-2 py-0.5 text-[11px] text-foreground transition-colors hover:bg-accent/60 cursor-pointer"
+                >
+                  <Rocket className="h-3 w-3" />
+                  <span>Test in app builder</span>
+                </button>
+              )}
               {canShareServer && (
                 <button
                   onClick={() => {

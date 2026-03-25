@@ -3,6 +3,7 @@ import { Card } from "./ui/card";
 import { Button } from "./ui/button";
 import { Plus, FileText } from "lucide-react";
 import { ServerWithName, type ServerUpdateResult } from "@/hooks/use-app-state";
+import { useUiAppServers } from "@/hooks/use-ui-app-servers";
 import { ServerConnectionCard } from "./connection/ServerConnectionCard";
 import { AddServerModal } from "./connection/AddServerModal";
 import {
@@ -86,6 +87,8 @@ function SortableServerCard({
   onDisconnect,
   onReconnect,
   onRemove,
+  onOpenAppBuilder,
+  isUiCapabilityResolved,
   hostedServerId,
   onOpenDetailModal,
 }: {
@@ -99,6 +102,8 @@ function SortableServerCard({
     opts?: { forceOAuthFlow?: boolean },
   ) => Promise<void>;
   onRemove: (name: string) => void;
+  onOpenAppBuilder?: (serverName: string) => void;
+  isUiCapabilityResolved?: boolean;
   hostedServerId?: string;
   onOpenDetailModal?: (
     server: ServerWithName,
@@ -127,6 +132,8 @@ function SortableServerCard({
         onDisconnect={onDisconnect}
         onReconnect={onReconnect}
         onRemove={onRemove}
+        onOpenAppBuilder={onOpenAppBuilder}
+        isUiCapabilityResolved={isUiCapabilityResolved}
         hostedServerId={hostedServerId}
         onOpenDetailModal={onOpenDetailModal}
       />
@@ -148,6 +155,7 @@ interface ServersTabProps {
     skipAutoConnect?: boolean,
   ) => Promise<ServerUpdateResult>;
   onRemove: (serverName: string) => void;
+  onOpenAppBuilder?: (serverName: string) => void;
   workspaces: Record<string, Workspace>;
   activeWorkspaceId: string;
   isLoadingWorkspaces?: boolean;
@@ -160,6 +168,7 @@ export function ServersTab({
   onReconnect,
   onUpdate,
   onRemove,
+  onOpenAppBuilder,
   workspaces,
   activeWorkspaceId,
   isLoadingWorkspaces,
@@ -185,6 +194,16 @@ export function ServersTab({
     sessionKey: 0,
     serverSnapshot: null,
   });
+  const { appServerNames, resolvedServerNames } =
+    useUiAppServers(workspaceServers);
+  const appServerNameSet = useMemo(
+    () => new Set(appServerNames),
+    [appServerNames],
+  );
+  const resolvedServerNameSet = useMemo(
+    () => new Set(resolvedServerNames),
+    [resolvedServerNames],
+  );
 
   // --- Self-contained local ordering (localStorage only, never synced to Convex) ---
   const allNames = useMemo(
@@ -510,6 +529,12 @@ export function ServersTab({
                       onDisconnect={onDisconnect}
                       onReconnect={onReconnect}
                       onRemove={onRemove}
+                      onOpenAppBuilder={
+                        appServerNameSet.has(name)
+                          ? onOpenAppBuilder
+                          : undefined
+                      }
+                      isUiCapabilityResolved={resolvedServerNameSet.has(name)}
                       hostedServerId={sharedWorkspaceServersRecord[name]?._id}
                       onOpenDetailModal={handleOpenDetailModal}
                     />
@@ -528,6 +553,14 @@ export function ServersTab({
                     onDisconnect={onDisconnect}
                     onReconnect={onReconnect}
                     onRemove={onRemove}
+                    onOpenAppBuilder={
+                      appServerNameSet.has(activeServer.name)
+                        ? onOpenAppBuilder
+                        : undefined
+                    }
+                    isUiCapabilityResolved={resolvedServerNameSet.has(
+                      activeServer.name,
+                    )}
                     hostedServerId={
                       sharedWorkspaceServersRecord[activeId!]?._id
                     }

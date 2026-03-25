@@ -833,7 +833,6 @@ export default function App() {
       <MCPSidebar
         onNavigate={handleNavigate}
         activeTab={activeTab}
-        servers={workspaceServers}
         workspaces={workspaces}
         activeWorkspaceId={activeWorkspaceId}
         onSwitchWorkspace={handleSidebarSwitchWorkspace}
@@ -883,6 +882,10 @@ export default function App() {
               onReconnect={handleReconnect}
               onUpdate={handleUpdate}
               onRemove={handleRemoveServer}
+              onOpenAppBuilder={(serverName) => {
+                setSelectedServer(serverName);
+                handleNavigate("app-builder");
+              }}
               workspaces={workspaces}
               activeWorkspaceId={activeWorkspaceId}
               isLoadingWorkspaces={isLoadingRemoteWorkspaces}

@@ -388,5 +388,49 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.queryByText("Copy ngrok URL")).not.toBeInTheDocument();
     });
+
+    it("hides app-builder and ngrok actions while UI capability is still resolving", () => {
+      const server = createServer({ connectionStatus: "connected" });
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onOpenAppBuilder={vi.fn()}
+          isUiCapabilityResolved={false}
+        />,
+      );
+
+      expect(screen.queryByText("Test in app builder")).not.toBeInTheDocument();
+      expect(screen.queryByText("Create ngrok tunnel")).not.toBeInTheDocument();
+    });
+
+    it("shows only ngrok when UI capability is resolved but no UI exists", () => {
+      const server = createServer({ connectionStatus: "connected" });
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          isUiCapabilityResolved={true}
+        />,
+      );
+
+      expect(screen.queryByText("Test in app builder")).not.toBeInTheDocument();
+      expect(screen.getByText("Create ngrok tunnel")).toBeInTheDocument();
+    });
+
+    it("shows app-builder and ngrok together once UI capability is resolved", () => {
+      const server = createServer({ connectionStatus: "connected" });
+      render(
+        <ServerConnectionCard
+          server={server}
+          {...defaultProps}
+          onOpenAppBuilder={vi.fn()}
+          isUiCapabilityResolved={true}
+        />,
+      );
+
+      expect(screen.getByText("Test in app builder")).toBeInTheDocument();
+      expect(screen.getByText("Create ngrok tunnel")).toBeInTheDocument();
+    });
   });
 });
