@@ -276,8 +276,8 @@ export function McpAppsGuide({
             MCP Apps
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
-            See how MCP servers deliver interactive HTML UIs into the host:
-            tool metadata,{" "}
+            See how MCP servers deliver interactive HTML UIs into the host: tool
+            metadata,{" "}
             <span className="font-medium text-foreground/80">ui://</span>{" "}
             resources, sandboxed iframes, and JSON-RPC over postMessage. Scroll
             to sync the diagram, or use{" "}
