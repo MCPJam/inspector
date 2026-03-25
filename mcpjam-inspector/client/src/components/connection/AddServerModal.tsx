@@ -19,6 +19,7 @@ import { useServerForm } from "./hooks/use-server-form";
 import { AuthenticationSection } from "./shared/AuthenticationSection";
 import { CustomHeadersSection } from "./shared/CustomHeadersSection";
 import { EnvVarsSection } from "./shared/EnvVarsSection";
+import { HostedConnectionTypeControl } from "./shared/HostedConnectionTypeControl";
 
 interface AddServerModalProps {
   isOpen: boolean;
@@ -37,6 +38,7 @@ export function AddServerModal({
 }: AddServerModalProps) {
   const posthog = usePostHog();
   const formState = useServerForm(undefined, { requireHttps });
+  const hostedUrlPlaceholder = "https://example.com/mcp";
 
   // Initialize form with initial data if provided
   useEffect(() => {
@@ -159,7 +161,29 @@ export function AddServerModal({
             <label className="block text-sm font-medium text-foreground">
               Connection Type
             </label>
-            {formState.type === "stdio" && !HOSTED_MODE ? (
+            {HOSTED_MODE ? (
+              formState.type === "stdio" ? (
+                <HostedConnectionTypeControl transportType="stdio">
+                  <Input
+                    value={formState.commandInput}
+                    onChange={(e) => formState.setCommandInput(e.target.value)}
+                    placeholder="npx -y @modelcontextprotocol/server-everything"
+                    required
+                    className="flex-1 rounded-l-none"
+                  />
+                </HostedConnectionTypeControl>
+              ) : (
+                <HostedConnectionTypeControl transportType="http">
+                  <Input
+                    value={formState.url}
+                    onChange={(e) => formState.setUrl(e.target.value)}
+                    placeholder={hostedUrlPlaceholder}
+                    required
+                    className="flex-1 rounded-l-none"
+                  />
+                </HostedConnectionTypeControl>
+              )
+            ) : formState.type === "stdio" ? (
               <div className="flex">
                 <Select
                   value={formState.type}
