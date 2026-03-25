@@ -248,7 +248,6 @@ function toConvexOAuthPayload(
   return payload;
 }
 
-
 async function loadCallbackDiscoveryState(
   provider: MCPOAuthProvider,
   serverUrl: string,

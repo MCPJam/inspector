@@ -41,8 +41,14 @@ function card(
 
 describe("compareQuickConnectCatalogCards", () => {
   it("orders App-capable cards before text-only when catalogSortOrder would disagree", () => {
-    const textFirst = card("Zebra", { catalogSortOrder: 0, clientTypes: ["text"] });
-    const appLater = card("Acme", { catalogSortOrder: 99, clientTypes: ["app"] });
+    const textFirst = card("Zebra", {
+      catalogSortOrder: 0,
+      clientTypes: ["text"],
+    });
+    const appLater = card("Acme", {
+      catalogSortOrder: 99,
+      clientTypes: ["app"],
+    });
     const sorted = [textFirst, appLater].sort(compareQuickConnectCatalogCards);
     expect(sorted[0].variants[0].displayName).toBe("Acme");
     expect(sorted[1].variants[0].displayName).toBe("Zebra");
@@ -50,7 +56,10 @@ describe("compareQuickConnectCatalogCards", () => {
 
   it("places Excalidraw before Asana before other App servers", () => {
     const asana = card("Asana", { catalogSortOrder: 0, clientTypes: ["app"] });
-    const notion = card("Notion", { catalogSortOrder: 0, clientTypes: ["app"] });
+    const notion = card("Notion", {
+      catalogSortOrder: 0,
+      clientTypes: ["app"],
+    });
     const excalidraw = card("Excalidraw", {
       catalogSortOrder: 99,
       clientTypes: ["app"],

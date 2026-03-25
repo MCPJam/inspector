@@ -38,11 +38,9 @@ async function readJsonBody(response: Response): Promise<unknown> {
   }
 }
 
-function throwFromFailedResponse(
-  response: Response,
-  body: unknown,
-): never {
-  const record = body && typeof body === "object" ? (body as Record<string, unknown>) : null;
+function throwFromFailedResponse(response: Response, body: unknown): never {
+  const record =
+    body && typeof body === "object" ? (body as Record<string, unknown>) : null;
   const code =
     typeof record?.code === "string"
       ? record.code
@@ -75,9 +73,7 @@ export async function fetchRegistryCatalog(
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(
-      category === undefined || category === null
-        ? {}
-        : { category },
+      category === undefined || category === null ? {} : { category },
     ),
   });
   const body = await readJsonBody(response);

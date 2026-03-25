@@ -273,10 +273,7 @@ function RegistryServerCard({
               {first.publisher}
             </span>
             {isPublisherVerified && (
-              <span
-                className="inline-flex shrink-0"
-                title="Verified publisher"
-              >
+              <span className="inline-flex shrink-0" title="Verified publisher">
                 <BadgeCheck
                   className="h-4 w-4 shrink-0 [&>path:first-of-type]:fill-orange-500 [&>path:first-of-type]:stroke-none [&>path:last-of-type]:stroke-white [&>path:last-of-type]:stroke-[2.5] [&>path:last-of-type]:[stroke-linecap:round] [&>path:last-of-type]:[stroke-linejoin:round]"
                   aria-label="Verified publisher"

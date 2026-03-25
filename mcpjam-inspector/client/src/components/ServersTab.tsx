@@ -180,67 +180,66 @@ function ServersQuickConnectMiniCard({
   const descLine =
     description.length > 140 ? `${description.slice(0, 137)}…` : description;
 
-  const connectControl =
-    card.hasDualType ? (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            size="sm"
-            variant="outline"
-            className="h-7 shrink-0 gap-1 border-orange-200/70 bg-orange-50/50 px-2.5 text-xs font-medium text-orange-950 shadow-none dark:border-orange-800/50 dark:bg-orange-950/35 dark:text-orange-100/95 hover:border-orange-300/90 hover:bg-orange-100/60 hover:text-orange-950 dark:hover:border-orange-700/60 dark:hover:bg-orange-900/45 dark:hover:text-orange-50"
+  const connectControl = card.hasDualType ? (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 shrink-0 gap-1 border-orange-200/70 bg-orange-50/50 px-2.5 text-xs font-medium text-orange-950 shadow-none dark:border-orange-800/50 dark:bg-orange-950/35 dark:text-orange-100/95 hover:border-orange-300/90 hover:bg-orange-100/60 hover:text-orange-950 dark:hover:border-orange-700/60 dark:hover:bg-orange-900/45 dark:hover:text-orange-50"
+          disabled={isPending}
+          aria-label={`Connect ${first.displayName}`}
+          data-testid="connect-dropdown-trigger"
+        >
+          {isPending ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span className="max-w-28 truncate">{pendingPhaseLabel}</span>
+            </>
+          ) : (
+            <>
+              Connect
+              <ChevronDown className="h-3 w-3 opacity-80 text-orange-800/80 dark:text-orange-200/90" />
+            </>
+          )}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {card.variants.map((v) => (
+          <DropdownMenuItem
+            key={v._id}
             disabled={isPending}
-            aria-label={`Connect ${first.displayName}`}
-            data-testid="connect-dropdown-trigger"
+            onClick={() => void onConnect(v)}
           >
-            {isPending ? (
-              <>
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span className="max-w-28 truncate">{pendingPhaseLabel}</span>
-              </>
+            {v.clientType === "app" ? (
+              <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-blue-400" />
             ) : (
-              <>
-                Connect
-                <ChevronDown className="h-3 w-3 opacity-80 text-orange-800/80 dark:text-orange-200/90" />
-              </>
+              <MessageSquareText className="h-3.5 w-3.5 mr-2 text-violet-400" />
             )}
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {card.variants.map((v) => (
-            <DropdownMenuItem
-              key={v._id}
-              disabled={isPending}
-              onClick={() => void onConnect(v)}
-            >
-              {v.clientType === "app" ? (
-                <MonitorSmartphone className="h-3.5 w-3.5 mr-2 text-blue-400" />
-              ) : (
-                <MessageSquareText className="h-3.5 w-3.5 mr-2 text-violet-400" />
-              )}
-              Connect as {v.clientType === "app" ? "App" : "Text"}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    ) : (
-      <Button
-        size="sm"
-        variant="outline"
-        className="h-7 shrink-0 border-orange-200/70 bg-orange-50/50 px-2.5 text-xs font-medium text-orange-950 shadow-none dark:border-orange-800/50 dark:bg-orange-950/35 dark:text-orange-100/95 hover:border-orange-300/90 hover:bg-orange-100/60 hover:text-orange-950 dark:hover:border-orange-700/60 dark:hover:bg-orange-900/45 dark:hover:text-orange-50"
-        disabled={isPending}
-        onClick={() => void onConnect(first)}
-        aria-label={`Connect ${first.displayName}`}
-      >
-        {isPending ? (
-          <>
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {pendingPhaseLabel}
-          </>
-        ) : (
-          "Connect"
-        )}
-      </Button>
-    );
+            Connect as {v.clientType === "app" ? "App" : "Text"}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  ) : (
+    <Button
+      size="sm"
+      variant="outline"
+      className="h-7 shrink-0 border-orange-200/70 bg-orange-50/50 px-2.5 text-xs font-medium text-orange-950 shadow-none dark:border-orange-800/50 dark:bg-orange-950/35 dark:text-orange-100/95 hover:border-orange-300/90 hover:bg-orange-100/60 hover:text-orange-950 dark:hover:border-orange-700/60 dark:hover:bg-orange-900/45 dark:hover:text-orange-50"
+      disabled={isPending}
+      onClick={() => void onConnect(first)}
+      aria-label={`Connect ${first.displayName}`}
+    >
+      {isPending ? (
+        <>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          {pendingPhaseLabel}
+        </>
+      ) : (
+        "Connect"
+      )}
+    </Button>
+  );
 
   return (
     <div
@@ -836,13 +835,10 @@ export function ServersTab({
     const hasMiniCardContent =
       isRegistryCatalogLoading || featuredQuickConnectCards.length > 0;
     const showMiniCardsRow =
-      hasMiniCardContent &&
-      (!minimized || quickConnectMiniCardsExpanded);
+      hasMiniCardContent && (!minimized || quickConnectMiniCardsExpanded);
     const featuredCount = featuredQuickConnectCards.length;
     const featuredCountForLabel =
-      isRegistryCatalogLoading && featuredCount === 0
-        ? null
-        : featuredCount;
+      isRegistryCatalogLoading && featuredCount === 0 ? null : featuredCount;
 
     return (
       <div

@@ -541,7 +541,9 @@ describe("RegistryTab", () => {
         expect(readPendingQuickConnect()).toBeNull();
       });
       expect(screen.queryByText("Connecting")).not.toBeInTheDocument();
-      expect(screen.getByRole("button", { name: "Connect" })).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Connect" }),
+      ).toBeInTheDocument();
     });
 
     it("clears registry pending when oauth-flow exceeds the stale window", async () => {

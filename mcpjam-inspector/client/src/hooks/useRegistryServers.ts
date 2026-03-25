@@ -278,7 +278,9 @@ export function getRegistryServerName(server: RegistryServer): string {
   return server.displayName;
 }
 
-function sortRawCatalogCards(cards: RegistryCatalogCard[]): RegistryCatalogCard[] {
+function sortRawCatalogCards(
+  cards: RegistryCatalogCard[],
+): RegistryCatalogCard[] {
   return [...cards].sort((a, b) => {
     if (a.isStarred !== b.isStarred) return a.isStarred ? -1 : 1;
     return a.catalogSortOrder - b.catalogSortOrder;
@@ -329,9 +331,10 @@ function enrichCatalogCards(
 }
 
 function buildMockCatalogCards(): RegistryCatalogCard[] {
-  const enriched: EnrichedRegistryServer[] = MOCK_REGISTRY_SERVERS.map(
-    (s) => ({ ...s, connectionStatus: "not_connected" as const }),
-  );
+  const enriched: EnrichedRegistryServer[] = MOCK_REGISTRY_SERVERS.map((s) => ({
+    ...s,
+    connectionStatus: "not_connected" as const,
+  }));
   const consolidated = consolidateServers(enriched);
   return consolidated.map((c, i) => ({
     registryCardKey: `mock:${c.variants[0].displayName}:${i}`,
@@ -348,9 +351,7 @@ function buildMockCatalogCards(): RegistryCatalogCard[] {
 function isMissingWorkspaceConnectionError(error: unknown): boolean {
   return (
     error instanceof Error &&
-    error.message.includes(
-      "Registry server is not connected to this workspace",
-    )
+    error.message.includes("Registry server is not connected to this workspace")
   );
 }
 
@@ -520,87 +521,81 @@ export function useRegistryServers({
     connections === undefined;
 
   const isLoading =
-    enabled && !DEV_MOCK_REGISTRY && (rawCatalog === null || connectionsAreLoading);
+    enabled &&
+    !DEV_MOCK_REGISTRY &&
+    (rawCatalog === null || connectionsAreLoading);
 
-  const toggleStar = useCallback(
-    async (registryCardKey: string) => {
-      if (DEV_MOCK_REGISTRY) return;
+  const toggleStar = useCallback(async (registryCardKey: string) => {
+    if (DEV_MOCK_REGISTRY) return;
 
-      const priorStarState: {
-        current: { isStarred: boolean; starCount: number } | null;
-      } = { current: null };
+    const priorStarState: {
+      current: { isStarred: boolean; starCount: number } | null;
+    } = { current: null };
 
+    setRawCatalog((prev) => {
+      if (!prev) return prev;
+      const card = prev.find((c) => c.registryCardKey === registryCardKey);
+      if (!card) return prev;
+      priorStarState.current = {
+        isStarred: card.isStarred,
+        starCount: card.starCount,
+      };
+      const nextStarred = !card.isStarred;
+      const nextCount = Math.max(0, card.starCount + (nextStarred ? 1 : -1));
+      return sortRawCatalogCards(
+        prev.map((c) =>
+          c.registryCardKey === registryCardKey
+            ? {
+                ...c,
+                isStarred: nextStarred,
+                starCount: nextCount,
+              }
+            : c,
+        ),
+      );
+    });
+
+    const snapshot = priorStarState.current;
+    if (!snapshot) return;
+
+    try {
+      const result = snapshot.isStarred
+        ? await unstarRegistryCard(registryCardKey)
+        : await starRegistryCard(registryCardKey);
       setRawCatalog((prev) => {
         if (!prev) return prev;
-        const card = prev.find((c) => c.registryCardKey === registryCardKey);
-        if (!card) return prev;
-        priorStarState.current = {
-          isStarred: card.isStarred,
-          starCount: card.starCount,
-        };
-        const nextStarred = !card.isStarred;
-        const nextCount = Math.max(
-          0,
-          card.starCount + (nextStarred ? 1 : -1),
-        );
         return sortRawCatalogCards(
           prev.map((c) =>
             c.registryCardKey === registryCardKey
               ? {
                   ...c,
-                  isStarred: nextStarred,
-                  starCount: nextCount,
+                  isStarred: result.isStarred,
+                  starCount: result.starCount,
                 }
               : c,
           ),
         );
       });
-
-      const snapshot = priorStarState.current;
-      if (!snapshot) return;
-
-      try {
-        const result = snapshot.isStarred
-          ? await unstarRegistryCard(registryCardKey)
-          : await starRegistryCard(registryCardKey);
-        setRawCatalog((prev) => {
-          if (!prev) return prev;
-          return sortRawCatalogCards(
-            prev.map((c) =>
-              c.registryCardKey === registryCardKey
-                ? {
-                    ...c,
-                    isStarred: result.isStarred,
-                    starCount: result.starCount,
-                  }
-                : c,
-            ),
-          );
-        });
-      } catch (error) {
-        setRawCatalog((prev) => {
-          if (!prev) return prev;
-          return sortRawCatalogCards(
-            prev.map((c) =>
-              c.registryCardKey === registryCardKey
-                ? {
-                    ...c,
-                    isStarred: snapshot.isStarred,
-                    starCount: snapshot.starCount,
-                  }
-                : c,
-            ),
-          );
-        });
-        const message =
-          error instanceof WebApiError
-            ? error.message
-            : "Could not update star";
-        toast.error(message);
-      }
-    },
-    [],
-  );
+    } catch (error) {
+      setRawCatalog((prev) => {
+        if (!prev) return prev;
+        return sortRawCatalogCards(
+          prev.map((c) =>
+            c.registryCardKey === registryCardKey
+              ? {
+                  ...c,
+                  isStarred: snapshot.isStarred,
+                  starCount: snapshot.starCount,
+                }
+              : c,
+          ),
+        );
+      });
+      const message =
+        error instanceof WebApiError ? error.message : "Could not update star";
+      toast.error(message);
+    }
+  }, []);
 
   async function connect(server: RegistryServer) {
     const serverName = getRegistryServerName(server);

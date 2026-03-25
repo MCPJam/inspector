@@ -659,7 +659,9 @@ describe("ServersTab shared detail modal", () => {
     expect(
       screen.getByTestId("servers-quick-connect-browse-registry"),
     ).toBeInTheDocument();
-    expect(screen.getByTestId("servers-quick-connect-mini-card")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-mini-card"),
+    ).toBeInTheDocument();
   });
 
   it("keeps quick connect visible after clicking a quick connect server", () => {
@@ -684,7 +686,9 @@ describe("ServersTab shared detail modal", () => {
     expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(
       1,
     );
-    expect(screen.getByRole("button", { name: "Connect Linear" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Connect Linear" }),
+    ).toBeDisabled();
   });
 
   it("keeps quick connect visible during oauth-flow after return", () => {
@@ -829,11 +833,15 @@ describe("ServersTab shared detail modal", () => {
         }}
       />,
     );
-    expect(screen.getByTestId("servers-quick-connect-section")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-section"),
+    ).toBeInTheDocument();
     expect(
       screen.getByTestId("servers-quick-connect-section"),
     ).not.toHaveAttribute("data-minimized", "true");
-    expect(screen.getByTestId("servers-quick-connect-mini-card")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-mini-card"),
+    ).toBeInTheDocument();
 
     rerender(
       <ServersTab
@@ -844,11 +852,15 @@ describe("ServersTab shared detail modal", () => {
         }}
       />,
     );
-    expect(screen.getByTestId("servers-quick-connect-section")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-section"),
+    ).toBeInTheDocument();
     expect(
       screen.getByTestId("servers-quick-connect-section"),
     ).not.toHaveAttribute("data-minimized", "true");
-    expect(screen.getByTestId("servers-quick-connect-mini-card")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-mini-card"),
+    ).toBeInTheDocument();
 
     rerender(
       <ServersTab
@@ -862,20 +874,24 @@ describe("ServersTab shared detail modal", () => {
     const minimized = screen.getByTestId("servers-quick-connect-section");
     expect(minimized).toBeInTheDocument();
     expect(minimized).toHaveAttribute("data-minimized", "true");
-    expect(screen.getByTestId("servers-quick-connect-mini-cards-toggle")).toHaveTextContent(
-      /Show \(1\)/,
-    );
+    expect(
+      screen.getByTestId("servers-quick-connect-mini-cards-toggle"),
+    ).toHaveTextContent(/Show \(1\)/);
     expect(
       screen.queryByTestId("servers-tab-browse-registry-header-fallback"),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("servers-quick-connect-mini-card"),
     ).not.toBeInTheDocument();
-    fireEvent.click(screen.getByTestId("servers-quick-connect-mini-cards-toggle"));
-    expect(screen.getByTestId("servers-quick-connect-mini-card")).toBeInTheDocument();
-    expect(screen.getByTestId("servers-quick-connect-mini-cards-toggle")).toHaveTextContent(
-      /Hide \(1\)/,
+    fireEvent.click(
+      screen.getByTestId("servers-quick-connect-mini-cards-toggle"),
     );
+    expect(
+      screen.getByTestId("servers-quick-connect-mini-card"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-mini-cards-toggle"),
+    ).toHaveTextContent(/Hide \(1\)/);
   });
 
   it("keeps quick connect visible with three or more servers while a quick connect is pending", () => {
@@ -918,7 +934,9 @@ describe("ServersTab shared detail modal", () => {
       />,
     );
 
-    expect(screen.getByTestId("servers-quick-connect-section")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-section"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByTestId("servers-tab-browse-registry-header-fallback"),
     ).not.toBeInTheDocument();
@@ -958,7 +976,9 @@ describe("ServersTab shared detail modal", () => {
     const { rerender } = render(
       <ServersTab {...defaultProps} workspaceServers={{}} />,
     );
-    expect(screen.getByTestId("servers-quick-connect-section")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("servers-quick-connect-section"),
+    ).toBeInTheDocument();
 
     const s1 = createServer({ name: "a" });
     const s2 = createServer({ name: "b" });

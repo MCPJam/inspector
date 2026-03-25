@@ -46,14 +46,12 @@ describe("sortRegistryVariantsAppBeforeText", () => {
       clientType: "app",
     });
 
-    expect(sortRegistryVariantsAppBeforeText([text, app]).map((v) => v._id)).toEqual([
-      "asana-app",
-      "asana-text",
-    ]);
-    expect(sortRegistryVariantsAppBeforeText([app, text]).map((v) => v._id)).toEqual([
-      "asana-app",
-      "asana-text",
-    ]);
+    expect(
+      sortRegistryVariantsAppBeforeText([text, app]).map((v) => v._id),
+    ).toEqual(["asana-app", "asana-text"]);
+    expect(
+      sortRegistryVariantsAppBeforeText([app, text]).map((v) => v._id),
+    ).toEqual(["asana-app", "asana-text"]);
   });
 });
 

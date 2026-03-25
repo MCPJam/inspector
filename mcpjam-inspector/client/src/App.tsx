@@ -655,10 +655,7 @@ export default function App() {
         )} plan. Upgrade the organization to continue.`,
       );
       applyNavigation("servers", { updateHash: true });
-    } else if (
-      activeTab === "registry" &&
-      registryEnabled !== true
-    ) {
+    } else if (activeTab === "registry" && registryEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
     } else if (
       activeTab === "learning" &&
