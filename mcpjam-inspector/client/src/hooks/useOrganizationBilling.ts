@@ -11,13 +11,19 @@ export type BillingFeatureName =
   | "auditLog"
   | "sso"
   | "prioritySupport";
+export type BillingLimitName =
+  | "maxMembers"
+  | "maxWorkspaces"
+  | "maxServersPerWorkspace"
+  | "maxSandboxesPerWorkspace"
+  | "maxEvalRunsPerMonth";
 
 export interface OrganizationEntitlements {
   plan: OrganizationPlan;
   billingInterval: BillingInterval | null;
   source: "persisted" | "simulation";
   features: Record<BillingFeatureName, boolean>;
-  limits: Record<string, number | null>;
+  limits: Record<BillingLimitName, number | null>;
 }
 
 export interface BillingRolloutState {
@@ -40,6 +46,21 @@ export interface OrganizationBillingStatus {
   stripePriceId: string | null;
 }
 
+export interface PlanCatalogEntry {
+  plan: OrganizationPlan;
+  displayName: string;
+  isSelfServe: boolean;
+  prices: Record<BillingInterval, number | null>;
+  features: Record<BillingFeatureName, boolean>;
+  limits: Record<BillingLimitName, number | null>;
+}
+
+export interface PlanCatalog {
+  catalogVersion: string;
+  currency: string;
+  plans: Record<OrganizationPlan, PlanCatalogEntry>;
+}
+
 export function isPaidPlan(plan: OrganizationPlan): boolean {
   return plan !== "free";
 }
@@ -57,6 +78,10 @@ export function useOrganizationBilling(organizationId: string | null) {
     "billing:getBillingRolloutState" as any,
     organizationId ? ({ organizationId } as any) : "skip",
   ) as BillingRolloutState | undefined;
+  const planCatalog = useQuery(
+    "billing:getPlanCatalog" as any,
+    organizationId ? ({ organizationId } as any) : "skip",
+  ) as PlanCatalog | undefined;
 
   const createCheckout = useAction(
     "billing:createOrganizationCheckoutSession" as any,
@@ -125,9 +150,11 @@ export function useOrganizationBilling(organizationId: string | null) {
     billingStatus,
     entitlements,
     rolloutState,
+    planCatalog,
     isLoadingBilling: !!organizationId && billingStatus === undefined,
     isLoadingEntitlements: !!organizationId && entitlements === undefined,
     isLoadingRollout: !!organizationId && rolloutState === undefined,
+    isLoadingPlanCatalog: !!organizationId && planCatalog === undefined,
     isStartingCheckout,
     isOpeningPortal,
     error,

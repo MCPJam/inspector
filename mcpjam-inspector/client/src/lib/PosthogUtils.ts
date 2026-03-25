@@ -12,6 +12,7 @@ export const options = {
     posthog.register({
       environment: import.meta.env.MODE, // "development" or "production"
       platform: detectPlatform(),
+      version: __APP_VERSION__,
     });
   },
 };

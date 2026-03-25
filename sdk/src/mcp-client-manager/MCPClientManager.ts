@@ -4,8 +4,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
-  getDefaultEnvironment,
   StdioClientTransport,
+  getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -90,6 +90,11 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import {
+  getDefaultClientCapabilities,
+  mergeClientCapabilities,
+  normalizeClientCapabilities,
+} from "./capabilities.js";
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -146,7 +151,10 @@ export class MCPClientManager {
     this.defaultClientVersion =
       options.defaultClientVersion ?? DEFAULT_CLIENT_VERSION;
     this.defaultClientName = options.defaultClientName;
-    this.defaultCapabilities = { ...(options.defaultCapabilities ?? {}) };
+    this.defaultCapabilities = mergeClientCapabilities(
+      getDefaultClientCapabilities(),
+      options.defaultCapabilities,
+    );
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
@@ -1254,20 +1262,11 @@ export class MCPClientManager {
   }
 
   private buildCapabilities(config: MCPServerConfig): ClientCapabilityOptions {
-    const capabilities: ClientCapabilityOptions = {
-      ...this.defaultCapabilities,
-      ...(config.capabilities ?? {}),
-    };
-    if (!capabilities.elicitation) {
-      capabilities.elicitation = {};
+    if (config.clientCapabilities) {
+      return normalizeClientCapabilities(config.clientCapabilities);
     }
-    // Advertise MCP Apps UI support (ext-apps spec)
-    (capabilities as Record<string, unknown>).extensions = {
-      "io.modelcontextprotocol/ui": {
-        mimeTypes: ["text/html;profile=mcp-app"],
-      },
-    };
-    return capabilities;
+
+    return mergeClientCapabilities(this.defaultCapabilities, config.capabilities);
   }
 
   private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {

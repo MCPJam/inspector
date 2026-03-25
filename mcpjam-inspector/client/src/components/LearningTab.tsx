@@ -1,126 +1,331 @@
-import { useState, useMemo, useCallback, useRef } from "react";
-import { ArrowLeft } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import {
-  ResizablePanelGroup,
-  ResizablePanel,
-  ResizableHandle,
-} from "@/components/ui/resizable";
+import { useState, useMemo, useCallback } from "react";
 import { McpLifecycleDiagram } from "@/components/lifecycle/McpLifecycleDiagram";
 import { McpLifecycleGuide } from "@/components/lifecycle/McpLifecycleGuide";
 import { buildMcpLifecycleScenario20250326 } from "@/components/lifecycle/mcp-lifecycle-data";
-import { HTTP_STEP_ORDER } from "@/components/lifecycle/mcp-lifecycle-guide-data";
+import {
+  HTTP_STEP_ORDER,
+  isLastHttpLifecycleStep,
+  nextHttpLifecycleStepId,
+} from "@/components/lifecycle/mcp-lifecycle-guide-data";
 import { LearningLandingPage } from "@/components/LearningLandingPage";
+import { WhatIsMcpDiagram } from "@/components/what-is-mcp/WhatIsMcpDiagram";
+import { WhatIsMcpGuide } from "@/components/what-is-mcp/WhatIsMcpGuide";
+import { WHAT_IS_MCP_STEP_ORDER } from "@/components/what-is-mcp/what-is-mcp-data";
+import {
+  isLastWhatIsMcpStep,
+  nextWhatIsMcpStepId,
+} from "@/components/what-is-mcp/what-is-mcp-guide-data";
+import { McpAppsDiagram } from "@/components/mcp-apps/McpAppsDiagram";
+import { McpAppsGuide } from "@/components/mcp-apps/McpAppsGuide";
+import { MCP_APPS_STEP_ORDER } from "@/components/mcp-apps/mcp-apps-data";
+import {
+  isLastMcpAppsStep,
+  nextMcpAppsStepId,
+} from "@/components/mcp-apps/mcp-apps-guide-data";
+import { AppsSdkDiagram } from "@/components/apps-sdk/AppsSdkDiagram";
+import { AppsSdkGuide } from "@/components/apps-sdk/AppsSdkGuide";
+import { APPS_SDK_STEP_ORDER } from "@/components/apps-sdk/apps-sdk-data";
+import {
+  isLastAppsSdkStep,
+  nextAppsSdkStepId,
+} from "@/components/apps-sdk/apps-sdk-guide-data";
+import { useWalkthrough } from "@/hooks/use-walkthrough";
+import { WalkthroughShell } from "@/components/walkthrough/WalkthroughShell";
+import { ArticleShell } from "@/components/learning-article/ArticleShell";
+import { WhyMcpArticle } from "@/components/why-mcp/WhyMcpArticle";
 
 /**
- * Sentinel value used as `currentStep` when the walkthrough is at step 0.
- * It won't match any real action ID, which makes action[0] get "current" status
- * (the status logic marks actionIndex === currentIndex + 1 as "current",
- * and findIndex returns -1 for the sentinel → currentIndex = -1 → action[0] is current).
+ * Sentinel value used as `currentStep` when the lifecycle walkthrough is at step 0.
+ * It won't match any real action ID, which makes action[0] get "current" status.
  */
 const WALKTHROUGH_START_SENTINEL = "__walkthrough_start__";
 
-function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
-  // Active step — which section is currently visible in the scroll container
-  const [activeStepId, setActiveStepId] = useState<string | undefined>(
-    undefined,
-  );
-  // Target step to scroll to — set when user clicks a diagram edge
-  const [scrollTargetStepId, setScrollTargetStepId] = useState<
-    string | undefined
-  >(undefined);
-  // Guard to prevent feedback loops during programmatic scroll
-  const isProgrammaticScrollRef = useRef(false);
+// ---------------------------------------------------------------------------
+// MCP Lifecycle Walkthrough
+// ---------------------------------------------------------------------------
 
+function McpLifecycleWalkthrough({ onBack }: { onBack: () => void }) {
   const scenario = useMemo(
     () => buildMcpLifecycleScenario20250326({ transport: "http" }),
     [],
   );
 
-  // Derive currentStep for the diagram:
-  // - active step gets "current" (blue) status
-  // - steps before it get "complete" (green) status
-  // - steps after get "pending" (gray) status
-  const currentStep = useMemo(() => {
-    if (!activeStepId) return undefined;
-    const idx = HTTP_STEP_ORDER.indexOf(
-      activeStepId as (typeof HTTP_STEP_ORDER)[number],
-    );
-    if (idx < 0) return undefined;
-    if (idx === 0) return WALKTHROUGH_START_SENTINEL;
-    return scenario.actions[idx - 1].id;
-  }, [activeStepId, scenario.actions]);
-
-  // Scroll → Diagram: IntersectionObserver detected a new section in view
-  const handleScrollStepChange = useCallback((stepId: string) => {
-    if (isProgrammaticScrollRef.current) return;
-    setActiveStepId(stepId);
-  }, []);
-
-  // Diagram → Scroll: user clicked an edge label
-  const handleDiagramStepClick = useCallback((stepId: string) => {
-    isProgrammaticScrollRef.current = true;
-    setActiveStepId(stepId);
-    setScrollTargetStepId(stepId);
-  }, []);
-
-  // Called after programmatic scroll animation completes
-  const handleScrollComplete = useCallback(() => {
-    isProgrammaticScrollRef.current = false;
-    setScrollTargetStepId(undefined);
-  }, []);
+  const wt = useWalkthrough({
+    stepOrder: HTTP_STEP_ORDER,
+    isLastStep: isLastHttpLifecycleStep,
+    nextStepId: nextHttpLifecycleStepId,
+    mapToDiagramStep: useCallback(
+      (activeStepId: string | undefined) => {
+        if (!activeStepId) return undefined;
+        const idx = HTTP_STEP_ORDER.indexOf(
+          activeStepId as (typeof HTTP_STEP_ORDER)[number],
+        );
+        if (idx < 0) return undefined;
+        if (idx === 0) return WALKTHROUGH_START_SENTINEL;
+        return scenario.actions[idx - 1].id;
+      },
+      [scenario.actions],
+    ),
+  });
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Minimal header bar */}
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={onBack}
-            title="Back to Learning"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" />
-          </Button>
-          <h2 className="text-sm font-semibold">MCP Protocol Lifecycle</h2>
-          <Badge variant="secondary" className="text-[10px] h-4 px-1.5">
-            HTTP
-          </Badge>
-        </div>
-      </div>
-
-      {/* Split view: Content (left) + Diagram (right) */}
-      <div className="flex-1 min-h-0">
-        <ResizablePanelGroup direction="horizontal" className="h-full">
-          <ResizablePanel defaultSize={50} minSize={30}>
-            <McpLifecycleGuide
-              activeStepId={activeStepId}
-              onActiveStepChange={handleScrollStepChange}
-              scrollToStepId={scrollTargetStepId}
-              onScrollComplete={handleScrollComplete}
-            />
-          </ResizablePanel>
-
-          <ResizableHandle withHandle />
-
-          <ResizablePanel defaultSize={50} minSize={20} maxSize={70}>
-            <McpLifecycleDiagram
-              transport="http"
-              currentStep={currentStep}
-              focusedStep={activeStepId}
-              onStepClick={handleDiagramStepClick}
-            />
-          </ResizablePanel>
-        </ResizablePanelGroup>
-      </div>
-    </div>
+    <WalkthroughShell
+      title="MCP Protocol Lifecycle"
+      badge="HTTP"
+      onBack={onBack}
+      continueLabel={wt.continueLabel}
+      onContinue={wt.handleContinue}
+      onReset={wt.handleReset}
+      guidePanel={
+        <McpLifecycleGuide
+          activeStepId={wt.activeStepId}
+          onActiveStepChange={wt.handleScrollStepChange}
+          scrollToStepId={wt.scrollTargetStepId}
+          scrollToStepToken={wt.scrollToStepToken}
+          onScrollComplete={wt.handleScrollComplete}
+        />
+      }
+      diagramPanel={
+        <McpLifecycleDiagram
+          transport="http"
+          currentStep={wt.currentStep}
+          focusedStep={wt.activeStepId}
+          onStepClick={wt.scrollToStep}
+        />
+      }
+    />
   );
 }
 
+// ---------------------------------------------------------------------------
+// "What is MCP?" Walkthrough
+// ---------------------------------------------------------------------------
+
+function WhatIsMcpWalkthrough({ onBack }: { onBack: () => void }) {
+  const wt = useWalkthrough({
+    stepOrder: WHAT_IS_MCP_STEP_ORDER,
+    isLastStep: isLastWhatIsMcpStep,
+    nextStepId: nextWhatIsMcpStepId,
+  });
+
+  const handleDiagramStepClick = useCallback(
+    (nodeId: string) => {
+      const nodeToStep: Record<string, string> = {
+        "host-group": "host_app",
+        "llm-app": "host_app",
+        "mcp-client": "mcp_client",
+        "server-tools": "mcp_servers",
+        "server-resources": "mcp_servers",
+        "server-prompts": "mcp_servers",
+        tools: "tools",
+        resources: "resources",
+        prompts: "prompts",
+      };
+      const stepId = nodeToStep[nodeId] ?? nodeId;
+      if (
+        WHAT_IS_MCP_STEP_ORDER.includes(
+          stepId as (typeof WHAT_IS_MCP_STEP_ORDER)[number],
+        )
+      ) {
+        wt.scrollToStep(stepId);
+      }
+    },
+    [wt.scrollToStep],
+  );
+
+  return (
+    <WalkthroughShell
+      title="What is MCP?"
+      badge="Fundamentals"
+      onBack={onBack}
+      continueLabel={wt.continueLabel}
+      onContinue={wt.handleContinue}
+      onReset={wt.handleReset}
+      guidePanel={
+        <WhatIsMcpGuide
+          activeStepId={wt.activeStepId}
+          onActiveStepChange={wt.handleScrollStepChange}
+          scrollToStepId={wt.scrollTargetStepId}
+          scrollToStepToken={wt.scrollToStepToken}
+          onScrollComplete={wt.handleScrollComplete}
+        />
+      }
+      diagramPanel={
+        <WhatIsMcpDiagram
+          currentStep={wt.currentStep}
+          onStepClick={handleDiagramStepClick}
+        />
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MCP Apps walkthrough
+// ---------------------------------------------------------------------------
+
+function McpAppsWalkthrough({ onBack }: { onBack: () => void }) {
+  const wt = useWalkthrough({
+    stepOrder: MCP_APPS_STEP_ORDER,
+    isLastStep: isLastMcpAppsStep,
+    nextStepId: nextMcpAppsStepId,
+  });
+
+  const handleDiagramStepClick = useCallback(
+    (diagramId: string) => {
+      const nodeToStep: Record<string, string> = {
+        "host-group": "host_client",
+        "ai-client": "host_client",
+        "iframe-view": "iframe_view",
+        "tool-code": "tool_definition",
+        "resource-code": "ui_resource",
+        "widget-file": "widget_component",
+      };
+      const edgeToStep: Record<string, string> = {
+        "e-step1": "tool_definition",
+        "e-step2": "ui_resource",
+        "e-step3": "widget_component",
+        "e-step4": "iframe_view",
+        "e-postmessage": "iframe_view",
+      };
+      const stepId =
+        nodeToStep[diagramId] ?? edgeToStep[diagramId] ?? diagramId;
+      if (
+        MCP_APPS_STEP_ORDER.includes(
+          stepId as (typeof MCP_APPS_STEP_ORDER)[number],
+        )
+      ) {
+        wt.scrollToStep(stepId);
+      }
+    },
+    [wt.scrollToStep],
+  );
+
+  return (
+    <WalkthroughShell
+      title="MCP Apps"
+      badge="Extensions"
+      onBack={onBack}
+      continueLabel={wt.continueLabel}
+      onContinue={wt.handleContinue}
+      onReset={wt.handleReset}
+      guidePanel={
+        <McpAppsGuide
+          activeStepId={wt.activeStepId}
+          onActiveStepChange={wt.handleScrollStepChange}
+          scrollToStepId={wt.scrollTargetStepId}
+          scrollToStepToken={wt.scrollToStepToken}
+          onScrollComplete={wt.handleScrollComplete}
+        />
+      }
+      diagramPanel={
+        <McpAppsDiagram
+          currentStep={wt.currentStep}
+          onStepClick={handleDiagramStepClick}
+        />
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Apps SDK walkthrough
+// ---------------------------------------------------------------------------
+
+function AppsSdkWalkthrough({ onBack }: { onBack: () => void }) {
+  const wt = useWalkthrough({
+    stepOrder: APPS_SDK_STEP_ORDER,
+    isLastStep: isLastAppsSdkStep,
+    nextStepId: nextAppsSdkStepId,
+  });
+
+  const handleDiagramStepClick = useCallback(
+    (diagramId: string) => {
+      const nodeToStep: Record<string, string> = {
+        "host-group": "host_model",
+        "ai-model": "host_model",
+        "iframe-view": "iframe_view",
+        "tool-code": "tool_definition",
+        "result-code": "tool_result",
+        "widget-file": "widget_component",
+      };
+      const edgeToStep: Record<string, string> = {
+        "e-step1": "tool_definition",
+        "e-step2": "tool_result",
+        "e-step3": "widget_component",
+        "e-step4": "iframe_view",
+        "e-postmessage": "iframe_view",
+      };
+      const stepId =
+        nodeToStep[diagramId] ?? edgeToStep[diagramId] ?? diagramId;
+      if (
+        APPS_SDK_STEP_ORDER.includes(
+          stepId as (typeof APPS_SDK_STEP_ORDER)[number],
+        )
+      ) {
+        wt.scrollToStep(stepId);
+      }
+    },
+    [wt.scrollToStep],
+  );
+
+  return (
+    <WalkthroughShell
+      title="OpenAI Apps SDK"
+      badge="Extensions"
+      onBack={onBack}
+      continueLabel={wt.continueLabel}
+      onContinue={wt.handleContinue}
+      onReset={wt.handleReset}
+      guidePanel={
+        <AppsSdkGuide
+          activeStepId={wt.activeStepId}
+          onActiveStepChange={wt.handleScrollStepChange}
+          scrollToStepId={wt.scrollTargetStepId}
+          scrollToStepToken={wt.scrollToStepToken}
+          onScrollComplete={wt.handleScrollComplete}
+        />
+      }
+      diagramPanel={
+        <AppsSdkDiagram
+          currentStep={wt.currentStep}
+          onStepClick={handleDiagramStepClick}
+        />
+      }
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LearningTab — routes to the selected concept
+// ---------------------------------------------------------------------------
+
 export function LearningTab() {
   const [selectedConcept, setSelectedConcept] = useState<string | null>(null);
+
+  if (selectedConcept === "why-mcp") {
+    return (
+      <ArticleShell
+        title="Why MCP?"
+        badge="Concepts"
+        onBack={() => setSelectedConcept(null)}
+      >
+        <WhyMcpArticle />
+      </ArticleShell>
+    );
+  }
+
+  if (selectedConcept === "what-is-mcp") {
+    return <WhatIsMcpWalkthrough onBack={() => setSelectedConcept(null)} />;
+  }
+
+  if (selectedConcept === "mcp-apps") {
+    return <McpAppsWalkthrough onBack={() => setSelectedConcept(null)} />;
+  }
+
+  if (selectedConcept === "apps-sdk") {
+    return <AppsSdkWalkthrough onBack={() => setSelectedConcept(null)} />;
+  }
 
   if (selectedConcept === "mcp-lifecycle") {
     return <McpLifecycleWalkthrough onBack={() => setSelectedConcept(null)} />;

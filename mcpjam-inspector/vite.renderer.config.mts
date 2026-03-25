@@ -24,11 +24,15 @@ export default defineConfig(({ mode }) => {
     root: "./client",
     resolve: {
       alias: {
+        "@repo/assets": resolve(__dirname, "./client/src/assets"),
         "@/shared": resolve(__dirname, "./shared"),
         "@": resolve(__dirname, "./client/src"),
       },
     },
     server: {
+      fs: {
+        allow: [resolve(__dirname, "./client/src/assets")],
+      },
       proxy: {
         "/api": {
           target: "http://localhost:6274",

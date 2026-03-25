@@ -12,11 +12,11 @@ import { FileCode, Play, RefreshCw, ChevronRight, Eye } from "lucide-react";
 import { EmptyState } from "./ui/empty-state";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
-import {
+import type {
+  MCPReadResourceResult,
+  MCPResourceTemplate,
   MCPServerConfig,
-  type MCPResourceTemplate,
-  type MCPReadResourceResult,
-} from "@mcpjam/sdk";
+} from "@mcpjam/sdk/browser";
 import { listResourceTemplates as listResourceTemplatesApi } from "@/lib/apis/mcp-resource-templates-api";
 import { readResource as readResourceTemplateApi } from "@/lib/apis/mcp-resources-api";
 import { LoggerView } from "./logger-view";

@@ -47,6 +47,7 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
+import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
@@ -55,6 +56,8 @@ interface NavItem {
   title: string;
   url: string;
   icon: React.ComponentType;
+  disabled?: boolean;
+  disabledTooltip?: string;
   /** Only show this item when the named feature flag is enabled */
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
@@ -147,6 +150,12 @@ const navigationSections: NavSection[] = [
         icon: Layers,
       },
       {
+        title: "Client Config",
+        url: "#client-config",
+        icon: Settings,
+        featureFlag: "client-config-enabled",
+      },
+      {
         title: "Generate Evals",
         url: "#evals",
         icon: FlaskConical,
@@ -230,18 +239,40 @@ const navigationSections: NavSection[] = [
   },
 ];
 
-const hostedNavigationSections = navigationSections
-  .map((section) => ({
-    ...section,
-    items: section.items.filter((item) =>
-      isHostedSidebarTabAllowed(
-        normalizeHostedHashTab(
+export function getHostedNavigationSections(
+  sections: NavSection[],
+): NavSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.flatMap((item) => {
+        const normalizedTab = normalizeHostedHashTab(
           item.url.startsWith("#") ? item.url.slice(1) : item.url,
-        ),
-      ),
-    ),
-  }))
-  .filter((section) => section.items.length > 0);
+        );
+
+        if (isHostedSidebarTabAllowed(normalizedTab)) {
+          return [item];
+        }
+
+        if (normalizedTab === "skills") {
+          return [
+            {
+              ...item,
+              disabled: true,
+              disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
+              hiddenByFlag: undefined,
+            },
+          ];
+        }
+
+        return [];
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+}
+
+const hostedNavigationSections =
+  getHostedNavigationSections(navigationSections);
 
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
@@ -281,6 +312,7 @@ export function MCPSidebar({
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
+  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -377,8 +409,15 @@ export function MCPSidebar({
       "ci-evals-enabled": !!ciEvalsEnabled && isAuthenticated,
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
+      "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
     }),
-    [ciEvalsEnabled, learningEnabled, sandboxesEnabled, isAuthenticated],
+    [
+      ciEvalsEnabled,
+      learningEnabled,
+      sandboxesEnabled,
+      clientConfigEnabled,
+      isAuthenticated,
+    ],
   );
   const visibleNavigationSections = filterByBillingEntitlements(
     filterByFeatureFlags(

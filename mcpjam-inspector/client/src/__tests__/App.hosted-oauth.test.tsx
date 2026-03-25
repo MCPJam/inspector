@@ -11,52 +11,67 @@ import {
   writeSandboxSession,
 } from "../lib/sandbox-session";
 
-const { mockHandleOAuthCallback, mockPosthogCapture, mockUseAppState } =
-  vi.hoisted(() => ({
+const {
+  createAppStateMock,
+  mockHandleOAuthCallback,
+  mockOrganizationsTab,
+  mockPosthogCapture,
+  mockUseAppState,
+  mockUseQuery,
+} = vi.hoisted(() => {
+  const createAppStateMock = () => ({
+    appState: {
+      servers: {},
+      selectedServer: undefined,
+      selectedMultipleServers: [],
+    },
+    isLoading: false,
+    isLoadingRemoteWorkspaces: false,
+    workspaceServers: {},
+    connectedOrConnectingServerConfigs: {},
+    selectedMCPConfig: null,
+    handleConnect: vi.fn(),
+    handleDisconnect: vi.fn(),
+    handleReconnect: vi.fn(),
+    handleUpdate: vi.fn().mockResolvedValue({
+      ok: true,
+      serverName: "test-server",
+    }),
+    handleRemoveServer: vi.fn(),
+    setSelectedServer: vi.fn(),
+    toggleServerSelection: vi.fn(),
+    setSelectedMultipleServersToAllServers: vi.fn(),
+    workspaces: {},
+    activeWorkspaceId: "ws_local",
+    handleSwitchWorkspace: vi.fn(),
+    handleCreateWorkspace: vi.fn(),
+    handleUpdateWorkspace: vi.fn(),
+    handleDeleteWorkspace: vi.fn(),
+    handleLeaveWorkspace: vi.fn(),
+    handleWorkspaceShared: vi.fn(),
+    saveServerConfigWithoutConnecting: vi.fn(),
+    handleConnectWithTokensFromOAuthFlow: vi.fn(),
+    handleRefreshTokensFromOAuthFlow: vi.fn(),
+    activeOrganizationId: undefined,
+    setActiveOrganizationId: vi.fn(),
+  });
+
+  return {
+    createAppStateMock,
     mockHandleOAuthCallback: vi.fn(),
+    mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
-    mockUseAppState: vi.fn(() => ({
-      appState: {
-        servers: {},
-        selectedServer: undefined,
-        selectedMultipleServers: [],
-      },
-      isLoading: false,
-      isLoadingRemoteWorkspaces: false,
-      workspaceServers: {},
-      connectedOrConnectingServerConfigs: {},
-      selectedMCPConfig: null,
-      handleConnect: vi.fn(),
-      handleDisconnect: vi.fn(),
-      handleReconnect: vi.fn(),
-      handleUpdate: vi.fn().mockResolvedValue({
-        ok: true,
-        serverName: "test-server",
-      }),
-      handleRemoveServer: vi.fn(),
-      setSelectedServer: vi.fn(),
-      toggleServerSelection: vi.fn(),
-      setSelectedMultipleServersToAllServers: vi.fn(),
-      workspaces: {},
-      activeWorkspaceId: "ws_local",
-      handleSwitchWorkspace: vi.fn(),
-      handleCreateWorkspace: vi.fn(),
-      handleUpdateWorkspace: vi.fn(),
-      handleDeleteWorkspace: vi.fn(),
-      handleLeaveWorkspace: vi.fn(),
-      handleWorkspaceShared: vi.fn(),
-      saveServerConfigWithoutConnecting: vi.fn(),
-      handleConnectWithTokensFromOAuthFlow: vi.fn(),
-      handleRefreshTokensFromOAuthFlow: vi.fn(),
-    })),
-  }));
+    mockUseAppState: vi.fn(createAppStateMock),
+    mockUseQuery: vi.fn(() => undefined),
+  };
+});
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
-  useQuery: () => undefined,
+  useQuery: mockUseQuery,
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -161,6 +176,9 @@ vi.mock("../components/SandboxesTab", () => ({
 vi.mock("../components/SettingsTab", () => ({
   SettingsTab: () => <div />,
 }));
+vi.mock("../components/client-config/WorkspaceClientConfigSync", () => ({
+  WorkspaceClientConfigSync: () => null,
+}));
 vi.mock("../components/TracingTab", () => ({
   TracingTab: () => <div />,
 }));
@@ -177,7 +195,7 @@ vi.mock("../components/ProfileTab", () => ({
   ProfileTab: () => <div />,
 }));
 vi.mock("../components/OrganizationsTab", () => ({
-  OrganizationsTab: () => <div />,
+  OrganizationsTab: (props: unknown) => mockOrganizationsTab(props),
 }));
 vi.mock("../components/SupportTab", () => ({
   SupportTab: () => <div />,
@@ -243,7 +261,13 @@ describe("App hosted OAuth callback handling", () => {
     sessionStorage.clear();
     vi.stubGlobal("__APP_VERSION__", "test");
     window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
+    mockUseAppState.mockReset();
+    mockUseAppState.mockImplementation(createAppStateMock);
+    mockUseQuery.mockReset();
+    mockUseQuery.mockImplementation(() => undefined);
     mockHandleOAuthCallback.mockReset();
+    mockOrganizationsTab.mockReset();
+    mockOrganizationsTab.mockImplementation(() => <div />);
     mockPosthogCapture.mockReset();
     mockHandleOAuthCallback.mockImplementation(
       () => new Promise<never>(() => {}),
@@ -299,6 +323,132 @@ describe("App hosted OAuth callback handling", () => {
     ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(mockHandleOAuthCallback).toHaveBeenCalledWith("oauth-code");
+    });
+  });
+
+  it("skips billing queries while a persisted org id is still being validated", () => {
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "stale-org",
+    }));
+
+    render(<App />);
+
+    const entitlementsCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationEntitlements",
+    );
+    const rolloutCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getBillingRolloutState",
+    );
+
+    expect(entitlementsCall?.[1]).toBe("skip");
+    expect(rolloutCall?.[1]).toBe("skip");
+  });
+
+  it("skips billing queries while a workspace org id is still unvalidated", () => {
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      workspaces: {
+        ws_local: {
+          id: "ws_local",
+          name: "Shared workspace",
+          organizationId: "workspace-org",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+
+    render(<App />);
+
+    const entitlementsCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationEntitlements",
+    );
+    const rolloutCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getBillingRolloutState",
+    );
+
+    expect(entitlementsCall?.[1]).toBe("skip");
+    expect(rolloutCall?.[1]).toBe("skip");
+  });
+
+  it("does not auto-select the first organization without an explicit org route", async () => {
+    const setActiveOrganizationId = vi.fn();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      setActiveOrganizationId,
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-recent",
+            name: "Recent Org",
+            updatedAt: 2,
+            createdAt: 1,
+            createdBy: "user-1",
+          },
+          {
+            _id: "org-older",
+            name: "Older Org",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockHandleOAuthCallback).toHaveBeenCalledWith("oauth-code");
+    });
+
+    expect(setActiveOrganizationId).not.toHaveBeenCalled();
+  });
+
+  it("renders the organization route from the hash even before active org state catches up", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-1");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: undefined,
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockOrganizationsTab).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockOrganizationsTab.mock.calls[
+        mockOrganizationsTab.mock.calls.length - 1
+      ];
+    expect(lastCall?.[0]).toMatchObject({
+      organizationId: "org-1",
+      section: "overview",
     });
   });
 

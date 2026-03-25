@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ResourceTemplatesTab } from "../ResourceTemplatesTab";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const { mockJsonEditor } = vi.hoisted(() => ({
   mockJsonEditor: vi.fn((props: any) => (

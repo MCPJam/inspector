@@ -68,6 +68,16 @@ const {
   };
 });
 
+const mockClientConfigStoreState = {
+  draftConfig: undefined as
+    | {
+        version: 1;
+        clientCapabilities: Record<string, unknown>;
+        hostContext: Record<string, unknown>;
+      }
+    | undefined,
+};
+
 // ── Module mocks ───────────────────────────────────────────────────────────
 vi.mock("@modelcontextprotocol/ext-apps/app-bridge", () => ({
   AppBridge: vi.fn().mockImplementation(() => mockBridge),
@@ -123,6 +133,10 @@ vi.mock("@/stores/ui-playground-store", () => ({
       safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
       deviceType: "desktop",
     }),
+}));
+
+vi.mock("@/stores/client-config-store", () => ({
+  useClientConfigStore: (selector: any) => selector(mockClientConfigStoreState),
 }));
 
 vi.mock("@/stores/traffic-log-store", () => ({
@@ -186,6 +200,7 @@ const baseProps = {
 describe("MCPAppsRenderer tool input streaming", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockClientConfigStoreState.draftConfig = undefined;
     mockBridge.sendToolInput.mockClear();
     mockBridge.sendToolInputPartial.mockClear();
     mockBridge.sendToolResult.mockClear();
@@ -278,6 +293,91 @@ describe("MCPAppsRenderer tool input streaming", () => {
               fonts: "",
             }),
           }),
+        }),
+      );
+    });
+  });
+
+  it("clamps configured host display modes before sending host context", async () => {
+    mockClientConfigStoreState.draftConfig = {
+      version: 1,
+      clientCapabilities: {},
+      hostContext: {
+        displayMode: "fullscreen",
+        availableDisplayModes: ["inline"],
+        locale: "fr-FR",
+        timeZone: "Europe/Paris",
+      },
+    };
+
+    render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          displayMode: "inline",
+          availableDisplayModes: ["inline"],
+          locale: "fr-FR",
+          timeZone: "Europe/Paris",
+        }),
+      );
+    });
+  });
+
+  it("pushes updated host context when the workspace client profile changes", async () => {
+    const { rerender } = render(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.connect).toHaveBeenCalled();
+    });
+
+    await act(async () => {
+      triggerReady();
+      await Promise.resolve();
+    });
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenCalledWith(
+        expect.objectContaining({
+          locale: "en-US",
+          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        }),
+      );
+    });
+
+    mockClientConfigStoreState.draftConfig = {
+      version: 1,
+      clientCapabilities: {},
+      hostContext: {
+        locale: "es-ES",
+        timeZone: "Europe/Madrid",
+        deviceCapabilities: {
+          hover: false,
+          touch: true,
+        },
+      },
+    };
+
+    rerender(<MCPAppsRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(mockBridge.setHostContext).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          locale: "es-ES",
+          timeZone: "Europe/Madrid",
+          deviceCapabilities: {
+            hover: false,
+            touch: true,
+          },
         }),
       );
     });

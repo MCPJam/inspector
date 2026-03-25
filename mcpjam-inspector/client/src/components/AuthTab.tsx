@@ -23,7 +23,7 @@ import {
 } from "../lib/types/oauth-flow-types";
 import { OAuthFlowProgressSimple } from "./oauth/OAuthFlowProgressSimple";
 import { OAuthStateMachine } from "../lib/oauth/oauth-state-machine";
-import { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 interface StatusMessageProps {
   message: StatusMessage;

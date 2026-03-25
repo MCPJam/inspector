@@ -66,6 +66,7 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
 
 interface ServerConnectionCardProps {
   server: ServerWithName;
+  needsReconnect?: boolean;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -82,6 +83,7 @@ interface ServerConnectionCardProps {
 
 export function ServerConnectionCard({
   server,
+  needsReconnect = false,
   onDisconnect,
   onReconnect,
   onRemove,
@@ -376,6 +378,11 @@ export function ServerConnectionCard({
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {server.name}
                 </h3>
+                {needsReconnect ? (
+                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                    Needs reconnect
+                  </span>
+                ) : null}
                 {version && (
                   <span className="text-xs text-muted-foreground">
                     v{version}
