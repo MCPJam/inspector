@@ -137,7 +137,9 @@ export function buildStoredOAuthConfig(
   return config;
 }
 
-function parseOAuthRequestFields(body: unknown): OAuthRequestFields | undefined {
+function parseOAuthRequestFields(
+  body: unknown,
+): OAuthRequestFields | undefined {
   if (!body) return undefined;
 
   if (typeof body === "string") {
@@ -152,7 +154,11 @@ function parseOAuthRequestFields(body: unknown): OAuthRequestFields | undefined 
     ) {
       try {
         const parsed = JSON.parse(trimmed);
-        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+        if (
+          typeof parsed === "object" &&
+          parsed !== null &&
+          !Array.isArray(parsed)
+        ) {
           const entries = Object.entries(parsed).flatMap(([key, value]) => {
             if (typeof value === "string") {
               return [[key, value] as const];
@@ -311,7 +317,9 @@ function createOAuthFetchInterceptor(
     init?: RequestInit,
   ): Promise<Response> {
     const method = (init?.method || "GET").toUpperCase();
-    const serializedBody = init?.body ? await serializeBody(init.body) : undefined;
+    const serializedBody = init?.body
+      ? await serializeBody(init.body)
+      : undefined;
     const url =
       typeof input === "string"
         ? input
@@ -610,7 +618,11 @@ export class MCPOAuthProvider implements OAuthClientProvider {
     captureServerDetailModalOAuthResume(this.serverName);
     // Store server name for callback recovery
     localStorage.setItem("mcp-oauth-pending", this.serverName);
-    console.log("[OAuthDebug] SET mcp-oauth-pending =", this.serverName, "(redirectToAuthorization)"); // ##TODOClean
+    console.log(
+      "[OAuthDebug] SET mcp-oauth-pending =",
+      this.serverName,
+      "(redirectToAuthorization)",
+    ); // ##TODOClean
     // Store current hash to restore after OAuth callback
     if (window.location.hash) {
       localStorage.setItem("mcp-oauth-return-hash", window.location.hash);
@@ -625,7 +637,12 @@ export class MCPOAuthProvider implements OAuthClientProvider {
 
   codeVerifier(): string {
     const verifier = localStorage.getItem(`mcp-verifier-${this.serverName}`);
-    console.log("[OAuthDebug] READ verifier for", this.serverName, "exists:", !!verifier); // ##TODOClean
+    console.log(
+      "[OAuthDebug] READ verifier for",
+      this.serverName,
+      "exists:",
+      !!verifier,
+    ); // ##TODOClean
     if (!verifier) {
       throw new Error("Code verifier not found");
     }
@@ -635,7 +652,13 @@ export class MCPOAuthProvider implements OAuthClientProvider {
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ) {
-    console.log("[OAuthDebug] invalidateCredentials:", scope, "for", this.serverName, new Error().stack); // ##TODOClean
+    console.log(
+      "[OAuthDebug] invalidateCredentials:",
+      scope,
+      "for",
+      this.serverName,
+      new Error().stack,
+    ); // ##TODOClean
     switch (scope) {
       case "all":
         localStorage.removeItem(`mcp-tokens-${this.serverName}`);
@@ -685,7 +708,15 @@ export async function initiateOAuth(
       options.serverUrl,
     );
     localStorage.setItem("mcp-oauth-pending", options.serverName);
-    console.log("[OAuthDebug] SET mcp-oauth-pending =", options.serverName, "registryServerId:", options.registryServerId, "clientId:", options.clientId, "(initiateOAuth)"); // ##TODOClean
+    console.log(
+      "[OAuthDebug] SET mcp-oauth-pending =",
+      options.serverName,
+      "registryServerId:",
+      options.registryServerId,
+      "clientId:",
+      options.clientId,
+      "(initiateOAuth)",
+    ); // ##TODOClean
 
     // Store OAuth configuration (scopes, registryServerId) for recovery if connection fails
     const oauthConfig = buildStoredOAuthConfig(options);
@@ -784,11 +815,19 @@ export async function handleOAuthCallback(
 ): Promise<OAuthResult & { serverName?: string }> {
   // Get pending server name from localStorage (needed before creating interceptor)
   const serverName = localStorage.getItem("mcp-oauth-pending");
-  console.log("[OAuthDebug] handleOAuthCallback: mcp-oauth-pending =", serverName); // ##TODOClean
+  console.log(
+    "[OAuthDebug] handleOAuthCallback: mcp-oauth-pending =",
+    serverName,
+  ); // ##TODOClean
 
   // Read registryServerId from stored OAuth config if present
   const oauthConfig = readStoredOAuthConfig(serverName);
-  console.log("[OAuthDebug] handleOAuthCallback: registryServerId =", oauthConfig.registryServerId, "oauthConfig =", localStorage.getItem(`mcp-oauth-config-${serverName}`)); // ##TODOClean
+  console.log(
+    "[OAuthDebug] handleOAuthCallback: registryServerId =",
+    oauthConfig.registryServerId,
+    "oauthConfig =",
+    localStorage.getItem(`mcp-oauth-config-${serverName}`),
+  ); // ##TODOClean
 
   // Build fetch interceptor — routes token requests through Convex for registry servers
   const fetchFn = createOAuthFetchInterceptor(oauthConfig);
@@ -836,16 +875,22 @@ export async function handleOAuthCallback(
       "resource:",
       resource?.toString() ?? "(none)",
     ); // ##TODOClean
-    const tokens = await fetchToken(provider, discoveryState.authorizationServerUrl, {
-      metadata: discoveryState.authorizationServerMetadata,
-      resource,
-      authorizationCode,
-      fetchFn,
-    });
+    const tokens = await fetchToken(
+      provider,
+      discoveryState.authorizationServerUrl,
+      {
+        metadata: discoveryState.authorizationServerMetadata,
+        resource,
+        authorizationCode,
+        fetchFn,
+      },
+    );
     await provider.saveTokens(tokens);
 
     // Clean up pending state
-    console.log("[OAuthDebug] REMOVE mcp-oauth-pending (handleOAuthCallback success)"); // ##TODOClean
+    console.log(
+      "[OAuthDebug] REMOVE mcp-oauth-pending (handleOAuthCallback success)",
+    ); // ##TODOClean
     localStorage.removeItem("mcp-oauth-pending");
 
     const serverConfig = createServerConfig(serverUrl, tokens);

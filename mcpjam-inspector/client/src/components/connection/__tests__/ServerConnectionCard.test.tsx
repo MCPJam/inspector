@@ -152,7 +152,9 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
       expect(
-        screen.getByText("Authorization complete. Finalizing the MCP connection."),
+        screen.getByText(
+          "Authorization complete. Finalizing the MCP connection.",
+        ),
       ).toBeInTheDocument();
     });
 
@@ -163,9 +165,7 @@ describe("ServerConnectionCard", () => {
       });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      expect(
-        screen.getByText("Authorizing in browser..."),
-      ).toBeInTheDocument();
+      expect(screen.getByText("Authorizing in browser...")).toBeInTheDocument();
       expect(
         screen.getByText(
           "Complete sign-in in the browser. Inspector will resume automatically.",

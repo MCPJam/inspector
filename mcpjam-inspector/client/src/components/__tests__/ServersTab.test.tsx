@@ -13,18 +13,20 @@ import {
 import { writePendingQuickConnect } from "@/lib/quick-connect-pending";
 
 let mockIsAuthenticated = false;
-let mockRegistryServers: Array<{
-  _id: string;
-  displayName: string;
-  publisher?: string;
-  transport: {
-    transportType: "http" | "stdio";
-    url?: string;
-    useOAuth?: boolean;
-    oauthScopes?: string[];
-    oauthCredentialKey?: string;
-  };
-}> | undefined;
+let mockRegistryServers:
+  | Array<{
+      _id: string;
+      displayName: string;
+      publisher?: string;
+      transport: {
+        transportType: "http" | "stdio";
+        url?: string;
+        useOAuth?: boolean;
+        oauthScopes?: string[];
+        oauthCredentialKey?: string;
+      };
+    }>
+  | undefined;
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
@@ -549,7 +551,9 @@ describe("ServersTab shared detail modal", () => {
     );
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
-    expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(
+      1,
+    );
     expect(screen.getByLabelText("Connect Linear")).toBeDisabled();
   });
 
@@ -599,7 +603,9 @@ describe("ServersTab shared detail modal", () => {
 
     expect(screen.getByText("Quick Connect")).toBeInTheDocument();
     expect(screen.getByText("Connecting Linear...")).toBeInTheDocument();
-    expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Authorizing...").length).toBeGreaterThanOrEqual(
+      1,
+    );
     expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
       "Linear:oauth-flow",
     );
@@ -649,7 +655,9 @@ describe("ServersTab shared detail modal", () => {
       />,
     );
 
-    expect(screen.getAllByText("Finishing setup...").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getAllByText("Finishing setup...").length,
+    ).toBeGreaterThanOrEqual(1);
     expect(screen.getByTestId("server-card-Linear")).toHaveTextContent(
       "Linear:connecting",
     );

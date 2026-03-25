@@ -760,7 +760,8 @@ export function ServersTab({
                 onRemove(serverName);
               }}
               hostedServerId={
-                sharedWorkspaceServersRecord[pendingQuickConnectServer.name]?._id
+                sharedWorkspaceServersRecord[pendingQuickConnectServer.name]
+                  ?._id
               }
               onOpenDetailModal={handleOpenDetailModal}
             />
@@ -801,7 +802,8 @@ export function ServersTab({
     <div className="h-full flex flex-col">
       {isLoadingWorkspaces
         ? renderLoadingContent()
-        : hasConnectedServers || (hasAnyServers && !isPendingQuickConnectVisible)
+        : hasConnectedServers ||
+            (hasAnyServers && !isPendingQuickConnectVisible)
           ? renderConnectedContent()
           : renderEmptyContent()}
 

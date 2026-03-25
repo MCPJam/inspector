@@ -550,25 +550,27 @@ describe("mcp-oauth", () => {
 
       const discoveryState = createAsanaDiscoveryState();
       await seedPendingOAuth("registry-asana", discoveryState, true);
-      mockFetchToken.mockImplementationOnce(async (provider, authServerUrl, options) => {
-        expect(authServerUrl).toBe("https://app.asana.com");
-        expect(options?.metadata?.token_endpoint).toBe(
-          "https://app.asana.com/-/oauth_token",
-        );
-        const response = await options!.fetchFn!(
-          "https://app.asana.com/-/oauth_token",
-          {
-            method: "POST",
-            body: new URLSearchParams({
-              grant_type: "authorization_code",
-              code: options!.authorizationCode!,
-              code_verifier: provider.codeVerifier(),
-              redirect_uri: String(provider.redirectUrl),
-            }),
-          },
-        );
-        return await response.json();
-      });
+      mockFetchToken.mockImplementationOnce(
+        async (provider, authServerUrl, options) => {
+          expect(authServerUrl).toBe("https://app.asana.com");
+          expect(options?.metadata?.token_endpoint).toBe(
+            "https://app.asana.com/-/oauth_token",
+          );
+          const response = await options!.fetchFn!(
+            "https://app.asana.com/-/oauth_token",
+            {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: options!.authorizationCode!,
+                code_verifier: provider.codeVerifier(),
+                redirect_uri: String(provider.redirectUrl),
+              }),
+            },
+          );
+          return await response.json();
+        },
+      );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
       const callbackResult = await handleOAuthCallback("oauth-code");
@@ -595,7 +597,11 @@ describe("mcp-oauth", () => {
     });
 
     it("persists preregistered registry routing for fresh Asana OAuth connects", async () => {
-      await seedPendingOAuth("registry-asana", createAsanaDiscoveryState(), true);
+      await seedPendingOAuth(
+        "registry-asana",
+        createAsanaDiscoveryState(),
+        true,
+      );
 
       expect(localStorage.getItem("mcp-oauth-config-asana")).toBe(
         JSON.stringify({
@@ -641,7 +647,10 @@ describe("mcp-oauth", () => {
         return "AUTHORIZED";
       });
 
-      localStorage.setItem("mcp-serverUrl-asana", "https://mcp.asana.com/v2/mcp");
+      localStorage.setItem(
+        "mcp-serverUrl-asana",
+        "https://mcp.asana.com/v2/mcp",
+      );
       localStorage.setItem(
         "mcp-oauth-config-asana",
         JSON.stringify({
@@ -702,25 +711,27 @@ describe("mcp-oauth", () => {
       });
 
       await seedPendingOAuth("registry-asana", undefined, true);
-      mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {
-        const response = await options!.fetchFn!(
-          "https://app.asana.com/-/oauth_token",
-          {
-            method: "POST",
-            body: new URLSearchParams({
-              grant_type: "authorization_code",
-              code: options!.authorizationCode!,
-              code_verifier: provider.codeVerifier(),
-              redirect_uri: String(provider.redirectUrl),
-            }),
-          },
-        );
-        if (!response.ok) {
-          const payload = await response.json();
-          throw new Error(`${payload.error}: ${payload.error_description}`);
-        }
-        return await response.json();
-      });
+      mockFetchToken.mockImplementationOnce(
+        async (provider, _authServerUrl, options) => {
+          const response = await options!.fetchFn!(
+            "https://app.asana.com/-/oauth_token",
+            {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: options!.authorizationCode!,
+                code_verifier: provider.codeVerifier(),
+                redirect_uri: String(provider.redirectUrl),
+              }),
+            },
+          );
+          if (!response.ok) {
+            const payload = await response.json();
+            throw new Error(`${payload.error}: ${payload.error_description}`);
+          }
+          return await response.json();
+        },
+      );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
       const callbackResult = await handleOAuthCallback("oauth-code");
@@ -749,21 +760,23 @@ describe("mcp-oauth", () => {
           },
         }),
       );
-      mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {
-        const response = await options!.fetchFn!(
-          "https://app.asana.com/-/oauth_token",
-          {
-            method: "POST",
-            body: new URLSearchParams({
-              grant_type: "authorization_code",
-              code: options!.authorizationCode!,
-              code_verifier: provider.codeVerifier(),
-              redirect_uri: String(provider.redirectUrl),
-            }),
-          },
-        );
-        return await response.json();
-      });
+      mockFetchToken.mockImplementationOnce(
+        async (provider, _authServerUrl, options) => {
+          const response = await options!.fetchFn!(
+            "https://app.asana.com/-/oauth_token",
+            {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: options!.authorizationCode!,
+                code_verifier: provider.codeVerifier(),
+                redirect_uri: String(provider.redirectUrl),
+              }),
+            },
+          );
+          return await response.json();
+        },
+      );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
       const callbackResult = await handleOAuthCallback("oauth-code");
@@ -812,21 +825,23 @@ describe("mcp-oauth", () => {
           },
         }),
       );
-      mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {
-        const response = await options!.fetchFn!(
-          "https://app.asana.com/-/oauth_token",
-          {
-            method: "POST",
-            body: new URLSearchParams({
-              grant_type: "authorization_code",
-              code: options!.authorizationCode!,
-              code_verifier: provider.codeVerifier(),
-              redirect_uri: String(provider.redirectUrl),
-            }),
-          },
-        );
-        return await response.json();
-      });
+      mockFetchToken.mockImplementationOnce(
+        async (provider, _authServerUrl, options) => {
+          const response = await options!.fetchFn!(
+            "https://app.asana.com/-/oauth_token",
+            {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: options!.authorizationCode!,
+                code_verifier: provider.codeVerifier(),
+                redirect_uri: String(provider.redirectUrl),
+              }),
+            },
+          );
+          return await response.json();
+        },
+      );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
       const callbackResult = await handleOAuthCallback("oauth-code");
@@ -879,21 +894,23 @@ describe("mcp-oauth", () => {
           },
         }),
       );
-      mockFetchToken.mockImplementationOnce(async (provider, _authServerUrl, options) => {
-        const response = await options!.fetchFn!(
-          "https://mcp.linear.app/token",
-          {
-            method: "POST",
-            body: new URLSearchParams({
-              grant_type: "authorization_code",
-              code: options!.authorizationCode!,
-              code_verifier: provider.codeVerifier(),
-              redirect_uri: String(provider.redirectUrl),
-            }),
-          },
-        );
-        return await response.json();
-      });
+      mockFetchToken.mockImplementationOnce(
+        async (provider, _authServerUrl, options) => {
+          const response = await options!.fetchFn!(
+            "https://mcp.linear.app/token",
+            {
+              method: "POST",
+              body: new URLSearchParams({
+                grant_type: "authorization_code",
+                code: options!.authorizationCode!,
+                code_verifier: provider.codeVerifier(),
+                redirect_uri: String(provider.redirectUrl),
+              }),
+            },
+          );
+          return await response.json();
+        },
+      );
 
       const { handleOAuthCallback } = await import("../mcp-oauth");
       const callbackResult = await handleOAuthCallback("oauth-code");
@@ -954,7 +971,10 @@ describe("mcp-oauth", () => {
         return "AUTHORIZED";
       });
 
-      localStorage.setItem("mcp-serverUrl-linear", "https://mcp.linear.app/mcp");
+      localStorage.setItem(
+        "mcp-serverUrl-linear",
+        "https://mcp.linear.app/mcp",
+      );
       localStorage.setItem(
         "mcp-oauth-config-linear",
         JSON.stringify({ registryServerId: "registry-linear" }),

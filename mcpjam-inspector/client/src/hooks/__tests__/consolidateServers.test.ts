@@ -95,15 +95,21 @@ describe("consolidateServers", () => {
 
     expect(result).toHaveLength(3);
 
-    const asanaGroup = result.find((c) => c.variants[0].displayName === "Asana");
+    const asanaGroup = result.find(
+      (c) => c.variants[0].displayName === "Asana",
+    );
     expect(asanaGroup?.hasDualType).toBe(true);
     expect(asanaGroup?.variants).toHaveLength(2);
 
-    const linearGroup = result.find((c) => c.variants[0].displayName === "Linear");
+    const linearGroup = result.find(
+      (c) => c.variants[0].displayName === "Linear",
+    );
     expect(linearGroup?.hasDualType).toBe(false);
     expect(linearGroup?.variants).toHaveLength(1);
 
-    const notionGroup = result.find((c) => c.variants[0].displayName === "Notion");
+    const notionGroup = result.find(
+      (c) => c.variants[0].displayName === "Notion",
+    );
     expect(notionGroup?.hasDualType).toBe(false);
     expect(notionGroup?.variants).toHaveLength(1);
   });

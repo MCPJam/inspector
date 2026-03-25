@@ -6,15 +6,12 @@ import {
   useRegistryServers,
 } from "../useRegistryServers";
 
-const {
-  mockUseQuery,
-  mockConnectMutation,
-  mockDisconnectMutation,
-} = vi.hoisted(() => ({
-  mockUseQuery: vi.fn(),
-  mockConnectMutation: vi.fn(),
-  mockDisconnectMutation: vi.fn(),
-}));
+const { mockUseQuery, mockConnectMutation, mockDisconnectMutation } =
+  vi.hoisted(() => ({
+    mockUseQuery: vi.fn(),
+    mockConnectMutation: vi.fn(),
+    mockDisconnectMutation: vi.fn(),
+  }));
 
 vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => mockUseQuery(...args),

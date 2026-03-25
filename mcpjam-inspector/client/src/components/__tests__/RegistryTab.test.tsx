@@ -129,9 +129,7 @@ describe("RegistryTab", () => {
 
       expect(screen.getByText("Registry")).toBeInTheDocument();
       expect(
-        screen.getByText(
-          "Pre-configured MCP servers you can connect quickly.",
-        ),
+        screen.getByText("Pre-configured MCP servers you can connect quickly."),
       ).toBeInTheDocument();
     });
   });
@@ -513,7 +511,10 @@ describe("RegistryTab", () => {
 
   describe("consolidated cards — dual-type servers", () => {
     function createFullServer(
-      overrides: Partial<EnrichedRegistryServer> & { _id: string; displayName: string },
+      overrides: Partial<EnrichedRegistryServer> & {
+        _id: string;
+        displayName: string;
+      },
     ): EnrichedRegistryServer {
       return {
         name: `com.test.${overrides.displayName.toLowerCase()}`,
@@ -539,9 +540,21 @@ describe("RegistryTab", () => {
     it("renders one card per consolidated server (dual-type = 1 card)", () => {
       mockHookReturn = {
         registryServers: [
-          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
-          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
-          createFullServer({ _id: "linear-1", displayName: "Linear", clientType: "text" }),
+          createFullServer({
+            _id: "asana-text",
+            displayName: "Asana",
+            clientType: "text",
+          }),
+          createFullServer({
+            _id: "asana-app",
+            displayName: "Asana",
+            clientType: "app",
+          }),
+          createFullServer({
+            _id: "linear-1",
+            displayName: "Linear",
+            clientType: "text",
+          }),
         ],
         categories: ["Productivity"],
         isLoading: false,
@@ -561,8 +574,16 @@ describe("RegistryTab", () => {
     it("shows both Text and App badges on dual-type card", () => {
       mockHookReturn = {
         registryServers: [
-          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
-          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+          createFullServer({
+            _id: "asana-text",
+            displayName: "Asana",
+            clientType: "text",
+          }),
+          createFullServer({
+            _id: "asana-app",
+            displayName: "Asana",
+            clientType: "app",
+          }),
         ],
         categories: ["Productivity"],
         isLoading: false,
@@ -579,8 +600,16 @@ describe("RegistryTab", () => {
     it("shows dropdown trigger for dual-type card", () => {
       mockHookReturn = {
         registryServers: [
-          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
-          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+          createFullServer({
+            _id: "asana-text",
+            displayName: "Asana",
+            clientType: "text",
+          }),
+          createFullServer({
+            _id: "asana-app",
+            displayName: "Asana",
+            clientType: "app",
+          }),
         ],
         categories: ["Productivity"],
         isLoading: false,
@@ -590,13 +619,19 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
 
-      expect(screen.getByTestId("connect-dropdown-trigger")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("connect-dropdown-trigger"),
+      ).toBeInTheDocument();
     });
 
     it("does not show dropdown trigger for single-type card", () => {
       mockHookReturn = {
         registryServers: [
-          createFullServer({ _id: "linear-1", displayName: "Linear", clientType: "text" }),
+          createFullServer({
+            _id: "linear-1",
+            displayName: "Linear",
+            clientType: "text",
+          }),
         ],
         categories: ["Productivity"],
         isLoading: false,
@@ -612,8 +647,16 @@ describe("RegistryTab", () => {
     it("dropdown contains Connect as Text and Connect as App options", async () => {
       mockHookReturn = {
         registryServers: [
-          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
-          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+          createFullServer({
+            _id: "asana-text",
+            displayName: "Asana",
+            clientType: "text",
+          }),
+          createFullServer({
+            _id: "asana-app",
+            displayName: "Asana",
+            clientType: "app",
+          }),
         ],
         categories: ["Productivity"],
         isLoading: false,
@@ -633,8 +676,16 @@ describe("RegistryTab", () => {
     it("stores the suffixed runtime name when connecting a dual-type variant", async () => {
       mockHookReturn = {
         registryServers: [
-          createFullServer({ _id: "asana-text", displayName: "Asana", clientType: "text" }),
-          createFullServer({ _id: "asana-app", displayName: "Asana", clientType: "app" }),
+          createFullServer({
+            _id: "asana-text",
+            displayName: "Asana",
+            clientType: "text",
+          }),
+          createFullServer({
+            _id: "asana-app",
+            displayName: "Asana",
+            clientType: "app",
+          }),
         ],
         categories: ["Productivity"],
         isLoading: false,

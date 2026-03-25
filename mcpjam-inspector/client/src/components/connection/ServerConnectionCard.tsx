@@ -133,9 +133,7 @@ export function ServerConnectionCard({
   const isPendingConnection =
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
-  const isReconnectMenuDisabled =
-    isReconnecting ||
-    isPendingConnection;
+  const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
   const isStdioServer = "command" in server.config;
   const isInsecureHttpServer =
     "url" in server.config &&

@@ -379,9 +379,9 @@ export function useRegistryServers({
   }, [enrichedServers]);
 
   // Track registry server IDs that are pending connection (waiting for OAuth / handshake)
-  const [pendingServerIds, setPendingServerIds] = useState<
-    Map<string, string>
-  >(new Map()); // registryServerId → suffixed server name
+  const [pendingServerIds, setPendingServerIds] = useState<Map<string, string>>(
+    new Map(),
+  ); // registryServerId → suffixed server name
 
   // Record the Convex connection only after the server actually connects
   useEffect(() => {

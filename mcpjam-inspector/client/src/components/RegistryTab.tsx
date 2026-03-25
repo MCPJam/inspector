@@ -63,15 +63,14 @@ export function RegistryTab({
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
 
-  const { registryServers, isLoading, connect, disconnect } = useRegistryServers(
-    {
+  const { registryServers, isLoading, connect, disconnect } =
+    useRegistryServers({
       workspaceId,
       isAuthenticated,
       liveServers: servers,
       onConnect,
       onDisconnect,
-    },
-  );
+    });
 
   // Auto-redirect to App Builder when a pending server becomes connected.
   // We persist in localStorage to survive OAuth redirects (page remounts).
@@ -366,7 +365,8 @@ function DualTypeAction({
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onDisconnect(activeVariant)}>
               <Unplug className="h-3.5 w-3.5 mr-2" />
-              {disconnectLabel} {activeVariant.clientType === "app" ? "App" : "Text"}
+              {disconnectLabel}{" "}
+              {activeVariant.clientType === "app" ? "App" : "Text"}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
