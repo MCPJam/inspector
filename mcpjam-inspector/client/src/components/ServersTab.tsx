@@ -668,13 +668,14 @@ export function ServersTab({
   const {
     serversRecord: sharedWorkspaceServersRecord,
     isLoading: isSharedWorkspaceServersLoading,
-  } =
-    useRemoteWorkspaceServers({
-      workspaceId: sharedWorkspaceId ?? null,
-      isAuthenticated,
-    });
+  } = useRemoteWorkspaceServers({
+    workspaceId: sharedWorkspaceId ?? null,
+    isAuthenticated,
+  });
   const isSuiteOverviewLoading =
-    Boolean(registryWorkspaceId) && isAuthenticated && suiteOverview === undefined;
+    Boolean(registryWorkspaceId) &&
+    isAuthenticated &&
+    suiteOverview === undefined;
   const isEvalSuiteActionsLoading =
     Boolean(sharedWorkspaceId) &&
     (isSharedWorkspaceServersLoading || isSuiteOverviewLoading);
@@ -733,7 +734,9 @@ export function ServersTab({
       try {
         const hostedServerId = sharedWorkspaceServersRecord[serverName]?._id;
         if (!hostedServerId) {
-          throw new Error("Server details are still syncing. Try again in a moment.");
+          throw new Error(
+            "Server details are still syncing. Try again in a moment.",
+          );
         }
         const createdSuite = await createTestSuiteMutation({
           workspaceId: sharedWorkspaceId,

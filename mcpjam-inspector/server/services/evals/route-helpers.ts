@@ -88,16 +88,19 @@ export async function fetchReplayConfig(
 
   let response: Response;
   try {
-    response = await fetch(`${convexHttpUrl}/internal/v1/evals/runs/replay-config`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${userAuthToken}`,
-        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
+    response = await fetch(
+      `${convexHttpUrl}/internal/v1/evals/runs/replay-config`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${userAuthToken}`,
+          [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
+        },
+        body: JSON.stringify({ runId }),
+        signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
       },
-      body: JSON.stringify({ runId }),
-      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
-    });
+    );
   } catch (error) {
     if (
       error instanceof Error &&

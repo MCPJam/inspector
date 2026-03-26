@@ -259,7 +259,12 @@ export function useEvalHandlers({
       if (rerunningSuiteId) return;
 
       const latestRun = selectedSuiteEntry?.latestRun;
-      if (isHostedMode() && suite.source === "sdk" && latestRun?._id) {
+      if (
+        isHostedMode() &&
+        suite.source === "sdk" &&
+        latestRun?._id &&
+        latestRun.hasServerReplayConfig
+      ) {
         await handleReplayRun(suite, latestRun);
         return;
       }

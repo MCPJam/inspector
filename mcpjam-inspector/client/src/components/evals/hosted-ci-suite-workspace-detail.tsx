@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -88,6 +89,35 @@ export function HostedCiSuiteWorkspaceDetail({
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
+  const navigation = useMemo(
+    () => ({
+      toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") =>
+        navigateToCiEvalsRoute({
+          type: "suite-overview",
+          suiteId,
+          view,
+        }),
+      toRunDetail: (suiteId: string, runId: string, iteration?: string) =>
+        navigateToCiEvalsRoute({
+          type: "run-detail",
+          suiteId,
+          runId,
+          iteration,
+        }),
+      toTestDetail: (suiteId: string, testId: string, iteration?: string) =>
+        navigateToCiEvalsRoute({
+          type: "test-detail",
+          suiteId,
+          testId,
+          iteration,
+        }),
+      toTestEdit: (suiteId: string, testId: string) =>
+        navigateToCiEvalsRoute({ type: "test-edit", suiteId, testId }),
+      toSuiteEdit: (suiteId: string) =>
+        navigateToCiEvalsRoute({ type: "suite-edit", suiteId }),
+    }),
+    [],
+  );
 
   return (
     <ResizablePanelGroup direction="horizontal" className="flex h-full">
@@ -157,32 +187,7 @@ export function HostedCiSuiteWorkspaceDetail({
             availableModels={availableModels}
             route={route}
             userMap={userMap}
-            navigation={{
-              toSuiteOverview: (suiteId, view) =>
-                navigateToCiEvalsRoute({
-                  type: "suite-overview",
-                  suiteId,
-                  view,
-                }),
-              toRunDetail: (suiteId, runId, iteration) =>
-                navigateToCiEvalsRoute({
-                  type: "run-detail",
-                  suiteId,
-                  runId,
-                  iteration,
-                }),
-              toTestDetail: (suiteId, testId, iteration) =>
-                navigateToCiEvalsRoute({
-                  type: "test-detail",
-                  suiteId,
-                  testId,
-                  iteration,
-                }),
-              toTestEdit: (suiteId, testId) =>
-                navigateToCiEvalsRoute({ type: "test-edit", suiteId, testId }),
-              toSuiteEdit: (suiteId) =>
-                navigateToCiEvalsRoute({ type: "suite-edit", suiteId }),
-            }}
+            navigation={navigation}
           />
         </div>
       </ResizablePanel>

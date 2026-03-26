@@ -254,11 +254,13 @@ export function CiSuiteDetail({
               isReplayingLatestRun={
                 replayingRunId != null &&
                 runs.some(
-                  (run) => run._id === replayingRunId && run.hasServerReplayConfig,
+                  (run) =>
+                    run._id === replayingRunId && run.hasServerReplayConfig,
                 ) &&
                 runs
                   .filter(
-                    (run) => run.isActive !== false && run.hasServerReplayConfig,
+                    (run) =>
+                      run.isActive !== false && run.hasServerReplayConfig,
                   )
                   .sort((a, b) => {
                     const aTime = a.completedAt ?? a.createdAt ?? 0;
