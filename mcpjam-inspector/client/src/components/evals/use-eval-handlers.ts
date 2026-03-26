@@ -10,7 +10,10 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { navigateToEvalsRoute, type EvalsRoute } from "@/lib/evals-router";
-import { navigateToCiEvalsRoute, type CiEvalsRoute } from "@/lib/ci-evals-router";
+import {
+  navigateToCiEvalsRoute,
+  type CiEvalsRoute,
+} from "@/lib/ci-evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
