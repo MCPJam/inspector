@@ -1,7 +1,7 @@
 import { GitBranch, GitCommit } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { CommitGroup } from "./types";
-import { formatRelativeTime } from "./helpers";
+import { evalStatusLeftBorderClasses, formatRelativeTime } from "./helpers";
 
 interface CommitListSidebarProps {
   commitGroups: CommitGroup[];
@@ -10,36 +10,25 @@ interface CommitListSidebarProps {
   isLoading?: boolean;
 }
 
-function getCommitStatusInfo(group: CommitGroup): {
-  dotClass: string;
-  labelClass: string;
-  label: string;
-} {
-  switch (group.status) {
+function commitGroupLeftBorder(status: CommitGroup["status"]): string {
+  if (status === "running") {
+    return evalStatusLeftBorderClasses("running");
+  }
+  return evalStatusLeftBorderClasses(status);
+}
+
+function commitGroupOutcomeTitle(status: CommitGroup["status"]): string {
+  switch (status) {
     case "passed":
-      return {
-        dotClass: "bg-emerald-500",
-        labelClass: "text-emerald-500",
-        label: "Passed",
-      };
+      return "All runs passed";
     case "failed":
-      return {
-        dotClass: "bg-destructive",
-        labelClass: "text-destructive",
-        label: "Failed",
-      };
+      return "Some runs failed";
     case "running":
-      return {
-        dotClass: "bg-warning animate-pulse",
-        labelClass: "text-warning",
-        label: "Running",
-      };
+      return "Runs in progress";
     case "mixed":
-      return {
-        dotClass: "bg-amber-500",
-        labelClass: "text-amber-500",
-        label: "Mixed",
-      };
+      return "Mixed results";
+    default:
+      return "Commit runs";
   }
 }
 
@@ -62,82 +51,72 @@ export function CommitListSidebar({
       ) : (
         <div>
           {commitGroups.map((group) => {
-            const status = getCommitStatusInfo(group);
             const isManual = group.commitSha.startsWith("manual-");
+            const leftBorder = commitGroupLeftBorder(group.status);
 
             return (
               <button
                 key={group.commitSha}
+                type="button"
+                title={commitGroupOutcomeTitle(group.status)}
                 onClick={() => onSelectCommit(group.commitSha)}
                 className={cn(
-                  "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+                  "w-full border-l-2 py-2.5 pl-[15px] pr-4 text-left transition-colors hover:bg-accent/50",
+                  leftBorder,
                   selectedCommitSha === group.commitSha &&
                     "bg-accent shadow-sm",
                 )}
               >
-                <div className="flex items-start gap-2.5">
-                  {/* Status dot */}
-                  <div
-                    className={cn(
-                      "h-2 w-2 rounded-full mt-1.5 shrink-0",
-                      status.dotClass,
-                    )}
-                  />
-
-                  {/* Content */}
-                  <div className="min-w-0 flex-1">
-                    {/* Row 1: SHA + timestamp */}
-                    <div className="flex items-center justify-between gap-2">
-                      {isManual ? (
-                        <span className="text-sm font-medium text-muted-foreground">
-                          Manual
-                        </span>
-                      ) : (
-                        <div className="flex items-center gap-1">
-                          <GitCommit className="h-3 w-3 shrink-0 text-muted-foreground" />
-                          <span className="text-sm font-mono font-medium truncate">
-                            {group.shortSha}
-                          </span>
-                        </div>
-                      )}
-                      <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
-                        {formatRelativeTime(group.timestamp)}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center justify-between gap-2">
+                    {isManual ? (
+                      <span className="text-sm font-medium text-muted-foreground">
+                        Manual
                       </span>
-                    </div>
-
-                    {/* Row 2: branch + pass/fail summary */}
-                    <div className="flex items-center justify-between gap-2 mt-0.5">
-                      {group.branch ? (
-                        <div className="flex items-center gap-1 min-w-0">
-                          <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
-                          <span className="text-[11px] text-muted-foreground truncate">
-                            {group.branch}
-                          </span>
-                        </div>
-                      ) : isManual ? (
-                        <span className="text-[11px] text-muted-foreground truncate">
-                          {Array.from(group.suiteMap.values()).join(", ")}
+                    ) : (
+                      <div className="flex items-center gap-1">
+                        <GitCommit className="h-3 w-3 shrink-0 text-muted-foreground" />
+                        <span className="text-sm font-mono font-medium truncate">
+                          {group.shortSha}
                         </span>
-                      ) : (
-                        <div />
-                      )}
-                      <div className="flex items-center gap-1.5 shrink-0 text-[10px] tabular-nums">
-                        {group.summary.passed > 0 && (
-                          <span className="text-emerald-500 font-medium">
-                            {group.summary.passed} passed
-                          </span>
-                        )}
-                        {group.summary.failed > 0 && (
-                          <span className="text-destructive font-medium">
-                            {group.summary.failed} failed
-                          </span>
-                        )}
-                        {group.summary.running > 0 && (
-                          <span className="text-warning font-medium">
-                            {group.summary.running} running
-                          </span>
-                        )}
                       </div>
+                    )}
+                    <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
+                      {formatRelativeTime(group.timestamp)}
+                    </span>
+                  </div>
+
+                  <div className="mt-0.5 flex items-center justify-between gap-2">
+                    {group.branch ? (
+                      <div className="flex min-w-0 items-center gap-1">
+                        <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
+                        <span className="truncate text-[11px] text-muted-foreground">
+                          {group.branch}
+                        </span>
+                      </div>
+                    ) : isManual ? (
+                      <span className="truncate text-[11px] text-muted-foreground">
+                        {Array.from(group.suiteMap.values()).join(", ")}
+                      </span>
+                    ) : (
+                      <div />
+                    )}
+                    <div className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums">
+                      {group.summary.passed > 0 && (
+                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
+                          {group.summary.passed} passed
+                        </span>
+                      )}
+                      {group.summary.failed > 0 && (
+                        <span className="font-medium text-destructive">
+                          {group.summary.failed} failed
+                        </span>
+                      )}
+                      {group.summary.running > 0 && (
+                        <span className="font-medium text-amber-600 dark:text-amber-400">
+                          {group.summary.running} running
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>

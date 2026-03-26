@@ -242,7 +242,97 @@ export function formatTokens(tokens: number): string {
 }
 
 /**
- * Get border color based on result status
+ * Left `border-l-2` accents — parity with pre–#1602 `getIterationBorderColor` stripes
+ * (`bg-success/50`, `bg-red-500/50`, `bg-warning/50`, …).
+ */
+export function evalStatusLeftBorderClasses(result: string): string {
+  switch (result) {
+    case RESULT_STATUS.PASSED:
+      return "border-l-success/50";
+    case RESULT_STATUS.FAILED:
+      return "border-l-red-500/50";
+    case RESULT_STATUS.PENDING:
+    case "running":
+      return "border-l-warning/50";
+    case RESULT_STATUS.CANCELLED:
+      return "border-l-muted";
+    case "mixed":
+      return "border-l-warning/50";
+    default:
+      return "border-l-muted-foreground/50";
+  }
+}
+
+/**
+ * Thin vertical strip / dot fills — parity with pre–#1602 suite list (`bg-emerald-500`,
+ * `bg-destructive`, `bg-warning`).
+ */
+export function evalStatusMiniBarClasses(result: string): string {
+  switch (result) {
+    case RESULT_STATUS.PASSED:
+      return "bg-emerald-500";
+    case RESULT_STATUS.FAILED:
+      return "bg-destructive";
+    case RESULT_STATUS.PENDING:
+    case "running":
+      return "bg-warning animate-pulse";
+    case RESULT_STATUS.CANCELLED:
+      return "bg-muted-foreground/40";
+    case "mixed":
+      return "bg-warning";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
+/** Left `border-l-*` for a suite overview row from `latestRun`. */
+export function evalOverviewEntryLeftBorderClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "border-l-transparent";
+  if (r.status === "running" || r.status === "pending") {
+    return evalStatusLeftBorderClasses(RESULT_STATUS.PENDING);
+  }
+  if (r.result === "passed") {
+    return evalStatusLeftBorderClasses(RESULT_STATUS.PASSED);
+  }
+  if (r.result === "failed") {
+    return evalStatusLeftBorderClasses(RESULT_STATUS.FAILED);
+  }
+  return "border-l-muted-foreground/35";
+}
+
+export function evalOverviewEntryMiniBarClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "bg-muted-foreground/25";
+  if (r.status === "running" || r.status === "pending") {
+    return "bg-warning animate-pulse";
+  }
+  if (r.result === "passed") {
+    return "bg-emerald-500";
+  }
+  if (r.result === "failed") return "bg-destructive";
+  return "bg-muted-foreground/40";
+}
+
+export function evalOverviewEntryOutcomeTitle(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "No runs yet";
+  if (r.status === "running" || r.status === "pending") {
+    return "Run in progress";
+  }
+  if (r.result === "passed") return "Last run passed";
+  if (r.result === "failed") return "Last run failed";
+  return `Last run: ${r.status}`;
+}
+
+/**
+ * Background class for legacy `w-1` strips (pre–#1602 iteration rows).
  */
 export function getIterationBorderColor(result: string): string {
   switch (result) {
@@ -253,6 +343,7 @@ export function getIterationBorderColor(result: string): string {
     case RESULT_STATUS.CANCELLED:
       return "bg-muted";
     case RESULT_STATUS.PENDING:
+    case "running":
       return "bg-warning/50";
     default:
       return "bg-muted-foreground/50";

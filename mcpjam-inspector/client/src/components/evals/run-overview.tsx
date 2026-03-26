@@ -17,7 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { formatRunId, getIterationBorderColor } from "./helpers";
+import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
@@ -470,8 +470,10 @@ export function RunOverview({
                         : "failed"
                       : run.status === "cancelled"
                         ? "cancelled"
-                        : "pending");
-                  const runBorderColor = getIterationBorderColor(runResult);
+                        : run.status === "running"
+                          ? "running"
+                          : "pending");
+                  const runAccent = evalStatusLeftBorderClasses(runResult);
 
                   const isSelected = selectedRunIds.has(run._id);
                   const showCiMetadata =
@@ -583,11 +585,12 @@ export function RunOverview({
                   return (
                     <div
                       key={run._id}
-                      className={cn("relative", isInactive && "opacity-50")}
+                      className={cn(
+                        "relative border-l-2",
+                        runAccent,
+                        isInactive && "opacity-50",
+                      )}
                     >
-                      <div
-                        className={`absolute left-0 top-0 h-full w-1 ${runBorderColor}`}
-                      />
                       {isInactive ? (
                         <Tooltip>
                           <TooltipTrigger asChild>{runButton}</TooltipTrigger>

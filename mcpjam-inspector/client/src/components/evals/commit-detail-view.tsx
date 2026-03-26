@@ -1,14 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import {
-  GitBranch,
-  GitCommit,
-  XCircle,
-  CheckCircle2,
-  MinusCircle,
-  Clock,
-  Sparkles,
-  Loader2,
-} from "lucide-react";
+import { GitBranch, GitCommit, Clock, Sparkles, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +9,7 @@ import type {
   EvalIteration,
   SuiteDetailsQueryResponse,
 } from "./types";
-import { formatDuration } from "./helpers";
+import { evalStatusLeftBorderClasses, formatDuration } from "./helpers";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { useCommitTriage } from "./use-ai-triage";
@@ -302,36 +293,39 @@ export function CommitDetailView({
                 const suiteName =
                   commitGroup.suiteMap.get(run.suiteId) || "Unknown";
                 const isSelected = run.suiteId === selectedSuiteId;
-                const isFailed = run.result === "failed";
                 const isRunning =
                   run.status === "running" || run.status === "pending";
-                const isPassed = run.result === "passed";
+                const runAccent = evalStatusLeftBorderClasses(
+                  isRunning ? "running" : (run.result ?? "pending"),
+                );
+                const outcomeTitle = isRunning
+                  ? "Run in progress"
+                  : run.result === "passed"
+                    ? "Last run passed"
+                    : run.result === "failed"
+                      ? "Last run failed"
+                      : run.status === "cancelled"
+                        ? "Run cancelled"
+                        : "Run status";
 
                 return (
                   <button
                     key={run._id}
+                    type="button"
+                    title={outcomeTitle}
                     onClick={() => handleSelectSuite(run.suiteId)}
                     className={cn(
-                      "w-full text-left px-3 py-2.5 transition-colors hover:bg-muted/50",
-                      isSelected && "bg-primary/5 border-l-2 border-l-primary",
+                      "w-full border-l-2 py-2.5 pl-[11px] pr-3 text-left transition-colors hover:bg-muted/50",
+                      runAccent,
+                      isSelected &&
+                        "border-r-2 border-r-primary bg-primary/10",
                     )}
                   >
-                    <div className="flex items-center gap-2">
-                      {isFailed ? (
-                        <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
-                      ) : isRunning ? (
-                        <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500 animate-pulse" />
-                      ) : isPassed ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                      ) : (
-                        <MinusCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="text-xs font-medium truncate flex-1">
-                        {suiteName}
-                      </span>
-                    </div>
+                    <span className="block truncate text-xs font-medium">
+                      {suiteName}
+                    </span>
                     {isRunning && (
-                      <div className="mt-1 ml-5.5 text-[10px] text-amber-500">
+                      <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
                         in progress
                       </div>
                     )}

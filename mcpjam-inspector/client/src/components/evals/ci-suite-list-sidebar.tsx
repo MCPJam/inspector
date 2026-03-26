@@ -3,6 +3,11 @@ import { Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { CommitGroup, EvalSuite, EvalSuiteOverviewEntry } from "./types";
+import {
+  evalOverviewEntryLeftBorderClass,
+  evalOverviewEntryMiniBarClass,
+  evalOverviewEntryOutcomeTitle,
+} from "./helpers";
 import { TagBadges } from "./tag-editor";
 import { CommitListSidebar } from "./commit-list-sidebar";
 
@@ -39,47 +44,6 @@ interface CiSuiteListSidebarProps {
   connectedServerNames?: Set<string>;
   onRerunSuite?: (suite: EvalSuite) => void;
   rerunningSuiteId?: string | null;
-}
-
-function getStatusInfo(entry: EvalSuiteOverviewEntry): {
-  label: string;
-  dotClass: string;
-  labelClass: string;
-} {
-  const latestRun = entry.latestRun;
-  if (!latestRun) {
-    return {
-      label: "No runs",
-      dotClass: "bg-muted-foreground/40",
-      labelClass: "text-muted-foreground",
-    };
-  }
-  if (latestRun.status === "running" || latestRun.status === "pending") {
-    return {
-      label: "Running",
-      dotClass: "bg-warning animate-pulse",
-      labelClass: "text-warning",
-    };
-  }
-  if (latestRun.result === "passed") {
-    return {
-      label: "Passed",
-      dotClass: "bg-emerald-500",
-      labelClass: "text-emerald-500",
-    };
-  }
-  if (latestRun.result === "failed") {
-    return {
-      label: "Failed",
-      dotClass: "bg-destructive",
-      labelClass: "text-destructive",
-    };
-  }
-  return {
-    label: latestRun.status,
-    dotClass: "bg-muted-foreground/40",
-    labelClass: "text-muted-foreground",
-  };
 }
 
 function toPercent(value: number): number {
@@ -244,7 +208,6 @@ function SuiteGroupItem({
   const [expanded, setExpanded] = useState(false);
 
   const latestRun = primary.latestRun;
-  const status = getStatusInfo(primary);
   const trend = primary.passRateTrend
     .slice(-12)
     .map((value) => toPercent(value));
@@ -264,7 +227,6 @@ function SuiteGroupItem({
         entry={primary}
         isSelected={selectedSuiteId === primary.suite._id}
         onSelect={() => onSelectSuite(primary.suite._id)}
-        status={status}
         trend={trend}
         timestamp={timestamp}
         connectedServerNames={connectedServerNames}
@@ -279,13 +241,15 @@ function SuiteGroupItem({
     <div>
       <div
         className={cn(
-          "group flex w-full items-center gap-2.5 px-4 py-2.5 transition-colors hover:bg-accent/50",
+          "group flex w-full items-center gap-2.5 border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
+          evalOverviewEntryLeftBorderClass(primary),
           isAnySelected && "bg-accent shadow-sm",
         )}
       >
         <div
           role="button"
           tabIndex={0}
+          title={evalOverviewEntryOutcomeTitle(primary)}
           onClick={() => {
             if (!isAnySelected) {
               onSelectSuite(primary.suite._id);
@@ -305,17 +269,6 @@ function SuiteGroupItem({
           }}
           className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
         >
-          <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
-            <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
-            <span
-              className={cn(
-                "text-[9px] font-medium leading-none",
-                status.labelClass,
-              )}
-            >
-              {status.label}
-            </span>
-          </div>
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span
@@ -381,7 +334,6 @@ function SuiteGroupItem({
       {(expanded || isAnySelected) && entries.length > 1 && (
         <div className="border-l-2 border-muted ml-6">
           {entries.map((entry) => {
-            const entryStatus = getStatusInfo(entry);
             const entryTimestamp = formatRelativeTime(
               entry.latestRun?.completedAt ??
                 entry.latestRun?.createdAt ??
@@ -396,11 +348,19 @@ function SuiteGroupItem({
             return (
               <div
                 key={entry.suite._id}
-                className="flex w-full items-center gap-2 border-b border-border/40 last:border-b-0"
+                className="flex w-full items-stretch gap-2 border-b border-border/40 last:border-b-0"
               >
+                <div
+                  className={cn(
+                    "my-2 ml-2 w-0.5 shrink-0 self-stretch rounded-full",
+                    evalOverviewEntryMiniBarClass(entry),
+                  )}
+                  aria-hidden
+                />
                 <div
                   role="button"
                   tabIndex={0}
+                  title={evalOverviewEntryOutcomeTitle(entry)}
                   onClick={() => onSelectSuite(entry.suite._id)}
                   onKeyDown={(e) => {
                     if (e.key === "Enter" || e.key === " ") {
@@ -409,36 +369,20 @@ function SuiteGroupItem({
                     }
                   }}
                   className={cn(
-                    "min-w-0 flex-1 cursor-pointer px-3 py-1.5 text-left transition-colors hover:bg-accent/50",
+                    "min-w-0 flex-1 cursor-pointer py-1.5 pl-1 pr-3 text-left transition-colors hover:bg-accent/50",
                     selectedSuiteId === entry.suite._id &&
                       "bg-primary/10 border-r-2 border-r-primary",
                   )}
                 >
-                  <div className="flex items-center gap-2">
-                    <div
-                      className={cn(
-                        "h-1.5 w-1.5 rounded-full shrink-0",
-                        entryStatus.dotClass,
-                      )}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[11px] text-muted-foreground truncate">
-                        {entryTimestamp}
-                      </div>
-                      {missing.length > 0 ? (
-                        <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                          Connect {missing.join(", ")} to run.
-                        </p>
-                      ) : null}
+                  <div className="min-w-0">
+                    <div className="text-[11px] text-muted-foreground truncate">
+                      {entryTimestamp}
                     </div>
-                    <span
-                      className={cn(
-                        "text-[10px] font-medium shrink-0",
-                        entryStatus.labelClass,
-                      )}
-                    >
-                      {entryStatus.label}
-                    </span>
+                    {missing.length > 0 ? (
+                      <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                        Connect {missing.join(", ")} to run.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
                 {onRerunSuite ? (
@@ -470,7 +414,6 @@ function SuiteEntryButton({
   entry,
   isSelected,
   onSelect,
-  status,
   trend,
   timestamp,
   connectedServerNames,
@@ -480,7 +423,6 @@ function SuiteEntryButton({
   entry: EvalSuiteOverviewEntry;
   isSelected: boolean;
   onSelect: () => void;
-  status: { label: string; dotClass: string; labelClass: string };
   trend: number[];
   timestamp: string;
   connectedServerNames?: Set<string>;
@@ -496,13 +438,15 @@ function SuiteEntryButton({
   return (
     <div
       className={cn(
-        "group flex w-full items-center gap-2.5 px-4 py-2.5 transition-colors hover:bg-accent/50",
+        "group flex w-full items-center gap-2.5 border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
+        evalOverviewEntryLeftBorderClass(entry),
         isSelected && "bg-accent shadow-sm",
       )}
     >
       <div
         role="button"
         tabIndex={0}
+        title={evalOverviewEntryOutcomeTitle(entry)}
         onClick={onSelect}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -512,17 +456,6 @@ function SuiteEntryButton({
         }}
         className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
       >
-        <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
-          <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
-          <span
-            className={cn(
-              "text-[9px] font-medium leading-none",
-              status.labelClass,
-            )}
-          >
-            {status.label}
-          </span>
-        </div>
         <div className="min-w-0 flex-1">
           <div
             className={cn(
@@ -549,7 +482,14 @@ function SuiteEntryButton({
             {trend.map((value, idx) => (
               <div
                 key={`${entry.suite._id}-t-${idx}`}
-                className="w-1 rounded-sm bg-primary/70"
+                className={cn(
+                  "w-1 rounded-sm",
+                  value >= 80
+                    ? "bg-emerald-500/70"
+                    : value >= 50
+                      ? "bg-amber-500/70"
+                      : "bg-destructive/70",
+                )}
                 style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
               />
             ))}

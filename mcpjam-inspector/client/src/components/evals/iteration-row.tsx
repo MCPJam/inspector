@@ -3,7 +3,7 @@ import { cn } from "@/lib/utils";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { EvalIteration, EvalCase } from "./types";
 import { IterationDetails } from "./iteration-details";
-import { formatRunId } from "./helpers";
+import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 
 interface IterationRowProps {
   iteration: EvalIteration;
@@ -11,7 +11,6 @@ interface IterationRowProps {
   iterationTestCase?: EvalCase | null;
   iterationRun?: { _id: string } | null;
   onViewRun?: (runId: string) => void;
-  getIterationBorderColor: (result: string) => string;
   formatTime: (ts?: number) => string;
   formatDuration: (ms: number) => string;
   isOpen?: boolean;
@@ -24,7 +23,6 @@ export function CompactIterationRow({
   iterationTestCase,
   iterationRun,
   onViewRun,
-  getIterationBorderColor,
   formatTime,
   formatDuration,
   isOpen = false,
@@ -43,13 +41,15 @@ export function CompactIterationRow({
   const actualToolCalls = iteration.actualToolCalls || [];
 
   return (
-    <div className={cn("relative overflow-hidden", isPending && "opacity-60")}>
-      <div
-        className={cn(
-          "absolute left-0 top-0 h-full w-1",
-          getIterationBorderColor(iteration.result),
-        )}
-      />
+    <div
+      className={cn(
+        "relative overflow-hidden border-l-2",
+        evalStatusLeftBorderClasses(
+          isPending ? "running" : iteration.result,
+        ),
+        isPending && "opacity-60",
+      )}
+    >
       <div className="flex items-center gap-6 w-full">
         <div className="pl-3">
           {isOpen ? (

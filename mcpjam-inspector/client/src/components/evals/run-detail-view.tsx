@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { Loader2, CheckCircle2, XCircle } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
-import { getIterationBorderColor } from "./helpers";
+import { evalStatusLeftBorderClasses } from "./helpers";
 import {
   computeIterationResult,
   computeIterationPassed,
@@ -355,7 +356,7 @@ function IterationListWithSections({
     <>
       {failing.length > 0 && (
         <>
-          <div className="px-3 py-1.5 bg-red-500/10 text-[10px] font-semibold text-red-500 uppercase tracking-wide sticky top-0 z-[1]">
+          <div className="px-3 py-1.5 bg-destructive/10 text-[10px] font-semibold text-destructive uppercase tracking-wide sticky top-0 z-[1]">
             Failing ({failing.length})
           </div>
           {failing.map((iteration) => {
@@ -374,7 +375,7 @@ function IterationListWithSections({
       )}
       {passing.length > 0 && (
         <>
-          <div className="px-3 py-1.5 bg-green-500/10 text-[10px] font-semibold text-green-500 uppercase tracking-wide sticky top-0 z-[1]">
+          <div className="px-3 py-1.5 bg-emerald-500/10 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide sticky top-0 z-[1]">
             Passing ({passing.length})
           </div>
           {passing.map((iteration) => {
@@ -437,7 +438,6 @@ function IterationListItem({
   const modelName = testInfo?.model || "—";
 
   const computedResult = computeIterationResult(iteration);
-  const passed = computeIterationPassed(iteration);
 
   // Extract a distinguishing detail from the query or expected tool call args
   const distinguisher = useMemo(() => {
@@ -462,12 +462,15 @@ function IterationListItem({
   }, [testInfo]);
 
   return (
-    <div className={`relative ${isPending ? "opacity-60" : ""}`}>
-      <div
-        className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(
-          computedResult,
-        )}`}
-      />
+    <div
+      className={cn(
+        "relative border-l-2",
+        evalStatusLeftBorderClasses(
+          isPending ? "running" : computedResult,
+        ),
+        isPending && "opacity-60",
+      )}
+    >
       <button
         onClick={onSelect}
         className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer ${
@@ -477,18 +480,12 @@ function IterationListItem({
         }`}
       >
         <div className="flex items-center gap-1.5 min-w-0">
-          {/* Sequence number */}
           <span className="text-[10px] text-muted-foreground font-mono shrink-0 w-4 text-right">
             {index}
           </span>
-          {/* Pass/fail icon */}
           {isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-warning shrink-0" />
-          ) : passed ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-          ) : (
-            <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
-          )}
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
+          ) : null}
           <span className="text-xs font-medium truncate flex-1">
             {testInfo?.title || "Iteration"}
           </span>
@@ -503,11 +500,21 @@ function IterationListItem({
         </div>
         {/* Distinguishing detail */}
         {distinguisher && (
-          <div className="ml-[calc(1rem+0.375rem+0.875rem)] text-[10px] text-muted-foreground/70 truncate italic">
+          <div
+            className={cn(
+              "text-[10px] text-muted-foreground/70 truncate italic",
+              isPending ? "ml-[calc(1rem+0.375rem+0.875rem)]" : "ml-[1.375rem]",
+            )}
+          >
             {distinguisher}
           </div>
         )}
-        <div className="ml-[calc(1rem+0.375rem+0.875rem)] flex items-center gap-2 text-[10px] text-muted-foreground">
+        <div
+          className={cn(
+            "flex items-center gap-2 text-[10px] text-muted-foreground",
+            isPending ? "ml-[calc(1rem+0.375rem+0.875rem)]" : "ml-[1.375rem]",
+          )}
+        >
           <span className="font-mono truncate">{modelName}</span>
           <span className="shrink-0">
             {isPending
