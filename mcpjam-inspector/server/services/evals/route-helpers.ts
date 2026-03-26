@@ -86,6 +86,11 @@ export async function fetchReplayConfig(
     throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
   }
 
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, WEB_CALL_TIMEOUT_MS);
+
   let response: Response;
   try {
     response = await fetch(
@@ -98,7 +103,7 @@ export async function fetchReplayConfig(
           [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
         },
         body: JSON.stringify({ runId }),
-        signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+        signal: controller.signal,
       },
     );
   } catch (error) {
@@ -109,6 +114,8 @@ export async function fetchReplayConfig(
       throw new Error("Timed out fetching replay config");
     }
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 
   const body = (await response.json()) as {

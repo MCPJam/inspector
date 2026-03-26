@@ -12,6 +12,11 @@ import { renderHook, act, waitFor } from "@testing-library/react";
 import { useEvalHandlers } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
+import { setHostedApiContext } from "@/lib/apis/web/context";
+
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: true,
+}));
 
 // Mock authFetch
 const mockAuthFetch = vi.fn();
@@ -132,6 +137,7 @@ describe("useEvalHandlers", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    setHostedApiContext(null);
   });
 
   describe("handleRerun", () => {
@@ -280,6 +286,66 @@ describe("useEvalHandlers", () => {
         suiteId: "suite-123",
         runId: "run-replay",
       });
+    });
+
+    it("falls back to the normal rerun path when hosted SDK runs are not replayable", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+      setHostedApiContext({
+        workspaceId: "ws-123",
+        isAuthenticated: true,
+        serverIdsByName: { "server-1": "srv-1" },
+      });
+
+      const selectedSuiteEntry = {
+        latestRun: {
+          _id: "run-source",
+          hasServerReplayConfig: false,
+          passCriteria: { minimumPassRate: 92 },
+        },
+        recentRuns: [
+          {
+            _id: "run-source",
+            hasServerReplayConfig: false,
+            passCriteria: { minimumPassRate: 92 },
+          },
+        ],
+      };
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          success: true,
+          suiteId: "suite-123",
+          runId: "run-rerun",
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          selectedSuiteEntry: selectedSuiteEntry as any,
+          selectedSuiteId: "suite-123",
+        }),
+      );
+
+      const mockSuite = {
+        _id: "suite-123",
+        name: "Hosted SDK Suite",
+        description: "A replay-ineligible suite",
+        source: "sdk",
+        environment: { servers: ["server-1"] },
+      };
+
+      await act(async () => {
+        await result.current.handleRerun(mockSuite as any);
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/web/evals/run",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
     });
   });
 

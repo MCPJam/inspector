@@ -59,6 +59,7 @@ describe("fetchReplayConfig", () => {
           Authorization: "Bearer user-token",
           "X-Inspector-Service-Token": "service-token",
         }),
+        signal: expect.any(AbortSignal),
       }),
     );
   });
