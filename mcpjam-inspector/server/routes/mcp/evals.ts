@@ -69,7 +69,10 @@ evals.post("/run-test-case", async (c) => {
     }
 
     return c.json(
-      await runEvalTestCaseWithManager(c.mcpClientManager, validationResult.data),
+      await runEvalTestCaseWithManager(
+        c.mcpClientManager,
+        validationResult.data,
+      ),
     );
   } catch (error) {
     logger.error("[Error running test case]", error);
@@ -136,7 +139,10 @@ evals.post("/generate-tests", async (c) => {
     }
 
     return c.json(
-      await generateEvalTestsWithManager(c.mcpClientManager, validationResult.data),
+      await generateEvalTestsWithManager(
+        c.mcpClientManager,
+        validationResult.data,
+      ),
     );
   } catch (error) {
     logger.error("Error in /evals/generate-tests", error);
@@ -147,8 +153,7 @@ evals.post("/generate-tests", async (c) => {
 evals.post("/generate-negative-tests", async (c) => {
   try {
     const body = await c.req.json();
-    const validationResult =
-      GenerateNegativeTestsRequestSchema.safeParse(body);
+    const validationResult = GenerateNegativeTestsRequestSchema.safeParse(body);
     if (!validationResult.success) {
       return c.json(
         {

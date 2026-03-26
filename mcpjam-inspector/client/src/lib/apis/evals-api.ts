@@ -140,13 +140,10 @@ export async function runEvals(request: RunEvalsRequest): Promise<any> {
     local: () =>
       postEvalRequest(API_ENDPOINTS.EVALS_RUN, request as JsonRecord),
     hosted: () =>
-      postEvalRequest(
-        HOSTED_EVALS_API_ENDPOINTS.run,
-        {
-          ...mergeHostedServerBatch(request),
-          storageServerIds: request.storageServerIds ?? request.serverIds,
-        } as JsonRecord,
-      ),
+      postEvalRequest(HOSTED_EVALS_API_ENDPOINTS.run, {
+        ...mergeHostedServerBatch(request),
+        storageServerIds: request.storageServerIds ?? request.serverIds,
+      } as JsonRecord),
   });
 }
 
@@ -155,10 +152,7 @@ export async function runEvalTestCase(
 ): Promise<any> {
   return runByMode({
     local: () =>
-      postEvalRequest(
-        API_ENDPOINTS.EVALS_RUN_TEST_CASE,
-        request as JsonRecord,
-      ),
+      postEvalRequest(API_ENDPOINTS.EVALS_RUN_TEST_CASE, request as JsonRecord),
     hosted: () =>
       postEvalRequest(
         HOSTED_EVALS_API_ENDPOINTS.runTestCase,

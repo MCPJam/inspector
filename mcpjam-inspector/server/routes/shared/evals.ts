@@ -291,7 +291,8 @@ export async function runEvalsWithManager(
         const modelsChanged =
           JSON.stringify(
             normalizeForComparison(existingTestCase.models || []),
-          ) !== JSON.stringify(normalizeForComparison(testCaseData.models || []));
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.models || []));
         const runsChanged =
           normalize(existingTestCase.runs) !== normalize(testCaseData.runs);
         const expectedToolCallsChanged =

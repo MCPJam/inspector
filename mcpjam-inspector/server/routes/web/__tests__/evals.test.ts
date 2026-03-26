@@ -26,13 +26,13 @@ vi.mock("@mcpjam/sdk", () => ({
 }));
 
 vi.mock("../../shared/evals.js", async () => {
-  const actual =
-    await vi.importActual<typeof import("../../shared/evals.js")>(
-      "../../shared/evals.js",
-    );
+  const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
+    "../../shared/evals.js",
+  );
   return {
     ...actual,
-    runEvalsWithManager: (...args: unknown[]) => runEvalsWithManagerMock(...args),
+    runEvalsWithManager: (...args: unknown[]) =>
+      runEvalsWithManagerMock(...args),
     runEvalTestCaseWithManager: (...args: unknown[]) =>
       runEvalTestCaseWithManagerMock(...args),
     generateEvalTestsWithManager: (...args: unknown[]) =>

@@ -25,11 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  WIZARD_STEPS,
-  STORAGE_KEYS,
-  DEFAULTS,
-} from "./constants";
+import { WIZARD_STEPS, STORAGE_KEYS, DEFAULTS } from "./constants";
 import { ServersStep } from "./eval-runner/ServersStep";
 import { ModelStep } from "./eval-runner/ModelStep";
 import { TestsStep } from "./eval-runner/TestsStep";

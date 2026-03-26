@@ -74,7 +74,10 @@ describe("hosted-navigation", () => {
     expect(listResolved.normalizedTab).toBe("evals");
     expect(listResolved.isBlocked).toBe(false);
 
-    const suiteResolved = resolveHostedNavigation("#evals/suite/suite_123", true);
+    const suiteResolved = resolveHostedNavigation(
+      "#evals/suite/suite_123",
+      true,
+    );
     expect(suiteResolved.normalizedTab).toBe("evals");
     expect(suiteResolved.isBlocked).toBe(false);
   });
