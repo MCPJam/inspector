@@ -145,6 +145,8 @@ await uploadEvalArtifact({
 
 Most users should pass `agent` or `mcpClientManager` and let the SDK derive replay credentials automatically. Use `serverReplayConfigs` only as an advanced override.
 
+When replay configs are inferred from `agent` or `mcpClientManager`, the SDK limits them to the `serverNames` you attach to the run when `serverNames` is provided.
+
 ## CI Metadata
 
 Attach CI/CD context to your eval runs for traceability in the dashboard:

@@ -203,6 +203,8 @@ Authenticated HTTP evals can securely persist replay credentials for reruns and 
 
 Prefer passing `agent` or `mcpClientManager` directly. Use `serverReplayConfigs` only when you need a low-level override.
 
+If you also provide `serverNames`, inferred replay configs are filtered to those server IDs before upload. Explicit `serverReplayConfigs` are left unchanged.
+
 ### Using with PromptResult
 
 ```typescript

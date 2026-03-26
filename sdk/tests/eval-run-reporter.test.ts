@@ -253,6 +253,54 @@ describe("createEvalRunReporter", () => {
     ]);
   });
 
+  it("filters inferred replay configs by serverNames for reporter uploads", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "asana",
+          url: "https://asana.example.com/mcp",
+          accessToken: "at_asana",
+        },
+        {
+          serverId: "github",
+          url: "https://github.example.com/mcp",
+          accessToken: "at_github",
+        },
+      ]),
+    };
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "filtered-reporter",
+      serverNames: ["asana"],
+      agent,
+    });
+
+    reporter.add({ caseTitle: "case-1", passed: true });
+    await reporter.finalize();
+
+    const reportBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(reportBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "asana",
+        url: "https://asana.example.com/mcp",
+        accessToken: "at_asana",
+      },
+    ]);
+  });
+
   describe("getAddedCount", () => {
     it("tracks total added results", () => {
       const reporter = createEvalRunReporter({

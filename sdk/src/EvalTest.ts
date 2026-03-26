@@ -380,6 +380,7 @@ export class EvalTest {
       serverNames: config?.serverNames,
       serverReplayConfigs: resolveServerReplayConfigs({
         serverReplayConfigs: config?.serverReplayConfigs,
+        serverNames: config?.serverNames,
         agent,
       }),
       notes: config?.notes,

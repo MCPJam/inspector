@@ -34,6 +34,11 @@ function createReplayAwareAgent() {
       url: "https://mcp.asana.com/sse",
       accessToken: "at_123",
     },
+    {
+      serverId: "github",
+      url: "https://api.githubcopilot.com/mcp",
+      accessToken: "gh_123",
+    },
   ];
 
   return {
@@ -87,6 +92,7 @@ describe("server replay config auto-save wiring", () => {
       iterations: 1,
       mcpjam: {
         apiKey: "mcpjam_test_key",
+        serverNames: ["asana"],
       },
     });
 
@@ -120,6 +126,7 @@ describe("server replay config auto-save wiring", () => {
       iterations: 1,
       mcpjam: {
         apiKey: "mcpjam_test_key",
+        serverNames: ["asana"],
       },
     });
 
@@ -131,6 +138,41 @@ describe("server replay config auto-save wiring", () => {
             serverId: "asana",
             url: "https://mcp.asana.com/sse",
             accessToken: "at_123",
+          },
+        ],
+      })
+    );
+  });
+
+  it("falls back to all inferred replay configs when serverNames is omitted", async () => {
+    const agent = createReplayAwareAgent();
+    const test = new EvalTest({
+      name: "list-workspaces",
+      test: async (evalAgent) => {
+        await evalAgent.prompt("Show me my workspaces");
+        return true;
+      },
+    });
+
+    await test.run(agent as any, {
+      iterations: 1,
+      mcpjam: {
+        apiKey: "mcpjam_test_key",
+      },
+    });
+
+    expect(mockReportEvalResultsSafely).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverReplayConfigs: [
+          {
+            serverId: "asana",
+            url: "https://mcp.asana.com/sse",
+            accessToken: "at_123",
+          },
+          {
+            serverId: "github",
+            url: "https://api.githubcopilot.com/mcp",
+            accessToken: "gh_123",
           },
         ],
       })

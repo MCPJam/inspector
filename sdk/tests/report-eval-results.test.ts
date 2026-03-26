@@ -147,6 +147,7 @@ describe("reportEvalResults", () => {
       apiKey: "mcpjam_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
+      serverNames: ["asana"],
       agent: {
         getServerReplayConfigs: jest.fn().mockReturnValue([
           {
@@ -181,6 +182,52 @@ describe("reportEvalResults", () => {
         serverId: "remote",
         url: "https://example.com/mcp",
         accessToken: "at_123",
+      },
+    ]);
+  });
+
+  it("filters inferred replay configs by serverNames in one-shot reports", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "asana",
+          url: "https://asana.example.com/mcp",
+          accessToken: "at_asana",
+        },
+        {
+          serverId: "github",
+          url: "https://github.example.com/mcp",
+          accessToken: "at_github",
+        },
+      ]),
+    };
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "SDK smoke",
+      serverNames: ["asana"],
+      agent,
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "asana",
+        url: "https://asana.example.com/mcp",
+        accessToken: "at_asana",
       },
     ]);
   });
