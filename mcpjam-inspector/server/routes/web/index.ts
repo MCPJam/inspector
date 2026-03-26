@@ -13,6 +13,7 @@ import oauthWeb from "./oauth.js";
 import xrayPayload from "./xray-payload.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
+import evals from "./evals.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -23,6 +24,7 @@ web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/sandboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/evals/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/chat-v2", bearerAuthMiddleware, guestRateLimitMiddleware);
 
 web.route("/servers", servers);
@@ -30,6 +32,7 @@ web.route("/tools", tools);
 web.route("/resources", resources);
 web.route("/prompts", prompts);
 web.route("/sandboxes", sandboxes);
+web.route("/evals", evals);
 web.route("/export", exporter);
 web.route("/chat-v2", chatV2);
 web.route("/apps", apps);

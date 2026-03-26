@@ -29,7 +29,6 @@ import {
   WIZARD_STEPS,
   STORAGE_KEYS,
   DEFAULTS,
-  API_ENDPOINTS,
 } from "./constants";
 import { ServersStep } from "./eval-runner/ServersStep";
 import { ModelStep } from "./eval-runner/ModelStep";
@@ -42,6 +41,12 @@ import type {
 } from "./eval-runner/types";
 import { useSharedAppState } from "@/state/app-state-context";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  generateEvalTests,
+  generateNegativeEvalTests,
+  listEvalTools,
+  runEvals,
+} from "@/lib/apis/evals-api";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
@@ -251,23 +256,18 @@ export function EvalRunner({
       }
 
       try {
-        const response = await fetch(API_ENDPOINTS.LIST_TOOLS, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverIds: selectedServers }),
+        const data = await listEvalTools({
+          workspaceId,
+          serverIds: selectedServers,
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableTools(data.tools || []);
-        }
+        setAvailableTools(data.tools || []);
       } catch (error) {
         console.error("Failed to fetch tools:", error);
       }
     }
 
     fetchTools();
-  }, [selectedServers]);
+  }, [selectedServers, workspaceId]);
 
   useEffect(() => {
     if (!inline && !open) {
@@ -402,21 +402,11 @@ export function EvalRunner({
 
     try {
       const accessToken = await getAccessToken();
-
-      const response = await fetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverIds: selectedServers,
-          convexAuthToken: accessToken,
-        }),
+      const result = await generateEvalTests({
+        workspaceId,
+        serverIds: selectedServers,
+        convexAuthToken: accessToken,
       });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to generate tests");
-      }
 
       if (result.tests && result.tests.length > 0) {
         const generatedTemplates = result.tests.map(
@@ -469,23 +459,11 @@ export function EvalRunner({
     try {
       const accessToken = await getAccessToken();
 
-      const response = await fetch(
-        API_ENDPOINTS.EVALS_GENERATE_NEGATIVE_TESTS,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverIds: selectedServers,
-            convexAuthToken: accessToken,
-          }),
-        },
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to generate negative tests");
-      }
+      const result = await generateNegativeEvalTests({
+        workspaceId,
+        serverIds: selectedServers,
+        convexAuthToken: accessToken,
+      });
 
       if (result.tests && result.tests.length > 0) {
         const generatedNegativeTemplates: TestTemplate[] = result.tests.map(
@@ -616,36 +594,19 @@ export function EvalRunner({
       // Build pass criteria description for notes
       const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-      const response = await fetch(API_ENDPOINTS.EVALS_RUN, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          workspaceId,
-          suiteName: suiteName.trim(),
-          suiteDescription: suiteDescription.trim() || undefined,
-          tests: expandedTests,
-          serverIds: selectedServers,
-          modelApiKeys,
-          convexAuthToken: accessToken,
-          passCriteria: {
-            minimumPassRate: minimumPassRate,
-          },
-          notes: criteriaNote,
-        }),
+      const result = await runEvals({
+        workspaceId,
+        suiteName: suiteName.trim(),
+        suiteDescription: suiteDescription.trim() || undefined,
+        tests: expandedTests,
+        serverIds: selectedServers,
+        modelApiKeys,
+        convexAuthToken: accessToken,
+        passCriteria: {
+          minimumPassRate: minimumPassRate,
+        },
+        notes: criteriaNote,
       });
-
-      if (!response.ok) {
-        let errorMessage = "Failed to start evals";
-        try {
-          const result = await response.json();
-          errorMessage = result.error || errorMessage;
-        } catch (parseError) {
-          console.error("Failed to parse error response:", parseError);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
 
       // Track suite created

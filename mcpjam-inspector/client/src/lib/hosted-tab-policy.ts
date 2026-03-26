@@ -10,6 +10,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "app-builder",
   "views",
   "client-config",
+  "evals",
   "ci-evals",
   "tools",
   "resources",
@@ -28,7 +29,6 @@ export const HOSTED_HASH_ALLOWED_TABS = [
 ] as const;
 
 export const HOSTED_HASH_BLOCKED_TABS = [
-  "evals",
   "skills",
   "tasks",
   "tracing",

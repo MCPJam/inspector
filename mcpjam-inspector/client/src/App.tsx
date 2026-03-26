@@ -644,9 +644,7 @@ export default function App() {
   // Redirect away from tabs hidden by the ci-evals feature flag.
   // Use strict equality to avoid redirecting while the flag is still loading (undefined).
   useEffect(() => {
-    if (ciEvalsEnabled === true && activeTab === "evals") {
-      applyNavigation("servers", { updateHash: true });
-    } else if (ciEvalsEnabled === false && activeTab === "ci-evals") {
+    if (ciEvalsEnabled === false && activeTab === "ci-evals") {
       applyNavigation("servers", { updateHash: true });
     } else if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(

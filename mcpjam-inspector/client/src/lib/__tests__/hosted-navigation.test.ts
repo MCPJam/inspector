@@ -69,6 +69,16 @@ describe("hosted-navigation", () => {
     expect(resolved.isBlocked).toBe(false);
   });
 
+  it("allows evals routes in hosted mode", () => {
+    const listResolved = resolveHostedNavigation("#evals", true);
+    expect(listResolved.normalizedTab).toBe("evals");
+    expect(listResolved.isBlocked).toBe(false);
+
+    const suiteResolved = resolveHostedNavigation("#evals/suite/suite_123", true);
+    expect(suiteResolved.normalizedTab).toBe("evals");
+    expect(suiteResolved.isBlocked).toBe(false);
+  });
+
   it("treats sandboxes as a normal hosted app tab", () => {
     const resolved = resolveHostedNavigation("#sandboxes", true);
     expect(resolved.normalizedTab).toBe("sandboxes");

@@ -18,7 +18,6 @@ const makeSections = () => [
         title: "Generate Evals",
         url: "#evals",
         icon: FakeIcon,
-        hiddenByFlag: "ci-evals-enabled",
       },
       {
         title: "Evals CI/CD",
@@ -49,13 +48,13 @@ describe("filterByFeatureFlags", () => {
     expect(titles).not.toContain("Evals CI/CD");
   });
 
-  it("shows featureFlag items and hides hiddenByFlag items when flag is on", () => {
+  it("shows featureFlag items without hiding Generate Evals when flag is on", () => {
     const result = filterByFeatureFlags(makeSections(), {
       "ci-evals-enabled": true,
     });
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toContain("Always Visible");
-    expect(titles).not.toContain("Generate Evals");
+    expect(titles).toContain("Generate Evals");
     expect(titles).toContain("Evals CI/CD");
   });
 
@@ -157,7 +156,6 @@ describe("getHostedNavigationSections", () => {
             title: "Generate Evals",
             url: "#evals",
             icon: FakeIcon,
-            hiddenByFlag: "ci-evals-enabled",
             billingFeature: "evals",
           },
           { title: "OAuth Debugger", url: "#oauth-flow", icon: FakeIcon },
@@ -175,6 +173,12 @@ describe("getHostedNavigationSections", () => {
         disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
       },
       {
+        title: "Generate Evals",
+        url: "#evals",
+        icon: FakeIcon,
+        billingFeature: "evals",
+      },
+      {
         title: "OAuth Debugger",
         url: "#oauth-flow",
         icon: FakeIcon,
@@ -182,7 +186,7 @@ describe("getHostedNavigationSections", () => {
     ]);
   });
 
-  it("continues hiding Generate Evals in hosted even when ci-evals is enabled", () => {
+  it("keeps Generate Evals visible in hosted when ci-evals is enabled", () => {
     const hostedSections = getHostedNavigationSections([
       {
         id: "mcp-apps",
@@ -191,7 +195,6 @@ describe("getHostedNavigationSections", () => {
             title: "Generate Evals",
             url: "#evals",
             icon: FakeIcon,
-            hiddenByFlag: "ci-evals-enabled",
           },
           {
             title: "Evals CI/CD",
@@ -208,6 +211,7 @@ describe("getHostedNavigationSections", () => {
     });
 
     expect(visibleSections[0].items.map((item) => item.title)).toEqual([
+      "Generate Evals",
       "Evals CI/CD",
     ]);
   });

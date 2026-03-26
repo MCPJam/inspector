@@ -12,15 +12,15 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
-import { API_ENDPOINTS } from "./constants";
-import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { generateEvalTests, runEvals } from "@/lib/apis/evals-api";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
   selectedSuiteId: string | null;
   selectedTestId: string | null;
+  workspaceId: string | null;
 }
 
 /**
@@ -31,6 +31,7 @@ export function useEvalHandlers({
   selectedSuiteEntry,
   selectedSuiteId,
   selectedTestId,
+  workspaceId,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -161,39 +162,31 @@ export function useEvalHandlers({
           suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-        const response = await authFetch("/api/mcp/evals/run", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            suiteId: suite._id,
-            suiteName: suite.name,
-            suiteDescription: suite.description,
-            tests: tests.map((test) => ({
-              title: test.title,
-              query: test.query,
-              runs: test.runs ?? 1,
-              model: test.model,
-              provider: test.provider,
-              expectedToolCalls: test.expectedToolCalls,
-              isNegativeTest: test.isNegativeTest,
-              scenario: test.scenario,
-              advancedConfig: test.advancedConfig,
-            })),
-            serverIds: suiteServers,
-            modelApiKeys:
-              Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-            convexAuthToken: accessToken,
-            passCriteria: {
-              minimumPassRate: minimumPassRate,
-            },
-            notes: criteriaNote,
-          }),
+        await runEvals({
+          workspaceId,
+          suiteId: suite._id,
+          suiteName: suite.name,
+          suiteDescription: suite.description,
+          tests: tests.map((test) => ({
+            title: test.title,
+            query: test.query,
+            runs: test.runs ?? 1,
+            model: test.model,
+            provider: test.provider,
+            expectedToolCalls: test.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            scenario: test.scenario,
+            advancedConfig: test.advancedConfig,
+          })),
+          serverIds: suiteServers,
+          modelApiKeys:
+            Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
+          convexAuthToken: accessToken,
+          passCriteria: {
+            minimumPassRate: minimumPassRate,
+          },
+          notes: criteriaNote,
         });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(errorText || "Failed to start eval run");
-        }
 
         // Track suite run started
         posthog.capture("eval_suite_run_started", {
@@ -223,6 +216,7 @@ export function useEvalHandlers({
       hasToken,
       getToken,
       getTestCasesForRerun,
+      workspaceId,
     ],
   );
 
@@ -602,20 +596,11 @@ export function useEvalHandlers({
         }
 
         // Call generate tests API
-        const response = await authFetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverIds,
-            convexAuthToken: accessToken,
-          }),
+        const result = await generateEvalTests({
+          workspaceId,
+          serverIds,
+          convexAuthToken: accessToken,
         });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.error || "Failed to generate tests");
-        }
 
         if (!result.tests || result.tests.length === 0) {
           toast.info("No test cases were generated");
@@ -671,6 +656,7 @@ export function useEvalHandlers({
       getAccessToken,
       convex,
       mutations.createTestCaseMutation,
+      workspaceId,
     ],
   );
 

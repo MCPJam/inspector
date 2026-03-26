@@ -91,6 +91,7 @@ describe("useEvalHandlers", () => {
     selectedSuiteEntry: null,
     selectedSuiteId: null,
     selectedTestId: null,
+    workspaceId: "workspace-1",
   };
 
   beforeEach(() => {
