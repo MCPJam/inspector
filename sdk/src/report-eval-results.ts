@@ -5,6 +5,7 @@ import type {
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
+import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -503,6 +504,7 @@ async function reportEvalResultsInternal(
   const config = createRuntimeConfig(input);
   const uploadedResults = await uploadWidgetSnapshots(config, input.results);
   const externalRunId = input.externalRunId ?? generateExternalRunId();
+  const serverReplayConfigs = resolveServerReplayConfigs(input);
   const resultsWithIterationIds = withExternalIterationIds(
     uploadedResults,
     externalRunId
@@ -510,7 +512,12 @@ async function reportEvalResultsInternal(
 
   if (
     shouldUseOneShotUpload(
-      { ...input, externalRunId, results: resultsWithIterationIds },
+      {
+        ...input,
+        externalRunId,
+        serverReplayConfigs,
+        results: resultsWithIterationIds,
+      },
       config
     )
   ) {
@@ -521,7 +528,7 @@ async function reportEvalResultsInternal(
         suiteName: input.suiteName,
         suiteDescription: input.suiteDescription,
         serverNames: input.serverNames,
-        serverReplayConfigs: input.serverReplayConfigs,
+        serverReplayConfigs,
         notes: input.notes,
         passCriteria: input.passCriteria,
         externalRunId,
@@ -538,7 +545,7 @@ async function reportEvalResultsInternal(
     suiteName: input.suiteName,
     suiteDescription: input.suiteDescription,
     serverNames: input.serverNames,
-    serverReplayConfigs: input.serverReplayConfigs,
+    serverReplayConfigs,
     notes: input.notes,
     passCriteria: input.passCriteria,
     externalRunId,

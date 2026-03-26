@@ -187,7 +187,10 @@ export class EvalSuite {
       suiteName: config?.suiteName ?? this.name,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,
-      serverReplayConfigs: resolveServerReplayConfigs(agent, config),
+      serverReplayConfigs: resolveServerReplayConfigs({
+        serverReplayConfigs: config?.serverReplayConfigs,
+        agent,
+      }),
       notes: config?.notes,
       passCriteria: config?.passCriteria,
       externalRunId: config?.externalRunId,

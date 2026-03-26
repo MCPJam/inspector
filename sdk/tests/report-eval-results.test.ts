@@ -147,6 +147,24 @@ describe("reportEvalResults", () => {
       apiKey: "mcpjam_test_key",
       baseUrl: "https://example.com",
       suiteName: "SDK smoke",
+      agent: {
+        getServerReplayConfigs: jest.fn().mockReturnValue([
+          {
+            serverId: "agent",
+            url: "https://agent.example.com/mcp",
+            accessToken: "at_agent",
+          },
+        ]),
+      },
+      mcpClientManager: {
+        getServerReplayConfigs: jest.fn().mockReturnValue([
+          {
+            serverId: "manager",
+            url: "https://manager.example.com/mcp",
+            accessToken: "at_manager",
+          },
+        ]),
+      } as any,
       serverReplayConfigs: [
         {
           serverId: "remote",
@@ -163,6 +181,186 @@ describe("reportEvalResults", () => {
         serverId: "remote",
         url: "https://example.com/mcp",
         accessToken: "at_123",
+      },
+    ]);
+  });
+
+  it("resolves replay configs from agent in one-shot reports", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "agent",
+          url: "https://agent.example.com/mcp",
+          accessToken: "at_agent",
+        },
+      ]),
+    };
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "SDK smoke",
+      agent,
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "agent",
+        url: "https://agent.example.com/mcp",
+        accessToken: "at_agent",
+      },
+    ]);
+  });
+
+  it("prefers agent replay configs over mcpClientManager", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "agent",
+          url: "https://agent.example.com/mcp",
+          accessToken: "at_agent",
+        },
+      ]),
+    };
+    const mcpClientManager = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "manager",
+          url: "https://manager.example.com/mcp",
+          accessToken: "at_manager",
+        },
+      ]),
+    };
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "SDK smoke",
+      agent,
+      mcpClientManager: mcpClientManager as any,
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    expect(mcpClientManager.getServerReplayConfigs).not.toHaveBeenCalled();
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "agent",
+        url: "https://agent.example.com/mcp",
+        accessToken: "at_agent",
+      },
+    ]);
+  });
+
+  it("falls back to mcpClientManager replay configs when agent has none", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([]),
+    };
+    const mcpClientManager = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "manager",
+          url: "https://manager.example.com/mcp",
+          accessToken: "at_manager",
+        },
+      ]),
+    };
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "SDK smoke",
+      agent,
+      mcpClientManager: mcpClientManager as any,
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "manager",
+        url: "https://manager.example.com/mcp",
+        accessToken: "at_manager",
+      },
+    ]);
+  });
+
+  it("resolves replay configs from mcpClientManager when agent is absent", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const mcpClientManager = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "manager",
+          url: "https://manager.example.com/mcp",
+          accessToken: "at_manager",
+        },
+      ]),
+    };
+
+    await reportEvalResults({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "SDK smoke",
+      mcpClientManager: mcpClientManager as any,
+      results: [{ caseTitle: "happy-path", passed: true }],
+    });
+
+    expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(requestBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "manager",
+        url: "https://manager.example.com/mcp",
+        accessToken: "at_manager",
       },
     ]);
   });

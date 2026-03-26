@@ -15,6 +15,8 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
+`MCPJAM_API_KEY` controls whether results are uploaded. Replay credential capture is separate and only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`.
+
 ---
 
 ## reportEvalResults()
@@ -22,7 +24,7 @@ Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, su
 One-shot reporting. Sends all results in a single call. Throws on failure.
 
 ```typescript
-import { reportEvalResults } from "@mcpjam/sdk";
+import { MCPClientManager, reportEvalResults } from "@mcpjam/sdk";
 ```
 
 ### Signature
@@ -34,8 +36,20 @@ reportEvalResults(input: ReportEvalResultsInput): Promise<ReportEvalResultsOutpu
 ### Example
 
 ```typescript
+const manager = new MCPClientManager({
+  asana: {
+    url: process.env.MCP_SERVER_URL!,
+    refreshToken: process.env.MCP_REFRESH_TOKEN!,
+    clientId: process.env.MCP_CLIENT_ID!,
+    clientSecret: process.env.MCP_CLIENT_SECRET,
+  },
+});
+
+await manager.connectToServer("asana");
+
 const output = await reportEvalResults({
   suiteName: "Nightly",
+  mcpClientManager: manager,
   results: [
     { caseTitle: "healthcheck", passed: true },
     { caseTitle: "tool-selection", passed: true, durationMs: 1200 },
@@ -60,7 +74,7 @@ console.log(`${output.summary.passed}/${output.summary.total} passed`);
 Same as `reportEvalResults()`, but returns `null` instead of throwing on failure. Warnings are logged to the console.
 
 ```typescript
-import { reportEvalResultsSafely } from "@mcpjam/sdk";
+import { MCPClientManager, reportEvalResultsSafely } from "@mcpjam/sdk";
 ```
 
 ### Signature
@@ -72,8 +86,19 @@ reportEvalResultsSafely(input: ReportEvalResultsInput): Promise<ReportEvalResult
 ### Example
 
 ```typescript
+const manager = new MCPClientManager({
+  asana: {
+    url: process.env.MCP_SERVER_URL!,
+    refreshToken: process.env.MCP_REFRESH_TOKEN!,
+    clientId: process.env.MCP_CLIENT_ID!,
+  },
+});
+
+await manager.connectToServer("asana");
+
 const output = await reportEvalResultsSafely({
   suiteName: "Nightly",
+  mcpClientManager: manager,
   results: [{ caseTitle: "healthcheck", passed: true }],
 });
 
@@ -103,6 +128,8 @@ import { createEvalRunReporter } from "@mcpjam/sdk";
 ```typescript
 createEvalRunReporter(input: CreateEvalRunReporterInput): EvalRunReporter
 ```
+
+`CreateEvalRunReporterInput` accepts the same replay source fields as `reportEvalResults()`: `serverReplayConfigs`, `agent`, and `mcpClientManager`.
 
 ### EvalRunReporter Methods
 
@@ -135,13 +162,25 @@ createEvalRunReporter(input: CreateEvalRunReporterInput): EvalRunReporter
 ### Example
 
 ```typescript
+// Assumes `agent` was created with `mcpClientManager: manager`
 const reporter = createEvalRunReporter({
   suiteName: "Integration Tests",
   passCriteria: { minimumPassRate: 85 },
+  agent,
   ci: {
     branch: process.env.GITHUB_REF_NAME,
     commitSha: process.env.GITHUB_SHA,
   },
+});
+```
+
+### Example with manual replay source resolution
+
+```typescript
+const reporter = createEvalRunReporter({
+  suiteName: "Integration Tests",
+  passCriteria: { minimumPassRate: 85 },
+  mcpClientManager: manager,
 });
 
 // Add results as tests complete
@@ -153,6 +192,16 @@ await reporter.record({ caseTitle: "test-3", passed: true });
 const output = await reporter.finalize();
 console.log(`${output.summary.passed}/${output.summary.total} passed`);
 ```
+
+### Replay credential sources
+
+Authenticated HTTP evals can securely persist replay credentials for reruns and debugging. Manual reporting APIs resolve replay configs in this order:
+
+1. `serverReplayConfigs`
+2. `agent.getServerReplayConfigs()`
+3. `mcpClientManager.getServerReplayConfigs()`
+
+Prefer passing `agent` or `mcpClientManager` directly. Use `serverReplayConfigs` only when you need a low-level override.
 
 ### Using with PromptResult
 
@@ -250,6 +299,10 @@ await uploadEvalArtifact({
 type ReportEvalResultsInput = MCPJamReportingConfig & {
   suiteName: string;
   results: EvalResultInput[];
+  agent?: {
+    getServerReplayConfigs?: () => MCPServerReplayConfig[] | undefined;
+  };
+  mcpClientManager?: MCPClientManager;
 };
 ```
 
@@ -263,6 +316,7 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `suiteName` | `string` | No | Suite name for the run |
 | `suiteDescription` | `string` | No | Description of the suite |
 | `serverNames` | `string[]` | No | MCP server names being tested |
+| `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
 | `notes` | `string` | No | Free-form notes |
 | `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
 | `strict` | `boolean` | No | Throw on upload errors (`false` = warn only) |
@@ -270,6 +324,22 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `framework` | `string` | No | Test framework name (e.g., `"jest"`, `"vitest"`) |
 | `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
 | `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
+| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting |
+| `mcpClientManager` | `MCPClientManager` | No | Replay source for manual reporting when no agent is provided |
+
+### MCPServerReplayConfig
+
+Advanced replay override. Most users should not construct this manually.
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `serverId` | `string` | Yes | MCP server identifier |
+| `url` | `string` | Yes | MCP server URL |
+| `preferSSE` | `boolean` | No | Prefer SSE transport for replay |
+| `accessToken` | `string` | No | Static bearer token for replay |
+| `refreshToken` | `string` | No | Refresh token for replay |
+| `clientId` | `string` | No | OAuth client ID, required with `refreshToken` |
+| `clientSecret` | `string` | No | OAuth client secret when needed for token refresh |
 
 ### EvalCiMetadata
 

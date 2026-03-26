@@ -18,6 +18,7 @@ import {
 import type { PromptResult } from "./PromptResult.js";
 import type { EvalRunResult } from "./EvalTest.js";
 import { captureEvalReportingFailure } from "./sentry.js";
+import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import {
   runToEvalResults,
   suiteRunToEvalResults,
@@ -209,12 +210,13 @@ class EvalRunReporterImpl implements EvalRunReporter {
       return;
     }
     try {
+      const serverReplayConfigs = resolveServerReplayConfigs(this.input);
       if (!this.runId) {
         const started = await startEvalRun(this.runtimeConfig, {
           suiteName: this.input.suiteName,
           suiteDescription: this.input.suiteDescription,
           serverNames: this.input.serverNames,
-          serverReplayConfigs: this.input.serverReplayConfigs,
+          serverReplayConfigs,
           notes: this.input.notes,
           passCriteria: this.input.passCriteria,
           externalRunId: this.externalRunId,
@@ -279,11 +281,12 @@ class EvalRunReporterImpl implements EvalRunReporter {
     this.ensureNotFinalized();
 
     if (!this.runId) {
+      const serverReplayConfigs = resolveServerReplayConfigs(this.input);
       const reportInput: ReportEvalResultsInput = {
         suiteName: this.input.suiteName,
         suiteDescription: this.input.suiteDescription,
         serverNames: this.input.serverNames,
-        serverReplayConfigs: this.input.serverReplayConfigs,
+        serverReplayConfigs,
         notes: this.input.notes,
         passCriteria: this.input.passCriteria,
         externalRunId: this.externalRunId,
@@ -291,6 +294,8 @@ class EvalRunReporterImpl implements EvalRunReporter {
         apiKey: this.input.apiKey,
         baseUrl: this.input.baseUrl,
         strict: this.input.strict,
+        agent: this.input.agent,
+        mcpClientManager: this.input.mcpClientManager,
         results: this.buffered,
       };
 

@@ -144,6 +144,115 @@ describe("createEvalRunReporter", () => {
     ]);
   });
 
+  it("resolves replay configs from agent for one-shot finalize", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "agent",
+          url: "https://agent.example.com/mcp",
+          accessToken: "at_agent",
+        },
+      ]),
+    };
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "one-shot-reporter",
+      agent,
+    });
+
+    reporter.add({ caseTitle: "case-1", passed: true });
+    await reporter.finalize();
+
+    expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    const reportBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(reportBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "agent",
+        url: "https://agent.example.com/mcp",
+        accessToken: "at_agent",
+      },
+    ]);
+  });
+
+  it("resolves replay configs from mcpClientManager when starting a chunked run", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([]),
+    };
+    const mcpClientManager = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "manager",
+          url: "https://manager.example.com/mcp",
+          refreshToken: "rt_manager",
+          clientId: "cid_manager",
+        },
+      ]),
+    };
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "chunked-manager-replay",
+      agent,
+      mcpClientManager: mcpClientManager as any,
+    });
+
+    reporter.add({
+      caseTitle: "case-1",
+      passed: true,
+      trace: "x".repeat(1024 * 1024),
+    });
+    await reporter.flush();
+    await reporter.finalize();
+
+    expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "manager",
+        url: "https://manager.example.com/mcp",
+        refreshToken: "rt_manager",
+        clientId: "cid_manager",
+      },
+    ]);
+  });
+
   describe("getAddedCount", () => {
     it("tracks total added results", () => {
       const reporter = createEvalRunReporter({

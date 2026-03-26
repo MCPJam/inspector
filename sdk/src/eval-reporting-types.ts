@@ -1,3 +1,5 @@
+import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
+
 export type EvalExpectedToolCall = {
   toolName: string;
   arguments?: Record<string, unknown>;
@@ -104,6 +106,10 @@ export type MCPJamReportingConfig = {
 export type ReportEvalResultsInput = MCPJamReportingConfig & {
   suiteName: string;
   results: EvalResultInput[];
+  agent?: {
+    getServerReplayConfigs?: () => MCPServerReplayConfig[] | undefined;
+  };
+  mcpClientManager?: MCPClientManager;
 };
 
 export type ReportEvalResultsOutput = {
