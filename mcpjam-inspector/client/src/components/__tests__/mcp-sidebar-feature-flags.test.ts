@@ -32,17 +32,30 @@ describe("filterByFeatureFlags", () => {
   });
 
   it("hides featureFlag items when flag is off", () => {
-    const result = filterByFeatureFlags(makeSections(), {
-      "ci-evals-enabled": false,
-    });
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "main",
+          items: [
+            { title: "Always Visible", url: "#always", icon: FakeIcon },
+            {
+              title: "Registry",
+              url: "#registry",
+              icon: FakeIcon,
+              featureFlag: "registry-enabled",
+            },
+          ],
+        },
+      ],
+      { "registry-enabled": false },
+    );
     const titles = result[0].items.map((i) => i.title);
-    expect(titles).toContain("Always Visible");
-    expect(titles).toContain("Testing");
+    expect(titles).toEqual(["Always Visible"]);
   });
 
   it("keeps Testing visible when unrelated flags are on", () => {
     const result = filterByFeatureFlags(makeSections(), {
-      "ci-evals-enabled": true,
+      "registry-enabled": true,
     });
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toContain("Always Visible");
@@ -191,9 +204,7 @@ describe("getHostedNavigationSections", () => {
       },
     ]);
 
-    const visibleSections = filterByFeatureFlags(hostedSections, {
-      "ci-evals-enabled": true,
-    });
+    const visibleSections = filterByFeatureFlags(hostedSections, {});
 
     expect(visibleSections[0].items.map((item) => item.title)).toEqual([
       "Testing",

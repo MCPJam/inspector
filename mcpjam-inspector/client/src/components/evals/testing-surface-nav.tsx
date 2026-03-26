@@ -15,22 +15,23 @@ export function TestingSurfaceNav({
     <SegmentedControl
       value={value}
       onChange={onChange}
+      size="default"
       className="w-full sm:w-auto"
       options={[
         {
           value: "explore",
           label: "Explore",
-          icon: <Sparkles className="h-3.5 w-3.5" />,
+          icon: <Sparkles className="h-4 w-4" />,
         },
         {
           value: "suites",
           label: "Suites",
-          icon: <Layers3 className="h-3.5 w-3.5" />,
+          icon: <Layers3 className="h-4 w-4" />,
         },
         {
           value: "runs",
           label: "Runs",
-          icon: <GitBranch className="h-3.5 w-3.5" />,
+          icon: <GitBranch className="h-4 w-4" />,
         },
       ]}
     />

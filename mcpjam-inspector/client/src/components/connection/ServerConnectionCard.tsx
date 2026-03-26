@@ -32,7 +32,7 @@ import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
 } from "./server-card-utils";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { ServerDetailTab } from "./ServerDetailModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
@@ -94,7 +94,6 @@ export function ServerConnectionCard({
   footerActions,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -534,27 +533,25 @@ export function ServerConnectionCard({
                       )}
                       {isExporting ? "Exporting..." : "Export server info"}
                     </DropdownMenuItem>
-                    {ciEvalsEnabled && (
-                      <DropdownMenuItem
-                        onClick={() => {
-                          handleCopyAgentBrief();
-                        }}
-                        disabled={
-                          isCopyingBrief ||
-                          server.connectionStatus !== "connected"
-                        }
-                        className="text-xs cursor-pointer"
-                      >
-                        {isCopyingBrief ? (
-                          <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                        ) : (
-                          <FileText className="h-3 w-3 mr-2" />
-                        )}
-                        {isCopyingBrief
-                          ? "Copying..."
-                          : "Copy markdown for server evals"}
-                      </DropdownMenuItem>
-                    )}
+                    <DropdownMenuItem
+                      onClick={() => {
+                        handleCopyAgentBrief();
+                      }}
+                      disabled={
+                        isCopyingBrief ||
+                        server.connectionStatus !== "connected"
+                      }
+                      className="text-xs cursor-pointer"
+                    >
+                      {isCopyingBrief ? (
+                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                      ) : (
+                        <FileText className="h-3 w-3 mr-2" />
+                      )}
+                      {isCopyingBrief
+                        ? "Copying..."
+                        : "Copy markdown for server evals"}
+                    </DropdownMenuItem>
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"

@@ -10,7 +10,6 @@ import {
   RefreshCw,
   Sparkles,
 } from "lucide-react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -139,7 +138,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const route = useEvalsRoute();
   const convex = useConvex();
   const appState = useSharedAppState();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const { availableModels } = useAvailableEvalModels();
   const updateSuiteMutation = useMutation("testSuites:updateTestSuite" as any);
   const updateTestCaseMutation = useMutation("testSuites:updateTestCase" as any);
@@ -392,24 +390,17 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     surface,
   ]);
 
-  const handleSurfaceChange = useCallback(
-    (nextSurface: TestingSurface) => {
-      if (nextSurface === "runs") {
-        if (ciEvalsEnabled !== true) {
-          toast.info("Runs are only available when the CI feature is enabled.");
-          return;
-        }
-        navigateToCiEvalsRoute({ type: "list" });
-        return;
-      }
+  const handleSurfaceChange = useCallback((nextSurface: TestingSurface) => {
+    if (nextSurface === "runs") {
+      navigateToCiEvalsRoute({ type: "list" });
+      return;
+    }
 
-      window.location.hash = withTestingSurface(
-        buildEvalsHash({ type: "list" }),
-        nextSurface,
-      );
-    },
-    [ciEvalsEnabled],
-  );
+    window.location.hash = withTestingSurface(
+      buildEvalsHash({ type: "list" }),
+      nextSurface,
+    );
+  }, []);
 
   const navigateToSavedSuite = useCallback((suiteId: string) => {
     window.location.hash = withTestingSurface(
@@ -669,8 +660,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     return (
       <div className="h-full flex flex-col overflow-hidden">
         <TestingShellHeader
-          surfaceTitle="Suites"
-          subtitle="Saved collections you can rerun and promote into CI when ready."
           surface={surface}
           onSurfaceChange={handleSurfaceChange}
         />
@@ -703,133 +692,106 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {surface === "explore" ? (
-        <TestingShellHeader
-          surfaceTitle="Explore"
-          surface={surface}
-          onSurfaceChange={handleSurfaceChange}
-        />
-      ) : (
-        <TestingShellHeader
-          surfaceTitle="Suites"
-          subtitle="Keep the cases you trust and rerun them on demand."
-          surface={surface}
-          onSurfaceChange={handleSurfaceChange}
-        />
-      )}
+      <TestingShellHeader
+        surface={surface}
+        onSurfaceChange={handleSurfaceChange}
+      />
 
       {surface === "explore" ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <>
-              <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-3 sm:px-6">
+              <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2 sm:px-6">
                 {handlers.isGeneratingTests && exploreSuite ? (
-                  <div className="flex flex-wrap items-center gap-3 rounded-xl border border-amber-200/60 bg-amber-50/80 px-4 py-3 text-sm dark:border-amber-900/50 dark:bg-amber-950/20">
-                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-amber-700 dark:text-amber-400" />
-                    <div>
-                      <p className="font-medium text-foreground">
-                        Generating cases for {selectedServer ?? "this server"}…
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        This runs on the server and may take a minute.
-                      </p>
-                    </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Generating cases for{" "}
+                      <span className="font-medium text-foreground">
+                        {selectedServer ?? "this server"}
+                      </span>
+                      …
+                    </p>
                   </div>
                 ) : (
-                  <div
-                    className={
-                      findingCount > 0
-                        ? "rounded-xl border border-amber-200/70 bg-amber-50/60 px-4 py-3 dark:border-amber-900/40 dark:bg-amber-950/25"
-                        : allCasesPassed
-                          ? "rounded-xl border border-emerald-200/70 bg-emerald-50/50 px-4 py-3 dark:border-emerald-900/40 dark:bg-emerald-950/20"
-                          : "rounded-xl border border-border/70 bg-card/80 px-4 py-3"
-                    }
-                  >
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                      <div className="min-w-0 space-y-1">
-                        <p className="text-sm font-medium text-foreground">
-                          {findingCount > 0
-                            ? `${findingCount} finding${findingCount === 1 ? "" : "s"} worth attention`
-                            : allCasesPassed
-                              ? `All ${exploreCases.length} cases passed`
-                              : exploreCases.length > 0
-                                ? `${exploreCases.length} case${exploreCases.length === 1 ? "" : "s"} ready`
-                                : selectedServer && isServerConnected
-                                  ? "Connect and generate cases to explore"
-                                  : "Connect a server to start discovering cases"}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {findingCount > 0
-                            ? "Review failures first, then save what you want to keep proving."
-                            : allCasesPassed
-                              ? "Model drift and schema changes can still break you—save a suite to catch regressions early."
-                              : selectedServer && isServerConnected
-                                ? "Judge signal here before saving anything as a suite."
-                                : "Pick a connected server to generate runnable cases."}
-                        </p>
-                        {selectedServer && isServerConnected && exploreSuite ? (
-                          <div className="flex flex-wrap gap-2 pt-1 text-xs text-muted-foreground">
-                            <Badge variant="secondary">
-                              {exploreCases.length} case
-                              {exploreCases.length === 1 ? "" : "s"}
-                            </Badge>
-                            {totalRunCount > 0 ? (
-                              <Badge variant="outline">
-                                {totalRunCount} recent run
-                                {totalRunCount === 1 ? "" : "s"}
-                              </Badge>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-center">
-                        {shouldReviewFindings ? (
-                          <>
-                            <Button
-                              size="sm"
-                              onClick={handleReviewFindings}
-                              disabled={!exploreSuite || !firstFindingCaseId}
-                              className="min-w-[160px]"
-                            >
-                              Review findings
-                              <ArrowRight className="ml-2 h-4 w-4" />
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={openSaveDialog}
-                              disabled={!exploreSuite || exploreCases.length === 0}
-                            >
-                              Save as Suite
-                            </Button>
-                          </>
-                        ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="min-w-0 text-sm text-muted-foreground">
+                      {findingCount > 0 ? (
+                        <>
+                          <span className="font-medium text-foreground">
+                            {findingCount}
+                          </span>{" "}
+                          finding{findingCount === 1 ? "" : "s"} across{" "}
+                          <span className="font-medium text-foreground">
+                            {exploreCases.length}
+                          </span>{" "}
+                          case{exploreCases.length === 1 ? "" : "s"}
+                        </>
+                      ) : allCasesPassed ? (
+                        <>
+                          All{" "}
+                          <span className="font-medium text-foreground">
+                            {exploreCases.length}
+                          </span>{" "}
+                          passed
+                        </>
+                      ) : exploreCases.length > 0 ? (
+                        <>
+                          <span className="font-medium text-foreground">
+                            {exploreCases.length}
+                          </span>{" "}
+                          case{exploreCases.length === 1 ? "" : "s"} ready
+                        </>
+                      ) : selectedServer && isServerConnected ? (
+                        "Connect and generate cases to explore"
+                      ) : (
+                        "Connect a server to start discovering cases"
+                      )}
+                    </p>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      {shouldReviewFindings ? (
+                        <>
                           <Button
                             size="sm"
-                            onClick={openSaveDialog}
-                            disabled={
-                              !exploreSuite ||
-                              exploreCases.length === 0 ||
-                              handlers.isGeneratingTests
-                            }
-                            className="min-w-[160px]"
+                            onClick={handleReviewFindings}
+                            disabled={!exploreSuite || !firstFindingCaseId}
                           >
-                            {allCasesPassed
-                              ? "Save as Suite — catch drift"
-                              : "Save as Suite"}
+                            Review findings
+                            <ArrowRight className="ml-2 h-4 w-4" />
                           </Button>
-                        )}
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="gap-1"
-                              disabled={!exploreSuite}
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                              More
-                            </Button>
-                          </DropdownMenuTrigger>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={openSaveDialog}
+                            disabled={!exploreSuite || exploreCases.length === 0}
+                          >
+                            Save as Suite
+                          </Button>
+                        </>
+                      ) : (
+                        <Button
+                          size="sm"
+                          onClick={openSaveDialog}
+                          disabled={
+                            !exploreSuite ||
+                            exploreCases.length === 0 ||
+                            handlers.isGeneratingTests
+                          }
+                        >
+                          Save as Suite
+                        </Button>
+                      )}
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8"
+                            disabled={!exploreSuite}
+                            aria-label="More actions"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
                             <DropdownMenuItem
                               onClick={() => void handleGenerateMore()}
@@ -868,7 +830,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                         </DropdownMenu>
                       </div>
                     </div>
-                  </div>
                 )}
               </div>
 
@@ -998,130 +959,121 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         <div className="flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-6">
           {route.type === "list" || !savedSuiteEntry || !selectedSuite ? (
             <div className="space-y-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-sm text-muted-foreground">
-                  <span className="font-medium text-foreground">
-                    {savedSuiteEntries.length}
-                  </span>{" "}
-                  saved suite{savedSuiteEntries.length === 1 ? "" : "s"}
-                </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    window.location.hash = withTestingSurface(
-                      buildEvalsHash({ type: "create" }),
-                      "suites",
-                    );
-                  }}
-                >
-                  Manual suite
-                </Button>
-              </div>
-
               {savedSuiteEntries.length === 0 ? (
-                <div className="flex min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/15 px-4 py-10 text-center">
-                  <LayersPlaceholder />
-                  <h3 className="mt-3 text-base font-semibold">No saved suites yet</h3>
-                  <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                    Start in Explore, then save cases you want to keep proving.
-                  </p>
-                  <Button className="mt-5" onClick={() => handleSurfaceChange("explore")}>
-                    Go to Explore
-                  </Button>
+                <div className="space-y-4">
+                  <div className="flex min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/15 px-4 py-10 text-center">
+                    <LayersPlaceholder />
+                    <h3 className="mt-3 text-base font-semibold">No saved suites yet</h3>
+                    <p className="mt-1 max-w-sm text-sm text-muted-foreground">
+                      Start in Explore, then save cases you want to keep proving.
+                    </p>
+                    <Button className="mt-5" onClick={() => handleSurfaceChange("explore")}>
+                      Go to Explore
+                    </Button>
+                  </div>
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+                    onClick={() => {
+                      window.location.hash = withTestingSurface(
+                        buildEvalsHash({ type: "create" }),
+                        "suites",
+                      );
+                    }}
+                  >
+                    <Plus className="h-4 w-4 shrink-0" />
+                    Create manual suite
+                  </button>
                 </div>
               ) : (
-                <div className="overflow-hidden rounded-xl border bg-card">
-                  <div className="grid grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto_auto] gap-2 border-b bg-muted/30 px-3 py-2 text-xs font-medium text-muted-foreground sm:px-4">
-                    <div>Name</div>
-                    <div className="hidden sm:block">Server</div>
-                    <div className="text-center sm:text-left">Status</div>
-                    <div className="hidden text-right md:block">Last run</div>
-                    <div className="text-right"> </div>
-                  </div>
-                  <div className="divide-y">
-                    {savedSuiteEntries.map((entry) => {
-                      const suite = entry.suite;
-                      const latestRun = entry.latestRun;
-                      const latestTimestamp =
-                        latestRun?.completedAt ??
-                        latestRun?.createdAt ??
-                        suite.updatedAt ??
-                        suite._creationTime;
-                      const missingServers = (suite.environment?.servers || []).filter(
-                        (server) => !connectedServerNames.has(server),
-                      );
-                      const canRun = missingServers.length === 0;
-                      const isRunning = handlers.rerunningSuiteId === suite._id;
+                <div className="space-y-1.5">
+                  {savedSuiteEntries.map((entry) => {
+                    const suite = entry.suite;
+                    const latestRun = entry.latestRun;
+                    const latestTimestamp =
+                      latestRun?.completedAt ??
+                      latestRun?.createdAt ??
+                      suite.updatedAt ??
+                      suite._creationTime;
+                    const missingServers = (suite.environment?.servers || []).filter(
+                      (server) => !connectedServerNames.has(server),
+                    );
+                    const canRun = missingServers.length === 0;
+                    const isRunning = handlers.rerunningSuiteId === suite._id;
 
-                      return (
-                        <div
-                          key={suite._id}
-                          className="grid grid-cols-1 items-start gap-3 px-3 py-3 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)_auto_auto_auto] sm:items-center sm:gap-2 sm:px-4"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => navigateToSavedSuite(suite._id)}
-                            className="min-w-0 text-left"
-                          >
-                            <div className="truncate font-medium text-foreground hover:underline">
-                              {suite.name}
-                            </div>
-                            {missingServers.length > 0 ? (
-                              <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
-                                Connect {missingServers.join(", ")} to run.
-                              </p>
-                            ) : null}
-                          </button>
-                          <div className="hidden text-sm text-muted-foreground sm:block">
+                    return (
+                      <div
+                        key={suite._id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => navigateToSavedSuite(suite._id)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            navigateToSavedSuite(suite._id);
+                          }
+                        }}
+                        className="flex cursor-pointer flex-wrap items-center justify-between gap-3 rounded-lg border border-border/50 px-4 py-3 outline-none hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate font-medium text-foreground">
+                            {suite.name}
+                          </div>
+                          <p className="truncate text-xs text-muted-foreground">
                             {(suite.environment?.servers || []).join(", ") || "—"}
-                          </div>
-                          <div className="flex justify-center sm:justify-start">
-                            {latestRun?.result === "failed" ? (
-                              <Badge variant="destructive" className="text-xs">
-                                {latestRun.summary?.failed ?? 0} finding
-                                {(latestRun.summary?.failed ?? 0) === 1 ? "" : "s"}
-                              </Badge>
-                            ) : latestRun?.result === "passed" ? (
-                              <Badge variant="secondary" className="text-xs">
-                                Passing
-                              </Badge>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </div>
-                          <div className="hidden text-right text-xs text-muted-foreground md:block">
-                            {formatRelativeTime(latestTimestamp)}
-                          </div>
-                          <div className="flex flex-wrap justify-end gap-2">
-                            <Button
-                              size="sm"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                void handlers.handleRerun(suite);
-                              }}
-                              disabled={!canRun || isRunning}
-                            >
-                              <RefreshCw
-                                className={`mr-2 h-4 w-4 ${isRunning ? "animate-spin" : ""}`}
-                              />
-                              Run now
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                navigateToSavedSuite(suite._id);
-                              }}
-                            >
-                              View cases
-                            </Button>
-                          </div>
+                          </p>
+                          {missingServers.length > 0 ? (
+                            <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
+                              Connect {missingServers.join(", ")} to run.
+                            </p>
+                          ) : null}
                         </div>
+                        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:gap-3">
+                          {latestRun?.result === "failed" ? (
+                            <Badge variant="destructive" className="text-xs">
+                              {latestRun.summary?.failed ?? 0} finding
+                              {(latestRun.summary?.failed ?? 0) === 1 ? "" : "s"}
+                            </Badge>
+                          ) : latestRun?.result === "passed" ? (
+                            <Badge variant="secondary" className="text-xs">
+                              Passing
+                            </Badge>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          )}
+                          <span className="text-xs text-muted-foreground tabular-nums">
+                            {formatRelativeTime(latestTimestamp)}
+                          </span>
+                          <Button
+                            size="sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void handlers.handleRerun(suite);
+                            }}
+                            disabled={!canRun || isRunning}
+                          >
+                            <RefreshCw
+                              className={`mr-2 h-4 w-4 ${isRunning ? "animate-spin" : ""}`}
+                            />
+                            Run now
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
+                    onClick={() => {
+                      window.location.hash = withTestingSurface(
+                        buildEvalsHash({ type: "create" }),
+                        "suites",
                       );
-                    })}
-                  </div>
+                    }}
+                  >
+                    <Plus className="h-4 w-4 shrink-0" />
+                    Create manual suite
+                  </button>
                 </div>
               )}
             </div>
@@ -1158,11 +1110,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
               userMap={userMap}
               workspaceId={workspaceId}
               navigation={suitesNavigation}
-              onSetupCi={
-                ciEvalsEnabled === true
-                  ? () => setSuiteForCiSetup(selectedSuite)
-                  : undefined
-              }
+              onSetupCi={() => setSuiteForCiSetup(selectedSuite)}
             />
           )}
         </div>

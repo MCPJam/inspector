@@ -373,8 +373,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <TestingShellHeader
-        surfaceTitle="Runs"
-        subtitle="Compare manual and CI-backed executions over time."
         surface="runs"
         onSurfaceChange={handleSurfaceChange}
       />

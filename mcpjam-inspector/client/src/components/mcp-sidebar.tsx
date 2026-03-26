@@ -318,7 +318,6 @@ export function MCPSidebar({
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
@@ -422,14 +421,12 @@ export function MCPSidebar({
     : null;
   const featureFlags = useMemo(
     () => ({
-      "ci-evals-enabled": !!ciEvalsEnabled && isAuthenticated,
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
     }),
     [
-      ciEvalsEnabled,
       learningEnabled,
       sandboxesEnabled,
       clientConfigEnabled,

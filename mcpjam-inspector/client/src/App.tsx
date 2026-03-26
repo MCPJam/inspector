@@ -139,7 +139,6 @@ export default function App() {
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
@@ -683,12 +682,8 @@ export default function App() {
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
 
-  // Redirect away from tabs hidden by the ci-evals feature flag.
-  // Use strict equality to avoid redirecting while the flag is still loading (undefined).
   useEffect(() => {
-    if (ciEvalsEnabled === false && activeTab === "ci-evals") {
-      applyNavigation("servers", { updateHash: true });
-    } else if (activeTabBillingLocked && activeTabBillingFeature) {
+    if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
           billingEntitlements?.plan,
@@ -709,7 +704,6 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     }
   }, [
-    ciEvalsEnabled,
     clientConfigEnabled,
     registryEnabled,
     activeTabBillingFeature,
