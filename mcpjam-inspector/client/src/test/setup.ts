@@ -44,6 +44,9 @@ global.IntersectionObserver = vi.fn().mockImplementation(() => ({
   thresholds: [],
 }));
 
+// Mock scrollTo for components that auto-scroll log panes.
+HTMLElement.prototype.scrollTo = vi.fn();
+
 // Mock localStorage
 const localStorageMock = (() => {
   let store: Record<string, string> = {};
