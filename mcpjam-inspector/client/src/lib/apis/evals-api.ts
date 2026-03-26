@@ -37,3 +37,7 @@ export function buildEvalServerBatchPayload(serverNames: string[]) {
     serverNames,
   };
 }
+
+export function buildEvalConvexAuthPayload(convexAuthToken: string) {
+  return isHostedMode() ? {} : { convexAuthToken };
+}

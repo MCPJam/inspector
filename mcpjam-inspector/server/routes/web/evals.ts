@@ -11,6 +11,9 @@ import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { logger } from "../../utils/logger";
 import { promptsListMultiSchema, handleRoute, parseWithSchema, readJsonBody, withEphemeralConnection } from "./auth.js";
+import { assertBearerToken } from "./errors.js";
+
+const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
 
 const evals = new Hono();
 
@@ -45,7 +48,6 @@ const runEvalsSchema = promptsListMultiSchema.extend({
   tests: z.array(testSchema),
   serverNames: z.array(z.string()).min(1).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
-  convexAuthToken: z.string(),
   notes: z.string().optional(),
   passCriteria: z
     .object({
@@ -54,13 +56,10 @@ const runEvalsSchema = promptsListMultiSchema.extend({
     .optional(),
 });
 
-const generateTestsSchema = promptsListMultiSchema.extend({
-  convexAuthToken: z.string(),
-});
+const generateTestsSchema = promptsListMultiSchema.extend({});
 
 const replayRunSchema = z.object({
   runId: z.string().min(1),
-  convexAuthToken: z.string(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   notes: z.string().optional(),
   passCriteria: z
@@ -74,7 +73,6 @@ const runTestCaseSchema = promptsListMultiSchema.extend({
   testCaseId: z.string().min(1),
   model: z.string().min(1),
   provider: z.string().min(1),
-  convexAuthToken: z.string(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   testCaseOverrides: z
     .object({
@@ -161,7 +159,7 @@ function requireConvexHttpUrl() {
   return convexHttpUrl;
 }
 
-async function fetchReplayConfig(runId: string) {
+async function fetchReplayConfig(runId: string, userAuthToken: string) {
   const convexHttpUrl = requireConvexHttpUrl();
   const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
   if (!inspectorServiceToken) {
@@ -174,7 +172,8 @@ async function fetchReplayConfig(runId: string) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${inspectorServiceToken}`,
+        Authorization: `Bearer ${userAuthToken}`,
+        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
       },
       body: JSON.stringify({ runId }),
     },
@@ -239,10 +238,10 @@ evals.post("/run", async (c) =>
       serverIds,
       serverNames,
       modelApiKeys,
-      convexAuthToken,
       notes,
       passCriteria,
     } = body;
+    const convexAuthToken = assertBearerToken(c);
 
     if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
       throw new Error("Provide suiteId or suiteName");
@@ -399,6 +398,7 @@ evals.post("/run", async (c) =>
 
 evals.post("/generate-tests", async (c) =>
   withEphemeralConnection(c, generateTestsSchema, async (clientManager, body) => {
+    const convexAuthToken = assertBearerToken(c);
     const filteredTools = await collectToolsForServers(
       clientManager,
       body.serverIds,
@@ -412,7 +412,7 @@ evals.post("/generate-tests", async (c) =>
     const testCases = await generateTestCases(
       filteredTools,
       convexHttpUrl,
-      body.convexAuthToken,
+      convexAuthToken,
     );
 
     return {
@@ -425,7 +425,8 @@ evals.post("/generate-tests", async (c) =>
 evals.post("/replay-run", async (c) =>
   handleRoute(c, async () => {
     const body = parseWithSchema(replayRunSchema, await readJsonBody(c));
-    const convexClient = createConvexClient(body.convexAuthToken);
+    const convexAuthToken = assertBearerToken(c);
+    const convexClient = createConvexClient(convexAuthToken);
     const convexHttpUrl = requireConvexHttpUrl();
     const replayMetadata = await convexClient.query(
       "testSuites:getRunReplayMetadata" as any,
@@ -438,7 +439,7 @@ evals.post("/replay-run", async (c) =>
       throw new Error("This run does not have stored replay credentials");
     }
 
-    const replayConfig = await fetchReplayConfig(body.runId);
+    const replayConfig = await fetchReplayConfig(body.runId, convexAuthToken);
     if (!replayConfig || replayConfig.servers.length === 0) {
       throw new Error("No replay configuration found for this run");
     }
@@ -463,7 +464,7 @@ evals.post("/replay-run", async (c) =>
         modelApiKeys: body.modelApiKeys ?? undefined,
         convexClient,
         convexHttpUrl,
-        convexAuthToken: body.convexAuthToken,
+        convexAuthToken,
         mcpClientManager: manager,
         recorder,
       });
@@ -483,7 +484,8 @@ evals.post("/replay-run", async (c) =>
 
 evals.post("/run-test-case", async (c) =>
   withEphemeralConnection(c, runTestCaseSchema, async (clientManager, body) => {
-    const convexClient = createConvexClient(body.convexAuthToken);
+    const convexAuthToken = assertBearerToken(c);
+    const convexClient = createConvexClient(convexAuthToken);
     const convexHttpUrl = requireConvexHttpUrl();
 
     const testCase = await convexClient.query("testSuites:getTestCase" as any, {
@@ -522,7 +524,7 @@ evals.post("/run-test-case", async (c) =>
       modelApiKeys: body.modelApiKeys ?? undefined,
       convexClient,
       convexHttpUrl,
-      convexAuthToken: body.convexAuthToken,
+      convexAuthToken,
       mcpClientManager: clientManager,
       recorder: null,
       testCaseId: body.testCaseId,

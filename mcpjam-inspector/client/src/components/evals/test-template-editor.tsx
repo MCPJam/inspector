@@ -8,7 +8,11 @@ import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { authFetch } from "@/lib/session-token";
-import { buildEvalServerBatchPayload, getEvalApiEndpoints } from "@/lib/apis/evals-api";
+import {
+  buildEvalConvexAuthPayload,
+  buildEvalServerBatchPayload,
+  getEvalApiEndpoints,
+} from "@/lib/apis/evals-api";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import {
   Tooltip,
@@ -397,7 +401,7 @@ export function TestTemplateEditor({
           ...buildEvalServerBatchPayload(serverIds),
           modelApiKeys:
             Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-          convexAuthToken: accessToken,
+          ...buildEvalConvexAuthPayload(accessToken),
           // Send current form state to run with unsaved changes
           testCaseOverrides: editForm
             ? {

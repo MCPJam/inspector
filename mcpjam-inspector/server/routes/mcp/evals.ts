@@ -16,6 +16,8 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 
+const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
+
 // Helper to compute config revision (same as in Convex)
 function normalizeForSignature(value: unknown): unknown {
   if (Array.isArray(value)) {
@@ -112,7 +114,7 @@ function requireConvexHttpUrl() {
   return convexHttpUrl;
 }
 
-async function fetchReplayConfig(runId: string) {
+async function fetchReplayConfig(runId: string, userAuthToken: string) {
   const convexHttpUrl = requireConvexHttpUrl();
   const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
   if (!inspectorServiceToken) {
@@ -125,7 +127,8 @@ async function fetchReplayConfig(runId: string) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${inspectorServiceToken}`,
+        Authorization: `Bearer ${userAuthToken}`,
+        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
       },
       body: JSON.stringify({ runId }),
     },
@@ -575,7 +578,7 @@ evals.post("/replay-run", async (c) => {
       );
     }
 
-    const replayConfig = await fetchReplayConfig(runId);
+    const replayConfig = await fetchReplayConfig(runId, convexAuthToken);
     if (!replayConfig || replayConfig.servers.length === 0) {
       return c.json(
         {

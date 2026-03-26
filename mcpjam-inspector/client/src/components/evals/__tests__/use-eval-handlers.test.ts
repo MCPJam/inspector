@@ -271,9 +271,9 @@ describe("useEvalHandlers", () => {
       const requestBody = JSON.parse(callArgs[1].body);
       expect(requestBody).toMatchObject({
         runId: "run-source",
-        convexAuthToken: "mock-access-token",
         passCriteria: { minimumPassRate: 92 },
       });
+      expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
         type: "run-detail",
@@ -461,9 +461,9 @@ describe("useEvalHandlers", () => {
       const requestBody = JSON.parse(callArgs[1].body);
       expect(requestBody).toMatchObject({
         runId: "run-replayable",
-        convexAuthToken: "mock-access-token",
         passCriteria: { minimumPassRate: 88 },
       });
+      expect(requestBody.convexAuthToken).toBeUndefined();
 
       expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
         type: "run-detail",
@@ -604,7 +604,7 @@ describe("useEvalHandlers", () => {
   });
 
   describe("auth token inclusion", () => {
-    it("includes convexAuthToken in handleRerun request", async () => {
+    it("includes convexAuthToken in local handleRerun request", async () => {
       mockGetAccessToken.mockResolvedValue("specific-access-token");
 
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
@@ -626,7 +626,7 @@ describe("useEvalHandlers", () => {
       expect(requestBody.convexAuthToken).toBe("specific-access-token");
     });
 
-    it("includes convexAuthToken in handleGenerateTests request", async () => {
+    it("includes convexAuthToken in local handleGenerateTests request", async () => {
       mockGetAccessToken.mockResolvedValue("another-access-token");
       mockAuthFetch.mockResolvedValue(createFetchResponse({ tests: [] }));
 
@@ -640,6 +640,52 @@ describe("useEvalHandlers", () => {
       const requestBody = JSON.parse(callArgs[1].body);
 
       expect(requestBody.convexAuthToken).toBe("another-access-token");
+    });
+
+    it("omits convexAuthToken in hosted handleReplayRun requests", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+      mockGetAccessToken.mockResolvedValue("hosted-access-token");
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          success: true,
+          suiteId: "suite-456",
+          runId: "run-new",
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          selectedSuiteEntry: {
+            latestRun: {
+              _id: "run-replayable",
+              hasServerReplayConfig: true,
+            },
+            recentRuns: [],
+          } as any,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleReplayRun(
+          {
+            _id: "suite-456",
+            name: "Replay Suite",
+            description: "A replayable CI suite",
+            source: "sdk",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "run-replayable",
+            hasServerReplayConfig: true,
+          } as any,
+        );
+      });
+
+      const callArgs = mockAuthFetch.mock.calls[0];
+      const requestBody = JSON.parse(callArgs[1].body);
+      expect(requestBody.convexAuthToken).toBeUndefined();
     });
   });
 

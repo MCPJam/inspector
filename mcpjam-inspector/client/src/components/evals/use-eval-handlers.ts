@@ -16,6 +16,7 @@ import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
+  buildEvalConvexAuthPayload,
   buildEvalServerBatchPayload,
   getEvalApiEndpoints,
 } from "@/lib/apis/evals-api";
@@ -187,7 +188,7 @@ export function useEvalHandlers({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             runId: run._id,
-            convexAuthToken: accessToken,
+            ...buildEvalConvexAuthPayload(accessToken),
             modelApiKeys:
               Object.keys(executionContext.modelApiKeys).length > 0
                 ? executionContext.modelApiKeys
@@ -301,7 +302,7 @@ export function useEvalHandlers({
               Object.keys(executionContext.modelApiKeys).length > 0
                 ? executionContext.modelApiKeys
                 : undefined,
-            convexAuthToken: accessToken,
+            ...buildEvalConvexAuthPayload(accessToken),
             passCriteria: {
               minimumPassRate: minimumPassRate,
             },
@@ -726,7 +727,7 @@ export function useEvalHandlers({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...buildEvalServerBatchPayload(serverIds),
-            convexAuthToken: accessToken,
+            ...buildEvalConvexAuthPayload(accessToken),
           }),
         });
 
