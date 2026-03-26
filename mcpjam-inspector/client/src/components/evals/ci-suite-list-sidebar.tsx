@@ -178,7 +178,7 @@ export function CiSuiteListSidebar({
             </div>
           ) : suites.length === 0 ? (
             <div className="p-4 text-center text-xs text-muted-foreground">
-              No eval suites found.
+              No suites found.
             </div>
           ) : (
             <div>

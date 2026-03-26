@@ -1,5 +1,5 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -363,6 +363,7 @@ export default function App() {
     handleUpdateWorkspace,
     handleUpdateClientConfig,
     handleDeleteWorkspace,
+    handleLeaveWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -418,6 +419,47 @@ export default function App() {
     workspaceServers,
     handleConnect,
   ]);
+
+  const previousConnectedServersRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const connectedServers = new Set(
+      Object.entries(appState.servers)
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name),
+    );
+
+    const previousConnectedServers = previousConnectedServersRef.current;
+    const newlyConnectedServers = Array.from(connectedServers).filter(
+      (serverName) => !previousConnectedServers.has(serverName),
+    );
+
+    if (activeTab === "servers") {
+      const firstVisitServer = newlyConnectedServers.find((serverName) => {
+        try {
+          return (
+            localStorage.getItem(`testing-auto-opened:${serverName}`) !==
+            "true"
+          );
+        } catch {
+          return true;
+        }
+      });
+
+      if (firstVisitServer) {
+        try {
+          localStorage.setItem(`testing-auto-opened:${firstVisitServer}`, "true");
+        } catch {
+          // Ignore localStorage failures and still navigate.
+        }
+        setSelectedServer(firstVisitServer);
+        if (window.location.hash !== "#/evals") {
+          window.location.hash = "/evals";
+        }
+      }
+    }
+
+    previousConnectedServersRef.current = connectedServers;
+  }, [activeTab, appState.servers, setSelectedServer]);
 
   // Create effective app state that uses the correct workspaces (Convex when authenticated)
   const effectiveAppState = useMemo(

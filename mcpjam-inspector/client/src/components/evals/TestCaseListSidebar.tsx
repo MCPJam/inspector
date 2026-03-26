@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -48,6 +49,11 @@ interface TestCaseListSidebarProps {
   connectedServerNames?: Set<string>;
   onNavigateToOverview?: (suiteId: string) => void;
   onSelectTestCase?: (suiteId: string, testCaseId: string) => void;
+  heading?: string;
+  emptyLabel?: string;
+  onToggleSelection?: (testCaseId: string, selected: boolean) => void;
+  selectedCaseIds?: string[];
+  showSelection?: boolean;
 }
 
 export function TestCaseListSidebar({
@@ -71,6 +77,11 @@ export function TestCaseListSidebar({
   connectedServerNames,
   onNavigateToOverview,
   onSelectTestCase,
+  heading = "Cases",
+  emptyLabel = "No cases yet",
+  onToggleSelection,
+  selectedCaseIds = [],
+  showSelection = false,
 }: TestCaseListSidebarProps) {
   // Calculate rerun availability
   const suiteServers = suite?.environment?.servers || [];
@@ -93,11 +104,11 @@ export function TestCaseListSidebar({
     return (
       <>
         <div className="p-4 border-b">
-          <h2 className="text-sm font-semibold">Test Cases</h2>
+          <h2 className="text-sm font-semibold">{heading}</h2>
         </div>
         <div className="flex-1 flex items-center justify-center p-4">
           <p className="text-xs text-muted-foreground text-center">
-            Select a server to view test cases.
+            Select a server to view cases.
           </p>
         </div>
       </>
@@ -109,7 +120,7 @@ export function TestCaseListSidebar({
       {/* Header */}
       <div className="p-4 border-b flex items-center justify-between">
         <h2 className="text-sm font-semibold">
-          Test Cases
+          {heading}
           {selectedServer && (
             <span className="text-muted-foreground font-normal">
               {" "}
@@ -145,12 +156,12 @@ export function TestCaseListSidebar({
             </TooltipTrigger>
             <TooltipContent>
               {testCases.length === 0
-                ? "Add test cases first"
+                ? "Add cases first"
                 : !canRerun && missingServers.length > 0
                   ? `Connect the following servers: ${missingServers.join(", ")}`
                   : isRerunning
                     ? "Running..."
-                    : "Run all tests"}
+                    : "Run all cases"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -184,7 +195,7 @@ export function TestCaseListSidebar({
             <TooltipContent>
               {isGeneratingTests
                 ? "Generating..."
-                : "Generate test cases with AI"}
+                : "Generate cases with AI"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -205,7 +216,7 @@ export function TestCaseListSidebar({
                 <Plus className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Create new test case</TooltipContent>
+            <TooltipContent>Create new case</TooltipContent>
           </Tooltip>
         </div>
       </div>
@@ -221,24 +232,24 @@ export function TestCaseListSidebar({
           )}
         >
           <BarChart3 className="h-4 w-4 text-muted-foreground" />
-          <span>Results & Runs</span>
+          <span>Runs</span>
         </div>
       )}
 
-      {/* Test Cases List */}
+      {/* Cases List */}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
-            Loading test cases...
+            Loading cases...
           </div>
         ) : isGeneratingTests ? (
           <div className="p-4 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
-            <span>Generating test cases...</span>
+            <span>Generating cases...</span>
           </div>
         ) : testCases.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
-            No test cases yet
+            {emptyLabel}
           </div>
         ) : (
           <div className="py-2">
@@ -246,6 +257,7 @@ export function TestCaseListSidebar({
               const isTestSelected = selectedTestId === testCase._id;
               const isTestDeleting = deletingTestCaseId === testCase._id;
               const isTestDuplicating = duplicatingTestCaseId === testCase._id;
+              const isCaseChecked = selectedCaseIds.includes(testCase._id);
 
               return (
                 <div
@@ -268,12 +280,22 @@ export function TestCaseListSidebar({
                     isTestSelected && "bg-accent font-medium",
                   )}
                 >
+                  {showSelection && (
+                    <Checkbox
+                      checked={isCaseChecked}
+                      onCheckedChange={(checked) => {
+                        onToggleSelection?.(testCase._id, checked === true);
+                      }}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`Select ${testCase.title}`}
+                    />
+                  )}
                   <div className="flex-1 min-w-0 text-left flex items-center gap-1.5">
                     <span className="truncate">{testCase.title}</span>
                     {testCase.isNegativeTest && (
                       <span
                         className="text-[10px] text-orange-500 shrink-0"
-                        title="Negative test"
+                        title="Negative case"
                       >
                         NEG
                       </span>
@@ -284,7 +306,7 @@ export function TestCaseListSidebar({
                       <button
                         onClick={(e) => e.stopPropagation()}
                         className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
-                        aria-label="Test case options"
+                        aria-label="Case options"
                       >
                         <MoreVertical className="h-4 w-4" />
                       </button>

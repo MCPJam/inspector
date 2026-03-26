@@ -358,7 +358,7 @@ export function RunOverview({
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
             <div>
               <p className="text-xs text-muted-foreground">
-                Click on a run to view its test breakdown and results.
+                Click on a run to view its case breakdown and results.
               </p>
             </div>
             <select
@@ -366,12 +366,12 @@ export function RunOverview({
               onChange={(e) =>
                 onViewModeChange(e.target.value as "runs" | "test-cases")
               }
-              className="text-xs border rounded px-2 py-1 bg-background"
-            >
-              <option value="runs">Runs</option>
-              <option value="test-cases">Test Cases</option>
-            </select>
-          </div>
+            className="text-xs border rounded px-2 py-1 bg-background"
+          >
+            <option value="runs">Runs</option>
+            <option value="test-cases">Cases</option>
+          </select>
+        </div>
         )}
 
         <div ref={tableViewportRef} className="overflow-x-auto">

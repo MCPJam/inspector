@@ -15,7 +15,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, RotateCw, Settings2, X } from "lucide-react";
+import { GitBranch, Loader2, RotateCw, Settings2, X } from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -69,6 +69,7 @@ interface SuiteHeaderProps {
   onUpdateModels?: (models: ModelInfo[]) => Promise<void>;
   readOnlyConfig?: boolean;
   onEditSuite?: () => void;
+  onSetupCi?: () => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -91,6 +92,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onUpdateModels,
     readOnlyConfig = false,
     onEditSuite,
+    onSetupCi,
   } = props;
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -320,7 +322,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ? "No connected MCP servers are configured for this suite"
         : !canRerun
           ? `Connect the following servers: ${missingServers.join(", ")}`
-          : "Run all tests";
+          : "Run all cases";
 
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
@@ -468,6 +470,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           <Button size="sm" variant="outline" onClick={onEditSuite}>
             <Settings2 className="h-4 w-4 mr-2" />
             Settings
+          </Button>
+        )}
+        {onSetupCi && !readOnlyConfig && (
+          <Button size="sm" variant="outline" onClick={onSetupCi}>
+            <GitBranch className="h-4 w-4 mr-2" />
+            Setup CI
           </Button>
         )}
         {/* Models picker - compact dropdown */}
@@ -680,7 +688,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   ? "No connected MCP servers are configured for this suite"
                   : !canRerun
                     ? `Connect the following servers: ${missingServers.join(", ")}`
-                    : "Run all tests"}
+                    : "Run all cases"}
             </TooltipContent>
           </Tooltip>
         )}

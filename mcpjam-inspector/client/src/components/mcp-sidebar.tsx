@@ -13,7 +13,6 @@ import {
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
-  GitBranch,
   GraduationCap,
   Box,
   LayoutGrid,
@@ -174,17 +173,10 @@ const navigationSections: NavSection[] = [
         featureFlag: "client-config-enabled",
       },
       {
-        title: "Generate Evals",
+        title: "Evals",
         url: "#evals",
         icon: FlaskConical,
         billingFeature: "evals",
-      },
-      {
-        title: "Evals CI/CD",
-        url: "#ci-evals",
-        icon: GitBranch,
-        featureFlag: "ci-evals-enabled",
-        billingFeature: "cicd",
       },
     ],
   },
@@ -496,7 +488,10 @@ export function MCPSidebar({
             <NavMain
               items={section.items.map((item) => ({
                 ...item,
-                isActive: item.url === `#${activeTab}`,
+                isActive:
+                  item.url === "#evals"
+                    ? activeTab === "evals" || activeTab === "ci-evals"
+                    : item.url === `#${activeTab}`,
               }))}
               onItemClick={handleNavClick}
               appBuilderBubble={

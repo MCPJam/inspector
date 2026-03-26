@@ -11,6 +11,11 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import { buildEvalsHash, type EvalsRoute } from "@/lib/evals-router";
+import {
+  withTestingSurface,
+  type TestingSurface,
+} from "@/lib/testing-surface";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
 import { useEvalMutations } from "./evals/use-eval-mutations";
@@ -26,9 +31,16 @@ import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 import { HOSTED_MODE } from "@/lib/config";
+import { TestingShellHeader } from "./evals/testing-shell-header";
 
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
+}
+
+const EXPLORE_TAG = "explore";
+
+function isExploreSuite(suite: EvalSuite): boolean {
+  return suite.tags?.includes(EXPLORE_TAG) === true;
 }
 
 export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
@@ -96,20 +108,15 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   });
 
   const visibleSuites = useMemo(
-    () =>
-      HOSTED_MODE
-        ? queries.sortedSuites
-        : queries.sortedSuites.filter((entry) => entry.suite.source === "sdk"),
+    () => queries.sortedSuites.filter((entry) => !isExploreSuite(entry.suite)),
     [queries.sortedSuites],
-  );
-
-  const sdkSuites = useMemo(
-    () => visibleSuites.filter((entry) => entry.suite.source === "sdk"),
-    [visibleSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
 
-  const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
+  const commitGroups = useMemo(
+    () => groupRunsByCommit(visibleSuites),
+    [visibleSuites],
+  );
 
   // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
   useEffect(() => {
@@ -269,6 +276,61 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     );
   }, [handlers, selectedSuite, selectedSuiteId]);
 
+  const handleSurfaceChange = useCallback(
+    (nextSurface: TestingSurface) => {
+      if (nextSurface === "runs") {
+        return;
+      }
+
+      if (nextSurface === "explore") {
+        window.location.hash = withTestingSurface(
+          buildEvalsHash({ type: "list" }),
+          "explore",
+        );
+        return;
+      }
+
+      let targetRoute: EvalsRoute = { type: "list" };
+      if (route.type === "suite-overview") {
+        targetRoute = {
+          type: "suite-overview",
+          suiteId: route.suiteId,
+          view: route.view === "runs" ? "runs" : "test-cases",
+        };
+      } else if (route.type === "run-detail") {
+        targetRoute = {
+          type: "run-detail",
+          suiteId: route.suiteId,
+          runId: route.runId,
+          iteration: route.iteration,
+        };
+      } else if (route.type === "test-detail") {
+        targetRoute = {
+          type: "test-detail",
+          suiteId: route.suiteId,
+          testId: route.testId,
+          iteration: route.iteration,
+        };
+      } else if (route.type === "test-edit") {
+        targetRoute = {
+          type: "test-edit",
+          suiteId: route.suiteId,
+          testId: route.testId,
+        };
+      } else if (route.type === "suite-edit") {
+        targetRoute = { type: "suite-edit", suiteId: route.suiteId };
+      } else if (selectedSuiteId) {
+        targetRoute = { type: "suite-overview", suiteId: selectedSuiteId };
+      }
+
+      window.location.hash = withTestingSurface(
+        buildEvalsHash(targetRoute),
+        "suites",
+      );
+    },
+    [route, selectedSuiteId],
+  );
+
   if (isLoading) {
     return (
       <div className="p-6">
@@ -310,6 +372,12 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
+      <TestingShellHeader
+        surfaceTitle="Runs"
+        subtitle="Compare manual and CI-backed executions over time."
+        surface="runs"
+        onSurfaceChange={handleSurfaceChange}
+      />
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 overflow-hidden"
@@ -342,33 +410,32 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           {route.type === "commit-detail" && selectedCommitGroup ? (
             <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
           ) : !hasVisibleSuites ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-md mx-auto p-8">
-                <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-                  <GitBranch className="h-10 w-10 text-muted-foreground" />
+            <div className="flex flex-1 items-center justify-center">
+              <div className="mx-auto max-w-md p-6 text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                  <GitBranch className="h-7 w-7 text-muted-foreground" />
                 </div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  {HOSTED_MODE ? "No eval suites yet" : "No CI runs yet"}
+                <h2 className="mb-2 text-lg font-semibold text-foreground">
+                  No runs yet
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {HOSTED_MODE
-                    ? "Create a suite from Servers or report eval results from your SDK to see runs here."
-                    : "Report eval results from your SDK or CI pipeline to see runs here."}
+                  Save a suite from Explore or rerun an existing suite to see
+                  manual and CI-backed history in one place.
                 </p>
               </div>
             </div>
           ) : route.type === "list" || !selectedSuite ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-md mx-auto p-8">
-                <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-                  <GitBranch className="h-10 w-10 text-muted-foreground" />
+            <div className="flex flex-1 items-center justify-center">
+              <div className="mx-auto max-w-md p-6 text-center">
+                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                  <GitBranch className="h-7 w-7 text-muted-foreground" />
                 </div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  Select a suite
+                <h2 className="mb-2 text-lg font-semibold text-foreground">
+                  Select a suite or commit
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Choose a CI suite or commit from the sidebar to inspect runs
-                  and test iterations.
+                  Choose a suite to inspect regressions and failures, or switch
+                  to commits when you want a run-by-run timeline.
                 </p>
               </div>
             </div>

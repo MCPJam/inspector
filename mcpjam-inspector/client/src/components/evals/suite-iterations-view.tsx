@@ -70,6 +70,7 @@ export function SuiteIterationsView({
   userMap,
   workspaceId = null,
   navigation = defaultNavigation,
+  onSetupCi,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -95,6 +96,7 @@ export function SuiteIterationsView({
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   workspaceId?: string | null;
   navigation?: SuiteNavigation;
+  onSetupCi?: () => void;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -305,6 +307,7 @@ export function SuiteIterationsView({
           availableModels={availableModels}
           onUpdateModels={handleUpdateTests}
           onEditSuite={() => navigation.toSuiteEdit(suite._id)}
+          onSetupCi={onSetupCi}
         />
       </div>
 

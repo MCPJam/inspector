@@ -167,6 +167,52 @@ export function aggregateSuite(
 }
 
 /**
+ * Sort Explore cases: failures first, then "warning" tier (pending/running, no result yet,
+ * cancelled-only, or negative tests), then passes. Ties break by title.
+ */
+export function sortExploreCasesBySignal(
+  cases: EvalCase[],
+  aggregate: SuiteAggregate | null,
+  iterations: EvalIteration[],
+): EvalCase[] {
+  const byCaseId = new Map(
+    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? [],
+  );
+
+  const latestIterationForCase = (
+    testCaseId: string,
+  ): EvalIteration | undefined => {
+    const forCase = iterations.filter((i) => i.testCaseId === testCaseId);
+    if (forCase.length === 0) return undefined;
+    return forCase.reduce((a, b) =>
+      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b,
+    );
+  };
+
+  const signalRank = (c: EvalCase): number => {
+    const row = byCaseId.get(c._id);
+    if (row && row.failed > 0) return 0;
+
+    const latest = latestIterationForCase(c._id);
+    if (!latest) return 1;
+
+    const computed = computeIterationResult(latest);
+    if (computed === "failed") return 0;
+    if (computed === "pending") return 1;
+    if (computed === "cancelled") return 1;
+    if (c.isNegativeTest) return 1;
+    return 2;
+  };
+
+  return [...cases].sort((a, b) => {
+    const ra = signalRank(a);
+    const rb = signalRank(b);
+    if (ra !== rb) return ra - rb;
+    return (a.title || "").localeCompare(b.title || "");
+  });
+}
+
+/**
  * Centralized error handling for mutations
  */
 export function handleMutationError(error: unknown, action: string) {
