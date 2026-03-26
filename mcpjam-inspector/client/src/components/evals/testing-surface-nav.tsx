@@ -1,4 +1,4 @@
-import { GitBranch, Layers3, Sparkles } from "lucide-react";
+import { GitBranch, Sparkles } from "lucide-react";
 import { SegmentedControl } from "@/components/ui/json-editor/segmented-control";
 import type { TestingSurface } from "@/lib/testing-surface";
 
@@ -22,11 +22,6 @@ export function TestingSurfaceNav({
           value: "explore",
           label: "Explore",
           icon: <Sparkles className="h-4 w-4" />,
-        },
-        {
-          value: "suites",
-          label: "Suites",
-          icon: <Layers3 className="h-4 w-4" />,
         },
         {
           value: "runs",

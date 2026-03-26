@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from "react";
+import { Play } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { CommitGroup, EvalSuiteOverviewEntry } from "./types";
+import { Button } from "@/components/ui/button";
+import type { CommitGroup, EvalSuite, EvalSuiteOverviewEntry } from "./types";
 import { TagBadges } from "./tag-editor";
 import { CommitListSidebar } from "./commit-list-sidebar";
 
@@ -11,6 +13,15 @@ function useTick(intervalMs = 60_000) {
     const id = setInterval(() => setTick((t) => t + 1), intervalMs);
     return () => clearInterval(id);
   }, [intervalMs]);
+}
+
+function getMissingServers(
+  suite: EvalSuite,
+  connectedServerNames: Set<string> | undefined,
+): string[] {
+  const servers = suite.environment?.servers ?? [];
+  if (!connectedServerNames || servers.length === 0) return [];
+  return servers.filter((name) => !connectedServerNames.has(name));
 }
 
 export type SidebarMode = "suites" | "runs";
@@ -25,6 +36,9 @@ interface CiSuiteListSidebarProps {
   commitGroups: CommitGroup[];
   selectedCommitSha: string | null;
   onSelectCommit: (commitSha: string) => void;
+  connectedServerNames?: Set<string>;
+  onRerunSuite?: (suite: EvalSuite) => void;
+  rerunningSuiteId?: string | null;
 }
 
 function getStatusInfo(entry: EvalSuiteOverviewEntry): {
@@ -97,6 +111,9 @@ export function CiSuiteListSidebar({
   commitGroups,
   selectedCommitSha,
   onSelectCommit,
+  connectedServerNames,
+  onRerunSuite,
+  rerunningSuiteId,
 }: CiSuiteListSidebarProps) {
   useTick(); // keep "Xm ago" labels ticking
 
@@ -190,6 +207,9 @@ export function CiSuiteListSidebar({
                     entries={entries}
                     selectedSuiteId={selectedSuiteId}
                     onSelectSuite={onSelectSuite}
+                    connectedServerNames={connectedServerNames}
+                    onRerunSuite={onRerunSuite}
+                    rerunningSuiteId={rerunningSuiteId}
                   />
                 ),
               )}
@@ -206,11 +226,17 @@ function SuiteGroupItem({
   entries,
   selectedSuiteId,
   onSelectSuite,
+  connectedServerNames,
+  onRerunSuite,
+  rerunningSuiteId,
 }: {
   suiteName: string;
   entries: EvalSuiteOverviewEntry[];
   selectedSuiteId: string | null;
   onSelectSuite: (suiteId: string) => void;
+  connectedServerNames?: Set<string>;
+  onRerunSuite?: (suite: EvalSuite) => void;
+  rerunningSuiteId?: string | null;
 }) {
   const primary = entries[0]; // most recent
   const hasMultiple = entries.length > 1;
@@ -225,6 +251,11 @@ function SuiteGroupItem({
   const timestamp = formatRelativeTime(
     latestRun?.completedAt ?? latestRun?.createdAt ?? primary.suite.updatedAt,
   );
+  const primaryMissing = getMissingServers(primary.suite, connectedServerNames);
+  const canRunPrimary =
+    primaryMissing.length === 0 &&
+    !(rerunningSuiteId === primary.suite._id) &&
+    Boolean(onRerunSuite);
 
   // For single-entry groups, render directly
   if (!hasMultiple) {
@@ -236,6 +267,9 @@ function SuiteGroupItem({
         status={status}
         trend={trend}
         timestamp={timestamp}
+        connectedServerNames={connectedServerNames}
+        onRerunSuite={onRerunSuite}
+        rerunningSuiteId={rerunningSuiteId}
       />
     );
   }
@@ -243,21 +277,34 @@ function SuiteGroupItem({
   // For multi-entry groups, render as expandable group
   return (
     <div>
-      <button
-        onClick={() => {
-          if (!isAnySelected) {
-            // Click selects the most recent entry
-            onSelectSuite(primary.suite._id);
-          } else {
-            setExpanded(!expanded);
-          }
-        }}
+      <div
         className={cn(
-          "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+          "group flex w-full items-center gap-2.5 px-4 py-2.5 transition-colors hover:bg-accent/50",
           isAnySelected && "bg-accent shadow-sm",
         )}
       >
-        <div className="flex items-center gap-2.5">
+        <div
+          role="button"
+          tabIndex={0}
+          onClick={() => {
+            if (!isAnySelected) {
+              onSelectSuite(primary.suite._id);
+            } else {
+              setExpanded(!expanded);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (!isAnySelected) {
+                onSelectSuite(primary.suite._id);
+              } else {
+                setExpanded(!expanded);
+              }
+            }
+          }}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
+        >
           <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
             <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
             <span
@@ -286,8 +333,15 @@ function SuiteGroupItem({
             {primary.suite.tags && primary.suite.tags.length > 0 && (
               <TagBadges tags={primary.suite.tags} className="mt-0.5" />
             )}
+            {primaryMissing.length > 0 ? (
+              <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+                Connect {primaryMissing.join(", ")} to run.
+              </p>
+            ) : null}
             <div className="text-[11px] text-muted-foreground">{timestamp}</div>
           </div>
+        </div>
+        <div className="flex shrink-0 items-end gap-1">
           {trend.length >= 3 && (
             <div className="flex h-5 shrink-0 items-end gap-px">
               {trend.map((value, idx) => (
@@ -306,8 +360,24 @@ function SuiteGroupItem({
               ))}
             </div>
           )}
+          {onRerunSuite ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+              disabled={!canRunPrimary}
+              title="Run now"
+              onClick={(e) => {
+                e.stopPropagation();
+                void onRerunSuite(primary.suite);
+              }}
+            >
+              <Play className="h-4 w-4 fill-current" />
+            </Button>
+          ) : null}
         </div>
-      </button>
+      </div>
       {(expanded || isAnySelected) && entries.length > 1 && (
         <div className="border-l-2 border-muted ml-6">
           {entries.map((entry) => {
@@ -317,36 +387,77 @@ function SuiteGroupItem({
                 entry.latestRun?.createdAt ??
                 entry.suite.updatedAt,
             );
+            const missing = getMissingServers(entry.suite, connectedServerNames);
+            const canRunEntry =
+              missing.length === 0 &&
+              !(rerunningSuiteId === entry.suite._id) &&
+              Boolean(onRerunSuite);
+
             return (
-              <button
+              <div
                 key={entry.suite._id}
-                onClick={() => onSelectSuite(entry.suite._id)}
-                className={cn(
-                  "w-full px-3 py-1.5 text-left transition-colors hover:bg-accent/50",
-                  selectedSuiteId === entry.suite._id &&
-                    "bg-primary/10 border-r-2 border-r-primary",
-                )}
+                className="flex w-full items-center gap-2 border-b border-border/40 last:border-b-0"
               >
-                <div className="flex items-center gap-2">
-                  <div
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full shrink-0",
-                      entryStatus.dotClass,
-                    )}
-                  />
-                  <span className="text-[11px] text-muted-foreground truncate flex-1">
-                    {entryTimestamp}
-                  </span>
-                  <span
-                    className={cn(
-                      "text-[10px] font-medium",
-                      entryStatus.labelClass,
-                    )}
-                  >
-                    {entryStatus.label}
-                  </span>
+                <div
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onSelectSuite(entry.suite._id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelectSuite(entry.suite._id);
+                    }
+                  }}
+                  className={cn(
+                    "min-w-0 flex-1 cursor-pointer px-3 py-1.5 text-left transition-colors hover:bg-accent/50",
+                    selectedSuiteId === entry.suite._id &&
+                      "bg-primary/10 border-r-2 border-r-primary",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <div
+                      className={cn(
+                        "h-1.5 w-1.5 rounded-full shrink-0",
+                        entryStatus.dotClass,
+                      )}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        {entryTimestamp}
+                      </div>
+                      {missing.length > 0 ? (
+                        <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                          Connect {missing.join(", ")} to run.
+                        </p>
+                      ) : null}
+                    </div>
+                    <span
+                      className={cn(
+                        "text-[10px] font-medium shrink-0",
+                        entryStatus.labelClass,
+                      )}
+                    >
+                      {entryStatus.label}
+                    </span>
+                  </div>
                 </div>
-              </button>
+                {onRerunSuite ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 shrink-0 text-muted-foreground"
+                    disabled={!canRunEntry}
+                    title="Run now"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void onRerunSuite(entry.suite);
+                    }}
+                  >
+                    <Play className="h-3.5 w-3.5 fill-current" />
+                  </Button>
+                ) : null}
+              </div>
             );
           })}
         </div>
@@ -362,6 +473,9 @@ function SuiteEntryButton({
   status,
   trend,
   timestamp,
+  connectedServerNames,
+  onRerunSuite,
+  rerunningSuiteId,
 }: {
   entry: EvalSuiteOverviewEntry;
   isSelected: boolean;
@@ -369,16 +483,35 @@ function SuiteEntryButton({
   status: { label: string; dotClass: string; labelClass: string };
   trend: number[];
   timestamp: string;
+  connectedServerNames?: Set<string>;
+  onRerunSuite?: (suite: EvalSuite) => void;
+  rerunningSuiteId?: string | null;
 }) {
+  const missing = getMissingServers(entry.suite, connectedServerNames);
+  const canRun =
+    missing.length === 0 &&
+    !(rerunningSuiteId === entry.suite._id) &&
+    Boolean(onRerunSuite);
+
   return (
-    <button
-      onClick={onSelect}
+    <div
       className={cn(
-        "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+        "group flex w-full items-center gap-2.5 px-4 py-2.5 transition-colors hover:bg-accent/50",
         isSelected && "bg-accent shadow-sm",
       )}
     >
-      <div className="flex items-center gap-2.5">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={onSelect}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
+        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
+      >
         <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
           <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
           <span
@@ -402,8 +535,15 @@ function SuiteEntryButton({
           {entry.suite.tags && entry.suite.tags.length > 0 && (
             <TagBadges tags={entry.suite.tags} className="mt-0.5" />
           )}
+          {missing.length > 0 ? (
+            <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
+              Connect {missing.join(", ")} to run.
+            </p>
+          ) : null}
           <div className="text-[11px] text-muted-foreground">{timestamp}</div>
         </div>
+      </div>
+      <div className="flex shrink-0 items-end gap-1">
         {trend.length >= 3 && (
           <div className="flex h-5 shrink-0 items-end gap-px">
             {trend.map((value, idx) => (
@@ -415,7 +555,23 @@ function SuiteEntryButton({
             ))}
           </div>
         )}
+        {onRerunSuite ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
+            disabled={!canRun}
+            title="Run now"
+            onClick={(e) => {
+              e.stopPropagation();
+              void onRerunSuite(entry.suite);
+            }}
+          >
+            <Play className="h-4 w-4 fill-current" />
+          </Button>
+        ) : null}
       </div>
-    </button>
+    </div>
   );
 }

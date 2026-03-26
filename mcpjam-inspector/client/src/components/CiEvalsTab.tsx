@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { GitBranch } from "lucide-react";
+import { GitBranch, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { buildEvalsHash, type EvalsRoute } from "@/lib/evals-router";
+import { buildEvalsHash } from "@/lib/evals-router";
 import {
   withTestingSurface,
   type TestingSurface,
@@ -136,6 +136,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     }
   }, [commitGroups, hasAutoSwitchedMode]);
 
+  useEffect(() => {
+    if (route.type !== "create") return;
+    window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+  }, [route.type]);
+
   const selectedCommitSha =
     route.type === "commit-detail" ? route.commitSha : null;
 
@@ -170,7 +175,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   }, [selectedSuite, queries.suiteDetails, queries.activeIterations]);
 
   useEffect(() => {
-    if (route.type === "list") return;
+    if (route.type === "list" || route.type === "create") return;
     if (!selectedSuiteId) return;
     if (queries.isOverviewLoading) return;
     if (!selectedSuiteEntry) {
@@ -241,7 +246,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           navigateToCiEvalsRoute({
             type: "suite-overview",
             suiteId: selectedSuiteId,
-            view: "runs",
           });
         }
       } catch (error) {
@@ -276,60 +280,12 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     );
   }, [handlers, selectedSuite, selectedSuiteId]);
 
-  const handleSurfaceChange = useCallback(
-    (nextSurface: TestingSurface) => {
-      if (nextSurface === "runs") {
-        return;
-      }
-
-      if (nextSurface === "explore") {
-        window.location.hash = withTestingSurface(
-          buildEvalsHash({ type: "list" }),
-          "explore",
-        );
-        return;
-      }
-
-      let targetRoute: EvalsRoute = { type: "list" };
-      if (route.type === "suite-overview") {
-        targetRoute = {
-          type: "suite-overview",
-          suiteId: route.suiteId,
-          view: route.view === "runs" ? "runs" : "test-cases",
-        };
-      } else if (route.type === "run-detail") {
-        targetRoute = {
-          type: "run-detail",
-          suiteId: route.suiteId,
-          runId: route.runId,
-          iteration: route.iteration,
-        };
-      } else if (route.type === "test-detail") {
-        targetRoute = {
-          type: "test-detail",
-          suiteId: route.suiteId,
-          testId: route.testId,
-          iteration: route.iteration,
-        };
-      } else if (route.type === "test-edit") {
-        targetRoute = {
-          type: "test-edit",
-          suiteId: route.suiteId,
-          testId: route.testId,
-        };
-      } else if (route.type === "suite-edit") {
-        targetRoute = { type: "suite-edit", suiteId: route.suiteId };
-      } else if (selectedSuiteId) {
-        targetRoute = { type: "suite-overview", suiteId: selectedSuiteId };
-      }
-
-      window.location.hash = withTestingSurface(
-        buildEvalsHash(targetRoute),
-        "suites",
-      );
-    },
-    [route, selectedSuiteId],
-  );
+  const handleSurfaceChange = useCallback((nextSurface: TestingSurface) => {
+    if (nextSurface === "runs") {
+      return;
+    }
+    window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+  }, []);
 
   if (isLoading) {
     return (
@@ -396,6 +352,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             commitGroups={commitGroups}
             selectedCommitSha={selectedCommitSha}
             onSelectCommit={handleSelectCommit}
+            connectedServerNames={connectedServerNames}
+            onRerunSuite={handlers.handleRerun}
+            rerunningSuiteId={handlers.rerunningSuiteId}
           />
         </ResizablePanel>
 
@@ -405,7 +364,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           defaultSize={70}
           className="flex flex-col overflow-hidden"
         >
-          {route.type === "commit-detail" && selectedCommitGroup ? (
+          {route.type === "create" ? (
+            <div className="flex flex-1 items-center justify-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            </div>
+          ) : route.type === "commit-detail" && selectedCommitGroup ? (
             <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
           ) : !hasVisibleSuites ? (
             <div className="flex flex-1 items-center justify-center">
@@ -417,8 +380,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                   No runs yet
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Save a suite from Explore or rerun an existing suite to see
-                  manual and CI-backed history in one place.
+                  Switch to <span className="font-medium text-foreground">Explore</span>{" "}
+                  in the Testing header to create and save suites. Re-run a saved
+                  suite to see manual and CI-backed history here.
                 </p>
               </div>
             </div>

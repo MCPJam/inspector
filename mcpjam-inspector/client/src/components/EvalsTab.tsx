@@ -18,7 +18,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
@@ -42,15 +41,10 @@ import {
   type EvalsRoute,
 } from "@/lib/evals-router";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import {
-  readTestingSurfaceFromHash,
-  withTestingSurface,
-  type TestingSurface,
-} from "@/lib/testing-surface";
+import { withTestingSurface, type TestingSurface } from "@/lib/testing-surface";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite, sortExploreCasesBySignal } from "./evals/helpers";
 import { SuiteIterationsView, type SuiteNavigation } from "./evals/suite-iterations-view";
-import { EvalRunner } from "./evals/eval-runner";
 import { TestCaseListSidebar } from "./evals/TestCaseListSidebar";
 import { TestingShellHeader } from "./evals/testing-shell-header";
 import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
@@ -74,64 +68,6 @@ function isExploreSuite(suite: EvalSuite): boolean {
   return suite.tags?.includes(EXPLORE_TAG) === true;
 }
 
-function formatRelativeTime(timestamp?: number): string {
-  if (!timestamp) return "No runs yet";
-  const now = Date.now();
-  const diff = now - timestamp;
-  const minutes = Math.floor(diff / 60_000);
-  if (minutes < 1) return "Just now";
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
-  return new Date(timestamp).toLocaleDateString();
-}
-
-function buildSuitesNavigation(): SuiteNavigation {
-  const toSurfaceHash = (route: EvalsRoute) =>
-    withTestingSurface(buildEvalsHash(route), "suites");
-
-  return {
-    toSuiteOverview: (suiteId, view) => {
-      window.location.hash = toSurfaceHash({
-        type: "suite-overview",
-        suiteId,
-        view,
-      });
-    },
-    toRunDetail: (suiteId, runId, iteration) => {
-      window.location.hash = toSurfaceHash({
-        type: "run-detail",
-        suiteId,
-        runId,
-        iteration,
-      });
-    },
-    toTestDetail: (suiteId, testId, iteration) => {
-      window.location.hash = toSurfaceHash({
-        type: "test-detail",
-        suiteId,
-        testId,
-        iteration,
-      });
-    },
-    toTestEdit: (suiteId, testId) => {
-      window.location.hash = toSurfaceHash({
-        type: "test-edit",
-        suiteId,
-        testId,
-      });
-    },
-    toSuiteEdit: (suiteId) => {
-      window.location.hash = toSurfaceHash({
-        type: "suite-edit",
-        suiteId,
-      });
-    },
-  };
-}
-
 export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
@@ -143,9 +79,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const updateTestCaseMutation = useMutation("testSuites:updateTestCase" as any);
   const mutations = useEvalMutations();
 
-  const [surface, setSurface] = useState<TestingSurface>(() =>
-    readTestingSurfaceFromHash(window.location.hash),
-  );
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
   const [saveModalSelectedIds, setSaveModalSelectedIds] = useState<string[]>(
     [],
@@ -153,35 +86,13 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
   const [suiteNameDraft, setSuiteNameDraft] = useState("");
   const [isSavingSuite, setIsSavingSuite] = useState(false);
-  const [suiteForCiSetup, setSuiteForCiSetup] = useState<EvalSuite | null>(
-    null,
-  );
-
   const initializedExploreRef = useRef<Set<string>>(new Set());
   const generatedExploreSuiteRef = useRef<Set<string>>(new Set());
-
-  useEffect(() => {
-    const applyHash = () => {
-      setSurface(readTestingSurfaceFromHash(window.location.hash));
-    };
-    applyHash();
-    window.addEventListener("hashchange", applyHash);
-    return () => window.removeEventListener("hashchange", applyHash);
-  }, []);
 
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-  const selectedSuiteIdFromRoute =
-    route.type === "suite-overview" ||
-    route.type === "run-detail" ||
-    route.type === "test-detail" ||
-    route.type === "test-edit" ||
-    route.type === "suite-edit"
-      ? route.suiteId
-      : null;
-
   const connectedServerNames = useMemo(
     () =>
       new Set(
@@ -254,20 +165,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     [manualSuiteEntries],
   );
 
-  const savedSuiteEntry =
-    surface === "suites" && selectedSuiteIdFromRoute
-      ? (savedSuiteEntries.find(
-          (entry) => entry.suite._id === selectedSuiteIdFromRoute,
-        ) ?? null)
-      : null;
+  const selectedSuiteId = exploreSuiteEntry?.suite._id ?? null;
 
-  const selectedSuiteId =
-    surface === "explore"
-      ? exploreSuiteEntry?.suite._id ?? null
-      : selectedSuiteIdFromRoute;
-
-  const activeSuiteEntry =
-    surface === "explore" ? exploreSuiteEntry : savedSuiteEntry;
+  const activeSuiteEntry = exploreSuiteEntry;
 
   const handlers = useEvalHandlers({
     mutations,
@@ -297,15 +197,14 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     return aggregateSuite(selectedSuite, suiteDetails.testCases, activeIterations);
   }, [selectedSuite, suiteDetails, activeIterations]);
 
-  const exploreSuite = surface === "explore" ? selectedSuite : null;
-  const exploreCases =
-    surface === "explore" ? (suiteDetails?.testCases ?? EMPTY_CASES) : EMPTY_CASES;
+  const exploreSuite = selectedSuite;
+  const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
 
   useEffect(() => {
     if (!selectedServer || !isServerConnected || !workspaceId || !isAuthenticated) {
       return;
     }
-    if (surface !== "explore" || exploreSuiteEntry) {
+    if (exploreSuiteEntry) {
       return;
     }
     if (initializedExploreRef.current.has(selectedServer)) {
@@ -345,14 +244,12 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     isServerConnected,
     mutations.createTestSuiteMutation,
     selectedServer,
-    surface,
     updateSuiteMutation,
     workspaceId,
   ]);
 
   useEffect(() => {
     if (
-      surface !== "explore" ||
       !exploreSuite ||
       !selectedServer ||
       !isServerConnected ||
@@ -387,7 +284,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     isServerConnected,
     queries.isSuiteDetailsLoading,
     selectedServer,
-    surface,
   ]);
 
   const handleSurfaceChange = useCallback((nextSurface: TestingSurface) => {
@@ -396,27 +292,12 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       return;
     }
 
-    window.location.hash = withTestingSurface(
-      buildEvalsHash({ type: "list" }),
-      nextSurface,
-    );
+    window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
   }, []);
-
-  const navigateToSavedSuite = useCallback((suiteId: string) => {
-    window.location.hash = withTestingSurface(
-      buildEvalsHash({ type: "suite-overview", suiteId }),
-      "suites",
-    );
-  }, []);
-
-  const suitesNavigation = useMemo(() => buildSuitesNavigation(), []);
 
   const exploreNavigation = useMemo((): SuiteNavigation => {
     const toExploreList = () => {
-      window.location.hash = withTestingSurface(
-        buildEvalsHash({ type: "list" }),
-        "explore",
-      );
+      window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
     };
     return {
       toSuiteOverview: (_suiteId, _view) => {
@@ -425,25 +306,21 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       toRunDetail: (suiteId, runId, iteration) => {
         window.location.hash = withTestingSurface(
           buildEvalsHash({ type: "run-detail", suiteId, runId, iteration }),
-          "explore",
         );
       },
       toTestDetail: (suiteId, testId, iteration) => {
         window.location.hash = withTestingSurface(
           buildEvalsHash({ type: "test-detail", suiteId, testId, iteration }),
-          "explore",
         );
       },
       toTestEdit: (suiteId, testId) => {
         window.location.hash = withTestingSurface(
           buildEvalsHash({ type: "test-edit", suiteId, testId }),
-          "explore",
         );
       },
       toSuiteEdit: (suiteId) => {
         window.location.hash = withTestingSurface(
           buildEvalsHash({ type: "suite-edit", suiteId }),
-          "explore",
         );
       },
     };
@@ -467,10 +344,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     suiteAggregate?.byCase.filter((item) => item.failed > 0).length ?? 0;
   const totalRunCount = suiteAggregate?.filteredIterations.length ?? 0;
   const hasReviewedCase =
-    surface === "explore" &&
-    (route.type === "test-detail" ||
-      route.type === "test-edit" ||
-      route.type === "run-detail");
+    route.type === "test-detail" ||
+    route.type === "test-edit" ||
+    route.type === "run-detail";
 
   const shouldReviewFindings = findingCount > 0 && !hasReviewedCase;
   const allCasesPassed =
@@ -577,10 +453,10 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           : `Saved ${selectedCases.length} case${selectedCases.length === 1 ? "" : "s"} to "${suiteName}"`,
       );
       setIsSaveDialogOpen(false);
-      window.location.hash = withTestingSurface(
-        buildEvalsHash({ type: "suite-overview", suiteId: targetSuiteId }),
-        "suites",
-      );
+      navigateToCiEvalsRoute({
+        type: "suite-overview",
+        suiteId: targetSuiteId,
+      });
     } catch (error) {
       toast.error(getBillingErrorMessage(error, "Failed to save suite"));
     } finally {
@@ -613,7 +489,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         suiteId: exploreSuite._id,
         testId: firstFindingCaseId,
       }),
-      "explore",
     );
   }, [exploreSuite, firstFindingCaseId]);
 
@@ -656,49 +531,21 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     );
   }
 
-  if (surface === "suites" && route.type === "create") {
-    return (
-      <div className="h-full flex flex-col overflow-hidden">
-        <TestingShellHeader
-          surface={surface}
-          onSurfaceChange={handleSurfaceChange}
-        />
-        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
-          <EvalRunner
-            availableModels={availableModels}
-            workspaceId={workspaceId}
-            inline={true}
-            onSuccess={(suiteId) => {
-              window.location.hash = withTestingSurface(
-                buildEvalsHash(
-                  suiteId
-                    ? { type: "suite-overview", suiteId }
-                    : { type: "list" },
-                ),
-                "suites",
-              );
-            }}
-            preselectedServer={selectedServer}
-          />
-        </div>
-      </div>
-    );
-  }
-
   const showExploreLoading =
-    surface === "explore" &&
-    (isPreparingExplore ||
-      (selectedServer && isServerConnected && !exploreSuite && queries.isOverviewLoading));
+    isPreparingExplore ||
+    (selectedServer &&
+      isServerConnected &&
+      !exploreSuite &&
+      queries.isOverviewLoading);
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <TestingShellHeader
-        surface={surface}
+        surface="explore"
         onSurfaceChange={handleSurfaceChange}
       />
 
-      {surface === "explore" ? (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <>
               <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2 sm:px-6">
                 {handlers.isGeneratingTests && exploreSuite ? (
@@ -902,7 +749,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                         onNavigateToOverview={(suiteId) => {
                           window.location.hash = withTestingSurface(
                             buildEvalsHash({ type: "suite-overview", suiteId }),
-                            "explore",
                           );
                         }}
                       />
@@ -955,166 +801,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
               </div>
             </>
         </div>
-      ) : (
-        <div className="flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-6">
-          {route.type === "list" || !savedSuiteEntry || !selectedSuite ? (
-            <div className="space-y-4">
-              {savedSuiteEntries.length === 0 ? (
-                <div className="space-y-4">
-                  <div className="flex min-h-[280px] flex-col items-center justify-center rounded-xl border border-dashed border-border/70 bg-muted/15 px-4 py-10 text-center">
-                    <LayersPlaceholder />
-                    <h3 className="mt-3 text-base font-semibold">No saved suites yet</h3>
-                    <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-                      Start in Explore, then save cases you want to keep proving.
-                    </p>
-                    <Button className="mt-5" onClick={() => handleSurfaceChange("explore")}>
-                      Go to Explore
-                    </Button>
-                  </div>
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
-                    onClick={() => {
-                      window.location.hash = withTestingSurface(
-                        buildEvalsHash({ type: "create" }),
-                        "suites",
-                      );
-                    }}
-                  >
-                    <Plus className="h-4 w-4 shrink-0" />
-                    Create manual suite
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  {savedSuiteEntries.map((entry) => {
-                    const suite = entry.suite;
-                    const latestRun = entry.latestRun;
-                    const latestTimestamp =
-                      latestRun?.completedAt ??
-                      latestRun?.createdAt ??
-                      suite.updatedAt ??
-                      suite._creationTime;
-                    const missingServers = (suite.environment?.servers || []).filter(
-                      (server) => !connectedServerNames.has(server),
-                    );
-                    const canRun = missingServers.length === 0;
-                    const isRunning = handlers.rerunningSuiteId === suite._id;
-
-                    return (
-                      <div
-                        key={suite._id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={() => navigateToSavedSuite(suite._id)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            navigateToSavedSuite(suite._id);
-                          }
-                        }}
-                        className="flex cursor-pointer flex-wrap items-center justify-between gap-3 rounded-lg border border-border/50 px-4 py-3 outline-none hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring"
-                      >
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate font-medium text-foreground">
-                            {suite.name}
-                          </div>
-                          <p className="truncate text-xs text-muted-foreground">
-                            {(suite.environment?.servers || []).join(", ") || "—"}
-                          </p>
-                          {missingServers.length > 0 ? (
-                            <p className="mt-0.5 text-xs text-amber-600 dark:text-amber-400">
-                              Connect {missingServers.join(", ")} to run.
-                            </p>
-                          ) : null}
-                        </div>
-                        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:gap-3">
-                          {latestRun?.result === "failed" ? (
-                            <Badge variant="destructive" className="text-xs">
-                              {latestRun.summary?.failed ?? 0} finding
-                              {(latestRun.summary?.failed ?? 0) === 1 ? "" : "s"}
-                            </Badge>
-                          ) : latestRun?.result === "passed" ? (
-                            <Badge variant="secondary" className="text-xs">
-                              Passing
-                            </Badge>
-                          ) : (
-                            <span className="text-xs text-muted-foreground">—</span>
-                          )}
-                          <span className="text-xs text-muted-foreground tabular-nums">
-                            {formatRelativeTime(latestTimestamp)}
-                          </span>
-                          <Button
-                            size="sm"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handlers.handleRerun(suite);
-                            }}
-                            disabled={!canRun || isRunning}
-                          >
-                            <RefreshCw
-                              className={`mr-2 h-4 w-4 ${isRunning ? "animate-spin" : ""}`}
-                            />
-                            Run now
-                          </Button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <button
-                    type="button"
-                    className="flex w-full items-center justify-center gap-2 rounded-lg border border-dashed border-border/70 px-4 py-3 text-sm text-muted-foreground transition-colors hover:bg-muted/30 hover:text-foreground"
-                    onClick={() => {
-                      window.location.hash = withTestingSurface(
-                        buildEvalsHash({ type: "create" }),
-                        "suites",
-                      );
-                    }}
-                  >
-                    <Plus className="h-4 w-4 shrink-0" />
-                    Create manual suite
-                  </button>
-                </div>
-              )}
-            </div>
-          ) : queries.isSuiteDetailsLoading ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="text-center">
-                <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-                <p className="mt-4 text-sm text-muted-foreground">
-                  Loading suite data...
-                </p>
-              </div>
-            </div>
-          ) : (
-            <SuiteIterationsView
-              suite={selectedSuite}
-              cases={suiteDetails?.testCases || []}
-              iterations={activeIterations}
-              allIterations={sortedIterations}
-              runs={runsForSelectedSuite}
-              runsLoading={queries.isSuiteRunsLoading}
-              aggregate={suiteAggregate}
-              onRerun={handlers.handleRerun}
-              onCancelRun={handlers.handleCancelRun}
-              onDelete={handlers.handleDelete}
-              onDeleteRun={handlers.handleDeleteRun}
-              onDirectDeleteRun={handlers.directDeleteRun}
-              connectedServerNames={connectedServerNames}
-              rerunningSuiteId={handlers.rerunningSuiteId}
-              cancellingRunId={handlers.cancellingRunId}
-              deletingSuiteId={handlers.deletingSuiteId}
-              deletingRunId={handlers.deletingRunId}
-              availableModels={availableModels}
-              route={route}
-              userMap={userMap}
-              workspaceId={workspaceId}
-              navigation={suitesNavigation}
-              onSetupCi={() => setSuiteForCiSetup(selectedSuite)}
-            />
-          )}
-        </div>
-      )}
 
       <Dialog open={isSaveDialogOpen} onOpenChange={setIsSaveDialogOpen}>
         <DialogContent className="max-h-[min(90vh,720px)] gap-0 overflow-hidden sm:max-w-lg">
@@ -1206,46 +892,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={suiteForCiSetup !== null} onOpenChange={(open) => !open && setSuiteForCiSetup(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Setup CI</DialogTitle>
-            <DialogDescription>
-              Move this suite from manual confidence to ongoing proof. Open Runs to
-              track CI-backed executions and compare them against manual runs in one place.
-            </DialogDescription>
-          </DialogHeader>
-
-          {suiteForCiSetup ? (
-            <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
-              <p className="font-medium text-foreground">{suiteForCiSetup.name}</p>
-              <p className="mt-2">
-                Use Runs to inspect commit history, replay failures, and see how this
-                suite behaves once it starts running in CI.
-              </p>
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setSuiteForCiSetup(null)}>
-              Close
-            </Button>
-            <Button
-              onClick={() => {
-                if (suiteForCiSetup) {
-                  navigateToCiEvalsRoute({
-                    type: "suite-overview",
-                    suiteId: suiteForCiSetup._id,
-                  });
-                }
-              }}
-            >
-              Open Runs
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
       <ConfirmationDialogs
         suiteToDelete={handlers.suiteToDelete}
         setSuiteToDelete={handlers.setSuiteToDelete}
@@ -1260,14 +906,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         deletingTestCaseId={handlers.deletingTestCaseId}
         onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
       />
-    </div>
-  );
-}
-
-function LayersPlaceholder() {
-  return (
-    <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-muted">
-      <Sparkles className="h-10 w-10 text-muted-foreground" />
     </div>
   );
 }

@@ -139,17 +139,18 @@ export function HostedCiSuiteWorkspaceDetail({
           deletingTestCaseId={deletingTestCaseId}
           duplicatingTestCaseId={duplicatingTestCaseId}
           isGeneratingTests={isGeneratingTests}
-          showingOverview={!selectedTestId}
+          showingOverview={
+            !selectedTestId &&
+            !(
+              route.type === "suite-overview" && route.view === "test-cases"
+            )
+          }
           suite={suite}
           onRerun={onRerun}
           rerunningSuiteId={rerunningSuiteId}
           connectedServerNames={connectedServerNames}
           onNavigateToOverview={(suiteId) =>
-            navigateToCiEvalsRoute({
-              type: "suite-overview",
-              suiteId,
-              view: "test-cases",
-            })
+            navigateToCiEvalsRoute({ type: "suite-overview", suiteId })
           }
           onSelectTestCase={(suiteId, testId) =>
             navigateToCiEvalsRoute({ type: "test-edit", suiteId, testId })

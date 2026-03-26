@@ -1,4 +1,4 @@
-export type TestingSurface = "explore" | "suites" | "runs";
+export type TestingSurface = "explore" | "runs";
 
 export function readTestingSurfaceFromHash(hashValue: string): TestingSurface {
   const hash = hashValue.replace(/^#/, "");
@@ -9,22 +9,19 @@ export function readTestingSurfaceFromHash(hashValue: string): TestingSurface {
   }
 
   const params = new URLSearchParams(queryString || "");
-  return params.get("surface") === "suites" ? "suites" : "explore";
+  // Legacy ?surface=suites bookmarks — treat as Explore (Suites tab removed)
+  if (params.get("surface") === "suites") {
+    return "explore";
+  }
+  return "explore";
 }
 
-export function withTestingSurface(
-  hash: string,
-  surface: Exclude<TestingSurface, "runs">,
-): string {
+/** Strips legacy `surface` query params from evals hashes (Explore is default). */
+export function withTestingSurface(hash: string): string {
   const normalizedHash = hash.startsWith("#") ? hash.slice(1) : hash;
   const [path, queryString] = normalizedHash.split("?");
   const params = new URLSearchParams(queryString || "");
-
-  if (surface === "suites") {
-    params.set("surface", "suites");
-  } else {
-    params.delete("surface");
-  }
+  params.delete("surface");
 
   const nextQuery = params.toString();
   return `#${path}${nextQuery ? `?${nextQuery}` : ""}`;
