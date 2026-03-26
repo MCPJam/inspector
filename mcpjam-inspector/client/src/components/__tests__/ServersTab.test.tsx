@@ -157,7 +157,15 @@ vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
+    getAccessToken: vi.fn().mockResolvedValue("mock-access-token"),
     user: null,
+  }),
+}));
+
+vi.mock("@/hooks/use-ai-provider-keys", () => ({
+  useAiProviderKeys: () => ({
+    getToken: vi.fn().mockReturnValue("mock-api-key"),
+    hasToken: vi.fn().mockReturnValue(true),
   }),
 }));
 

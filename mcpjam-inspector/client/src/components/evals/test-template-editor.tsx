@@ -8,6 +8,8 @@ import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { authFetch } from "@/lib/session-token";
+import { buildEvalServerBatchPayload, getEvalApiEndpoints } from "@/lib/apis/evals-api";
+import { listTools } from "@/lib/apis/mcp-tools-api";
 import {
   Tooltip,
   TooltipContent,
@@ -195,14 +197,9 @@ export function TestTemplateEditor({
   }, [selectedTestCaseId, currentTestCase?._id]); // Reset when switching test cases or when test case first loads
 
   // Get suite config for servers (to fetch available tools)
-  const suiteConfig = useQuery(
-    "testSuites:getTestSuitesOverview" as any,
-    {},
-  ) as any;
-  const suite = useMemo(() => {
-    if (!suiteConfig) return null;
-    return suiteConfig.find((entry: any) => entry.suite._id === suiteId)?.suite;
-  }, [suiteConfig, suiteId]);
+  const suite = useQuery("testSuites:getTestSuite" as any, {
+    suiteId,
+  }) as any;
 
   // Calculate missing servers
   const missingServers = useMemo(() => {
@@ -227,18 +224,16 @@ export function TestTemplateEditor({
       }
 
       try {
-        const response = await authFetch("/api/mcp/list-tools", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverIds }),
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableTools(data.tools || []);
-        }
+        const toolsByServer = await Promise.all(
+          serverIds.map(async (serverId: string) => {
+            const result = await listTools({ serverId });
+            return result.tools || [];
+          }),
+        );
+        setAvailableTools(toolsByServer.flat());
       } catch (error) {
         console.error("Failed to fetch tools:", error);
+        setAvailableTools([]);
       }
     }
 
@@ -380,6 +375,7 @@ export function TestTemplateEditor({
     try {
       const accessToken = await getAccessToken();
       const serverIds = suite.environment?.servers || [];
+      const endpoints = getEvalApiEndpoints();
 
       // Collect API key if needed
       const modelApiKeys: Record<string, string> = {};
@@ -391,14 +387,14 @@ export function TestTemplateEditor({
         }
       }
 
-      const response = await authFetch("/api/mcp/evals/run-test-case", {
+      const response = await authFetch(endpoints.runTestCase, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           testCaseId: currentTestCase._id,
           model,
           provider,
-          serverIds,
+          ...buildEvalServerBatchPayload(serverIds),
           modelApiKeys:
             Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
           convexAuthToken: accessToken,

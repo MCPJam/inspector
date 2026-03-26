@@ -79,6 +79,7 @@ interface ServerConnectionCardProps {
     server: ServerWithName,
     defaultTab: ServerDetailTab,
   ) => void;
+  footerActions?: React.ReactNode;
 }
 
 export function ServerConnectionCard({
@@ -90,6 +91,7 @@ export function ServerConnectionCard({
   serverTunnelUrl,
   hostedServerId,
   onOpenDetailModal,
+  footerActions,
 }: ServerConnectionCardProps) {
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
@@ -613,9 +615,10 @@ export function ServerConnectionCard({
 
           <div className="mt-3 flex items-center justify-end">
             <div
-              className="flex items-center gap-2"
+              className="flex flex-wrap items-center justify-end gap-2"
               onClick={(e) => e.stopPropagation()}
             >
+              {footerActions}
               {canShareServer && (
                 <button
                   onClick={() => {

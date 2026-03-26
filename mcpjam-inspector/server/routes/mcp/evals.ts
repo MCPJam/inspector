@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { ConvexHttpClient } from "convex/browser";
+import { MCPClientManager, type HttpServerConfig } from "@mcpjam/sdk";
 import {
   generateTestCases,
   type DiscoveredTool,
@@ -11,7 +12,7 @@ import {
 } from "../../services/negative-test-agent";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 
@@ -92,6 +93,93 @@ async function collectToolsForServers(
   return perServerTools.flat();
 }
 
+function createConvexClient(convexAuthToken: string) {
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    throw new Error("CONVEX_URL is not set");
+  }
+
+  const convexClient = new ConvexHttpClient(convexUrl);
+  convexClient.setAuth(convexAuthToken);
+  return convexClient;
+}
+
+function requireConvexHttpUrl() {
+  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
+  if (!convexHttpUrl) {
+    throw new Error("CONVEX_HTTP_URL is not set");
+  }
+  return convexHttpUrl;
+}
+
+async function fetchReplayConfig(runId: string) {
+  const convexHttpUrl = requireConvexHttpUrl();
+  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  if (!inspectorServiceToken) {
+    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
+  }
+
+  const response = await fetch(
+    `${convexHttpUrl}/internal/v1/evals/runs/replay-config`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${inspectorServiceToken}`,
+      },
+      body: JSON.stringify({ runId }),
+    },
+  );
+
+  const body = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+    replayConfig?: {
+      runId: string;
+      suiteId: string;
+      servers: Array<{
+        serverId: string;
+        url: string;
+        preferSSE?: boolean;
+        accessToken?: string;
+        refreshToken?: string;
+        clientId?: string;
+        clientSecret?: string;
+      }>;
+    } | null;
+  };
+
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || "Failed to fetch replay config");
+  }
+
+  return body.replayConfig;
+}
+
+function buildReplayManager(
+  replayConfig: NonNullable<Awaited<ReturnType<typeof fetchReplayConfig>>>,
+) {
+  const entries = replayConfig.servers.map((server) => {
+    const config: HttpServerConfig = {
+      url: server.url,
+      timeout: WEB_CALL_TIMEOUT_MS,
+      ...(server.preferSSE !== undefined
+        ? { preferSSE: server.preferSSE }
+        : {}),
+      ...(server.accessToken ? { accessToken: server.accessToken } : {}),
+      ...(server.refreshToken ? { refreshToken: server.refreshToken } : {}),
+      ...(server.clientId ? { clientId: server.clientId } : {}),
+      ...(server.clientSecret ? { clientSecret: server.clientSecret } : {}),
+    };
+
+    return [server.serverId, config] as const;
+  });
+
+  return new MCPClientManager(Object.fromEntries(entries), {
+    defaultTimeout: WEB_CALL_TIMEOUT_MS,
+  });
+}
+
 const evals = new Hono();
 
 const RunEvalsRequestSchema = z.object({
@@ -138,6 +226,20 @@ const RunEvalsRequestSchema = z.object({
 });
 
 type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
+
+const ReplayRunRequestSchema = z.object({
+  runId: z.string().min(1),
+  convexAuthToken: z.string(),
+  modelApiKeys: z.record(z.string(), z.string()).optional(),
+  notes: z.string().optional(),
+  passCriteria: z
+    .object({
+      minimumPassRate: z.number(),
+    })
+    .optional(),
+});
+
+type ReplayRunRequest = z.infer<typeof ReplayRunRequestSchema>;
 
 evals.post("/run", async (c) => {
   try {
@@ -435,6 +537,94 @@ evals.post("/run", async (c) => {
       },
       500,
     );
+  }
+});
+
+evals.post("/replay-run", async (c) => {
+  try {
+    const body = await c.req.json();
+    const validationResult = ReplayRunRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const { runId, convexAuthToken, modelApiKeys, notes, passCriteria } =
+      validationResult.data as ReplayRunRequest;
+
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
+    const replayMetadata = await convexClient.query(
+      "testSuites:getRunReplayMetadata" as any,
+      {
+        runId,
+      },
+    );
+
+    if (!replayMetadata?.hasServerReplayConfig) {
+      return c.json(
+        {
+          error: "This run does not have stored replay credentials",
+        },
+        400,
+      );
+    }
+
+    const replayConfig = await fetchReplayConfig(runId);
+    if (!replayConfig || replayConfig.servers.length === 0) {
+      return c.json(
+        {
+          error: "No replay configuration found for this run",
+        },
+        400,
+      );
+    }
+
+    const replayManager = buildReplayManager(replayConfig);
+    try {
+      const { runId: replayRunId, recorder, config } =
+        await startSuiteRunWithRecorder({
+          convexClient,
+          suiteId: replayMetadata.suiteId,
+          notes,
+          passCriteria,
+          serverIds:
+            replayMetadata.environment?.servers ??
+            replayConfig.servers.map((server) => server.serverId),
+          replayedFromRunId: runId,
+        });
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: replayMetadata.suiteId,
+        runId: replayRunId,
+        config,
+        modelApiKeys: modelApiKeys ?? undefined,
+        convexClient,
+        convexHttpUrl,
+        convexAuthToken,
+        mcpClientManager: replayManager,
+        recorder,
+      });
+
+      return c.json({
+        success: true,
+        suiteId: replayMetadata.suiteId,
+        runId: replayRunId,
+        sourceRunId: runId,
+        message: "Replay completed successfully.",
+      });
+    } finally {
+      await replayManager.disconnectAllServers();
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("[Error replaying eval run]", error);
+    return c.json({ error: errorMessage }, 500);
   }
 });
 

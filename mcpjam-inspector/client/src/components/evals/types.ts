@@ -24,6 +24,10 @@ export type EvalSuite = {
   configRevision: string;
   environment: {
     servers: string[];
+    serverBindings?: Array<{
+      serverName: string;
+      workspaceServerId?: string;
+    }>;
   };
   createdAt: number;
   updatedAt: number;
@@ -119,7 +123,13 @@ export type EvalSuiteRun = {
   configRevision: string;
   configSnapshot: {
     tests: EvalSuiteConfigTest[];
-    environment: { servers: string[] };
+    environment: {
+      servers: string[];
+      serverBindings?: Array<{
+        serverName: string;
+        workspaceServerId?: string;
+      }>;
+    };
   };
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
   summary?: EvalSuiteRunSummary;
@@ -128,6 +138,8 @@ export type EvalSuiteRun = {
   };
   result?: "pending" | "passed" | "failed" | "cancelled";
   source?: "ui" | "sdk";
+  replayedFromRunId?: string;
+  hasServerReplayConfig?: boolean;
   externalRunId?: string;
   framework?: string;
   ciMetadata?: {

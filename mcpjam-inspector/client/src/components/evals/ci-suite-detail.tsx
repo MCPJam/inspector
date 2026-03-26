@@ -24,6 +24,7 @@ interface CiSuiteDetailProps {
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
   onRerun: (suite: EvalSuite) => void;
+  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
   onDeleteSuite: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
@@ -46,6 +47,7 @@ export function CiSuiteDetail({
   runsLoading,
   aggregate,
   onRerun,
+  onReplayRun,
   onCancelRun,
   onDeleteSuite,
   onDeleteRun,
@@ -170,6 +172,7 @@ export function CiSuiteDetail({
           selectedRunDetails={selectedRunDetails}
           isEditMode={false}
           onRerun={onRerun}
+          onReplayRun={onReplayRun}
           onDelete={onDeleteSuite}
           onCancelRun={onCancelRun}
           onDeleteRun={onDeleteRun}
@@ -243,12 +246,20 @@ export function CiSuiteDetail({
               testCaseCount={cases.length}
               isSDK={suite.source === "sdk"}
               onRunClick={handleRunClick}
+              onReplayLatestRun={
+                onReplayRun ? (run) => onReplayRun(suite, run) : undefined
+              }
+              isReplayingLatestRun={rerunningSuiteId === suite._id}
             />
             <RunAccordionView
               suite={suite}
               runs={runs}
               allIterations={allIterations}
               onRunClick={handleRunClick}
+              onReplayRun={
+                onReplayRun ? (run) => onReplayRun(suite, run) : undefined
+              }
+              isReplayingRun={rerunningSuiteId === suite._id}
               onTestCaseClick={(testCaseId) => {
                 navigateToCiEvalsRoute({
                   type: "test-detail",

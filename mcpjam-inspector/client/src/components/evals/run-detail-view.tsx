@@ -118,6 +118,12 @@ export function RunDetailView({
             </div>
           )}
 
+        {selectedRunDetails.replayedFromRunId && (
+          <div className="mb-4 inline-flex rounded-md bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-600">
+            Replayed from run {selectedRunDetails.replayedFromRunId}
+          </div>
+        )}
+
         {/* Run Metrics and Chart */}
         <div className="rounded-xl border bg-card text-card-foreground">
           <div className="flex items-center gap-6 p-5">

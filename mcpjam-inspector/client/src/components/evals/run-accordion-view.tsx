@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import {
@@ -7,7 +8,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronDown, ChevronRight, RotateCw } from "lucide-react";
 import { formatRunId, getIterationBorderColor } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { CiMetadataDisplay } from "./ci-metadata-display";
@@ -18,6 +19,8 @@ interface RunAccordionViewProps {
   runs: EvalSuiteRun[];
   allIterations: EvalIteration[];
   onRunClick: (runId: string) => void;
+  onReplayRun?: (run: EvalSuiteRun) => void;
+  isReplayingRun?: boolean;
   onTestCaseClick?: (testCaseId: string) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
@@ -35,6 +38,8 @@ export function RunAccordionView({
   runs,
   allIterations,
   onRunClick,
+  onReplayRun,
+  isReplayingRun = false,
   onTestCaseClick,
   userMap,
 }: RunAccordionViewProps) {
@@ -69,6 +74,16 @@ export function RunAccordionView({
       }
       return next;
     });
+  };
+
+  const handleRunHeaderKeyDown = (
+    event: React.KeyboardEvent<HTMLDivElement>,
+    runId: string,
+  ) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      toggleRun(runId);
+    }
   };
 
   // Pre-compute test cases for each run
@@ -154,8 +169,11 @@ export function RunAccordionView({
             />
 
             {/* Run header — clickable to expand/collapse */}
-            <button
+            <div
+              role="button"
+              tabIndex={0}
               onClick={() => toggleRun(run._id)}
+              onKeyDown={(event) => handleRunHeaderKeyDown(event, run._id)}
               className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50"
             >
               {/* Expand/collapse chevron */}
@@ -193,6 +211,12 @@ export function RunAccordionView({
                       compactMode="chip"
                       interactive={false}
                     />
+                  </span>
+                )}
+
+                {run.replayedFromRunId && (
+                  <span className="shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-medium text-blue-600">
+                    Replay
                   </span>
                 )}
 
@@ -234,6 +258,31 @@ export function RunAccordionView({
                   </span>
                 )}
 
+                {run.hasServerReplayConfig && onReplayRun && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onReplayRun(run);
+                          }}
+                          disabled={isReplayingRun}
+                          className="h-7 gap-1.5 px-2 text-xs"
+                        >
+                          <RotateCw
+                            className={`h-3.5 w-3.5 ${isReplayingRun ? "animate-spin" : ""}`}
+                          />
+                          {isReplayingRun ? "Replaying..." : "Replay"}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>Replay this CI run</TooltipContent>
+                  </Tooltip>
+                )}
+
                 {/* Avatar */}
                 {creator && (
                   <Tooltip>
@@ -254,7 +303,7 @@ export function RunAccordionView({
                   </Tooltip>
                 )}
               </div>
-            </button>
+            </div>
 
             {/* Expanded test cases */}
             {isExpanded && (
