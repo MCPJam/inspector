@@ -33,12 +33,26 @@ import {
 describe("evals-api hosted mode", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    buildHostedServerBatchRequestMock.mockReturnValue({
-      workspaceId: "workspace-1",
-      serverIds: ["srv_a", "srv_b"],
-      oauthTokens: { srv_a: "oauth-token-a" },
-      clientCapabilities: { sampling: true },
-    });
+    buildHostedServerBatchRequestMock.mockImplementation(
+      (serverNames: string[]) => {
+        const serverIds = serverNames.map((serverName) =>
+          serverName === "Server A"
+            ? "srv_a"
+            : serverName === "Server B"
+              ? "srv_b"
+              : serverName,
+        );
+
+        return {
+          workspaceId: "workspace-1",
+          serverIds,
+          oauthTokens: serverIds.includes("srv_a")
+            ? { srv_a: "oauth-token-a" }
+            : undefined,
+          clientCapabilities: { sampling: true },
+        };
+      },
+    );
     authFetchMock.mockResolvedValue(createFetchResponse({ success: true }));
   });
 
@@ -67,8 +81,8 @@ describe("evals-api hosted mode", () => {
       workspaceId: "workspace-1",
       serverIds: ["srv_a", "srv_b"],
       storageServerIds: ["Server A", "Server B"],
-      convexAuthToken: "convex-token",
     });
+    expect(body).not.toHaveProperty("convexAuthToken");
   });
 
   it("uses /api/web/evals/generate-tests for hosted test generation", async () => {
@@ -84,6 +98,13 @@ describe("evals-api hosted mode", () => {
         method: "POST",
       }),
     );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      workspaceId: "workspace-1",
+      serverIds: ["srv_a"],
+    });
+    expect(body).not.toHaveProperty("convexAuthToken");
   });
 
   it("uses /api/web/evals/generate-negative-tests for hosted negative generation", async () => {
@@ -99,6 +120,13 @@ describe("evals-api hosted mode", () => {
         method: "POST",
       }),
     );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      workspaceId: "workspace-1",
+      serverIds: ["srv_a"],
+    });
+    expect(body).not.toHaveProperty("convexAuthToken");
   });
 
   it("uses /api/web/evals/run-test-case for hosted quick runs", async () => {
@@ -117,6 +145,16 @@ describe("evals-api hosted mode", () => {
         method: "POST",
       }),
     );
+
+    const body = JSON.parse(authFetchMock.mock.calls[0][1].body);
+    expect(body).toMatchObject({
+      workspaceId: "workspace-1",
+      serverIds: ["srv_a"],
+      testCaseId: "test-case-1",
+      model: "openai/gpt-5-mini",
+      provider: "openai",
+    });
+    expect(body).not.toHaveProperty("convexAuthToken");
   });
 
   it("uses hosted tool listing instead of /api/mcp/list-tools", async () => {

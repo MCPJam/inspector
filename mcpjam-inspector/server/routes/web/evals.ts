@@ -41,19 +41,23 @@ const hostedBatchSchema = z.object({
 const hostedRunEvalsSchema = RunEvalsRequestSchema.omit({
   workspaceId: true,
   serverIds: true,
+  convexAuthToken: true,
 }).extend(hostedBatchSchema.shape);
 
 const hostedRunTestCaseSchema = RunTestCaseRequestSchema.omit({
   serverIds: true,
+  convexAuthToken: true,
 }).extend(hostedBatchSchema.shape);
 
 const hostedGenerateTestsSchema = GenerateTestsRequestSchema.omit({
   serverIds: true,
+  convexAuthToken: true,
 }).extend(hostedBatchSchema.shape);
 
 const hostedGenerateNegativeTestsSchema =
   GenerateNegativeTestsRequestSchema.omit({
     serverIds: true,
+    convexAuthToken: true,
   }).extend(hostedBatchSchema.shape);
 
 const hostedReplayRunSchema = z.object({
@@ -69,19 +73,28 @@ const hostedReplayRunSchema = z.object({
 
 evals.post("/run", async (c) =>
   withEphemeralConnection(c, hostedRunEvalsSchema, (manager, body) =>
-    runEvalsWithManager(manager, body),
+    runEvalsWithManager(manager, {
+      ...body,
+      convexAuthToken: assertBearerToken(c),
+    }),
   ),
 );
 
 evals.post("/run-test-case", async (c) =>
   withEphemeralConnection(c, hostedRunTestCaseSchema, (manager, body) =>
-    runEvalTestCaseWithManager(manager, body),
+    runEvalTestCaseWithManager(manager, {
+      ...body,
+      convexAuthToken: assertBearerToken(c),
+    }),
   ),
 );
 
 evals.post("/generate-tests", async (c) =>
   withEphemeralConnection(c, hostedGenerateTestsSchema, (manager, body) =>
-    generateEvalTestsWithManager(manager, body),
+    generateEvalTestsWithManager(manager, {
+      ...body,
+      convexAuthToken: assertBearerToken(c),
+    }),
   ),
 );
 
@@ -89,7 +102,11 @@ evals.post("/generate-negative-tests", async (c) =>
   withEphemeralConnection(
     c,
     hostedGenerateNegativeTestsSchema,
-    (manager, body) => generateNegativeEvalTestsWithManager(manager, body),
+    (manager, body) =>
+      generateNegativeEvalTestsWithManager(manager, {
+        ...body,
+        convexAuthToken: assertBearerToken(c),
+      }),
   ),
 );
 

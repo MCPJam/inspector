@@ -55,7 +55,6 @@ const endpointCases: EndpointCase[] = [
     body: {
       workspaceId: "workspace-1",
       serverIds: ["server-1"],
-      convexAuthToken: "convex-token",
       suiteName: "Hosted Suite",
       tests: [
         {
@@ -76,7 +75,6 @@ const endpointCases: EndpointCase[] = [
     body: {
       workspaceId: "workspace-1",
       serverIds: ["server-1"],
-      convexAuthToken: "convex-token",
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
@@ -89,7 +87,6 @@ const endpointCases: EndpointCase[] = [
     body: {
       workspaceId: "workspace-1",
       serverIds: ["server-1"],
-      convexAuthToken: "convex-token",
     },
     successBody: { success: true, tests: [{ title: "Generated test" }] },
     successMock: generateEvalTestsWithManagerMock,
@@ -99,7 +96,6 @@ const endpointCases: EndpointCase[] = [
     body: {
       workspaceId: "workspace-1",
       serverIds: ["server-1"],
-      convexAuthToken: "convex-token",
     },
     successBody: { success: true, tests: [{ title: "Negative test" }] },
     successMock: generateNegativeEvalTestsWithManagerMock,
@@ -254,6 +250,12 @@ describe("web routes — evals", () => {
       expect(status).toBe(200);
       expect(data).toEqual(successBody);
       expect(successMock).toHaveBeenCalledTimes(1);
+      expect(successMock.mock.calls[0]?.[1]).toEqual(
+        expect.objectContaining({
+          ...body,
+          convexAuthToken: token,
+        }),
+      );
       expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
     },
   );

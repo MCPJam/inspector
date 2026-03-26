@@ -93,13 +93,18 @@ export function buildEvalConvexAuthPayload(convexAuthToken: string) {
   return isHostedMode() ? {} : { convexAuthToken };
 }
 
-function mergeHostedServerBatch<T extends EvalRequestWithServers>(
+function mergeHostedServerBatch<
+  T extends EvalRequestWithServers & { convexAuthToken?: string | null },
+>(
   request: T,
-): Omit<T, "serverIds"> & ReturnType<typeof buildHostedServerBatchRequest> {
+): Omit<T, "serverIds" | "convexAuthToken"> &
+  ReturnType<typeof buildHostedServerBatchRequest> {
   const hostedBatch = buildHostedServerBatchRequest(request.serverIds);
+  const { convexAuthToken: _convexAuthToken, ...requestWithoutConvexAuthToken } =
+    request;
 
   return {
-    ...request,
+    ...requestWithoutConvexAuthToken,
     ...hostedBatch,
     workspaceId: request.workspaceId ?? hostedBatch.workspaceId,
   };
