@@ -1,10 +1,20 @@
 ---
 title: "Introduction"
-description: "MCPJam is the local inspector for ChatGPT apps, MCP Apps (ext-apps), and MCP servers."
+description: "MCPJam is a local tool for testing MCP servers and apps."
 icon: "book-open"
 ---
 
-MCPJam inspector is the local testing tool for ChatGPT apps and MCP servers. Build your apps locally with MCPJam's widget emulator and test against any LLM in the playground. Inspect your MCP server’s tools, resources, prompts, and OAuth flows. No more ngrok or ChatGPT subscription needed.
+MCPJam Inspector is a local workbench for MCP servers and apps.
+
+Use it to:
+
+- connect a server
+- see its tools, resources, and prompts
+- run tools by hand
+- test app widgets locally
+- debug auth and protocol issues
+
+It helps you test everything in one place instead of juggling tunnels, custom scripts, and client apps.
 
 <Frame>
   <img
@@ -17,7 +27,7 @@ MCPJam inspector is the local testing tool for ChatGPT apps and MCP servers. Bui
 
 ## Quick Start
 
-Start up the MCPJam inspector with a bash command
+Start MCPJam with one command:
 
 <Card
   title="Start MCPJam Inspector"
@@ -28,13 +38,13 @@ Start up the MCPJam inspector with a bash command
   Start testing your MCP servers immediately
 </Card>
 
-## Key features
+## What You Can Do
 
 | Capability           | Description                                                                                                                                                                                                                                                                                        |
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| ChatGPT Apps SDK     | Local development for ChatGPT Apps SDK support. Full support for the `windows.openai` API: `widgetState`, `callTool`, `structuredContent`, `sendFollowUpMessage`, `displayMode`, CSP, and more. No more ngrok or ChatGPT subscription needed. [Read more](https://www.mcpjam.com/blog/app-builder) |
-| MCP ext-apps (Claude)   | Full local development for MCP Apps (SEP-1865). Support for all JSON-RPC message types, such as `tools/call`, `ui/initialize`, `ui/message`, `ui/open-link`, and more. [Read more](https://www.mcpjam.com/blog/mcp-apps-preview)                                                                   |
-| OAuth Debugger       | Debug your MCP server's OAuth implementation at every step. Visually inspect every network message. Supports all protocol versions (03-26, 06-18, and 11-25). Support for client pre-registration, DCR, and CIMD. [Read more](https://www.mcpjam.com/blog/oauth-debugger)                          |
-| LLM playground       | Chat with your MCP server against any LLM in the playground. We provide frontier models such as GPT-5 and Claude Sonnet for free, or bring your own API key. Playground supports ChatGPT apps and MCP Apps. [Read more](https://www.mcpjam.com/blog/frontier-models)                               |
-| MCP server debugging | Connect to and test any MCP server local or remote. Manually invoke MCP tools, resources, resource templates, and elicitation flows. View all JSON-RPC logs. Support for all features from the official MCP inspector.                                                                             |
-| Server info          | View server icons, version, capabilities, instructions, and ChatGPT widget metadata exposed by the server. [Read more](https://www.mcpjam.com/blog/server-instructions)                                                                                                                            |
+| ChatGPT Apps SDK     | Build and test ChatGPT apps locally, including widget behavior and tool calls. [Read more](https://www.mcpjam.com/blog/app-builder) |
+| MCP ext-apps (Claude)   | Build and test MCP Apps locally, including the main JSON-RPC UI messages. [Read more](https://www.mcpjam.com/blog/mcp-apps-preview)                                                                   |
+| OAuth Debugger       | Step through your OAuth flow and inspect each request and response. [Read more](https://www.mcpjam.com/blog/oauth-debugger)                          |
+| LLM playground       | Chat with your MCP server using built-in models or your own API key. [Read more](https://www.mcpjam.com/blog/frontier-models)                               |
+| MCP server debugging | Connect to local or remote servers, run tools manually, and inspect logs.                                                                             |
+| Server info          | View server icons, version, capabilities, instructions, and app metadata. [Read more](https://www.mcpjam.com/blog/server-instructions)                                                                                                                            |

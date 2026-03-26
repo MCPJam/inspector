@@ -1,18 +1,18 @@
 ---
 title: "Getting Started"
-description: "Start testing your MCP servers in minutes"
+description: "Connect a server and try your first tool in a few minutes"
 icon: "rocket"
 ---
 
 ## Quick Start
 
-Start MCPJam Inspector with a single command:
+Run MCPJam Inspector:
 
 ```bash
 npx @mcpjam/inspector@latest
 ```
 
-After installation completes, you'll see a link to `localhost`. Open that link in your browser to access the inspector.
+When it starts, you'll get a `localhost` link. Open it in your browser.
 
 <Note>
   Don't have Node.js installed? Download our desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe), or use the [hosted app](https://app.mcpjam.com) in your browser — no installation needed.
@@ -20,7 +20,7 @@ After installation completes, you'll see a link to `localhost`. Open that link i
 
 ## Connect Your First MCP Server
 
-Click "Add server" and connect to an MCP server. For this example, we'll use Anthropic's sample server:
+Click "Add server". For a quick test, use the sample MCP server below:
 
 ```bash
 npx -y @modelcontextprotocol/server-everything
@@ -30,17 +30,19 @@ npx -y @modelcontextprotocol/server-everything
   <img src="/images/everything-demo.png" alt="Server everything demo" />
 </Frame>
 
-Once you submit, the connection status should show "Connected". You can connect to multiple MCP servers simultaneously on MCPJam.
+Click connect. If it worked, you should see "Connected".
+
+You can keep adding more servers later. MCPJam supports multiple connections at once.
 
 ## Test an MCP Tool
 
-Navigate to the "Tools" tab to see all available tools from `server-everything`. This tab lets you manually test individual tools with custom parameters.
+Open the "Tools" tab. This is where you can run a tool by hand and see what it returns.
 
 Try the `add` tool:
 1. Select the `add` tool from the list
 2. Set parameters for `a` and `b`
 3. Click "Execute"
-4. View the tool's return value at the bottom
+4. Check the result at the bottom
 
 <Frame>
   <img src="/images/tool-add.png" alt="Add tool demo" />
@@ -48,7 +50,7 @@ Try the `add` tool:
 
 ## Explore More Features
 
-Now that you've connected a server and tested a tool, explore the full power of MCPJam Inspector:
+Once that works, here are the next useful places to click:
 
 <CardGroup cols={2}>
   <Card

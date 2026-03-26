@@ -1,18 +1,18 @@
 ---
 title: "Installation"
-description: "Here's a list of all ways to start MCPJam"
+description: "Ways to start MCPJam locally"
 icon: "terminal"
 ---
 
 ## Quick start
 
-Run the command in your terminal:
+Run this in your terminal:
 
 ```bash
 npx @mcpjam/inspector@latest
 ```
 
-After installing the package, you should see a link to `localhost`. Open that link up to see the inspector.
+When the install finishes, open the `localhost` link it prints.
 
 <Note>
   Don't have Node.js installed? Download our desktop app for [Mac](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam.Inspector.dmg) or [Windows](https://github.com/MCPJam/inspector/releases/latest/download/MCPJam-Inspector-Setup.exe).
@@ -20,7 +20,7 @@ After installing the package, you should see a link to `localhost`. Open that li
 
 ## Docker
 
-Run MCPJam Inspector using Docker:
+Want to run MCPJam with Docker instead? Use:
 
 ```bash
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector
@@ -34,7 +34,7 @@ The application will be available at **`http://127.0.0.1:6274`**.
 
 ### Docker with Arguments
 
-You can pass command-line arguments to the Docker container:
+You can also pass startup arguments into the container:
 
 ```bash
 # Launch with STDIO server
@@ -48,7 +48,7 @@ docker run --rm -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector -- \
   --tab tools
 ```
 
-For more information check out our docs on [Launch from Code](https://docs.mcpjam.com/inspector/launch-from-code)
+For more details, see [Launch from Code](https://docs.mcpjam.com/inspector/launch-from-code).
 
 <Warning>
 **Important for macOS/Windows users:**
@@ -65,9 +65,9 @@ Example:
 
 </Warning>
 
-## Start with STDIO server
+## Start with a STDIO server
 
-This will open the MCPJam inspector and connect to a STDIO using the commands you provided.
+This starts MCPJam and connects it to a local STDIO server right away.
 
 <Tabs>
   <Tab title="Python Server">
@@ -94,9 +94,9 @@ This will open the MCPJam inspector and connect to a STDIO using the commands yo
   `/Users/yourname/project/server.py`) to avoid path resolution issues.
 </Info>
 
-## Start with custom port
+## Start with a custom port
 
-This will start the MCPJam inspector with a custom port number. The default port is `6274`.
+The default port is `6274`. Change it like this:
 
 ```bash
 npx @mcpjam/inspector@latest --port 4000
@@ -104,15 +104,15 @@ npx @mcpjam/inspector@latest --port 4000
 
 ## Start with Ollama
 
-This will open the MCPJam inspector and start an Ollama model with the `ollama serve <model>` command. Make sure you have Ollama installed.
+This starts MCPJam and launches an Ollama model with `ollama serve <model>`. Make sure Ollama is installed first.
 
 ```bash
 npx @mcpjam/inspector@latest --ollama llama3.2
 ```
 
-## Start with Configuration File
+## Start with a configuration file
 
-You can use a configuration file to connect to multiple MCP servers at once:
+Use a config file when you want MCPJam to load multiple servers at once:
 
 ```bash
 # Using npx directly
@@ -128,7 +128,7 @@ npm start -- --config path/to/config.json --server myserver
   arguments to the underlying script.
 </Info>
 
-Example configuration file structure:
+Example config:
 
 ```json
 {
@@ -151,9 +151,9 @@ Example configuration file structure:
 }
 ```
 
-## Start with Verbose Logging
+## Start with verbose logging
 
-Enable verbose HTTP request logging for debugging purposes. This is useful when troubleshooting connection issues with MCP servers.
+Use verbose logging when you need to debug connection problems.
 
 ```bash
 npx @mcpjam/inspector@latest --verbose
@@ -166,6 +166,6 @@ npx @mcpjam/inspector@latest -v
 ```
 
 <Info>
-  Verbose mode logs all HTTP requests made by the inspector, which can help
-  diagnose connectivity problems or inspect server communication.
+  Verbose mode logs the inspector's HTTP requests so you can see what it is
+  sending and receiving.
 </Info>

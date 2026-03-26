@@ -1,14 +1,20 @@
 ---
 title: "Multi-server connections"
-description: "Connect to multiple MCP servers with different transport methods"
+description: "Connect local and remote MCP servers in one place"
 icon: "plug"
 ---
 
-You can connect to MCP servers using all transports: STDIO, SSE, and Streamable HTTP. With OAuth 2 and Dynamic Client Registration (DCR) support.
+MCPJam can connect to both local and remote MCP servers.
+
+The simple version:
+
+- `STDIO` means MCPJam starts a program on your machine
+- `SSE` or `Streamable HTTP` means MCPJam connects to a server URL
+- you can stay connected to more than one server at the same time
 
 ## Manage connections
 
-You can connect to multiple MCP servers simultaneously. To manage connections, go to the "MCP Servers" tab in the MCPJam inspector.
+Go to the "MCP Servers" tab to add, remove, or inspect servers.
 
 <Frame>
   <img
@@ -20,12 +26,12 @@ You can connect to multiple MCP servers simultaneously. To manage connections, g
 </Frame>
 
 - Toggle MCP servers to enable or temporarily deactivate a server.
-- Hit the 3 dots. You can reconnect, edit, or disconnect to a server.
+- Hit the 3 dots to reconnect, edit, or disconnect a server.
 - Click "View server info" to open a detailed modal showing server metadata, protocol version, capabilities, and instructions.
 
 ### Server info modal
 
-View comprehensive server details in a dedicated modal dialog:
+The server info modal shows:
 
 - **Server metadata**: Name, title, version, protocol version, and transport type
 - **Capabilities**: Tools, prompts, and resources supported by the server
@@ -33,7 +39,7 @@ View comprehensive server details in a dedicated modal dialog:
 - **Raw capabilities**: Full JSON of server and client capabilities (with copy button)
 - **OpenAI Apps SDK**: For servers using the OpenAI Apps SDK, view widget metadata in a separate tab
 
-### Server information
+### What each server card shows
 
 Each connected server card displays:
 
@@ -50,7 +56,7 @@ Click "Show details" to expand additional server information:
 
 ### OpenAI app metadata
 
-Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indicator. Expanding these servers shows two tabs:
+Some servers also expose OpenAI-compatible tool metadata. Those show an OpenAI logo and two tabs:
 
 - **Info tab**: Standard server information and capabilities
 - **OpenAI Tool Metadata tab**: Detailed metadata for each tool including read/write permissions and widget configuration
@@ -59,17 +65,19 @@ Servers that provide OpenAI-compatible tool metadata display an OpenAI logo indi
   Using the [hosted app](https://app.mcpjam.com)? Only SSE and Streamable HTTP connections are available. STDIO and HTTP (non-HTTPS) connections require the [local inspector](/installation). See [Hosted App](/hosted/overview) for details.
 </Note>
 
-## STDIO servers
+## Local servers with STDIO
 
-Connect to STDIO with commands. Commands vary based on what language your MCP server is built with. For example, connecting to an MCP server built with Node might look like:
+Use STDIO when the server lives on your machine and should be started with a command.
+
+Example:
 
 ```bash
 node /path/to/your/server.js
 ```
 
 <Info>
-  For local development, always use absolute paths (e.g.,
-  `/Users/yourname/project/server.py`) to avoid path resolution issues.
+  Use absolute paths (for example,
+  `/Users/yourname/project/server.py`) so MCPJam can always find your files.
 </Info>
 
 <Frame>
@@ -83,13 +91,18 @@ node /path/to/your/server.js
 
 ### Environment variables
 
-You can configure environment variables with STDIO. Click "Add Variable" in the Environment Variables section. This is often used to pass dynamic values like API tokens to a STDIO server.
+Need to pass a token or config value to a local server? Use "Add Variable" in the Environment Variables section.
 
-## SSE / Streamable HTTP servers
+## Remote servers with SSE or Streamable HTTP
 
-Connect to SSE and Streamable HTTP servers. To do this, click the transport dropdown and select `SSE/HTTP`. They connect the same way: pass in a URL.
+Use these when the server is already running somewhere else and gives you a URL.
 
-SSE server URLs typically end with `/sse` and Streamable HTTP servers typically end with `/mcp`.
+Choose `SSE/HTTP` in the transport dropdown, then paste the URL.
+
+Common pattern:
+
+- SSE URLs often end in `/sse`
+- Streamable HTTP URLs often end in `/mcp`
 
 <Frame>
   <img
@@ -102,27 +115,29 @@ SSE server URLs typically end with `/sse` and Streamable HTTP servers typically 
 
 ### OAuth 2
 
-MCPJam is compliant with the MCP OAuth spec and Dynamic Client Registration (DCR). You can:
+If the remote server needs auth, MCPJam supports the MCP OAuth flow and Dynamic Client Registration (DCR).
+
+You can choose:
 
 1. Choose `No Authentication`
 2. Choose `Bearer Token`. Use this if you already have an API token and don't need to go through DCR.
-3. Choose `OAuth 2.0`. This will take you through [MCP Authorization](https://modelcontextprotocol.io/specification/draft/basic/authorization) to fetch a bearer token. You can also configure OAuth Scopes or custom OAuth credentials.
+3. Choose `OAuth 2.0` if you want MCPJam to walk through the auth flow and fetch a bearer token for you. You can also set custom scopes or credentials.
 
 ## Tunneling
 
-Expose your local MCP servers over HTTPS for remote access. This lets you share your servers with external clients and applications without deploying them.
+Tunnels let you give a local server a public HTTPS URL for temporary remote access.
 
 ### Create a tunnel
 
 1. Go to the **MCP Servers** tab
 2. Click **Create Tunnel** in the header
-3. The tunnel URL is automatically copied to your clipboard
+3. MCPJam copies the tunnel URL to your clipboard
 
-Once created, each connected server gets its own tunnel URL. Click **Copy Tunnel Url** on any server card to copy its specific endpoint.
+Each connected server gets its own tunnel URL. Click **Copy Tunnel Url** on a server card to copy that server's endpoint.
 
 ### Close a tunnel
 
-Click **Close Tunnel** in the header to stop remote access. The tunnel closes immediately and all remote connections are terminated.
+Click **Close Tunnel** to stop remote access right away.
 
 <Warning>
   Tunnel URLs are publicly accessible without authentication. Only create

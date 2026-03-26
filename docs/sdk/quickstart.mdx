@@ -1,15 +1,21 @@
 ---
 title: "Quickstart"
-description: "Get started with @mcpjam/sdk in 5 minutes"
+description: "Install the SDK, connect a server, and run a first test"
 icon: "rocket"
 ---
 
-This guide walks you through installing the SDK, connecting to an MCP server, and running your first evaluation.
+This guide shows the basic flow:
+
+1. install the SDK
+2. connect a server
+3. run a tool
+4. add an LLM
+5. write a test
 
 ## Prerequisites
 
 - Node.js 18+
-- An LLM API key (Anthropic, OpenAI, etc.)
+- An LLM API key if you want to use `TestAgent`
 
 ## Installation
 
@@ -31,7 +37,7 @@ const manager = new MCPClientManager({
 
 await manager.connectToServer("everything");
 
-// List available tools
+// See what the server exposes
 const tools = await manager.listTools("everything");
 console.log("Tools:", tools.tools.map((t) => t.name));
 ```
@@ -40,7 +46,7 @@ console.log("Tools:", tools.tools.map((t) => t.name));
 `@modelcontextprotocol/server-everything` is a reference MCP server with sample tools like `add`, `echo`, and `longRunningOperation`.
 </Note>
 
-If you're connecting to an OAuth-protected HTTP server and already have a refresh token, pass `refreshToken` and `clientId` instead of a static access token:
+If your remote server uses OAuth and you already have a refresh token, pass `refreshToken` and `clientId` instead of a static access token:
 
 ```typescript
 const manager = new MCPClientManager({
@@ -55,11 +61,11 @@ const manager = new MCPClientManager({
 await manager.connectToServer("remoteServer");
 ```
 
-The SDK will exchange the refresh token for an access token and automatically refresh it when needed.
+The SDK will fetch an access token and refresh it when needed.
 
 ## Step 2: Execute Tools Directly
 
-Call tools without an LLM—useful for unit tests:
+Call tools directly first. This is the simplest way to test your server:
 
 ```typescript
 const result = await manager.executeTool("everything", "add", {
@@ -71,7 +77,7 @@ console.log("5 + 3 =", result); // 8
 
 ## Step 3: Create a TestAgent
 
-Connect an LLM to your MCP tools:
+Now add an LLM so prompts can use your MCP tools:
 
 ```typescript
 import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
@@ -84,9 +90,9 @@ const agent = new TestAgent({
 });
 ```
 
-If `MCPJAM_API_KEY` is set, attaching the connected `MCPClientManager` also lets MCPJam securely persist replay credentials for authenticated HTTP MCP servers during eval reporting.
+If `MCPJAM_API_KEY` is set, attaching the connected `MCPClientManager` also lets MCPJam securely save replay credentials for authenticated HTTP servers during eval reporting.
 
-## Step 4: Run Prompts
+## Step 4: Run a Prompt
 
 ```typescript
 const result = await agent.prompt("What is 15 plus 27?");
@@ -129,7 +135,7 @@ await test.run(agent, { iterations: 30 });
 console.log(`Accuracy: ${(test.accuracy() * 100).toFixed(1)}%`);
 ```
 
-## Complete Example
+## Full Example
 
 ```typescript
 import { MCPClientManager, TestAgent, EvalSuite, EvalTest } from "@mcpjam/sdk";
@@ -151,12 +157,12 @@ async function main() {
     mcpClientManager: manager,
   });
 
-  // Quick test
+  // Quick prompt
   const result = await agent.prompt("Echo 'Hello!'");
   console.log("Response:", result.getText());
   console.log("Tools:", result.toolsCalled());
 
-  // Run eval suite
+  // Run an eval suite
   const suite = new EvalSuite({ name: "Basic Operations" });
 
   suite.add(new EvalTest({
@@ -182,7 +188,7 @@ main();
 
 ## Generate evals from the Inspector
 
-You can also generate eval code directly from the MCPJam Inspector:
+You can also let MCPJam Inspector help you draft eval code:
 
 1. Connect your MCP server in the Inspector
 2. Click the **⋮** menu on the server card
@@ -199,7 +205,7 @@ You can also generate eval code directly from the MCPJam Inspector:
   />
 </Frame>
 
-The copied markdown is a ready-to-use prompt that includes your server's capabilities and the full `@mcpjam/sdk` API reference, so the LLM has everything it needs to write your eval tests.
+The copied markdown includes your server's capabilities and the `@mcpjam/sdk` API details, so an LLM has enough context to draft eval tests.
 
 If you have a `MCPJAM_API_KEY` set up, the generated eval code will automatically save results to MCPJam — you can view them in the **Evals** tab of the Inspector. Go to **Settings > Workspace API Key** in the Inspector to get your key.
 
