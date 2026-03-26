@@ -107,21 +107,53 @@ function createPlanCatalog() {
   };
 }
 
+function billingStatusFixture(
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  return {
+    organizationId: "org-1",
+    organizationName: "Org One",
+    plan: "free",
+    effectivePlan: "free",
+    source: "persisted",
+    billingInterval: null,
+    billingConfigured: true,
+    subscriptionStatus: null,
+    canManageBilling: true,
+    isOwner: true,
+    hasCustomer: false,
+    stripeCurrentPeriodEnd: null,
+    stripePriceId: null,
+    trialStatus: "none",
+    trialPlan: null,
+    trialStartedAt: null,
+    trialEndsAt: null,
+    trialDaysRemaining: null,
+    decisionRequired: false,
+    trialDecision: null,
+    ...overrides,
+  };
+}
+
 function createBillingHookState(overrides: Record<string, unknown>) {
   return {
     billingStatus: undefined,
     entitlements: undefined,
-    rolloutState: undefined,
+    organizationPremiumness: undefined,
+    workspacePremiumness: undefined,
     planCatalog: createPlanCatalog(),
     isLoadingBilling: false,
     isLoadingEntitlements: false,
-    isLoadingRollout: false,
+    isLoadingOrganizationPremiumness: false,
+    isLoadingWorkspacePremiumness: false,
     isLoadingPlanCatalog: false,
     isStartingCheckout: false,
     isOpeningPortal: false,
+    isSelectingFreeAfterTrial: false,
     error: null,
     startCheckout: vi.fn(),
     openPortal: vi.fn(),
+    selectFreeAfterTrial: vi.fn(),
     ...overrides,
   };
 }
@@ -223,19 +255,7 @@ describe("OrganizationsTab billing", () => {
   it("shows a View plans entry point in the overview billing card", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
-          plan: "free",
-          billingInterval: null,
-          billingConfigured: true,
-          subscriptionStatus: null,
-          canManageBilling: true,
-          isOwner: true,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-        },
+        billingStatus: billingStatusFixture({ plan: "free" }),
       }),
     );
 
@@ -257,19 +277,15 @@ describe("OrganizationsTab billing", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
+        billingStatus: billingStatusFixture({
           plan: "starter",
+          effectivePlan: "starter",
           billingInterval: "monthly",
-          billingConfigured: true,
           subscriptionStatus: "active",
-          canManageBilling: true,
-          isOwner: true,
           hasCustomer: true,
           stripeCurrentPeriodEnd: 1_705_000_000_000,
           stripePriceId: "price_123",
-        },
+        }),
       }),
     );
 
@@ -300,19 +316,15 @@ describe("OrganizationsTab billing", () => {
 
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
+        billingStatus: billingStatusFixture({
           plan: "starter",
+          effectivePlan: "starter",
           billingInterval: "monthly",
-          billingConfigured: true,
           subscriptionStatus: "active",
-          canManageBilling: true,
-          isOwner: true,
           hasCustomer: true,
           stripeCurrentPeriodEnd: periodEnd,
           stripePriceId: "price_123",
-        },
+        }),
       }),
     );
 
@@ -372,19 +384,10 @@ describe("OrganizationsTab billing", () => {
 
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
-          plan: "free",
-          billingInterval: null,
-          billingConfigured: true,
-          subscriptionStatus: null,
+        billingStatus: billingStatusFixture({
           canManageBilling: false,
           isOwner: false,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-        },
+        }),
       }),
     );
 
@@ -404,19 +407,14 @@ describe("OrganizationsTab billing", () => {
   it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
+        billingStatus: billingStatusFixture({
           plan: "starter",
+          effectivePlan: "starter",
           billingInterval: "monthly",
-          billingConfigured: true,
           subscriptionStatus: "active",
-          canManageBilling: true,
-          isOwner: true,
           hasCustomer: true,
-          stripeCurrentPeriodEnd: null,
           stripePriceId: "price_123",
-        },
+        }),
       }),
     );
 
@@ -429,19 +427,7 @@ describe("OrganizationsTab billing", () => {
   it("updates pricing when the billing interval toggle changes", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
-          plan: "free",
-          billingInterval: null,
-          billingConfigured: true,
-          subscriptionStatus: null,
-          canManageBilling: true,
-          isOwner: true,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-        },
+        billingStatus: billingStatusFixture(),
       }),
     );
 
@@ -458,19 +444,7 @@ describe("OrganizationsTab billing", () => {
       .mockResolvedValue("https://stripe.test/checkout");
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
-          plan: "free",
-          billingInterval: null,
-          billingConfigured: true,
-          subscriptionStatus: null,
-          canManageBilling: true,
-          isOwner: true,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-        },
+        billingStatus: billingStatusFixture(),
         startCheckout,
       }),
     );
@@ -500,19 +474,14 @@ describe("OrganizationsTab billing", () => {
     const openPortal = vi.fn().mockResolvedValue("https://stripe.test/portal");
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
+        billingStatus: billingStatusFixture({
           plan: "starter",
+          effectivePlan: "starter",
           billingInterval: "monthly",
-          billingConfigured: true,
           subscriptionStatus: "active",
-          canManageBilling: true,
-          isOwner: true,
           hasCustomer: true,
-          stripeCurrentPeriodEnd: null,
           stripePriceId: "price_123",
-        },
+        }),
         openPortal,
       }),
     );
@@ -541,19 +510,10 @@ describe("OrganizationsTab billing", () => {
   it("suppresses purchase actions when billing is unconfigured", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
-          plan: "free",
-          billingInterval: null,
+        billingStatus: billingStatusFixture({
           billingConfigured: false,
-          subscriptionStatus: null,
           canManageBilling: false,
-          isOwner: true,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-        },
+        }),
       }),
     );
 
@@ -573,19 +533,14 @@ describe("OrganizationsTab billing", () => {
   it("locks audit log behind enterprise after enforcement becomes active", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
+        billingStatus: billingStatusFixture({
           plan: "team",
+          effectivePlan: "team",
           billingInterval: "monthly",
-          billingConfigured: true,
           subscriptionStatus: "active",
-          canManageBilling: true,
-          isOwner: true,
           hasCustomer: true,
-          stripeCurrentPeriodEnd: null,
           stripePriceId: "price_123",
-        },
+        }),
         entitlements: {
           plan: "team",
           billingInterval: "monthly",
@@ -601,14 +556,20 @@ describe("OrganizationsTab billing", () => {
           },
           limits: {},
         },
-        rolloutState: {
-          enforcementConfigured: true,
-          gracePeriodEndsAt: "2026-04-04T00:00:00.000Z",
-          enforcementActive: true,
+        organizationPremiumness: {
+          enforcementState: "enabled",
+          effectivePlan: "team",
+          gates: {
+            auditLog: {
+              allowed: false,
+              gateKey: "auditLog",
+              upgradePlan: "enterprise",
+            },
+          },
         },
         isLoadingBilling: false,
         isLoadingEntitlements: false,
-        isLoadingRollout: false,
+        isLoadingOrganizationPremiumness: false,
         isStartingCheckout: false,
         isOpeningPortal: false,
         error: null,
@@ -634,21 +595,16 @@ describe("OrganizationsTab billing", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
-        billingStatus: {
-          organizationId: "org-1",
-          organizationName: "Org One",
+        billingStatus: billingStatusFixture({
           plan: "team",
+          effectivePlan: "team",
           billingInterval: "monthly",
-          billingConfigured: true,
           subscriptionStatus: "active",
-          canManageBilling: true,
-          isOwner: true,
           hasCustomer: true,
-          stripeCurrentPeriodEnd: null,
           stripePriceId: "price_123",
-        },
+        }),
         isLoadingEntitlements: true,
-        isLoadingRollout: true,
+        isLoadingOrganizationPremiumness: true,
       }),
     );
 

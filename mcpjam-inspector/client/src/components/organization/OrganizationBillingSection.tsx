@@ -227,7 +227,12 @@ export function OrganizationBillingSection({
     }
   }, [billingStatus?.billingInterval]);
 
-  const currentPlan = billingStatus?.plan ?? "free";
+  const persistedPlan = billingStatus?.plan ?? "free";
+  const effectivePlan = billingStatus?.effectivePlan ?? persistedPlan;
+  const currentPlan = effectivePlan;
+  const planMismatch =
+    billingStatus &&
+    billingStatus.effectivePlan !== billingStatus.plan;
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;
@@ -284,13 +289,27 @@ export function OrganizationBillingSection({
             </div>
           ) : billingStatus ? (
             <>
-              <div className="grid gap-3 rounded-md border border-border/70 p-4 sm:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-3 rounded-md border border-border/70 p-4 sm:grid-cols-2 xl:grid-cols-5">
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">
                     Current plan
                   </p>
                   <p className="text-sm font-medium">
                     {formatPlanName(currentPlan)}
+                  </p>
+                  {planMismatch ? (
+                    <p className="text-xs text-muted-foreground">
+                      Subscription is {formatPlanName(persistedPlan)}; effective
+                      access follows {formatPlanName(effectivePlan)}.
+                    </p>
+                  ) : null}
+                </div>
+                <div className="space-y-1">
+                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
+                    Source
+                  </p>
+                  <p className="text-sm font-medium capitalize">
+                    {billingStatus.source.replace(/_/g, " ")}
                   </p>
                 </div>
                 <div className="space-y-1">
@@ -316,6 +335,33 @@ export function OrganizationBillingSection({
                   <p className="text-sm font-medium">{formattedPeriodEnd}</p>
                 </div>
               </div>
+              {billingStatus.trialStatus?.toLowerCase() === "active" &&
+              typeof billingStatus.trialDaysRemaining === "number" ? (
+                <div className="rounded-md border border-border/70 bg-muted/30 p-3 text-sm">
+                  <span className="font-medium">Trial active</span>
+                  {billingStatus.trialPlan ? (
+                    <span className="text-muted-foreground">
+                      {" "}
+                      ({formatPlanName(billingStatus.trialPlan)})
+                    </span>
+                  ) : null}
+                  : {billingStatus.trialDaysRemaining} day
+                  {billingStatus.trialDaysRemaining === 1 ? "" : "s"} remaining
+                  {billingStatus.trialEndsAt
+                    ? ` · ends ${new Intl.DateTimeFormat(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      }).format(new Date(billingStatus.trialEndsAt))}`
+                    : null}
+                </div>
+              ) : null}
+              {billingStatus.trialStatus?.toLowerCase() === "expired" ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                  Trial ended. Upgrade or choose the Free plan from the billing
+                  prompt if required.
+                </div>
+              ) : null}
               {!billingConfigured ? (
                 <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
                   Billing is not configured in this environment. Plans are

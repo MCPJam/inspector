@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  filterByBillingEntitlements,
+  applyBillingGateNavState,
   filterByFeatureFlags,
   getHostedNavigationSections,
   shouldPrefetchSidebarTools,
@@ -89,9 +89,9 @@ describe("filterByFeatureFlags", () => {
   });
 });
 
-describe("filterByBillingEntitlements", () => {
-  it("keeps billed items visible before enforcement is active", () => {
-    const result = filterByBillingEntitlements(
+describe("applyBillingGateNavState", () => {
+  it("keeps billed items enabled when enforcement is inactive", () => {
+    const result = applyBillingGateNavState(
       [
         {
           id: "main",
@@ -105,17 +105,18 @@ describe("filterByBillingEntitlements", () => {
           ],
         },
       ],
-      { evals: false },
-      false,
+      {
+        billingUiEnabled: true,
+        gateDenied: { evals: true },
+        enforcementActive: false,
+      },
     );
 
-    expect(result[0].items.map((item) => item.title)).toContain(
-      "Generate Evals",
-    );
+    expect(result[0].items[0].disabled).not.toBe(true);
   });
 
-  it("hides billed items when enforcement is active and the org lacks access", () => {
-    const result = filterByBillingEntitlements(
+  it("marks billed items disabled when enforcement is active and the gate denies access", () => {
+    const result = applyBillingGateNavState(
       [
         {
           id: "main",
@@ -134,13 +135,17 @@ describe("filterByBillingEntitlements", () => {
           ],
         },
       ],
-      { evals: false },
-      true,
+      {
+        billingUiEnabled: true,
+        gateDenied: { evals: true },
+        enforcementActive: true,
+      },
     );
 
-    const titles = result[0].items.map((item) => item.title);
-    expect(titles).toContain("Servers");
-    expect(titles).not.toContain("Generate Evals");
+    const evalItem = result[0].items.find((i) => i.title === "Generate Evals");
+    const servers = result[0].items.find((i) => i.title === "Servers");
+    expect(evalItem?.disabled).toBe(true);
+    expect(servers?.disabled).not.toBe(true);
   });
 });
 

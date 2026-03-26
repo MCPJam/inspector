@@ -1,6 +1,24 @@
 import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
-import { getBillingErrorMessage } from "../billing-entitlements";
+import {
+  getBillingErrorMessage,
+  isGateAccessDenied,
+  isPremiumnessGateDeniedForShell,
+} from "../billing-entitlements";
+import type { PremiumnessState } from "@/hooks/useOrganizationBilling";
+
+function premiumness(
+  overrides: Partial<PremiumnessState> & {
+    gates?: PremiumnessState["gates"];
+  } = {},
+): PremiumnessState {
+  return {
+    enforcementState: "enabled",
+    effectivePlan: "free",
+    gates: {},
+    ...overrides,
+  };
+}
 
 describe("getBillingErrorMessage", () => {
   it("formats backend limit payloads for monthly eval runs", () => {
@@ -55,6 +73,22 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
+  it("formats billing_feature_not_included using gateKey when feature is absent", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_feature_not_included",
+          gateKey: "evals",
+          upgradePlan: "starter",
+        }),
+      ),
+      "fallback",
+    );
+
+    expect(message).toContain("Generate Evals");
+    expect(message).toContain("Starter");
+  });
+
   it("preserves non-billing ConvexError messages", () => {
     const error = new ConvexError({
       code: "rate_limited",
@@ -65,5 +99,55 @@ describe("getBillingErrorMessage", () => {
     const message = getBillingErrorMessage(error, "fallback");
 
     expect(message).toBe('ConvexError: {"code":"rate_limited","retryAfter":5}');
+  });
+});
+
+describe("isGateAccessDenied", () => {
+  it("treats enforcement disabled as never locked (soft mode)", () => {
+    expect(
+      isGateAccessDenied(
+        premiumness({
+          enforcementState: "disabled",
+          gates: {
+            evals: { allowed: false, gateKey: "evals" },
+          },
+        }),
+        "evals",
+      ),
+    ).toBe(false);
+  });
+
+  it("denies when enforcement is enabled and the gate decision disallows", () => {
+    expect(
+      isGateAccessDenied(
+        premiumness({
+          gates: {
+            evals: { allowed: false, gateKey: "evals", upgradePlan: "starter" },
+          },
+        }),
+        "evals",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("isPremiumnessGateDeniedForShell", () => {
+  it("prefers workspace premiumness when a workspace exists", () => {
+    const denied = isPremiumnessGateDeniedForShell({
+      billingUiEnabled: true,
+      hasWorkspace: true,
+      gateKey: "evals",
+      workspacePremiumness: premiumness({
+        gates: {
+          evals: { allowed: false, gateKey: "evals" },
+        },
+      }),
+      organizationPremiumness: premiumness({
+        gates: {
+          evals: { allowed: true, gateKey: "evals" },
+        },
+      }),
+    });
+    expect(denied).toBe(true);
   });
 });

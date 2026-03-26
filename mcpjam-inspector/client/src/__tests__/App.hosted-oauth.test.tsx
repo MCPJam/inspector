@@ -72,6 +72,8 @@ vi.mock("convex/react", () => ({
     isLoading: false,
   }),
   useQuery: mockUseQuery,
+  useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -337,12 +339,16 @@ describe("App hosted OAuth callback handling", () => {
     const entitlementsCall = mockUseQuery.mock.calls.find(
       ([name]) => name === "billing:getOrganizationEntitlements",
     );
-    const rolloutCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getBillingRolloutState",
+    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationPremiumness",
+    );
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
-    expect(rolloutCall?.[1]).toBe("skip");
+    expect(orgPremiumnessCall?.[1]).toBe("skip");
+    expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
   it("skips billing queries while a workspace org id is still unvalidated", () => {
@@ -365,12 +371,16 @@ describe("App hosted OAuth callback handling", () => {
     const entitlementsCall = mockUseQuery.mock.calls.find(
       ([name]) => name === "billing:getOrganizationEntitlements",
     );
-    const rolloutCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getBillingRolloutState",
+    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationPremiumness",
+    );
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
-    expect(rolloutCall?.[1]).toBe("skip");
+    expect(orgPremiumnessCall?.[1]).toBe("skip");
+    expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
   it("does not auto-select the first organization without an explicit org route", async () => {

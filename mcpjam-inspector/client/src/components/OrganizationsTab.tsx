@@ -45,10 +45,7 @@ import {
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import {
   formatBillingFeatureName,
-  formatGracePeriodEndsAt,
-  formatPlanName,
-  isBillingGracePeriodActive,
-  isBillingFeatureLocked,
+  isGateAccessDenied,
 } from "@/lib/billing-entitlements";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
@@ -196,12 +193,12 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
   const {
     billingStatus,
     entitlements,
-    rolloutState,
+    organizationPremiumness,
     planCatalog,
     isLoadingBilling,
     isLoadingEntitlements,
     isLoadingPlanCatalog,
-    isLoadingRollout,
+    isLoadingOrganizationPremiumness,
     isStartingCheckout,
     isOpeningPortal,
     error: billingError,
@@ -463,20 +460,9 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
   const billingAccountLabel = billingStatus?.hasCustomer
     ? "Connected"
     : "Not connected";
-  const auditLogLocked = isBillingFeatureLocked({
-    billingUiEnabled,
-    entitlements,
-    rolloutState,
-    feature: "auditLog",
-  });
-  const auditLogGraceBanner =
+  const auditLogLocked =
     billingUiEnabled &&
-    !!entitlements &&
-    entitlements.features.auditLog === false &&
-    isBillingGracePeriodActive(rolloutState);
-  const auditLogGraceEndsAt = formatGracePeriodEndsAt(
-    rolloutState?.gracePeriodEndsAt,
-  );
+    isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
     window.location.hash = getOrganizationRouteHash(
       organization._id,
@@ -751,12 +737,15 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
                           </p>
                           <Badge
                             variant={
-                              billingStatus.plan !== "free"
+                              (billingStatus.effectivePlan ??
+                                billingStatus.plan) !== "free"
                                 ? "default"
                                 : "secondary"
                             }
                           >
-                            {billingStatus.plan.toUpperCase()}
+                            {(
+                              billingStatus.effectivePlan ?? billingStatus.plan
+                            ).toUpperCase()}
                           </Badge>
                         </div>
                         <div className="space-y-1">
@@ -822,36 +811,10 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
               </CardHeader>
               <CardContent className="space-y-3 pt-0">
                 {billingUiEnabled &&
-                (isLoadingEntitlements || isLoadingRollout) ? (
+                (isLoadingEntitlements || isLoadingOrganizationPremiumness) ? (
                   <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
                     Loading audit log access...
                   </div>
-                ) : auditLogGraceBanner ? (
-                  <>
-                    <Alert className="border-amber-500/30 bg-amber-500/5">
-                      <AlertTriangle className="size-4 text-amber-600" />
-                      <AlertTitle>
-                        {formatBillingFeatureName("auditLog")} trial access
-                      </AlertTitle>
-                      <AlertDescription>
-                        <p>
-                          Audit Log is not included in the{" "}
-                          {formatPlanName(entitlements?.plan)} plan.
-                        </p>
-                        <p>
-                          Access remains available until{" "}
-                          {auditLogGraceEndsAt ??
-                            "the rollout grace period ends"}
-                          . Upgrade to Enterprise before then to keep access.
-                        </p>
-                      </AlertDescription>
-                    </Alert>
-                    <OrganizationAuditLog
-                      organizationId={organization._id}
-                      organizationName={organization.name}
-                      isAuthenticated={isAuthenticated}
-                    />
-                  </>
                 ) : auditLogLocked ? (
                   <div className="rounded-md border border-border/70 p-4">
                     <div className="space-y-1.5">
@@ -859,8 +822,7 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
                         Audit Log requires Enterprise
                       </h3>
                       <p className="text-sm text-muted-foreground">
-                        Audit Log is not included in the{" "}
-                        {formatPlanName(entitlements?.plan)} plan.
+                        Audit Log is not included on your current plan.
                         {billingStatus?.canManageBilling
                           ? " Upgrade this organization to Enterprise to restore access."
                           : " Ask an organization owner to upgrade to Enterprise."}

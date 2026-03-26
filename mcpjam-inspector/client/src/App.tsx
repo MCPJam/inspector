@@ -1,4 +1,4 @@
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle } from "lucide-react";
@@ -25,6 +25,7 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
+import { PremiumnessLockedPanel } from "./components/billing/PremiumnessLockedPanel";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
@@ -32,6 +33,15 @@ import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { Button } from "./components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
@@ -41,6 +51,8 @@ import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
+import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
+import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
 // Import global styles
 import "./index.css";
@@ -77,12 +89,11 @@ import {
 } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
-  formatBillingFeatureName,
-  formatGracePeriodEndsAt,
-  formatPlanName,
+  getPremiumnessGateForTab,
   getRequiredBillingFeatureForTab,
-  isBillingFeatureLocked,
-  isBillingGracePeriodActive,
+  getUpgradePlanForDeniedGate,
+  isGateAccessDenied,
+  isPremiumnessGateDeniedForShell,
 } from "./lib/billing-entitlements";
 import {
   clearHostedOAuthPendingState,
@@ -110,10 +121,6 @@ import {
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
-import type {
-  BillingRolloutState,
-  OrganizationEntitlements,
-} from "./hooks/useOrganizationBilling";
 import { useClientConfigStore } from "./stores/client-config-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -448,35 +455,51 @@ export default function App() {
     sortedOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
       : null;
-  const billingEntitlements = useQuery(
-    "billing:getOrganizationEntitlements" as any,
-    isAuthenticated && billingOrganizationId
-      ? ({ organizationId: billingOrganizationId } as any)
-      : "skip",
-  ) as OrganizationEntitlements | undefined;
-  const billingRolloutState = useQuery(
-    "billing:getBillingRolloutState" as any,
-    isAuthenticated && billingOrganizationId
-      ? ({ organizationId: billingOrganizationId } as any)
-      : "skip",
-  ) as BillingRolloutState | undefined;
-  const billingUiEnabled = billingEntitlementsUiEnabled === true;
-  const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
-  const activeTabBillingLocked = isBillingFeatureLocked({
-    billingUiEnabled,
-    entitlements: billingEntitlements,
-    rolloutState: billingRolloutState,
-    feature: activeTabBillingFeature,
-  });
-  const activeTabGracePeriodBanner =
-    billingUiEnabled &&
-    !!activeTabBillingFeature &&
-    !!billingEntitlements &&
-    billingEntitlements.features[activeTabBillingFeature] === false &&
-    isBillingGracePeriodActive(billingRolloutState);
-  const billingGracePeriodEndsAt = formatGracePeriodEndsAt(
-    billingRolloutState?.gracePeriodEndsAt,
+  const {
+    billingStatus: shellBillingStatus,
+    organizationPremiumness,
+    workspacePremiumness,
+    selectFreeAfterTrial,
+    isSelectingFreeAfterTrial,
+  } = useOrganizationBilling(
+    isAuthenticated ? billingOrganizationId : null,
+    { workspaceId: convexWorkspaceId },
   );
+  const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const navPremiumness =
+    convexWorkspaceId && workspacePremiumness
+      ? workspacePremiumness
+      : organizationPremiumness;
+  const activeTabGate = getPremiumnessGateForTab(activeTab);
+  const activeTabBillingLocked = isPremiumnessGateDeniedForShell({
+    billingUiEnabled,
+    workspacePremiumness,
+    organizationPremiumness,
+    hasWorkspace: !!convexWorkspaceId,
+    gateKey: activeTabGate,
+  });
+  const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
+  const upgradePlanForActiveTab = getUpgradePlanForDeniedGate(
+    navPremiumness,
+    activeTabGate,
+  );
+  const sidebarGateDenied = useMemo(() => {
+    const denied: Partial<Record<BillingFeatureName, boolean>> = {};
+    for (const key of ["evals", "sandboxes", "cicd"] as const) {
+      denied[key] = isGateAccessDenied(navPremiumness, key);
+    }
+    return denied;
+  }, [navPremiumness]);
+  const billingGateEnforcementActive =
+    billingUiEnabled && navPremiumness?.enforcementState === "enabled";
+  const showTrialDecisionModal =
+    billingUiEnabled &&
+    shellBillingStatus?.decisionRequired === true &&
+    shellBillingStatus?.isOwner === true;
+  const showTrialDecisionNotice =
+    billingUiEnabled &&
+    shellBillingStatus?.decisionRequired === true &&
+    shellBillingStatus?.isOwner === false;
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
@@ -646,13 +669,6 @@ export default function App() {
   useEffect(() => {
     if (ciEvalsEnabled === false && activeTab === "ci-evals") {
       applyNavigation("servers", { updateHash: true });
-    } else if (activeTabBillingLocked && activeTabBillingFeature) {
-      toast.error(
-        `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
-          billingEntitlements?.plan,
-        )} plan. Upgrade the organization to continue.`,
-      );
-      applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
     } else if (
@@ -670,13 +686,10 @@ export default function App() {
     ciEvalsEnabled,
     clientConfigEnabled,
     registryEnabled,
-    activeTabBillingFeature,
-    activeTabBillingLocked,
     learningEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
-    billingEntitlements?.plan,
   ]);
 
   const handleNavigate = (section: string) => {
@@ -844,35 +857,21 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
         activeOrganizationId={activeOrganizationId}
-        billingFeatureAvailability={billingEntitlements?.features ?? {}}
-        billingEnforcementActive={
-          billingUiEnabled && billingRolloutState?.enforcementActive === true
-        }
+        billingUiEnabled={billingUiEnabled}
+        billingGateDenied={sidebarGateDenied}
+        billingGateEnforcementActive={billingGateEnforcementActive}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <Header activeServerSelectorProps={activeServerSelectorProps} />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {activeTabGracePeriodBanner && activeTabBillingFeature ? (
+          {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
-              <Alert className="border-amber-500/30 bg-amber-500/5">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                <AlertTitle>
-                  {formatBillingFeatureName(activeTabBillingFeature)} trial
-                  access
-                </AlertTitle>
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Billing decision required</AlertTitle>
                 <AlertDescription>
-                  <p>
-                    {formatBillingFeatureName(activeTabBillingFeature)} is not
-                    included in the {formatPlanName(billingEntitlements?.plan)}{" "}
-                    plan.
-                  </p>
-                  <p>
-                    Access remains available until{" "}
-                    {billingGracePeriodEndsAt ??
-                      "the rollout grace period ends"}
-                    . Upgrade from Organization settings before then to avoid a
-                    lockout.
-                  </p>
+                  This organization&apos;s trial has ended. An owner must
+                  upgrade or choose the free plan to restore full access.
                 </AlertDescription>
               </Alert>
             </div>
@@ -917,21 +916,78 @@ export default function App() {
               />
             </div>
           )}
-          {activeTab === "evals" && (
-            <EvalsTab
-              selectedServer={appState.selectedServer}
-              workspaceId={convexWorkspaceId}
-            />
-          )}
-          {activeTab === "ci-evals" && (
-            <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
-          )}
+          {activeTab === "evals" &&
+            (billingUiEnabled &&
+            activeTabBillingLocked &&
+            activeTabBillingFeature ? (
+              <PremiumnessLockedPanel
+                feature={activeTabBillingFeature}
+                upgradePlan={upgradePlanForActiveTab}
+                canManageBilling={
+                  shellBillingStatus?.canManageBilling ?? false
+                }
+                onViewBilling={() => {
+                  if (billingOrganizationId) {
+                    applyNavigation(
+                      `organizations/${billingOrganizationId}/billing`,
+                      { updateHash: true },
+                    );
+                  }
+                }}
+              />
+            ) : (
+              <EvalsTab
+                selectedServer={appState.selectedServer}
+                workspaceId={convexWorkspaceId}
+              />
+            ))}
+          {activeTab === "ci-evals" &&
+            (billingUiEnabled &&
+            activeTabBillingLocked &&
+            activeTabBillingFeature ? (
+              <PremiumnessLockedPanel
+                feature={activeTabBillingFeature}
+                upgradePlan={upgradePlanForActiveTab}
+                canManageBilling={
+                  shellBillingStatus?.canManageBilling ?? false
+                }
+                onViewBilling={() => {
+                  if (billingOrganizationId) {
+                    applyNavigation(
+                      `organizations/${billingOrganizationId}/billing`,
+                      { updateHash: true },
+                    );
+                  }
+                }}
+              />
+            ) : (
+              <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+            ))}
           {activeTab === "views" && (
             <ViewsTab selectedServer={appState.selectedServer} />
           )}
-          {activeTab === "sandboxes" && (
-            <SandboxesTab workspaceId={convexWorkspaceId} />
-          )}
+          {activeTab === "sandboxes" &&
+            (billingUiEnabled &&
+            activeTabBillingLocked &&
+            activeTabBillingFeature ? (
+              <PremiumnessLockedPanel
+                feature={activeTabBillingFeature}
+                upgradePlan={upgradePlanForActiveTab}
+                canManageBilling={
+                  shellBillingStatus?.canManageBilling ?? false
+                }
+                onViewBilling={() => {
+                  if (billingOrganizationId) {
+                    applyNavigation(
+                      `organizations/${billingOrganizationId}/billing`,
+                      { updateHash: true },
+                    );
+                  }
+                }}
+              />
+            ) : (
+              <SandboxesTab workspaceId={convexWorkspaceId} />
+            ))}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">
               <ResourcesTab
@@ -1043,6 +1099,53 @@ export default function App() {
           )}
         </div>
       </SidebarInset>
+      <Dialog open={showTrialDecisionModal}>
+        <DialogContent
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          data-testid="trial-decision-modal"
+        >
+          <DialogHeader>
+            <DialogTitle>Choose how to continue</DialogTitle>
+            <DialogDescription>
+              Your trial has ended. Upgrade to keep paid features, or move this
+              organization to the Free plan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSelectingFreeAfterTrial}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await selectFreeAfterTrial();
+                    toast.success("This organization is now on the Free plan.");
+                  } catch {
+                    toast.error("Could not update plan. Try again.");
+                  }
+                })();
+              }}
+            >
+              {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (billingOrganizationId) {
+                  applyNavigation(
+                    `organizations/${billingOrganizationId}/billing`,
+                    { updateHash: true },
+                  );
+                }
+              }}
+            >
+              Upgrade
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SidebarProvider>
   );
 

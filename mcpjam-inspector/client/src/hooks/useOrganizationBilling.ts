@@ -1,4 +1,4 @@
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useState } from "react";
 
 export type OrganizationPlan = "free" | "starter" | "team" | "enterprise";
@@ -18,6 +18,37 @@ export type BillingLimitName =
   | "maxSandboxesPerWorkspace"
   | "maxEvalRunsPerMonth";
 
+/** Mirrors backend premiumness gate keys exactly. */
+export type PremiumnessGateKey =
+  | "sandboxes"
+  | "evals"
+  | "cicd"
+  | "auditLog"
+  | "maxMembers"
+  | "maxWorkspaces"
+  | "maxServersPerWorkspace"
+  | "maxSandboxesPerWorkspace"
+  | "maxEvalRunsPerMonth";
+
+export type BillingEnforcementState = "enabled" | "disabled";
+
+export interface GateDecision {
+  allowed: boolean;
+  gateKey: PremiumnessGateKey;
+  upgradePlan?: OrganizationPlan | null;
+}
+
+export interface PremiumnessState {
+  organizationId?: string;
+  workspaceId?: string;
+  enforcementState: BillingEnforcementState;
+  /** Effective plan for UX (trials, simulations). */
+  effectivePlan: OrganizationPlan;
+  /** Persisted commercial plan (Stripe/admin), may differ during trials. */
+  plan?: OrganizationPlan;
+  gates: Partial<Record<PremiumnessGateKey, GateDecision>>;
+}
+
 export interface OrganizationEntitlements {
   plan: OrganizationPlan;
   billingInterval: BillingInterval | null;
@@ -26,16 +57,12 @@ export interface OrganizationEntitlements {
   limits: Record<BillingLimitName, number | null>;
 }
 
-export interface BillingRolloutState {
-  enforcementConfigured: boolean;
-  gracePeriodEndsAt: string | null;
-  enforcementActive: boolean;
-}
-
 export interface OrganizationBillingStatus {
   organizationId: string;
   organizationName: string;
   plan: OrganizationPlan;
+  effectivePlan: OrganizationPlan;
+  source: string;
   billingInterval: BillingInterval | null;
   billingConfigured: boolean;
   subscriptionStatus: string | null;
@@ -44,6 +71,13 @@ export interface OrganizationBillingStatus {
   hasCustomer: boolean;
   stripeCurrentPeriodEnd: number | null;
   stripePriceId: string | null;
+  trialStatus: string;
+  trialPlan: OrganizationPlan | null;
+  trialStartedAt: string | null;
+  trialEndsAt: string | null;
+  trialDaysRemaining: number | null;
+  decisionRequired: boolean;
+  trialDecision: string | null;
 }
 
 export interface PlanCatalogEntry {
@@ -65,19 +99,38 @@ export function isPaidPlan(plan: OrganizationPlan): boolean {
   return plan !== "free";
 }
 
-export function useOrganizationBilling(organizationId: string | null) {
+export interface UseOrganizationBillingOptions {
+  workspaceId?: string | null;
+}
+
+export function useOrganizationBilling(
+  organizationId: string | null,
+  options?: UseOrganizationBillingOptions,
+) {
+  const workspaceId = options?.workspaceId ?? null;
+
   const billingStatus = useQuery(
     "billing:getOrganizationBillingStatus" as any,
     organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationBillingStatus | undefined;
+
   const entitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,
     organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationEntitlements | undefined;
-  const rolloutState = useQuery(
-    "billing:getBillingRolloutState" as any,
+
+  const organizationPremiumness = useQuery(
+    "billing:getOrganizationPremiumness" as any,
     organizationId ? ({ organizationId } as any) : "skip",
-  ) as BillingRolloutState | undefined;
+  ) as PremiumnessState | undefined;
+
+  const workspacePremiumness = useQuery(
+    "billing:getWorkspacePremiumness" as any,
+    organizationId && workspaceId
+      ? ({ organizationId, workspaceId } as any)
+      : "skip",
+  ) as PremiumnessState | undefined;
+
   const planCatalog = useQuery(
     "billing:getPlanCatalog" as any,
     organizationId ? ({ organizationId } as any) : "skip",
@@ -89,9 +142,14 @@ export function useOrganizationBilling(organizationId: string | null) {
   const createPortal = useAction(
     "billing:createOrganizationBillingPortalSession" as any,
   );
+  const selectFreeAfterTrialMutation = useMutation(
+    "billing:selectOrganizationFreePlanAfterTrial" as any,
+  );
 
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
+  const [isSelectingFreeAfterTrial, setIsSelectingFreeAfterTrial] =
+    useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const startCheckout = useCallback(
@@ -146,19 +204,46 @@ export function useOrganizationBilling(organizationId: string | null) {
     [createPortal, organizationId],
   );
 
+  const selectFreeAfterTrial = useCallback(async () => {
+    if (!organizationId) throw new Error("Organization is required");
+    setIsSelectingFreeAfterTrial(true);
+    setError(null);
+    try {
+      await selectFreeAfterTrialMutation({ organizationId } as any);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to choose free plan";
+      setError(message);
+      throw err;
+    } finally {
+      setIsSelectingFreeAfterTrial(false);
+    }
+  }, [organizationId, selectFreeAfterTrialMutation]);
+
+  const isLoadingOrganizationPremiumness =
+    !!organizationId && organizationPremiumness === undefined;
+  const isLoadingWorkspacePremiumness =
+    !!organizationId &&
+    !!workspaceId &&
+    workspacePremiumness === undefined;
+
   return {
     billingStatus,
+    organizationPremiumness,
+    workspacePremiumness,
     entitlements,
-    rolloutState,
     planCatalog,
     isLoadingBilling: !!organizationId && billingStatus === undefined,
     isLoadingEntitlements: !!organizationId && entitlements === undefined,
-    isLoadingRollout: !!organizationId && rolloutState === undefined,
+    isLoadingOrganizationPremiumness,
+    isLoadingWorkspacePremiumness,
     isLoadingPlanCatalog: !!organizationId && planCatalog === undefined,
     isStartingCheckout,
     isOpeningPortal,
+    isSelectingFreeAfterTrial,
     error,
     startCheckout,
     openPortal,
+    selectFreeAfterTrial,
   };
 }
