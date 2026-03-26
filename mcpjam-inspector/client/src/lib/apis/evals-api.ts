@@ -1,5 +1,5 @@
 import { isHostedMode } from "@/lib/apis/mode-client";
-import { buildHostedServerBatchRequest } from "@/lib/apis/web/context";
+import { buildHostedEvalServerBatchRequest } from "@/lib/apis/web/context";
 
 export const EVALS_API_ENDPOINTS = {
   local: {
@@ -26,10 +26,7 @@ export function getEvalApiEndpoints() {
 
 export function buildEvalServerBatchPayload(serverNames: string[]) {
   if (isHostedMode()) {
-    return {
-      ...buildHostedServerBatchRequest(serverNames),
-      serverNames,
-    };
+    return buildHostedEvalServerBatchRequest(serverNames);
   }
 
   return {

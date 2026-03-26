@@ -1,43 +1,22 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
-import { MCPClientManager, type HttpServerConfig } from "@mcpjam/sdk";
-import {
-  generateTestCases,
-  type DiscoveredTool,
-} from "../../services/eval-agent";
+import { MCPClientManager } from "@mcpjam/sdk";
+import { generateTestCases } from "../../services/eval-agent";
 import {
   generateNegativeTestCases,
   convertToEvalTestCases,
 } from "../../services/negative-test-agent";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
-import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
+import {
+  buildReplayManager,
+  collectToolsForServers,
+  createConvexClient,
+  fetchReplayConfig,
+  requireConvexHttpUrl,
+} from "../../services/evals/route-helpers.js";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
-
-const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
-
-// Helper to compute config revision (same as in Convex)
-function normalizeForSignature(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(normalizeForSignature);
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, val]) => [key, normalizeForSignature(val)]);
-    return Object.fromEntries(entries);
-  }
-  return value;
-}
-
-function computeConfigRevision(config: {
-  tests: Array<Record<string, unknown>>;
-  environment: Record<string, unknown>;
-}): string {
-  return JSON.stringify(normalizeForSignature(config));
-}
 
 function resolveServerIdsOrThrow(
   requestedIds: string[],
@@ -61,126 +40,6 @@ function resolveServerIdsOrThrow(
   }
 
   return resolved;
-}
-
-async function collectToolsForServers(
-  clientManager: MCPClientManager,
-  serverIds: string[],
-): Promise<DiscoveredTool[]> {
-  const perServerTools = await Promise.all(
-    serverIds.map(async (serverId) => {
-      if (clientManager.getConnectionStatus(serverId) !== "connected") {
-        return [] as DiscoveredTool[];
-      }
-
-      try {
-        const { tools } = await clientManager.listTools(serverId);
-        return tools.map((tool: any) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          outputSchema: (tool as { outputSchema?: unknown }).outputSchema,
-          serverId,
-        }));
-      } catch (error) {
-        logger.warn(`[evals] Failed to list tools for server ${serverId}`, {
-          serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return [] as DiscoveredTool[];
-      }
-    }),
-  );
-
-  return perServerTools.flat();
-}
-
-function createConvexClient(convexAuthToken: string) {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
-    throw new Error("CONVEX_URL is not set");
-  }
-
-  const convexClient = new ConvexHttpClient(convexUrl);
-  convexClient.setAuth(convexAuthToken);
-  return convexClient;
-}
-
-function requireConvexHttpUrl() {
-  const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexHttpUrl) {
-    throw new Error("CONVEX_HTTP_URL is not set");
-  }
-  return convexHttpUrl;
-}
-
-async function fetchReplayConfig(runId: string, userAuthToken: string) {
-  const convexHttpUrl = requireConvexHttpUrl();
-  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
-  if (!inspectorServiceToken) {
-    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
-  }
-
-  const response = await fetch(
-    `${convexHttpUrl}/internal/v1/evals/runs/replay-config`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${userAuthToken}`,
-        [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
-      },
-      body: JSON.stringify({ runId }),
-    },
-  );
-
-  const body = (await response.json()) as {
-    ok?: boolean;
-    error?: string;
-    replayConfig?: {
-      runId: string;
-      suiteId: string;
-      servers: Array<{
-        serverId: string;
-        url: string;
-        preferSSE?: boolean;
-        accessToken?: string;
-        refreshToken?: string;
-        clientId?: string;
-        clientSecret?: string;
-      }>;
-    } | null;
-  };
-
-  if (!response.ok || !body.ok) {
-    throw new Error(body.error || "Failed to fetch replay config");
-  }
-
-  return body.replayConfig;
-}
-
-function buildReplayManager(
-  replayConfig: NonNullable<Awaited<ReturnType<typeof fetchReplayConfig>>>,
-) {
-  const entries = replayConfig.servers.map((server) => {
-    const config: HttpServerConfig = {
-      url: server.url,
-      timeout: WEB_CALL_TIMEOUT_MS,
-      ...(server.preferSSE !== undefined
-        ? { preferSSE: server.preferSSE }
-        : {}),
-      ...(server.accessToken ? { accessToken: server.accessToken } : {}),
-      ...(server.refreshToken ? { refreshToken: server.refreshToken } : {}),
-      ...(server.clientId ? { clientId: server.clientId } : {}),
-      ...(server.clientSecret ? { clientSecret: server.clientSecret } : {}),
-    };
-
-    return [server.serverId, config] as const;
-  });
-
-  return new MCPClientManager(Object.fromEntries(entries), {
-    defaultTimeout: WEB_CALL_TIMEOUT_MS,
-  });
 }
 
 const evals = new Hono();
@@ -291,18 +150,8 @@ evals.post("/run", async (c) => {
     const clientManager = c.mcpClientManager;
     const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
 
-    const convexUrl = process.env.CONVEX_URL;
-    if (!convexUrl) {
-      throw new Error("CONVEX_URL is not set");
-    }
-
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
-
-    const convexClient = new ConvexHttpClient(convexUrl);
-    convexClient.setAuth(convexAuthToken);
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
 
     let resolvedSuiteId = suiteId ?? null;
 
@@ -681,18 +530,8 @@ evals.post("/run-test-case", async (c) => {
     const clientManager = c.mcpClientManager;
     const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
 
-    const convexUrl = process.env.CONVEX_URL;
-    if (!convexUrl) {
-      throw new Error("CONVEX_URL is not set");
-    }
-
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
-
-    const convexClient = new ConvexHttpClient(convexUrl);
-    convexClient.setAuth(convexAuthToken);
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
 
     // Get the test case details
     const testCase = await convexClient.query("testSuites:getTestCase" as any, {
@@ -780,13 +619,7 @@ evals.post("/cancel", async (c) => {
       return c.json({ error: "convexAuthToken is required" }, 401);
     }
 
-    const convexUrl = process.env.CONVEX_URL;
-    if (!convexUrl) {
-      throw new Error("CONVEX_URL is not set");
-    }
-
-    const convexClient = new ConvexHttpClient(convexUrl);
-    convexClient.setAuth(convexAuthToken);
+    const convexClient = createConvexClient(convexAuthToken);
 
     await convexClient.mutation("testSuites:cancelTestSuiteRun" as any, {
       runId,
@@ -856,10 +689,7 @@ evals.post("/generate-tests", async (c) => {
       );
     }
 
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
+    const convexHttpUrl = requireConvexHttpUrl();
 
     // Generate test cases using the agent
     const testCases = await generateTestCases(
@@ -929,10 +759,7 @@ evals.post("/generate-negative-tests", async (c) => {
       );
     }
 
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
+    const convexHttpUrl = requireConvexHttpUrl();
 
     // Generate negative test cases using the agent
     const negativeTestCases = await generateNegativeTestCases(

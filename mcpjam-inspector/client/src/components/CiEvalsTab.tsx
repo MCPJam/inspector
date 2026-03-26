@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { useChat } from "@/hooks/use-chat";
+import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
@@ -55,11 +55,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-  const { availableModels } = useChat({
-    systemPrompt: "",
-    temperature: 1,
-    selectedServers: [],
-  });
+  const { availableModels } = useAvailableEvalModels();
 
   const connectedServerNames = useMemo(
     () =>
@@ -322,8 +318,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           maxSize={35}
           className="border-r bg-muted/30 flex flex-col"
         >
-              <CiSuiteListSidebar
-                suites={visibleSuites}
+          <CiSuiteListSidebar
+            suites={visibleSuites}
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
             isLoading={queries.isOverviewLoading}

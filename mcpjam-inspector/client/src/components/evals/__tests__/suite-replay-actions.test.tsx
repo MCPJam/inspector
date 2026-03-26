@@ -78,4 +78,24 @@ describe("CI replay actions", () => {
     expect(onReplayRun).toHaveBeenCalledWith(replayableRun);
     expect(onRunClick).not.toHaveBeenCalled();
   });
+
+  it("uses a real button to expand and collapse a run row", async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <RunAccordionView
+        suite={{ _id: "suite-1", name: "Asana MCP Evals", source: "sdk" }}
+        runs={[replayableRun]}
+        allIterations={[]}
+        onRunClick={vi.fn()}
+        onReplayRun={vi.fn()}
+      />,
+    );
+
+    const toggleButton = screen.getByRole("button", { name: /Run run-1/i });
+    expect(toggleButton).toHaveAttribute("aria-expanded", "true");
+
+    await user.click(toggleButton);
+    expect(toggleButton).toHaveAttribute("aria-expanded", "false");
+  });
 });

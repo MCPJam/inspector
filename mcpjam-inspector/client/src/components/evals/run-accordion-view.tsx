@@ -76,16 +76,6 @@ export function RunAccordionView({
     });
   };
 
-  const handleRunHeaderKeyDown = (
-    event: React.KeyboardEvent<HTMLDivElement>,
-    runId: string,
-  ) => {
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      toggleRun(runId);
-    }
-  };
-
   // Pre-compute test cases for each run
   const runTestCases = useMemo(() => {
     const map = new Map<string, RunTestCase[]>();
@@ -168,141 +158,136 @@ export function RunAccordionView({
               className={`absolute left-0 top-0 h-full w-1 ${borderColor} ${index === 0 ? "rounded-tl-xl" : ""} ${index === sortedRuns.length - 1 && !isExpanded ? "rounded-bl-xl" : ""}`}
             />
 
-            {/* Run header — clickable to expand/collapse */}
-            <div
-              role="button"
-              tabIndex={0}
-              onClick={() => toggleRun(run._id)}
-              onKeyDown={(event) => handleRunHeaderKeyDown(event, run._id)}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50"
-            >
-              {/* Expand/collapse chevron */}
-              <span className="shrink-0 text-muted-foreground">
-                {isExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
-              </span>
-
-              {/* Run info */}
-              <div className="flex flex-1 items-center gap-3 min-w-0">
-                <span className="text-xs font-medium shrink-0">
-                  Run {formatRunId(run._id)}
+            {/* Run header */}
+            <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50">
+              <button
+                type="button"
+                aria-expanded={isExpanded}
+                onClick={() => toggleRun(run._id)}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-sm bg-transparent p-0 text-left appearance-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                {/* Expand/collapse chevron */}
+                <span className="shrink-0 text-muted-foreground">
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
                 </span>
 
-                {timeAgo && (
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    {timeAgo}
+                {/* Run info */}
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="text-xs font-medium shrink-0">
+                    Run {formatRunId(run._id)}
                   </span>
-                )}
 
-                {duration && (
-                  <span className="text-xs font-mono text-muted-foreground shrink-0">
-                    {duration}
-                  </span>
-                )}
+                  {timeAgo && (
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {timeAgo}
+                    </span>
+                  )}
 
-                {showCiMetadata && (
-                  <span className="shrink-0">
-                    <CiMetadataDisplay
-                      ciMetadata={run.ciMetadata}
-                      compact={true}
-                      compactMode="chip"
-                      interactive={false}
-                    />
-                  </span>
-                )}
+                  {duration && (
+                    <span className="text-xs font-mono text-muted-foreground shrink-0">
+                      {duration}
+                    </span>
+                  )}
 
-                {run.replayedFromRunId && (
-                  <span className="shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-medium text-blue-600">
-                    Replay
-                  </span>
-                )}
+                  {showCiMetadata && (
+                    <span className="shrink-0">
+                      <CiMetadataDisplay
+                        ciMetadata={run.ciMetadata}
+                        compact={true}
+                        compactMode="chip"
+                        interactive={false}
+                      />
+                    </span>
+                  )}
 
-                {/* Spacer */}
-                <span className="flex-1" />
+                  {run.replayedFromRunId && (
+                    <span className="shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-medium text-blue-600">
+                      Replay
+                    </span>
+                  )}
 
-                {/* Pass/fail summary */}
-                {total > 0 && (
-                  <span className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs font-mono">
-                      <span className="text-green-500">{passed}</span>
-                      {failed > 0 && (
-                        <>
-                          <span className="text-muted-foreground"> / </span>
-                          <span className="text-red-500">{failed}</span>
-                        </>
+                  <span className="flex-1" />
+
+                  {total > 0 && (
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-mono">
+                        <span className="text-green-500">{passed}</span>
+                        {failed > 0 && (
+                          <>
+                            <span className="text-muted-foreground"> / </span>
+                            <span className="text-red-500">{failed}</span>
+                          </>
+                        )}
+                      </span>
+                      {passRate !== null && (
+                        <span
+                          className={cn(
+                            "text-xs font-medium px-1.5 py-0.5 rounded",
+                            passRate === 100
+                              ? "bg-green-500/15 text-green-500"
+                              : passRate >= 80
+                                ? "bg-yellow-500/15 text-yellow-500"
+                                : "bg-red-500/15 text-red-500",
+                          )}
+                        >
+                          {passRate}%
+                        </span>
                       )}
                     </span>
-                    {passRate !== null && (
-                      <span
-                        className={cn(
-                          "text-xs font-medium px-1.5 py-0.5 rounded",
-                          passRate === 100
-                            ? "bg-green-500/15 text-green-500"
-                            : passRate >= 80
-                              ? "bg-yellow-500/15 text-yellow-500"
-                              : "bg-red-500/15 text-red-500",
-                        )}
-                      >
-                        {passRate}%
-                      </span>
-                    )}
-                  </span>
-                )}
+                  )}
 
-                {run.status === "running" && (
-                  <span className="text-xs text-yellow-500 font-medium shrink-0">
-                    Running...
-                  </span>
-                )}
+                  {run.status === "running" && (
+                    <span className="text-xs text-yellow-500 font-medium shrink-0">
+                      Running...
+                    </span>
+                  )}
 
-                {run.hasServerReplayConfig && onReplayRun && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <span>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onReplayRun(run);
-                          }}
-                          disabled={isReplayingRun}
-                          className="h-7 gap-1.5 px-2 text-xs"
-                        >
-                          <RotateCw
-                            className={`h-3.5 w-3.5 ${isReplayingRun ? "animate-spin" : ""}`}
+                  {creator && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Avatar className="size-5 shrink-0">
+                          <AvatarImage
+                            src={creator.imageUrl}
+                            alt={creator.name}
                           />
-                          {isReplayingRun ? "Replaying..." : "Replay"}
-                        </Button>
-                      </span>
-                    </TooltipTrigger>
-                    <TooltipContent>Replay this CI run</TooltipContent>
-                  </Tooltip>
-                )}
+                          <AvatarFallback className="text-[9px]">
+                            {getInitials(creator.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="text-xs">{creator.name}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              </button>
 
-                {/* Avatar */}
-                {creator && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Avatar className="size-5 shrink-0">
-                        <AvatarImage
-                          src={creator.imageUrl}
-                          alt={creator.name}
+              {run.hasServerReplayConfig && onReplayRun && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onReplayRun(run)}
+                        disabled={isReplayingRun}
+                        className="h-7 gap-1.5 px-2 text-xs"
+                      >
+                        <RotateCw
+                          className={`h-3.5 w-3.5 ${isReplayingRun ? "animate-spin" : ""}`}
                         />
-                        <AvatarFallback className="text-[9px]">
-                          {getInitials(creator.name)}
-                        </AvatarFallback>
-                      </Avatar>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p className="text-xs">{creator.name}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
+                        {isReplayingRun ? "Replaying..." : "Replay"}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>Replay this CI run</TooltipContent>
+                </Tooltip>
+              )}
             </div>
 
             {/* Expanded test cases */}
