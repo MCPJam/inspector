@@ -113,6 +113,7 @@ export type ModelProvider =
 // We may add them back as a premium offering in the future.
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "openai/gpt-oss-120b",
+  "openai/gpt-4o-mini",
   "openai/gpt-5-nano",
   "anthropic/claude-haiku-4.5",
   "openai/gpt-5.1-codex-mini",

@@ -1,40 +1,22 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
-import {
-  generateTestCases,
-  type DiscoveredTool,
-} from "../../services/eval-agent";
+import { MCPClientManager } from "@mcpjam/sdk";
+import { generateTestCases } from "../../services/eval-agent";
 import {
   generateNegativeTestCases,
   convertToEvalTestCases,
 } from "../../services/negative-test-agent";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import {
+  buildReplayManager,
+  collectToolsForServers,
+  createConvexClient,
+  fetchReplayConfig,
+  requireConvexHttpUrl,
+} from "../../services/evals/route-helpers.js";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
-
-// Helper to compute config revision (same as in Convex)
-function normalizeForSignature(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(normalizeForSignature);
-  }
-  if (value && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, val]) => [key, normalizeForSignature(val)]);
-    return Object.fromEntries(entries);
-  }
-  return value;
-}
-
-function computeConfigRevision(config: {
-  tests: Array<Record<string, unknown>>;
-  environment: Record<string, unknown>;
-}): string {
-  return JSON.stringify(normalizeForSignature(config));
-}
 
 function resolveServerIdsOrThrow(
   requestedIds: string[],
@@ -58,38 +40,6 @@ function resolveServerIdsOrThrow(
   }
 
   return resolved;
-}
-
-async function collectToolsForServers(
-  clientManager: MCPClientManager,
-  serverIds: string[],
-): Promise<DiscoveredTool[]> {
-  const perServerTools = await Promise.all(
-    serverIds.map(async (serverId) => {
-      if (clientManager.getConnectionStatus(serverId) !== "connected") {
-        return [] as DiscoveredTool[];
-      }
-
-      try {
-        const { tools } = await clientManager.listTools(serverId);
-        return tools.map((tool: any) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          outputSchema: (tool as { outputSchema?: unknown }).outputSchema,
-          serverId,
-        }));
-      } catch (error) {
-        logger.warn(`[evals] Failed to list tools for server ${serverId}`, {
-          serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return [] as DiscoveredTool[];
-      }
-    }),
-  );
-
-  return perServerTools.flat();
 }
 
 const evals = new Hono();
@@ -139,6 +89,20 @@ const RunEvalsRequestSchema = z.object({
 
 type RunEvalsRequest = z.infer<typeof RunEvalsRequestSchema>;
 
+const ReplayRunRequestSchema = z.object({
+  runId: z.string().min(1),
+  convexAuthToken: z.string(),
+  modelApiKeys: z.record(z.string(), z.string()).optional(),
+  notes: z.string().optional(),
+  passCriteria: z
+    .object({
+      minimumPassRate: z.number(),
+    })
+    .optional(),
+});
+
+type ReplayRunRequest = z.infer<typeof ReplayRunRequestSchema>;
+
 evals.post("/run", async (c) => {
   try {
     const body = await c.req.json();
@@ -186,18 +150,8 @@ evals.post("/run", async (c) => {
     const clientManager = c.mcpClientManager;
     const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
 
-    const convexUrl = process.env.CONVEX_URL;
-    if (!convexUrl) {
-      throw new Error("CONVEX_URL is not set");
-    }
-
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
-
-    const convexClient = new ConvexHttpClient(convexUrl);
-    convexClient.setAuth(convexAuthToken);
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
 
     let resolvedSuiteId = suiteId ?? null;
 
@@ -438,6 +392,97 @@ evals.post("/run", async (c) => {
   }
 });
 
+evals.post("/replay-run", async (c) => {
+  try {
+    const body = await c.req.json();
+    const validationResult = ReplayRunRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const { runId, convexAuthToken, modelApiKeys, notes, passCriteria } =
+      validationResult.data as ReplayRunRequest;
+
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
+    const replayMetadata = await convexClient.query(
+      "testSuites:getRunReplayMetadata" as any,
+      {
+        runId,
+      },
+    );
+
+    if (!replayMetadata?.hasServerReplayConfig) {
+      return c.json(
+        {
+          error: "This run does not have stored replay credentials",
+        },
+        400,
+      );
+    }
+
+    const replayConfig = await fetchReplayConfig(runId, convexAuthToken);
+    if (!replayConfig || replayConfig.servers.length === 0) {
+      return c.json(
+        {
+          error: "No replay configuration found for this run",
+        },
+        400,
+      );
+    }
+
+    const replayManager = buildReplayManager(replayConfig);
+    try {
+      const {
+        runId: replayRunId,
+        recorder,
+        config,
+      } = await startSuiteRunWithRecorder({
+        convexClient,
+        suiteId: replayMetadata.suiteId,
+        notes,
+        passCriteria,
+        serverIds:
+          replayMetadata.environment?.servers ??
+          replayConfig.servers.map((server) => server.serverId),
+        replayedFromRunId: runId,
+      });
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: replayMetadata.suiteId,
+        runId: replayRunId,
+        config,
+        modelApiKeys: modelApiKeys ?? undefined,
+        convexClient,
+        convexHttpUrl,
+        convexAuthToken,
+        mcpClientManager: replayManager,
+        recorder,
+      });
+
+      return c.json({
+        success: true,
+        suiteId: replayMetadata.suiteId,
+        runId: replayRunId,
+        sourceRunId: runId,
+        message: "Replay completed successfully.",
+      });
+    } finally {
+      await replayManager.disconnectAllServers();
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.error("[Error replaying eval run]", error);
+    return c.json({ error: errorMessage }, 500);
+  }
+});
+
 const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
@@ -488,18 +533,8 @@ evals.post("/run-test-case", async (c) => {
     const clientManager = c.mcpClientManager;
     const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
 
-    const convexUrl = process.env.CONVEX_URL;
-    if (!convexUrl) {
-      throw new Error("CONVEX_URL is not set");
-    }
-
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
-
-    const convexClient = new ConvexHttpClient(convexUrl);
-    convexClient.setAuth(convexAuthToken);
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
 
     // Get the test case details
     const testCase = await convexClient.query("testSuites:getTestCase" as any, {
@@ -587,13 +622,7 @@ evals.post("/cancel", async (c) => {
       return c.json({ error: "convexAuthToken is required" }, 401);
     }
 
-    const convexUrl = process.env.CONVEX_URL;
-    if (!convexUrl) {
-      throw new Error("CONVEX_URL is not set");
-    }
-
-    const convexClient = new ConvexHttpClient(convexUrl);
-    convexClient.setAuth(convexAuthToken);
+    const convexClient = createConvexClient(convexAuthToken);
 
     await convexClient.mutation("testSuites:cancelTestSuiteRun" as any, {
       runId,
@@ -663,10 +692,7 @@ evals.post("/generate-tests", async (c) => {
       );
     }
 
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
+    const convexHttpUrl = requireConvexHttpUrl();
 
     // Generate test cases using the agent
     const testCases = await generateTestCases(
@@ -736,10 +762,7 @@ evals.post("/generate-negative-tests", async (c) => {
       );
     }
 
-    const convexHttpUrl = process.env.CONVEX_HTTP_URL;
-    if (!convexHttpUrl) {
-      throw new Error("CONVEX_HTTP_URL is not set");
-    }
+    const convexHttpUrl = requireConvexHttpUrl();
 
     // Generate negative test cases using the agent
     const negativeTestCases = await generateNegativeTestCases(

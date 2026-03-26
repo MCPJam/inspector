@@ -36,6 +36,23 @@ describe("ci-evals-router", () => {
     });
   });
 
+  it("parses suite edit route", () => {
+    window.location.hash = "#/ci-evals/suite/s_123/edit";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "suite-edit",
+      suiteId: "s_123",
+    });
+  });
+
+  it("parses test edit route", () => {
+    window.location.hash = "#/ci-evals/suite/s_123/test/t_789/edit";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "test-edit",
+      suiteId: "s_123",
+      testId: "t_789",
+    });
+  });
+
   it("navigates to suite overview route", () => {
     navigateToCiEvalsRoute({ type: "suite-overview", suiteId: "s_abc" });
     expect(window.location.hash).toBe("#/ci-evals/suite/s_abc");
@@ -51,6 +68,20 @@ describe("ci-evals-router", () => {
     expect(window.location.hash).toBe(
       "#/ci-evals/suite/s_abc/runs/r_def?iteration=i_3",
     );
+  });
+
+  it("navigates to suite edit route", () => {
+    navigateToCiEvalsRoute({ type: "suite-edit", suiteId: "s_abc" });
+    expect(window.location.hash).toBe("#/ci-evals/suite/s_abc/edit");
+  });
+
+  it("navigates to test edit route", () => {
+    navigateToCiEvalsRoute({
+      type: "test-edit",
+      suiteId: "s_abc",
+      testId: "t_def",
+    });
+    expect(window.location.hash).toBe("#/ci-evals/suite/s_abc/test/t_def/edit");
   });
 
   it("parses commit detail route", () => {

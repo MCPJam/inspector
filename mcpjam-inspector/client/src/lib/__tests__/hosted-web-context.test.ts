@@ -7,6 +7,7 @@ vi.mock("../config", () => ({
 }));
 
 import {
+  buildHostedEvalServerBatchRequest,
   buildHostedServerBatchRequest,
   buildHostedServerRequest,
   setHostedApiContext,
@@ -42,6 +43,15 @@ describe("hosted web context", () => {
     expect(buildHostedServerBatchRequest(["bench"])).toEqual({
       workspaceId: "ws_shared",
       serverIds: ["srv_bench"],
+      clientCapabilities: defaultClientCapabilities,
+      accessScope: "chat_v2",
+      shareToken: "share_tok_123",
+    });
+
+    expect(buildHostedEvalServerBatchRequest(["bench"])).toEqual({
+      workspaceId: "ws_shared",
+      serverIds: ["srv_bench"],
+      serverNames: ["bench"],
       clientCapabilities: defaultClientCapabilities,
       accessScope: "chat_v2",
       shareToken: "share_tok_123",
@@ -225,6 +235,9 @@ describe("hosted web context", () => {
     expect(() => buildHostedServerBatchRequest(["bench"])).toThrow(
       CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
     );
+    expect(() => buildHostedEvalServerBatchRequest(["bench"])).toThrow(
+      CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+    );
   });
 
   it("keeps direct guest requests working while sync-pending gating is enabled elsewhere", () => {
@@ -257,5 +270,26 @@ describe("hosted web context", () => {
     expect(() => buildHostedServerRequest("unknown")).toThrow(
       'No guest server config found for "unknown"',
     );
+  });
+
+  it("keeps hosted eval server names aligned with deduped server ids", () => {
+    setHostedApiContext({
+      workspaceId: "ws_eval",
+      isAuthenticated: true,
+      serverIdsByName: {
+        asana: "srv_asana",
+        github: "srv_github",
+      },
+      getAccessToken: async () => null,
+    });
+
+    expect(
+      buildHostedEvalServerBatchRequest(["asana", "srv_asana", "github"]),
+    ).toEqual({
+      workspaceId: "ws_eval",
+      serverIds: ["srv_asana", "srv_github"],
+      serverNames: ["asana", "github"],
+      clientCapabilities: defaultClientCapabilities,
+    });
   });
 });

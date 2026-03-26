@@ -9,18 +9,32 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
-import { navigateToEvalsRoute } from "@/lib/evals-router";
-import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
+import { navigateToEvalsRoute, type EvalsRoute } from "@/lib/evals-router";
+import {
+  navigateToCiEvalsRoute,
+  type CiEvalsRoute,
+} from "@/lib/ci-evals-router";
+import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
-import { API_ENDPOINTS } from "./constants";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  buildEvalConvexAuthPayload,
+  buildEvalServerBatchPayload,
+  getEvalApiEndpoints,
+} from "@/lib/apis/evals-api";
+import { isHostedMode } from "@/lib/apis/mode-client";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
   selectedSuiteId: string | null;
   selectedTestId: string | null;
+  /**
+   * When `ci-evals`, navigation after test-case mutations stays on CI evals
+   * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
+   */
+  evalsNavigationContext?: "evals" | "ci-evals";
 }
 
 /**
@@ -31,6 +45,7 @@ export function useEvalHandlers({
   selectedSuiteEntry,
   selectedSuiteId,
   selectedTestId,
+  evalsNavigationContext = "evals",
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -38,6 +53,7 @@ export function useEvalHandlers({
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
+  const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
@@ -59,6 +75,26 @@ export function useEvalHandlers({
   } | null>(null);
   const [isGeneratingTests, setIsGeneratingTests] = useState(false);
 
+  const navigateAfterTestCaseMutation = useCallback(
+    (
+      route:
+        | { type: "test-detail"; suiteId: string; testId: string }
+        | { type: "test-edit"; suiteId: string; testId: string }
+        | {
+            type: "suite-overview";
+            suiteId: string;
+            view?: "runs" | "test-cases";
+          },
+    ) => {
+      if (evalsNavigationContext === "ci-evals") {
+        navigateToCiEvalsRoute(route as CiEvalsRoute);
+      } else {
+        navigateToEvalsRoute(route as EvalsRoute);
+      }
+    },
+    [evalsNavigationContext],
+  );
+
   // Query to get test cases for a suite
   const getTestCasesForRerun = useCallback(
     async (suiteId: string) => {
@@ -76,30 +112,22 @@ export function useEvalHandlers({
     [convex],
   );
 
-  // Rerun handler
-  const handleRerun = useCallback(
+  const getSuiteExecutionContext = useCallback(
     async (suite: EvalSuite) => {
-      if (rerunningSuiteId) return;
-
-      const suiteServers = suite.environment?.servers || [];
-
-      // Get current test cases from database (not from stale config)
       const testCases = (await getTestCasesForRerun(suite._id)) as any[];
       if (!testCases || testCases.length === 0) {
         toast.error("No test cases found in this suite");
-        return;
+        return null;
       }
 
-      // Generate tests array by expanding each test case's models
       const tests: any[] = [];
+      const providersNeeded = new Set<string>();
 
       for (const testCase of testCases) {
-        // Skip test cases with no models
         if (!testCase.models || testCase.models.length === 0) {
           continue;
         }
 
-        // Create one test per model
         for (const modelConfig of testCase.models) {
           tests.push({
             title: testCase.title,
@@ -113,37 +141,166 @@ export function useEvalHandlers({
             advancedConfig: testCase.advancedConfig,
             testCaseId: testCase._id,
           });
+
+          if (!isMCPJamProvidedModel(modelConfig.model)) {
+            providersNeeded.add(modelConfig.provider);
+          }
         }
       }
 
       if (tests.length === 0) {
         toast.error("No tests to run. Please add models to your test cases.");
-        return;
+        return null;
       }
 
-      // Collect API keys for all providers used in the tests
       const modelApiKeys: Record<string, string> = {};
-      const providersNeeded = new Set<string>();
-
-      for (const test of tests) {
-        if (!isMCPJamProvidedModel(test.model)) {
-          providersNeeded.add(test.provider);
-        }
-      }
-
-      // Check that we have all required API keys
       for (const provider of providersNeeded) {
         const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
         if (!hasToken(tokenKey)) {
           toast.error(
             `Please add your ${provider} API key in Settings before running evals`,
           );
-          return;
+          return null;
         }
         const key = getToken(tokenKey);
         if (key) {
           modelApiKeys[provider] = key;
         }
+      }
+
+      return {
+        suiteServers: suite.environment?.servers || [],
+        testCases,
+        tests,
+        modelApiKeys,
+        providersNeeded,
+      };
+    },
+    [getTestCasesForRerun, getToken, hasToken],
+  );
+
+  const handleReplayRun = useCallback(
+    async (
+      suite: EvalSuite,
+      run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
+      options?: { minimumPassRate?: number },
+    ) => {
+      if (rerunningSuiteId || replayingRunId) return;
+
+      if (!run.hasServerReplayConfig) {
+        toast.error(
+          "This CI run can't be replayed because it doesn't have stored credentials.",
+        );
+        return;
+      }
+
+      const executionContext = await getSuiteExecutionContext(suite);
+      if (!executionContext) {
+        return;
+      }
+
+      const minimumPassRate =
+        options?.minimumPassRate ??
+        run.passCriteria?.minimumPassRate ??
+        suite.defaultPassCriteria?.minimumPassRate ??
+        selectedSuiteEntry?.latestRun?.passCriteria?.minimumPassRate ??
+        100;
+      const criteriaNote = `Replay of run ${run._id}. Pass Criteria: Min ${minimumPassRate}% Accuracy`;
+
+      setReplayingRunId(run._id);
+      const replayToastId = toast.loading("Replaying run...");
+
+      try {
+        const accessToken = await getAccessToken();
+        const endpoints = getEvalApiEndpoints();
+        const response = await authFetch(endpoints.replayRun, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: run._id,
+            ...buildEvalConvexAuthPayload(accessToken),
+            modelApiKeys:
+              Object.keys(executionContext.modelApiKeys).length > 0
+                ? executionContext.modelApiKeys
+                : undefined,
+            passCriteria: {
+              minimumPassRate,
+            },
+            notes: criteriaNote,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || "Failed to replay eval run");
+        }
+
+        const result = await response.json().catch(() => null);
+
+        posthog.capture("eval_suite_run_started", {
+          location: "ci_evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          num_test_cases: executionContext.testCases.length,
+          num_tests: executionContext.tests.length,
+          num_models: executionContext.providersNeeded.size,
+          minimum_pass_rate: minimumPassRate,
+          replay_source_run_id: run._id,
+          replay: true,
+        });
+
+        if (result?.suiteId && result?.runId) {
+          navigateToCiEvalsRoute({
+            type: "run-detail",
+            suiteId: result.suiteId,
+            runId: result.runId,
+          });
+        }
+
+        toast.success("Replay completed!", {
+          id: replayToastId,
+        });
+      } catch (error) {
+        console.error("Failed to replay evals:", error);
+        toast.error(
+          getBillingErrorMessage(error, "Failed to replay eval run"),
+          {
+            id: replayToastId,
+          },
+        );
+      } finally {
+        setReplayingRunId(null);
+      }
+    },
+    [
+      rerunningSuiteId,
+      replayingRunId,
+      selectedSuiteEntry,
+      getSuiteExecutionContext,
+      getAccessToken,
+    ],
+  );
+
+  // Rerun handler
+  const handleRerun = useCallback(
+    async (suite: EvalSuite) => {
+      if (rerunningSuiteId) return;
+
+      const latestRun = selectedSuiteEntry?.latestRun;
+      if (
+        isHostedMode() &&
+        suite.source === "sdk" &&
+        latestRun?._id &&
+        latestRun.hasServerReplayConfig
+      ) {
+        await handleReplayRun(suite, latestRun);
+        return;
+      }
+
+      const executionContext = await getSuiteExecutionContext(suite);
+      if (!executionContext) {
+        return;
       }
 
       setRerunningSuiteId(suite._id);
@@ -153,22 +310,22 @@ export function useEvalHandlers({
 
       try {
         const accessToken = await getAccessToken();
+        const endpoints = getEvalApiEndpoints();
 
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
-        const latestRun = selectedSuiteEntry?.latestRun;
         const minimumPassRate =
           suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-        const response = await authFetch("/api/mcp/evals/run", {
+        const response = await authFetch(endpoints.run, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             suiteId: suite._id,
             suiteName: suite.name,
             suiteDescription: suite.description,
-            tests: tests.map((test) => ({
+            tests: executionContext.tests.map((test) => ({
               title: test.title,
               query: test.query,
               runs: test.runs ?? 1,
@@ -179,10 +336,12 @@ export function useEvalHandlers({
               scenario: test.scenario,
               advancedConfig: test.advancedConfig,
             })),
-            serverIds: suiteServers,
+            ...buildEvalServerBatchPayload(executionContext.suiteServers),
             modelApiKeys:
-              Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-            convexAuthToken: accessToken,
+              Object.keys(executionContext.modelApiKeys).length > 0
+                ? executionContext.modelApiKeys
+                : undefined,
+            ...buildEvalConvexAuthPayload(accessToken),
             passCriteria: {
               minimumPassRate: minimumPassRate,
             },
@@ -201,9 +360,9 @@ export function useEvalHandlers({
           platform: detectPlatform(),
           environment: detectEnvironment(),
           suite_id: suite._id,
-          num_test_cases: testCases.length,
-          num_tests: tests.length,
-          num_models: providersNeeded.size,
+          num_test_cases: executionContext.testCases.length,
+          num_tests: executionContext.tests.length,
+          num_models: executionContext.providersNeeded.size,
           minimum_pass_rate: minimumPassRate,
         });
 
@@ -220,9 +379,8 @@ export function useEvalHandlers({
       rerunningSuiteId,
       selectedSuiteEntry,
       getAccessToken,
-      hasToken,
-      getToken,
-      getTestCasesForRerun,
+      getSuiteExecutionContext,
+      handleReplayRun,
     ],
   );
 
@@ -435,7 +593,7 @@ export function useEvalHandlers({
         });
 
         // Navigate to the new test case
-        navigateToEvalsRoute({
+        navigateAfterTestCaseMutation({
           type: "test-detail",
           suiteId,
           testId: testCaseId,
@@ -452,7 +610,12 @@ export function useEvalHandlers({
         setIsCreatingTestCase(false);
       }
     },
-    [isCreatingTestCase, mutations.createTestCaseMutation, convex],
+    [
+      isCreatingTestCase,
+      mutations.createTestCaseMutation,
+      convex,
+      navigateAfterTestCaseMutation,
+    ],
   );
 
   // Handle delete test case - opens confirmation modal
@@ -478,10 +641,18 @@ export function useEvalHandlers({
 
       // If we're viewing this test case, navigate back to suite overview
       if (selectedTestId === testCaseToDelete.id && selectedSuiteId) {
-        navigateToEvalsRoute({
-          type: "suite-overview",
-          suiteId: selectedSuiteId,
-        });
+        navigateAfterTestCaseMutation(
+          evalsNavigationContext === "ci-evals"
+            ? {
+                type: "suite-overview",
+                suiteId: selectedSuiteId,
+                view: "test-cases",
+              }
+            : {
+                type: "suite-overview",
+                suiteId: selectedSuiteId,
+              },
+        );
       }
 
       setTestCaseToDelete(null);
@@ -497,6 +668,8 @@ export function useEvalHandlers({
     mutations.deleteTestCaseMutation,
     selectedTestId,
     selectedSuiteId,
+    evalsNavigationContext,
+    navigateAfterTestCaseMutation,
   ]);
 
   // Duplicate test case handler
@@ -526,7 +699,7 @@ export function useEvalHandlers({
 
         // Navigate to the new duplicated test case
         if (newTestCase && newTestCase._id) {
-          navigateToEvalsRoute({
+          navigateAfterTestCaseMutation({
             type: "test-edit",
             suiteId,
             testId: newTestCase._id,
@@ -544,7 +717,11 @@ export function useEvalHandlers({
         setDuplicatingTestCaseId(null);
       }
     },
-    [duplicatingTestCaseId, mutations.duplicateTestCaseMutation],
+    [
+      duplicatingTestCaseId,
+      mutations.duplicateTestCaseMutation,
+      navigateAfterTestCaseMutation,
+    ],
   );
 
   // Generate tests handler - calls API and creates test cases
@@ -556,6 +733,7 @@ export function useEvalHandlers({
 
       try {
         const accessToken = await getAccessToken();
+        const endpoints = getEvalApiEndpoints();
 
         // Get existing test cases to extract models
         const existingTestCases = await convex.query(
@@ -602,12 +780,12 @@ export function useEvalHandlers({
         }
 
         // Call generate tests API
-        const response = await authFetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
+        const response = await authFetch(endpoints.generateTests, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            serverIds,
-            convexAuthToken: accessToken,
+            ...buildEvalServerBatchPayload(serverIds),
+            ...buildEvalConvexAuthPayload(accessToken),
           }),
         });
 
@@ -677,6 +855,7 @@ export function useEvalHandlers({
   return {
     // Handlers
     handleRerun,
+    handleReplayRun,
     handleDelete,
     confirmDelete,
     handleDuplicateSuite,
@@ -691,6 +870,7 @@ export function useEvalHandlers({
     handleGenerateTests,
     // States
     rerunningSuiteId,
+    replayingRunId,
     cancellingRunId,
     deletingSuiteId,
     suiteToDelete,

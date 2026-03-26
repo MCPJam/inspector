@@ -217,6 +217,35 @@ export function resolveHostedServerIds(serverNamesOrIds: string[]): string[] {
   return resolved;
 }
 
+function findHostedServerName(serverId: string): string | undefined {
+  return Object.entries(hostedApiContext.serverIdsByName).find(
+    ([, mappedId]) => mappedId === serverId,
+  )?.[0];
+}
+
+function resolveHostedServerEntries(
+  serverNamesOrIds: string[],
+): Array<{ serverId: string; serverName: string }> {
+  const seen = new Set<string>();
+  const resolved: Array<{ serverId: string; serverName: string }> = [];
+
+  for (const serverNameOrId of serverNamesOrIds) {
+    const serverId = resolveHostedServerId(serverNameOrId);
+    if (seen.has(serverId)) continue;
+    seen.add(serverId);
+
+    resolved.push({
+      serverId,
+      serverName:
+        hostedApiContext.serverIdsByName[serverNameOrId] !== undefined
+          ? serverNameOrId
+          : (findHostedServerName(serverId) ?? serverNameOrId),
+    });
+  }
+
+  return resolved;
+}
+
 export function getHostedOAuthToken(serverId: string): string | undefined {
   return hostedApiContext.oauthTokensByServerId?.[serverId];
 }
@@ -290,7 +319,9 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   sandboxToken?: string;
 } {
   assertHostedClientConfigSynced();
-  const serverIds = resolveHostedServerIds(serverNamesOrIds);
+  const serverIds = resolveHostedServerEntries(serverNamesOrIds).map(
+    (entry) => entry.serverId,
+  );
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const shareToken = getHostedShareToken();
   const sandboxToken = getHostedSandboxToken();
@@ -298,6 +329,39 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   return {
     workspaceId: getHostedWorkspaceId(),
     serverIds,
+    ...(hostedApiContext.clientCapabilities
+      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+      : {}),
+    ...(oauthTokens ? { oauthTokens } : {}),
+    ...(accessScope ? { accessScope } : {}),
+    ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
+  };
+}
+
+export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
+  workspaceId: string;
+  serverIds: string[];
+  serverNames: string[];
+  clientCapabilities?: Record<string, unknown>;
+  oauthTokens?: Record<string, string>;
+  accessScope?: HostedAccessScope;
+  shareToken?: string;
+  sandboxToken?: string;
+} {
+  assertHostedClientConfigSynced();
+  const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
+  const serverIds = serverEntries.map((entry) => entry.serverId);
+  const serverNames = serverEntries.map((entry) => entry.serverName);
+  const oauthTokens = buildHostedOAuthTokensMap(serverIds);
+  const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
+  const accessScope = getHostedAccessScope();
+
+  return {
+    workspaceId: getHostedWorkspaceId(),
+    serverIds,
+    serverNames,
     ...(hostedApiContext.clientCapabilities
       ? { clientCapabilities: hostedApiContext.clientCapabilities }
       : {}),

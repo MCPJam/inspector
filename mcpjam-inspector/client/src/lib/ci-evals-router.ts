@@ -11,12 +11,18 @@
 export type CiEvalsRoute =
   | { type: "list" }
   | { type: "suite-overview"; suiteId: string; view?: "runs" | "test-cases" }
+  | { type: "suite-edit"; suiteId: string }
   | { type: "run-detail"; suiteId: string; runId: string; iteration?: string }
   | {
       type: "test-detail";
       suiteId: string;
       testId: string;
       iteration?: string;
+    }
+  | {
+      type: "test-edit";
+      suiteId: string;
+      testId: string;
     }
   | {
       type: "commit-detail";
@@ -56,6 +62,10 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
   if (suiteMatch) {
     const [, suiteId, rest] = suiteMatch;
 
+    if (rest === "edit") {
+      return { type: "suite-edit", suiteId };
+    }
+
     const runMatch = rest?.match(/^runs\/([^/?]+)$/);
     if (runMatch) {
       const [, runId] = runMatch;
@@ -65,6 +75,16 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
         suiteId,
         runId,
         iteration: params.get("iteration") || undefined,
+      };
+    }
+
+    const testEditMatch = rest?.match(/^test\/([^/?]+)\/edit$/);
+    if (testEditMatch) {
+      const [, testId] = testEditMatch;
+      return {
+        type: "test-edit",
+        suiteId,
+        testId,
       };
     }
 
@@ -116,6 +136,9 @@ export function navigateToCiEvalsRoute(
       hash = `#/ci-evals/suite/${route.suiteId}${query ? `?${query}` : ""}`;
       break;
     }
+    case "suite-edit":
+      hash = `#/ci-evals/suite/${route.suiteId}/edit`;
+      break;
     case "run-detail": {
       const params = new URLSearchParams();
       if (route.iteration) {
@@ -134,6 +157,9 @@ export function navigateToCiEvalsRoute(
       hash = `#/ci-evals/suite/${route.suiteId}/test/${route.testId}${query ? `?${query}` : ""}`;
       break;
     }
+    case "test-edit":
+      hash = `#/ci-evals/suite/${route.suiteId}/test/${route.testId}/edit`;
+      break;
     case "commit-detail": {
       const params = new URLSearchParams();
       if (route.suite) params.set("suite", route.suite);

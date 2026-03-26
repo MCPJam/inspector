@@ -25,12 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  WIZARD_STEPS,
-  STORAGE_KEYS,
-  DEFAULTS,
-  API_ENDPOINTS,
-} from "./constants";
+import { WIZARD_STEPS, STORAGE_KEYS, DEFAULTS } from "./constants";
 import { ServersStep } from "./eval-runner/ServersStep";
 import { ModelStep } from "./eval-runner/ModelStep";
 import { TestsStep } from "./eval-runner/TestsStep";
@@ -42,6 +37,12 @@ import type {
 } from "./eval-runner/types";
 import { useSharedAppState } from "@/state/app-state-context";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { authFetch } from "@/lib/session-token";
+import {
+  buildEvalConvexAuthPayload,
+  buildEvalServerBatchPayload,
+  getEvalApiEndpoints,
+} from "@/lib/apis/evals-api";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
@@ -468,18 +469,16 @@ export function EvalRunner({
 
     try {
       const accessToken = await getAccessToken();
+      const endpoints = getEvalApiEndpoints();
 
-      const response = await fetch(
-        API_ENDPOINTS.EVALS_GENERATE_NEGATIVE_TESTS,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverIds: selectedServers,
-            convexAuthToken: accessToken,
-          }),
-        },
-      );
+      const response = await authFetch(endpoints.generateNegativeTests, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...buildEvalServerBatchPayload(selectedServers),
+          ...buildEvalConvexAuthPayload(accessToken),
+        }),
+      });
 
       const result = await response.json();
 
