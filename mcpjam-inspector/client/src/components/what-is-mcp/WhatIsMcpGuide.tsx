@@ -189,10 +189,8 @@ export function WhatIsMcpGuide({
             What is MCP?
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
-            Explore the Model Context Protocol architecture — how host
-            applications, clients, servers, and resources connect to give AI
-            access to the world. Scroll to move through the guide and sync the
-            diagram, or use{" "}
+            Learn the main parts of MCP and how they help AI use tools and
+            data. Scroll to move through the guide and sync the diagram, or use{" "}
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to jump to the next step.
           </p>
@@ -214,7 +212,7 @@ export function WhatIsMcpGuide({
         {/* Outro */}
         <div className="pt-8 pb-4 text-center">
           <p className="text-sm text-muted-foreground/60">
-            That&apos;s the MCP architecture overview. Use{" "}
+            That&apos;s the basic MCP picture. Use{" "}
             <span className="font-medium text-foreground/70">Start over</span>{" "}
             in the header or click any node in the diagram to jump back.
           </p>

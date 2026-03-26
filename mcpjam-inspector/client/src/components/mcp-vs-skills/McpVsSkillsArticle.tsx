@@ -10,17 +10,13 @@ export function McpVsSkillsArticle() {
     <div className="mx-auto max-w-2xl px-8 pb-16">
       <ArticleHero
         title="MCP vs Skills"
-        subtitle="Skills teach agents how to think. MCP gives them access to act. Learn why they're complementary, not competing, and how the best setups use both."
+        subtitle="Skills tell an agent how to work. MCP gives it access to real systems."
       />
 
-      {/* Section 1: The Comparison */}
-      <Section step={1} title="Skills: Teaching Agents How to Think">
+      <Section step={1} title="Quick Comparison">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Skills (also known as prompt files, <code>.cursorrules</code>,{" "}
-          <code>CLAUDE.md</code>, etc.) are markdown documents that encode
-          knowledge and best practices for AI agents. They teach agents{" "}
-          <em>how</em> to perform tasks effectively — but they don't give agents
-          access to external systems.
+          Skills and MCP solve different problems. Skills are instructions.
+          MCP is connectivity.
         </p>
 
         <ComparisonTable
@@ -29,87 +25,58 @@ export function McpVsSkillsArticle() {
             {
               cells: [
                 "What they provide",
-                "Knowledge — best practices, decision trees, tribal knowledge",
-                "Access — authenticated, scoped connections to external services",
+                "Knowledge and instructions",
+                "Live access to tools and data",
               ],
             },
             {
               cells: [
                 "Format",
-                "Markdown documents",
-                "Protocol with servers, clients, and structured communication",
+                "Usually markdown or prompt files",
+                "A protocol with clients and servers",
               ],
             },
             {
               cells: [
-                "Auth",
-                "None — they're just text",
-                "OAuth 2.1, scoped tokens, revocable access",
+                "Authentication",
+                "None",
+                "Scoped access to real systems",
               ],
             },
             {
               cells: [
-                "Data access",
-                "None — they describe, they don't connect",
-                "Direct connection to live systems behind auth",
-              ],
-            },
-            {
-              cells: [
-                "Example",
-                '"When writing React components, follow these 20 rules..."',
-                '"Connect to the user\'s GitHub and create a PR on their behalf"',
+                "Real actions",
+                "No",
+                "Yes",
               ],
             },
           ]}
         />
       </Section>
 
-      {/* Section 2: Complementary, Not Competing */}
-      <Section step={2} title="Complementary, Not Competing">
+      <Section step={2} title="Why They Work Together">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Skills make agents smarter about <em>how</em> to use tools. MCP gives
-          agents <em>access</em> to tools. The best setups use both: a skill
-          teaching the agent best practices for GitHub workflows, combined with
-          an MCP server that gives it authenticated access to GitHub. A skill is
-          a playbook. MCP is the field.
+          Skills make the agent smarter about what to do. MCP makes it possible
+          to actually do it.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            Skills encode domain expertise — "when deploying, always run
-            migrations first."
-          </li>
-          <li>
-            MCP provides the actual connection to run those migrations through
-            authenticated tool calls.
-          </li>
-          <li>
-            Without skills, agents have access but lack judgment. Without MCP,
-            agents have judgment but can't act.
-          </li>
+          <li>A skill might say how to review a pull request well.</li>
+          <li>An MCP server gives access to GitHub so the agent can inspect it.</li>
+          <li>Together, the agent has both judgment and access.</li>
         </ul>
       </Section>
 
-      {/* Section 3: The Bottom Line */}
-      <Section step={3} title="The Bottom Line">
+      <Section step={3} title="Simple Rule">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          There's a lot of helpful data behind auth. MCP gives agents access to
-          that data. Skills tell them what to do with it.
+          Use skills to teach repeatable behavior. Use MCP to connect the agent
+          to the systems where that behavior needs to happen.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            Use skills to teach agents domain expertise and best practices.
-          </li>
-          <li>
-            Use MCP to give agents authenticated, scoped access to external
-            systems.
-          </li>
-          <li>
-            The most effective agent setups combine both — knowledge and access
-            working together.
-          </li>
+          <li>Skills are the playbook.</li>
+          <li>MCP is the connection to the field.</li>
+          <li>The best agent setups usually use both.</li>
         </ul>
       </Section>
 
@@ -117,7 +84,7 @@ export function McpVsSkillsArticle() {
         See also:{" "}
         <span className="font-medium text-foreground/70">MCP vs CLI</span> and{" "}
         <span className="font-medium text-foreground/70">MCP vs REST APIs</span>{" "}
-        for the full picture.
+        to compare MCP with two other common approaches.
       </ArticleOutro>
     </div>
   );

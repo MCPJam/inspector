@@ -15,70 +15,41 @@ export function WhyMcpArticle() {
     <div className="mx-auto max-w-2xl px-8 pb-16">
       <ArticleHero
         title="Why We Need MCP"
-        subtitle="From isolated AI models to a universal standard for tool integration. Understand why LLMs need tools, why agents need governance, and why the industry needs MCP."
+        subtitle="MCP gives AI a standard way to use real tools and data."
       />
 
-      {/* Section 1: The Problem */}
-      <Section step={1} title="The Problem: Smart Models, No Hands">
+      <Section step={1} title="Smart, But Stuck">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Large Language Models are remarkably capable — they can reason, write
-          code, analyze data, and hold nuanced conversations. But out of the
-          box, they're trapped inside a text-in, text-out loop. They can't check
-          your database, file an Asana task, query your monitoring dashboard, or
-          deploy your code. They can only talk <em>about</em> doing those
-          things. An LLM without tools is a brain in a jar — it can think
-          brilliantly, but it can't interact with the world.
+          A model can explain how to check a database or create a Jira ticket,
+          but by itself it cannot actually do those things. It can think, but
+          it needs a connection to the outside world.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            LLMs can reason, write, and analyze — but they cannot act on
-            external systems.
-          </li>
-          <li>
-            The gap between "talking about doing something" and "actually doing
-            it" is the core limitation.
-          </li>
-          <li>
-            To make AI useful in engineering workflows, models need the ability
-            to act — not just think.
-          </li>
+          <li>Plain chat models only return text.</li>
+          <li>They need tools to read data and take actions.</li>
+          <li>That gap is why AI apps need integration layers.</li>
         </ul>
 
         <div className="space-y-2">
           <WhyMcpProblemDiagram />
           <p className="text-center text-[12px] text-muted-foreground/80 leading-relaxed">
-            LLMs can reason about databases, APIs, and services — but they can't
-            reach them.
+            The model can talk about systems, but it cannot reach them yet.
           </p>
         </div>
       </Section>
 
-      {/* Section 2: Tool Calling */}
-      <Section step={2} title="What is Tool Calling?">
+      <Section step={2} title="Tool Calling Helps">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Tool calling (sometimes called "function calling") is the mechanism
-          that lets an AI model invoke external functions during a conversation.
-          Instead of just generating text, the model can decide:{" "}
-          <em>
-            "I need to call a function to get real data before I respond."
-          </em>
+          Tool calling lets the model ask for a real action, like running a
+          search or looking up a file. Your app executes the action and sends
+          the result back.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            You describe available tools to the model (name, description, input
-            schema).
-          </li>
-          <li>
-            The model decides when to call a tool and outputs a structured call
-            — not free-form text.
-          </li>
-          <li>
-            Your application executes that function and returns the result to
-            the model.
-          </li>
-          <li>The model incorporates the real data into its response.</li>
+          <li>You tell the model which tools exist and what inputs they take.</li>
+          <li>The model chooses a tool when it needs one.</li>
+          <li>The app runs the tool and returns the output.</li>
         </ul>
 
         <div className="space-y-2">
@@ -86,166 +57,120 @@ export function WhyMcpArticle() {
         </div>
 
         <Aside>
-          This is the foundation that makes AI agents possible. An agent is just
-          a model that can reason about <em>which</em> tools to use,{" "}
-          <em>when</em> to use them, and <em>how</em> to chain them together to
-          accomplish a goal.
+          This is the basic idea behind agents: a model that can choose tools
+          and use them to finish a task.
         </Aside>
       </Section>
 
-      {/* Section 3: Governance */}
-      <Section step={3} title="Why Agents Need Governance">
+      <Section step={3} title="Safety Still Matters">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Once you give an agent tools, two critical questions immediately
-          arise: <strong>What should this agent be allowed to do?</strong> And{" "}
-          <strong>how do you know what it did?</strong>
+          Once an agent can do things, you need guardrails. You need to know
+          what it can access, who it is acting for, and what it already did.
         </p>
 
         <div className="space-y-2">
           <WhyMcpGovernanceDiagram />
           <p className="text-center text-[12px] text-muted-foreground/80 leading-relaxed">
-            Nothing reaches your systems unless policy allows it — scoped,
-            logged, and revocable on every path.
+            Good systems limit access, log actions, and let you revoke them.
           </p>
         </div>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            Scoped access: the agent should only see tools relevant to its task.
-            Least privilege: read-only access when writes aren't needed.
-          </li>
-          <li>
-            Per-user authorization: an agent acting on behalf of User A
-            shouldn't have User B's permissions.
-          </li>
-          <li>
-            Audit trails: a queryable log of every tool call, who triggered it,
-            and what happened.
-          </li>
-          <li>
-            Revocability: the ability to cut off access instantly if something
-            goes wrong.
-          </li>
+          <li>Give the agent only the access it needs.</li>
+          <li>Keep actions tied to the right user or tenant.</li>
+          <li>Log what happened so you can review it later.</li>
         </ul>
 
         <Aside>
-          The core question: <strong>"Who is your agent acting for?"</strong> A
-          developer automating their own workflow has different requirements
-          than an agent acting on behalf of thousands of customers. The latter
-          demands protocol-level governance that ad-hoc solutions can't provide.
+          If an agent works only for you on your laptop, the risk is lower. If
+          it acts for many users, safety rules are not optional.
         </Aside>
       </Section>
 
-      {/* Section 4: The N×M Problem */}
-      <Section step={4} title="The N × M Problem">
+      <Section step={4} title="Custom Integrations Do Not Scale">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          No shared standard means <strong>N × M</strong> integrations—one
-          custom link per platform–tool pair—and that cost explodes as{" "}
-          <strong>N</strong> or <strong>M</strong> grows.
+          Without a shared standard, every host needs a custom integration for
+          every tool. That creates a messy N x M problem.
         </p>
+
+        <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <li>More hosts means more duplicate integration work.</li>
+          <li>More tools means more custom adapters to maintain.</li>
+          <li>The cost grows fast.</li>
+        </ul>
 
         <div>
           <WhyMcpNxMDiagram />
         </div>
       </Section>
 
-      {/* Section 5: Enter MCP */}
-      <Section step={5} title="Enter MCP: The Universal Standard">
+      <Section step={5} title="MCP Is the Shared Standard">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          The <strong>Model Context Protocol (MCP)</strong> is an open standard
-          introduced by Anthropic that defines how AI applications communicate
-          with external tools and data sources. It provides a single, consistent
-          protocol for tool integration — replacing the patchwork of custom
-          adapters.
+          MCP is the standard that lets hosts and tool servers speak the same
+          language. One host can connect to many servers, and one server can
+          work in many hosts.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            MCP reduces N × M to N + M. Build one MCP server for your tool, and
-            it works with every MCP-compatible client.
-          </li>
-          <li>
-            Communication happens over JSON-RPC, using either stdio (local
-            tools) or HTTP with Server-Sent Events (remote services).
-          </li>
-          <li>
-            Three components: MCP Host (the AI application), MCP Client
-            (protocol bridge), MCP Server (tool wrapper).
-          </li>
+          <li>MCP turns many custom integrations into one shared protocol.</li>
+          <li>It commonly runs over stdio for local servers or HTTP for remote ones.</li>
+          <li>The main pieces are host, client, and server.</li>
         </ul>
       </Section>
 
-      {/* Section 6: What MCP Exposes */}
-      <Section step={6} title="What MCP Servers Expose">
+      <Section step={6} title="What Servers Share">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          An MCP server can provide three types of capabilities:
+          MCP servers usually expose tools, resources, and prompts. Together,
+          those cover actions, read-only data, and reusable workflows.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>
-            <strong>Tools:</strong> Actions the model can invoke — create_issue,
-            send_message, run_query. Model-controlled: the AI decides when to
-            use them.
+            <strong>Tools:</strong> actions like searching, creating, or sending.
           </li>
           <li>
-            <strong>Resources:</strong> Read-only data the model can access —
-            file contents, database schemas, documentation.
-            Application-controlled: the host decides what to include.
+            <strong>Resources:</strong> read-only data like files, docs, and schemas.
           </li>
           <li>
-            <strong>Prompts:</strong> Reusable templates that help the model
-            interact with tools effectively. User-controlled: the user selects
-            which prompt to use.
+            <strong>Prompts:</strong> reusable templates a user can choose.
           </li>
         </ul>
 
         <Aside>
-          Ready to go deeper? The <strong>"What is MCP?"</strong> walkthrough
-          explores the full host → client → server architecture with an
-          interactive diagram.
+          The next guide, <strong>What is MCP?</strong>, shows how those pieces
+          connect in one architecture.
         </Aside>
       </Section>
 
-      {/* Section 7: Conclusion */}
-      <Section step={7} title="The Bottom Line">
+      <Section step={7} title="The Simple Version">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          MCP isn't replacing your CLI, your APIs, or your prompt files. It's
-          the standardization layer that was missing — the thing that turns
-          isolated AI models into production-ready agents that can safely and
-          reliably interact with the real world.
+          MCP does not replace your CLI, APIs, or prompt files. It gives AI apps
+          a standard, safer way to use them.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Tool calling gives models the ability to act.</li>
-          <li>
-            MCP standardizes how those actions are defined, discovered,
-            authorized, and audited.
-          </li>
-          <li>
-            CLI, APIs, and Skills remain valuable — MCP complements them by
-            solving the governance and interoperability problems they weren't
-            designed to address.
-          </li>
+          <li>Tool calling gives AI a way to act.</li>
+          <li>MCP gives apps a standard way to expose those actions and data.</li>
+          <li>That makes tool integrations easier to reuse and easier to govern.</li>
         </ul>
 
         <div className="space-y-2">
           <WhyMcpConnectedDiagram />
           <p className="text-center text-[12px] text-muted-foreground/80 leading-relaxed">
-            With MCP, the same model reaches real systems through a governed,
-            standardized bridge.
+            MCP is the bridge between the model and real systems.
           </p>
         </div>
 
         <p className="text-sm text-foreground/70 leading-relaxed font-medium italic">
-          The bottleneck for AI agents was never intelligence — it was
-          connectivity. MCP removes that bottleneck.
+          The hard part was never just model intelligence. It was safe access to
+          real tools and data.
         </p>
       </Section>
 
       <ArticleOutro>
-        Next up: explore the{" "}
+        Next up: open{" "}
         <span className="font-medium text-foreground/70">What is MCP?</span>{" "}
-        walkthrough to see the architecture in action.
+        to see the architecture one piece at a time.
       </ArticleOutro>
     </div>
   );

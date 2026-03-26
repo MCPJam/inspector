@@ -32,135 +32,135 @@ export interface LearningGroup {
 export const LEARNING_GROUPS: LearningGroup[] = [
   {
     title: "Getting Started",
-    subtitle: "Understand why MCP exists and how it works",
+    subtitle: "Learn what MCP is and why people use it",
     modules: [
       {
         id: "why-mcp",
         title: "Why MCP?",
         description:
-          "Understand why AI needs a universal protocol — from isolated LLMs through tool calling and agents to the N×M problem MCP solves.",
+          "See why AI needs a standard way to reach tools and data.",
         icon: Lightbulb,
         totalSteps: 7,
         category: "Concepts",
-        estimatedMinutes: 4,
+        estimatedMinutes: 2,
       },
       {
         id: "what-is-mcp",
         title: "What is MCP?",
         description:
-          "Understand the Model Context Protocol architecture — how host applications, clients, servers, and resources connect to give AI access to the world.",
+          "Learn the basic parts of MCP and how they work together.",
         icon: Network,
         totalSteps: 8,
         category: "Fundamentals",
-        estimatedMinutes: 6,
+        estimatedMinutes: 4,
       },
     ],
   },
   {
     title: "The Protocol",
-    subtitle: "Learn the building blocks of MCP",
+    subtitle: "Learn the main pieces MCP servers expose",
     modules: [
       {
         id: "mcp-lifecycle",
         title: "MCP Lifecycle",
         description:
-          "Learn how MCP connections are established, used, and shut down — from initialization through operation to graceful shutdown.",
+          "Walk through how an MCP connection starts, runs, and ends.",
         icon: GitBranch,
         totalSteps: 5,
         category: "Protocol",
-        estimatedMinutes: 4,
+        estimatedMinutes: 3,
       },
       {
         id: "mcp-tools",
         title: "MCP Tools",
         description:
-          "Learn how MCP Tools let AI models invoke actions on external systems — discovery, invocation, result types, error handling, and security.",
+          "Learn how AI uses MCP tools to do real work.",
         icon: Wrench,
         totalSteps: 5,
         category: "Protocol",
-        estimatedMinutes: 3,
+        estimatedMinutes: 2,
       },
       {
         id: "mcp-resources",
         title: "MCP Resources",
         description:
-          "Understand MCP Resources — application-controlled data that gives AI context. URIs, templates, subscriptions, and content types.",
+          "Learn how MCP shares files, docs, and other read-only data.",
         icon: Database,
         totalSteps: 5,
         category: "Protocol",
-        estimatedMinutes: 3,
+        estimatedMinutes: 2,
       },
       {
         id: "mcp-prompts",
         title: "MCP Prompts",
         description:
-          "Discover MCP Prompts — user-controlled templates that guide AI interactions. Arguments, messages, and slash commands.",
+          "Learn how reusable prompt templates fit into MCP.",
         icon: MessageSquare,
         totalSteps: 5,
         category: "Protocol",
-        estimatedMinutes: 3,
+        estimatedMinutes: 2,
       },
     ],
   },
   {
     title: "Building with MCP",
-    subtitle: "See how MCP powers interactive apps",
+    subtitle: "See how MCP can power UI-based apps",
     modules: [
       {
         id: "mcp-apps",
         title: "MCP Apps",
         description:
-          "Learn how MCP servers deliver rich, interactive HTML user interfaces into host apps — ui:// resources, tool linkage, and postMessage.",
+          "See how an MCP server can open a real UI, not just return text.",
         icon: AppWindow,
         totalSteps: 7,
         category: "Extensions",
-        estimatedMinutes: 5,
+        estimatedMinutes: 4,
       },
       {
         id: "apps-sdk",
         title: "OpenAI Apps SDK",
         description:
-          "Learn how the Apps SDK layers ChatGPT-specific features (window.openai) on top of standard MCP Apps — dual-protocol support, tool metadata, and deployment.",
+          "Learn what ChatGPT adds on top of standard MCP Apps.",
         icon: Blocks,
         totalSteps: 7,
         category: "Extensions",
-        estimatedMinutes: 5,
+        estimatedMinutes: 4,
       },
     ],
   },
   {
     title: "MCP in Context",
-    subtitle: "Compare MCP to tools you already know",
+    subtitle: "Compare MCP with tools you already use",
     modules: [
       {
         id: "mcp-vs-cli",
         title: "MCP vs CLI",
         description:
-          "Compare MCP with CLI tools — when speed matters vs. when governance matters. Understand the tradeoffs for single-user vs. multi-user scenarios.",
+          "When should you use shell commands, and when should you use MCP?",
         icon: Terminal,
         totalSteps: 4,
         category: "Comparisons",
-        estimatedMinutes: 3,
+        estimatedMinutes: 2,
       },
       {
         id: "mcp-vs-api",
         title: "MCP vs REST APIs",
         description:
-          "Understand how MCP relates to REST APIs — stateless vs. stateful, static vs. dynamic discovery, and why MCP wraps APIs rather than replacing them.",
+          "See how MCP works with APIs instead of replacing them.",
         icon: Globe,
         totalSteps: 4,
         category: "Comparisons",
-        estimatedMinutes: 3,
+        estimatedMinutes: 2,
       },
       {
         id: "mcp-vs-skills",
         title: "MCP vs Skills",
         description:
-          "Learn why Skills and MCP are complementary — Skills teach agents how to think, MCP gives them access to act.",
+          "Learn the difference between instructions for an agent and access for an agent.",
         icon: BookOpen,
         totalSteps: 3,
         category: "Comparisons",
-        estimatedMinutes: 2,
+        estimatedMinutes: 1,
       },
     ],
   },

@@ -176,7 +176,7 @@ export function LearningLandingPage({
         <div className={`py-3 ${LEARNING_LANDING_MAX}`}>
           <h2 className="text-sm font-semibold">Learning</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            Master MCP from fundamentals to advanced topics
+            Learn MCP step by step
           </p>
           <p className="mt-1.5 text-[11px] text-muted-foreground/90">
             {TOTAL_TRACKS} tracks · {TOTAL_MODULES} lessons · ~
@@ -193,11 +193,11 @@ export function LearningLandingPage({
           {completionCount === 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
               <p className="m-0 w-fit max-w-full text-[11px] leading-relaxed text-muted-foreground">
-                Start with{" "}
+                New here? Start with{" "}
                 <span className="font-medium text-foreground/90">
                   {FIRST_GROUP.title}
                 </span>{" "}
-                — expand the first track below, or open your first lesson now.
+                and open the first lesson below.
               </p>
               <Button
                 type="button"
