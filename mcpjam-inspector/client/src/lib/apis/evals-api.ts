@@ -100,8 +100,10 @@ function mergeHostedServerBatch<
 ): Omit<T, "serverIds" | "convexAuthToken"> &
   ReturnType<typeof buildHostedServerBatchRequest> {
   const hostedBatch = buildHostedServerBatchRequest(request.serverIds);
-  const { convexAuthToken: _convexAuthToken, ...requestWithoutConvexAuthToken } =
-    request;
+  const {
+    convexAuthToken: _convexAuthToken,
+    ...requestWithoutConvexAuthToken
+  } = request;
 
   return {
     ...requestWithoutConvexAuthToken,
