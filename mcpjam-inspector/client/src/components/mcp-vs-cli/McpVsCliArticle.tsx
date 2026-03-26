@@ -11,16 +11,13 @@ export function McpVsCliArticle() {
     <div className="mx-auto max-w-2xl px-8 pb-16">
       <ArticleHero
         title="MCP vs CLI"
-        subtitle="CLI tools are the engineer's Swiss army knife. Understand when speed and simplicity win, when governance and multi-user safety matter, and how to choose between them."
+        subtitle="CLI is great for fast local work. MCP is better when access and safety need structure."
       />
 
-      {/* Section 1: The Comparison */}
-      <Section step={1} title="CLI: The Engineer's Swiss Army Knife">
+      <Section step={1} title="Quick Comparison">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          CLI tools are fast, efficient, and battle-tested. For AI agents,
-          wrapping CLI commands is often the simplest integration path. But the
-          tradeoffs become clear as you move from single-user scripts to
-          multi-user production systems.
+          CLI tools are simple and fast. MCP adds more structure so tools can be
+          shared across hosts and used with clearer auth and safety controls.
         </p>
 
         <ComparisonTable
@@ -29,124 +26,84 @@ export function McpVsCliArticle() {
             {
               cells: [
                 "Token efficiency",
-                "Excellent — a ~800-token tip doc is all the agent needs",
-                "Higher overhead — full tool schemas injected per conversation",
-              ],
-            },
-            {
-              cells: [
-                "Reliability",
-                "~100% success rate",
-                "Can face timeout issues without proper infrastructure",
+                "Very light",
+                "Heavier because tool schemas are shared",
               ],
             },
             {
               cells: [
                 "Authentication",
-                "Ambient credentials (your shell session)",
-                "Per-user OAuth 2.1 with PKCE, scoped and revocable",
-              ],
-            },
-            {
-              cells: [
-                "Tenant isolation",
-                "None at protocol level",
-                "Built-in per-user/per-tenant boundaries",
+                "Usually your current shell credentials",
+                "Scoped, explicit access per user or app",
               ],
             },
             {
               cells: [
                 "Audit trail",
-                "Shell history (unstructured)",
-                "Structured, queryable logs with user attribution",
+                "Mostly shell history",
+                "Structured logs and clearer attribution",
               ],
             },
             {
               cells: [
-                "Security at scale",
-                "Risky — credential leakage, no isolation",
-                "Protocol-level authorization and access control",
+                "Multi-user safety",
+                "Weak by default",
+                "Much better fit",
               ],
             },
           ]}
         />
       </Section>
 
-      {/* Section 2: When CLI Wins */}
       <Section step={2} title="When CLI Wins">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          A developer automating their own workflow. You're the only user, you
-          trust the environment, and you want maximum speed and minimum cost.
-          CLI wrappers give the agent exactly what it needs with near-zero
-          overhead.
+          CLI is often the best choice when you are automating your own machine
+          and you trust the environment.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Single-user automation where you control the environment.</li>
-          <li>
-            Token efficiency matters — CLI tip docs are tiny compared to full
-            MCP tool schemas.
-          </li>
-          <li>
-            The agent is running locally in your shell session with your ambient
-            credentials.
-          </li>
+          <li>You are the only user.</li>
+          <li>You want the fastest path from prompt to action.</li>
+          <li>Ambient local credentials are acceptable for the task.</li>
         </ul>
       </Section>
 
-      {/* Section 3: When MCP Wins */}
       <Section step={3} title="When MCP Wins">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Your agent acts on behalf of other users or customers. You need
-          per-user auth, audit trails, and tenant isolation. A bug in CLI
-          credential management could mean sending Acme's data to Globex's Jira
-          — that's a data breach, not a bug.
+          MCP is the better fit when the agent acts for other people or touches
+          shared systems.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            Multi-user production systems where the agent acts on behalf of
-            others.
-          </li>
-          <li>
-            Per-user authorization, audit trails, and tenant isolation are
-            requirements.
-          </li>
-          <li>
-            Credential leakage in a shared CLI environment becomes a security
-            incident.
-          </li>
+          <li>You need per-user access and clearer permissions.</li>
+          <li>You need better auditability.</li>
+          <li>You need safer reuse across many hosts or tenants.</li>
         </ul>
       </Section>
 
-      {/* Section 4: The Bottom Line */}
-      <Section step={4} title="The Bottom Line">
+      <Section step={4} title="Simple Rule">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          CLI and MCP aren't competing — they serve different trust models.
+          Use CLI for fast personal automation. Use MCP when the tool needs to
+          be shared, governed, or used on behalf of someone else.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>CLI is about efficiency for single-user automation.</li>
-          <li>MCP is about governance for multi-user production systems.</li>
-          <li>
-            Many teams use both: CLI for local dev workflows, MCP for
-            customer-facing agents.
-          </li>
+          <li>CLI is great for local speed.</li>
+          <li>MCP is great for reusable, safer integrations.</li>
+          <li>Many teams use both in different places.</li>
         </ul>
 
         <Aside>
-          Start with CLI if you're the only user. Move to MCP when your agent
-          starts acting on behalf of others — that's when governance stops being
-          optional.
+          A good default: start with CLI for your own workflow, then move to MCP
+          when the workflow needs stronger boundaries.
         </Aside>
       </Section>
 
       <ArticleOutro>
-        See also:{" "}
-        <span className="font-medium text-foreground/70">MCP vs REST APIs</span>{" "}
-        and{" "}
-        <span className="font-medium text-foreground/70">MCP vs Skills</span>{" "}
-        for the full picture.
+        Next: compare MCP with{" "}
+        <span className="font-medium text-foreground/70">REST APIs</span> and{" "}
+        <span className="font-medium text-foreground/70">Skills</span> to see
+        where it fits in the wider tool stack.
       </ArticleOutro>
     </div>
   );

@@ -176,13 +176,13 @@ export function AppsSdkGuide({
             OpenAI Apps SDK
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
-            See how the Apps SDK layers ChatGPT-specific capabilities on top of
-            standard MCP Apps:{" "}
+            See how the Apps SDK adds ChatGPT-only features on top of standard
+            MCP Apps:{" "}
             <span className="font-medium text-foreground/80">
               window.openai
             </span>
-            , tool metadata, dual-protocol support, and deployment. Scroll to
-            sync the diagram, or use{" "}
+            , extra tool metadata, and dual-protocol support. Scroll to sync
+            the diagram, or use{" "}
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to advance.
           </p>

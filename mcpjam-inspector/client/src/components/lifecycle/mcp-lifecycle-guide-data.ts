@@ -30,16 +30,14 @@ export const LIFECYCLE_GUIDE_METADATA: Partial<
   initialize_request: {
     title: "Initialize Request",
     summary:
-      "The client kicks off the MCP session by sending an initialize request. This is always the very first message — it carries the protocol version the client supports, the capabilities it can provide, and metadata about itself.",
+      "The client starts the MCP connection by saying which version and features it supports.",
     phase: "initialization",
     teachableMoments: [
-      "The client MUST send the latest protocol version it supports. The server will either agree or propose a different version.",
-      "Capabilities declare what optional features the client offers (e.g. roots, sampling, elicitation). The server uses this to decide what it can request later.",
-      "The client SHOULD NOT send any requests (other than pings) until it receives the initialize response.",
+      "This is always the first real MCP message.",
+      "The client should wait for the server's reply before sending normal requests.",
     ],
     tips: [
-      "For HTTP transports, the client MUST include the MCP-Protocol-Version header on all subsequent requests after initialization.",
-      "clientInfo fields like name, version, and icons help servers identify and display the connected client.",
+      "For HTTP, later requests should include the negotiated MCP protocol version header.",
     ],
     codeExample: JSON.stringify(
       {
@@ -78,17 +76,14 @@ export const LIFECYCLE_GUIDE_METADATA: Partial<
   initialize_result: {
     title: "Initialize Response",
     summary:
-      "The server responds with its own protocol version, capabilities, and metadata. This is where version negotiation resolves — the server either agrees to the client's version or proposes its own.",
+      "The server replies with the version and features it can support.",
     phase: "initialization",
     teachableMoments: [
-      "If the server supports the requested protocol version, it responds with the same version. Otherwise it responds with the latest version it supports.",
-      "If the client cannot support the server's proposed version, it SHOULD disconnect.",
-      "Server capabilities tell the client which features are available: tools, resources, prompts, logging, etc.",
-      "The optional instructions field provides human-readable guidance for the client.",
+      "This is where version negotiation is settled.",
+      "The server lists things like tools, resources, prompts, and logging support.",
     ],
     tips: [
-      "Check whether listChanged is true for prompts, resources, or tools — this means the server will notify you when these lists update.",
-      "The subscribe capability under resources means you can subscribe to individual resource changes.",
+      "If the server proposes a version the client cannot use, the client should disconnect cleanly.",
     ],
     codeExample: JSON.stringify(
       {
@@ -130,16 +125,14 @@ export const LIFECYCLE_GUIDE_METADATA: Partial<
   initialized_notification: {
     title: "Initialized Notification",
     summary:
-      "The client confirms that initialization is complete by sending a notification. This is a one-way message — the server does not respond. After this, both sides enter normal operation.",
+      "The client sends one last message to say the handshake is done.",
     phase: "initialization",
     teachableMoments: [
-      "This is a notification, not a request — there is no id field and no response is expected.",
-      "The server SHOULD NOT send requests (other than pings and logging) before receiving this notification.",
-      "After this notification, the session is fully established and both sides can use their negotiated capabilities.",
+      "It is a notification, so there is no id and no reply.",
+      "After this, both sides can use the features they agreed on.",
     ],
     tips: [
-      "If the server starts sending requests before this notification arrives, it may be a spec violation worth investigating.",
-      "This is the last message in the initialization phase. Everything after this is the operation phase.",
+      "This is the last step before normal MCP traffic starts.",
     ],
     codeExample: JSON.stringify(
       {
@@ -154,16 +147,14 @@ export const LIFECYCLE_GUIDE_METADATA: Partial<
   operation_request: {
     title: "Operation Phase — Request",
     summary:
-      "With initialization complete, the client sends operational requests to the server. These follow the JSON-RPC 2.0 format and can invoke tools, read resources, list prompts, and more — but only capabilities that were negotiated during initialization.",
+      "Now the client can do real work, like call tools, read resources, or list prompts.",
     phase: "operation",
     teachableMoments: [
-      "Both sides MUST respect the negotiated protocol version for all messages.",
-      "Only use capabilities that were successfully negotiated. For example, don't call tools/call if the server didn't declare the tools capability.",
-      "Each request has a unique id that the server uses to correlate its response.",
+      "The client should only use features the server said it supports.",
+      "Each request gets an id so the reply can match it.",
     ],
     tips: [
-      "Common operations: tools/call, resources/read, resources/list, prompts/get, prompts/list, logging/setLevel.",
-      "Implementations SHOULD set timeouts on all requests to prevent hung connections.",
+      "Set timeouts so one slow request does not hang the whole connection.",
     ],
     codeExample: JSON.stringify(
       {
@@ -185,16 +176,14 @@ export const LIFECYCLE_GUIDE_METADATA: Partial<
   operation_response: {
     title: "Operation Phase — Response & Shutdown",
     summary:
-      "The server processes the request and returns a JSON-RPC result. For HTTP transports, shutdown is signaled by simply closing the HTTP connection — there are no explicit shutdown messages in the protocol.",
+      "The server sends back the result. In HTTP, closing the connection is how shutdown usually happens.",
     phase: "shutdown",
     teachableMoments: [
-      "For HTTP, shutdown is signaled by closing the HTTP connection(s). There is no dedicated shutdown message.",
-      "Implementations SHOULD establish timeouts for all sent requests to prevent hung connections and resource exhaustion.",
-      "When a request times out, the sender SHOULD issue a cancellation notification for that request and stop waiting.",
+      "HTTP does not use a special shutdown message.",
+      "If a request takes too long, the sender should stop waiting and cancel it.",
     ],
     tips: [
-      "Progress notifications from the server can reset the timeout clock, but implementations SHOULD still enforce a maximum timeout.",
-      "SDKs and middleware SHOULD allow timeouts to be configured on a per-request basis.",
+      "Good clients still enforce a maximum timeout even if progress updates arrive.",
     ],
     codeExample: JSON.stringify(
       {
@@ -271,11 +260,11 @@ export const LIFECYCLE_GUIDE_SLIM: Record<
 > = {
   initialize_request: {
     title: "Initialize Request",
-    subtitle: "Client sends its version and capabilities",
+    subtitle: "Client says what version and features it supports",
     phase: "initialization",
     direction: "client-to-server",
     keyInsight:
-      "The client must send the latest protocol version it supports. The server will negotiate from there.",
+      "This starts the handshake. The server will answer with the version and features it can use.",
     codeSnippet: `{
   method: "initialize",
   params: {
@@ -288,11 +277,11 @@ export const LIFECYCLE_GUIDE_SLIM: Record<
 
   initialize_result: {
     title: "Initialize Response",
-    subtitle: "Server responds with its own capabilities",
+    subtitle: "Server replies with its version and features",
     phase: "initialization",
     direction: "server-to-client",
     keyInsight:
-      "If the client can't work with the server's proposed version, it should disconnect gracefully.",
+      "If the client cannot use the server's version, it should disconnect cleanly.",
     codeSnippet: `{
   result: {
     protocolVersion: "2025-11-25",
@@ -304,11 +293,11 @@ export const LIFECYCLE_GUIDE_SLIM: Record<
 
   initialized_notification: {
     title: "Initialized",
-    subtitle: "Client confirms — the handshake is complete",
+    subtitle: "Client confirms the handshake is done",
     phase: "initialization",
     direction: "client-to-server",
     keyInsight:
-      "This is a notification, not a request. No id field, no response expected. After this, normal operations can begin.",
+      "This is a one-way message. No id, no reply. After this, normal MCP work can begin.",
     codeSnippet: `{
   method: "notifications/initialized"
 }`,
@@ -316,11 +305,11 @@ export const LIFECYCLE_GUIDE_SLIM: Record<
 
   operation_request: {
     title: "Operation Request",
-    subtitle: "Client invokes tools, reads resources, or lists prompts",
+    subtitle: "Client asks to use tools or read data",
     phase: "operation",
     direction: "client-to-server",
     keyInsight:
-      "Only use capabilities that were negotiated during initialization. Each request gets a unique id for correlation.",
+      "Only use features the server agreed to during setup, and give each request an id.",
     codeSnippet: `{
   method: "tools/call",
   params: {
@@ -332,11 +321,11 @@ export const LIFECYCLE_GUIDE_SLIM: Record<
 
   operation_response: {
     title: "Response & Shutdown",
-    subtitle: "Server returns results. Close connection to shut down.",
+    subtitle: "Server returns the result; HTTP ends by closing",
     phase: "shutdown",
     direction: "server-to-client",
     keyInsight:
-      "For HTTP, there's no special shutdown message — just close the connection. Set timeouts to prevent hung requests.",
+      "HTTP has no special shutdown message. Clients should use timeouts so requests do not hang forever.",
     codeSnippet: `{
   result: {
     content: [{

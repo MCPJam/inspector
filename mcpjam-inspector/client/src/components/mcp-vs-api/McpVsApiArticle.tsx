@@ -11,15 +11,13 @@ export function McpVsApiArticle() {
     <div className="mx-auto max-w-2xl px-8 pb-16">
       <ArticleHero
         title="MCP vs REST APIs"
-        subtitle="REST APIs are the backbone of modern software. Understand how MCP relates to them — stateless vs. stateful, static vs. dynamic discovery, and why MCP wraps APIs rather than replacing them."
+        subtitle="MCP does not replace APIs. It gives AI a cleaner way to use them."
       />
 
-      {/* Section 1: The Comparison */}
-      <Section step={1} title="REST APIs: The Backbone of Modern Software">
+      <Section step={1} title="Quick Comparison">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Every SaaS product exposes a REST API. So why not just have agents
-          call REST APIs directly? The answer lies in how agents need to
-          discover, compose, and maintain context across tool calls.
+          REST APIs are still the systems many apps expose. MCP sits on top and
+          makes those systems easier for AI hosts to discover and use.
         </p>
 
         <ComparisonTable
@@ -27,115 +25,86 @@ export function McpVsApiArticle() {
           rows={[
             {
               cells: [
-                "State",
-                "Stateless — each request is independent",
-                "Stateful — maintains context across tool calls",
-              ],
-            },
-            {
-              cells: [
-                "Connection",
-                "One-way request/response",
-                "Persistent, bidirectional",
-              ],
-            },
-            {
-              cells: [
                 "Discovery",
-                "Static — you read docs and write integration code",
-                "Dynamic — the agent discovers available tools at runtime",
-              ],
-            },
-            {
-              cells: [
-                "Integration effort",
-                "Per-service: auth, pagination, error handling, rate limiting",
-                "One protocol, many servers",
+                "Usually docs and custom code",
+                "Tool and resource discovery at runtime",
               ],
             },
             {
               cells: [
                 "Context",
-                "Manual — you pass context between API calls yourself",
-                "Automatic — the conversation context spans multiple tool uses",
+                "You pass it manually",
+                "The conversation can carry it across calls",
+              ],
+            },
+            {
+              cells: [
+                "Integration effort",
+                "Per API integration",
+                "One protocol across many servers",
+              ],
+            },
+            {
+              cells: [
+                "Connection model",
+                "Typical request/response",
+                "Protocol built for ongoing host-server interaction",
               ],
             },
           ]}
         />
       </Section>
 
-      {/* Section 2: MCP Wraps APIs */}
-      <Section step={2} title="Important Nuance: MCP Wraps APIs">
+      <Section step={2} title="MCP Wraps APIs">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          MCP doesn't replace REST APIs. MCP servers often call REST APIs under
-          the hood. MCP is a layer <em>on top of</em> APIs that makes them
-          consumable by AI agents — think of it as middleware: REST provides
-          discrete services, MCP orchestrates them for agents.
-        </p>
-      </Section>
-
-      {/* Section 3: Multi-Tool Orchestration */}
-      <Section step={3} title="Example: Multi-Tool Orchestration">
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          An agent needs to check recent commits, create a Jira ticket for a
-          bug, and post a summary to Slack. With REST, that's three separate
-          integrations with custom auth, pagination, and context threading. With
-          MCP, the agent has a unified interface where context flows naturally
-          across all three actions in a single conversation.
+          MCP servers often call REST APIs under the hood. So MCP is not a
+          replacement for APIs. It is an AI-friendly layer in front of them.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            REST: 3 separate integrations, 3 auth schemes, manual context
-            threading between calls.
-          </li>
-          <li>
-            MCP: 1 protocol, context flows automatically across tool calls
-            within the conversation.
-          </li>
-          <li>
-            Each new tool added to MCP is N + 1, not N × M — the integration
-            cost stays linear.
-          </li>
+          <li>The API still does the real backend work.</li>
+          <li>The MCP server translates that work into tools and resources.</li>
+          <li>The host gets one consistent interface instead of many custom ones.</li>
         </ul>
       </Section>
 
-      {/* Section 4: The Bottom Line */}
-      <Section step={4} title="The Bottom Line">
+      <Section step={3} title="Why That Helps">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          REST APIs aren't going anywhere — they're what MCP servers call
-          internally. The question is whether your agents should manage raw API
-          complexity directly, or work through a protocol designed for
-          multi-tool orchestration.
+          Imagine an agent that needs GitHub, Jira, and Slack. With raw APIs,
+          you manage three integrations. With MCP, the host talks one protocol
+          while each server handles its own backend details.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>
-            Use REST APIs directly when integrating a single well-known API into
-            a specific app.
-          </li>
-          <li>
-            Use MCP when agents need to compose multiple tools with shared
-            context.
-          </li>
-          <li>
-            MCP reduces integration cost from N × M to N + M as your tool
-            surface grows.
-          </li>
+          <li>The host does not need a new custom flow for every service.</li>
+          <li>The model can discover tools at runtime.</li>
+          <li>Context can carry across multiple tool calls in one conversation.</li>
+        </ul>
+      </Section>
+
+      <Section step={4} title="Simple Rule">
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          Keep building APIs for your product. Add MCP when you want AI hosts to
+          use those systems through a standard agent-friendly interface.
+        </p>
+
+        <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <li>Use raw APIs when you are integrating one known service directly.</li>
+          <li>Use MCP when AI needs a shared protocol for many tools.</li>
+          <li>You often want both: APIs underneath, MCP on top.</li>
         </ul>
 
         <Aside>
-          If you're already building MCP servers, they likely wrap REST APIs
-          under the hood. You get the best of both worlds — REST's universality
-          with MCP's agent-native ergonomics.
+          The easy mental model: APIs are the backend surface; MCP is the AI
+          integration layer in front of that surface.
         </Aside>
       </Section>
 
       <ArticleOutro>
-        See also:{" "}
-        <span className="font-medium text-foreground/70">MCP vs CLI</span> and{" "}
-        <span className="font-medium text-foreground/70">MCP vs Skills</span>{" "}
-        for the full picture.
+        Next: compare MCP with{" "}
+        <span className="font-medium text-foreground/70">CLI</span> and{" "}
+        <span className="font-medium text-foreground/70">Skills</span> to see
+        the rest of the tradeoffs.
       </ArticleOutro>
     </div>
   );
