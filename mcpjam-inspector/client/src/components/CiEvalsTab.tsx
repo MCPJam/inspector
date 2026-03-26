@@ -322,8 +322,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           maxSize={35}
           className="border-r bg-muted/30 flex flex-col"
         >
-              <CiSuiteListSidebar
-                suites={visibleSuites}
+          <CiSuiteListSidebar
+            suites={visibleSuites}
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
             isLoading={queries.isOverviewLoading}

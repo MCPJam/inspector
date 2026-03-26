@@ -361,30 +361,30 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               </Tooltip>
             ) : null)}
           {showRunAction && !isRunInProgress ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        isReplayAction
-                          ? onReplayRun?.(suite, replayableSelectedRun)
-                          : onRerun(suite)
-                      }
-                      disabled={runActionDisabled}
-                      className="gap-2"
-                    >
-                      <RotateCw
-                        className={`h-4 w-4 ${showAsRunning ? "animate-spin" : ""}`}
-                      />
-                      {runActionLabel}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent>{runActionTooltip}</TooltipContent>
-              </Tooltip>
-            ) : null}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      isReplayAction
+                        ? onReplayRun?.(suite, replayableSelectedRun)
+                        : onRerun(suite)
+                    }
+                    disabled={runActionDisabled}
+                    className="gap-2"
+                  >
+                    <RotateCw
+                      className={`h-4 w-4 ${showAsRunning ? "animate-spin" : ""}`}
+                    />
+                    {runActionLabel}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{runActionTooltip}</TooltipContent>
+            </Tooltip>
+          ) : null}
           <Button
             variant="outline"
             size="icon"

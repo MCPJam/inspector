@@ -590,17 +590,20 @@ evals.post("/replay-run", async (c) => {
 
     const replayManager = buildReplayManager(replayConfig);
     try {
-      const { runId: replayRunId, recorder, config } =
-        await startSuiteRunWithRecorder({
-          convexClient,
-          suiteId: replayMetadata.suiteId,
-          notes,
-          passCriteria,
-          serverIds:
-            replayMetadata.environment?.servers ??
-            replayConfig.servers.map((server) => server.serverId),
-          replayedFromRunId: runId,
-        });
+      const {
+        runId: replayRunId,
+        recorder,
+        config,
+      } = await startSuiteRunWithRecorder({
+        convexClient,
+        suiteId: replayMetadata.suiteId,
+        notes,
+        passCriteria,
+        serverIds:
+          replayMetadata.environment?.servers ??
+          replayConfig.servers.map((server) => server.serverId),
+        replayedFromRunId: runId,
+      });
 
       await runEvalSuiteWithAiSdk({
         suiteId: replayMetadata.suiteId,
