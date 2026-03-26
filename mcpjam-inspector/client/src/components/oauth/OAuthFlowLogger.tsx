@@ -46,14 +46,16 @@ interface OAuthFlowLoggerProps {
     customHeadersCount?: number;
   };
   actions?: {
-    onConfigure?: () => void;
-    onReset?: () => void;
-    onContinue?: () => void;
+    onConfigure?: () => void | Promise<void>;
+    showConfigureTarget?: boolean;
+    showEditTarget?: boolean;
+    onReset?: () => void | Promise<void>;
+    onContinue?: () => void | Promise<void>;
     continueLabel?: string;
     continueDisabled?: boolean;
     resetDisabled?: boolean;
-    onConnectServer?: () => void;
-    onRefreshTokens?: () => void;
+    onConnectServer?: () => void | Promise<void>;
+    onRefreshTokens?: () => void | Promise<void>;
     isApplyingTokens?: boolean;
   };
 }
@@ -273,6 +275,11 @@ export function OAuthFlowLogger({
     }
   };
 
+  const showConfigureTarget =
+    actions?.showConfigureTarget !== false && Boolean(actions?.onConfigure);
+  const showEditTarget =
+    actions?.showEditTarget !== false && Boolean(actions?.onConfigure);
+
   return (
     <div className="h-full border-l border-border flex flex-col">
       <div className="bg-muted/30 border-b border-border px-4 py-3 space-y-3">
@@ -280,19 +287,26 @@ export function OAuthFlowLogger({
           <>
             {/* Top row: Server URL with Edit, and Reset/Continue on right */}
             <div className="flex items-center gap-2">
-              <button
-                onClick={actions?.onConfigure}
-                disabled={!actions?.onConfigure}
-                className="min-w-0 flex-1 flex items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed group"
-              >
-                <p className="text-sm font-medium text-foreground break-all flex-1">
-                  {summary.serverUrl || summary.description}
-                </p>
-                <span className="flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground shrink-0">
-                  <Pencil className="h-3 w-3" />
-                  Edit
-                </span>
-              </button>
+              {showEditTarget ? (
+                <button
+                  onClick={actions?.onConfigure}
+                  className="min-w-0 flex-1 flex items-center gap-2 text-left border border-border hover:border-foreground/30 bg-background rounded-md px-3 py-2 transition-colors cursor-pointer group"
+                >
+                  <p className="text-sm font-medium text-foreground break-all flex-1">
+                    {summary.serverUrl || summary.description}
+                  </p>
+                  <span className="flex items-center gap-1 text-xs text-muted-foreground group-hover:text-foreground shrink-0">
+                    <Pencil className="h-3 w-3" />
+                    Edit
+                  </span>
+                </button>
+              ) : (
+                <div className="min-w-0 flex-1 border border-border bg-background rounded-md px-3 py-2">
+                  <p className="text-sm font-medium text-foreground break-all">
+                    {summary.serverUrl || summary.description}
+                  </p>
+                </div>
+              )}
               <div className="flex items-center gap-1 shrink-0">
                 <Button
                   variant="ghost"
@@ -378,13 +392,11 @@ export function OAuthFlowLogger({
             <p className="text-sm text-muted-foreground">
               {summary.description}
             </p>
-            <Button
-              size="sm"
-              onClick={actions?.onConfigure}
-              disabled={!actions?.onConfigure}
-            >
-              Configure Target
-            </Button>
+            {showConfigureTarget && (
+              <Button size="sm" onClick={actions?.onConfigure}>
+                Configure Target
+              </Button>
+            )}
           </div>
         )}
       </div>
@@ -449,8 +461,8 @@ export function OAuthFlowLogger({
                         </li>
                       </ol>
                     </div>
-                    {actions?.onConfigure && (
-                      <Button onClick={actions.onConfigure}>
+                    {showConfigureTarget && (
+                      <Button onClick={() => actions?.onConfigure?.()}>
                         Configure Target
                       </Button>
                     )}
