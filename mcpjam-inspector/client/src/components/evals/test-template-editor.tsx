@@ -7,13 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { authFetch } from "@/lib/session-token";
-import {
-  buildEvalConvexAuthPayload,
-  buildEvalServerBatchPayload,
-  getEvalApiEndpoints,
-} from "@/lib/apis/evals-api";
-import { listTools } from "@/lib/apis/mcp-tools-api";
+import { listEvalTools, runEvalTestCase } from "@/lib/apis/evals-api";
 import {
   Tooltip,
   TooltipContent,
@@ -60,6 +54,7 @@ interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
   connectedServerNames: Set<string>;
+  workspaceId: string | null;
 }
 
 const validateExpectedToolCalls = (
@@ -129,6 +124,7 @@ export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
   connectedServerNames,
+  workspaceId,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -228,13 +224,11 @@ export function TestTemplateEditor({
       }
 
       try {
-        const toolsByServer = await Promise.all(
-          serverIds.map(async (serverId: string) => {
-            const result = await listTools({ serverId });
-            return result.tools || [];
-          }),
-        );
-        setAvailableTools(toolsByServer.flat());
+        const data = await listEvalTools({
+          workspaceId,
+          serverIds,
+        });
+        setAvailableTools(data.tools || []);
       } catch (error) {
         console.error("Failed to fetch tools:", error);
         setAvailableTools([]);
@@ -242,7 +236,7 @@ export function TestTemplateEditor({
     }
 
     fetchTools();
-  }, [suite]);
+  }, [suite, workspaceId]);
 
   const handleTitleClick = () => {
     setIsEditingTitle(true);
@@ -379,7 +373,6 @@ export function TestTemplateEditor({
     try {
       const accessToken = await getAccessToken();
       const serverIds = suite.environment?.servers || [];
-      const endpoints = getEvalApiEndpoints();
 
       // Collect API key if needed
       const modelApiKeys: Record<string, string> = {};
@@ -391,34 +384,24 @@ export function TestTemplateEditor({
         }
       }
 
-      const response = await authFetch(endpoints.runTestCase, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          testCaseId: currentTestCase._id,
-          model,
-          provider,
-          ...buildEvalServerBatchPayload(serverIds),
-          modelApiKeys:
-            Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-          ...buildEvalConvexAuthPayload(accessToken),
-          // Send current form state to run with unsaved changes
-          testCaseOverrides: editForm
-            ? {
-                query: editForm.query,
-                expectedToolCalls: editForm.expectedToolCalls,
-                runs: editForm.runs,
-              }
-            : undefined,
-        }),
+      const data = await runEvalTestCase({
+        workspaceId,
+        testCaseId: currentTestCase._id,
+        model,
+        provider,
+        serverIds,
+        modelApiKeys:
+          Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
+        convexAuthToken: accessToken,
+        // Send current form state to run with unsaved changes
+        testCaseOverrides: editForm
+          ? {
+              query: editForm.query,
+              expectedToolCalls: editForm.expectedToolCalls,
+              runs: editForm.runs,
+            }
+          : undefined,
       });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Failed to run test case");
-      }
-
-      const data = await response.json();
 
       // Store the iteration result
       if (data.iteration) {

@@ -177,7 +177,6 @@ const navigationSections: NavSection[] = [
         title: "Generate Evals",
         url: "#evals",
         icon: FlaskConical,
-        hiddenByFlag: "ci-evals-enabled",
         billingFeature: "evals",
       },
       {

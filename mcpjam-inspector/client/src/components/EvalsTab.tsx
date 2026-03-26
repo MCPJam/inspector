@@ -127,6 +127,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     selectedSuiteEntry: serverSuiteEntry ?? null,
     selectedSuiteId: serverSuiteId,
     selectedTestId,
+    workspaceId: workspaceId ?? null,
   });
 
   // Main queries with serverSuiteId for details
@@ -440,6 +441,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                   availableModels={availableModels}
                   route={route}
                   userMap={userMap}
+                  workspaceId={workspaceId ?? null}
                 />
               </div>
             ) : null}

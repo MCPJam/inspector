@@ -57,7 +57,8 @@ describe("hosted-tab-policy", () => {
   it("hides blocked tabs from hosted sidebar", () => {
     expect(isHostedSidebarTabAllowed("skills")).toBe(false);
     expect(isHostedSidebarTabAllowed("tasks")).toBe(false);
-    expect(isHostedSidebarTabAllowed("evals")).toBe(false);
+    expect(isHostedSidebarTabAllowed("evals")).toBe(true);
+    expect(isHostedHashTabBlocked("evals")).toBe(false);
   });
 
   it("allows oauth-flow in hosted sidebar", () => {

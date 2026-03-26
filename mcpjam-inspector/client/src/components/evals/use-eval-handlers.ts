@@ -20,8 +20,9 @@ import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   buildEvalConvexAuthPayload,
-  buildEvalServerBatchPayload,
+  generateEvalTests,
   getEvalApiEndpoints,
+  runEvals,
 } from "@/lib/apis/evals-api";
 import { isHostedMode } from "@/lib/apis/mode-client";
 
@@ -30,6 +31,7 @@ interface UseEvalHandlersProps {
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
   selectedSuiteId: string | null;
   selectedTestId: string | null;
+  workspaceId?: string | null;
   /**
    * When `ci-evals`, navigation after test-case mutations stays on CI evals
    * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
@@ -45,6 +47,7 @@ export function useEvalHandlers({
   selectedSuiteEntry,
   selectedSuiteId,
   selectedTestId,
+  workspaceId = null,
   evalsNavigationContext = "evals",
 }: UseEvalHandlersProps) {
   const convex = useConvex();
@@ -310,7 +313,6 @@ export function useEvalHandlers({
 
       try {
         const accessToken = await getAccessToken();
-        const endpoints = getEvalApiEndpoints();
 
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
@@ -318,41 +320,33 @@ export function useEvalHandlers({
           suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-        const response = await authFetch(endpoints.run, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            suiteId: suite._id,
-            suiteName: suite.name,
-            suiteDescription: suite.description,
-            tests: executionContext.tests.map((test) => ({
-              title: test.title,
-              query: test.query,
-              runs: test.runs ?? 1,
-              model: test.model,
-              provider: test.provider,
-              expectedToolCalls: test.expectedToolCalls,
-              isNegativeTest: test.isNegativeTest,
-              scenario: test.scenario,
-              advancedConfig: test.advancedConfig,
-            })),
-            ...buildEvalServerBatchPayload(executionContext.suiteServers),
-            modelApiKeys:
-              Object.keys(executionContext.modelApiKeys).length > 0
-                ? executionContext.modelApiKeys
-                : undefined,
-            ...buildEvalConvexAuthPayload(accessToken),
-            passCriteria: {
-              minimumPassRate: minimumPassRate,
-            },
-            notes: criteriaNote,
-          }),
+        await runEvals({
+          workspaceId,
+          suiteId: suite._id,
+          suiteName: suite.name,
+          suiteDescription: suite.description,
+          tests: executionContext.tests.map((test) => ({
+            title: test.title,
+            query: test.query,
+            runs: test.runs ?? 1,
+            model: test.model,
+            provider: test.provider,
+            expectedToolCalls: test.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            scenario: test.scenario,
+            advancedConfig: test.advancedConfig,
+          })),
+          serverIds: executionContext.suiteServers,
+          modelApiKeys:
+            Object.keys(executionContext.modelApiKeys).length > 0
+              ? executionContext.modelApiKeys
+              : undefined,
+          convexAuthToken: accessToken,
+          passCriteria: {
+            minimumPassRate: minimumPassRate,
+          },
+          notes: criteriaNote,
         });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(errorText || "Failed to start eval run");
-        }
 
         // Track suite run started
         posthog.capture("eval_suite_run_started", {
@@ -379,6 +373,7 @@ export function useEvalHandlers({
       rerunningSuiteId,
       selectedSuiteEntry,
       getAccessToken,
+      workspaceId,
       getSuiteExecutionContext,
       handleReplayRun,
     ],
@@ -780,20 +775,11 @@ export function useEvalHandlers({
         }
 
         // Call generate tests API
-        const response = await authFetch(endpoints.generateTests, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            ...buildEvalServerBatchPayload(serverIds),
-            ...buildEvalConvexAuthPayload(accessToken),
-          }),
+        const result = await generateEvalTests({
+          workspaceId,
+          serverIds,
+          convexAuthToken: accessToken,
         });
-
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.error || "Failed to generate tests");
-        }
 
         if (!result.tests || result.tests.length === 0) {
           toast.info("No test cases were generated");
@@ -849,6 +835,7 @@ export function useEvalHandlers({
       getAccessToken,
       convex,
       mutations.createTestCaseMutation,
+      workspaceId,
     ],
   );
 

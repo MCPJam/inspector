@@ -86,7 +86,8 @@ const mockIsHostedMode = vi.fn(() => false);
 vi.mock("@/lib/apis/mode-client", () => ({
   isHostedMode: () => mockIsHostedMode(),
   ensureLocalMode: vi.fn(),
-  runByMode: vi.fn(),
+  runByMode: (handlers: { local: () => unknown; hosted: () => unknown }) =>
+    mockIsHostedMode() ? handlers.hosted() : handlers.local(),
 }));
 
 // Mock isMCPJamProvidedModel
@@ -110,6 +111,7 @@ describe("useEvalHandlers", () => {
     selectedSuiteEntry: null,
     selectedSuiteId: null,
     selectedTestId: null,
+    workspaceId: "workspace-1",
   };
 
   beforeEach(() => {

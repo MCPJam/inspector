@@ -14,6 +14,7 @@ import oauthWeb from "./oauth.js";
 import xrayPayload from "./xray-payload.js";
 import exporter from "./export.js";
 import guestSession from "./guest-session.js";
+import evals from "./evals.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();

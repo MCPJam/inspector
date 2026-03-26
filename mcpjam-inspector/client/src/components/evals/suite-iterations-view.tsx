@@ -68,6 +68,7 @@ export function SuiteIterationsView({
   availableModels,
   route,
   userMap,
+  workspaceId = null,
   navigation = defaultNavigation,
 }: {
   suite: EvalSuite;
@@ -92,6 +93,7 @@ export function SuiteIterationsView({
   availableModels: any[];
   route: SuiteRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  workspaceId?: string | null;
   navigation?: SuiteNavigation;
 }) {
   // Derive view state from route
@@ -315,6 +317,7 @@ export function SuiteIterationsView({
                 suiteId={suite._id}
                 selectedTestCaseId={selectedTestId}
                 connectedServerNames={connectedServerNames}
+                workspaceId={workspaceId}
               />
             </div>
           ) : viewMode === "test-detail" && selectedTestId ? (
