@@ -33,7 +33,7 @@ import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-log
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { TagEditor, TagBadges } from "./tag-editor";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { isHostedMode } from "@/lib/apis/mode-client";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 
 interface ModelInfo {
   model: string;
@@ -239,17 +239,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   // Calculate suite server status
   const suiteServers = suite.environment?.servers || [];
-  const missingServers = suiteServers.filter(
-    (server) => !connectedServerNames.has(server),
-  );
-  const hasServersConfigured = suiteServers.length > 0;
-  const canRerun = hasServersConfigured && missingServers.length === 0;
+  const replayEligibility = getSuiteReplayEligibility({
+    suiteServers,
+    connectedServerNames,
+    latestRun: latestRunForMetadata,
+  });
+  const { hasServersConfigured, missingServers } = replayEligibility;
+  const canRerun = replayEligibility.canRunNow;
   const isRerunning = rerunningSuiteId === suite._id;
-  const isHosted = isHostedMode();
-  const replayableLatestRun =
-    isHosted && latestRunForMetadata?.hasServerReplayConfig
-      ? latestRunForMetadata
-      : null;
+  const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
 
@@ -300,10 +298,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       isRunInProgress ||
       rerunningSuiteId === suite._id ||
       replayingRunId === selectedRunDetails._id;
-    const replayableSelectedRun =
-      isHosted && selectedRunDetails.hasServerReplayConfig
-        ? selectedRunDetails
-        : null;
+    const replayableSelectedRun = selectedRunDetails.hasServerReplayConfig
+      ? selectedRunDetails
+      : null;
     const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
     const isReplayAction = Boolean(replayableSelectedRun);
     const runActionDisabled = isReplayAction

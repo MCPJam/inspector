@@ -112,6 +112,7 @@ describe("useEvalHandlers", () => {
     selectedSuiteId: null,
     selectedTestId: null,
     workspaceId: "workspace-1",
+    connectedServerNames: new Set(["server-1"]),
   };
 
   beforeEach(() => {
@@ -205,7 +206,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-123",
         name: "Test Suite",
         description: "A test suite",
-        environment: { servers: [] },
+        environment: { servers: ["server-1"] },
       };
 
       await act(async () => {
@@ -222,23 +223,8 @@ describe("useEvalHandlers", () => {
       global.fetch = originalFetch;
     });
 
-    it("replays the latest CI run in hosted mode for SDK suites", async () => {
+    it("replays the latest run when live servers are missing and replay is available", async () => {
       mockIsHostedMode.mockReturnValue(true);
-
-      const selectedSuiteEntry = {
-        latestRun: {
-          _id: "run-source",
-          hasServerReplayConfig: true,
-          passCriteria: { minimumPassRate: 92 },
-        },
-        recentRuns: [
-          {
-            _id: "run-source",
-            hasServerReplayConfig: true,
-            passCriteria: { minimumPassRate: 92 },
-          },
-        ],
-      };
 
       mockAuthFetch.mockResolvedValue(
         createFetchResponse({
@@ -251,7 +237,17 @@ describe("useEvalHandlers", () => {
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
-          selectedSuiteEntry: selectedSuiteEntry as any,
+          connectedServerNames: new Set(),
+          latestRunBySuiteId: new Map([
+            [
+              "suite-123",
+              {
+                _id: "run-source",
+                hasServerReplayConfig: true,
+                passCriteria: { minimumPassRate: 92 },
+              },
+            ],
+          ]),
         }),
       );
 
@@ -259,7 +255,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-123",
         name: "CI Suite",
         description: "A CI-backed suite",
-        source: "sdk",
+        source: "ui",
         environment: { servers: ["server-1"] },
       };
 
@@ -290,28 +286,13 @@ describe("useEvalHandlers", () => {
       });
     });
 
-    it("falls back to the normal rerun path when hosted SDK runs are not replayable", async () => {
+    it("uses the normal rerun path when live servers are connected", async () => {
       mockIsHostedMode.mockReturnValue(true);
       setHostedApiContext({
         workspaceId: "ws-123",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
-
-      const selectedSuiteEntry = {
-        latestRun: {
-          _id: "run-source",
-          hasServerReplayConfig: false,
-          passCriteria: { minimumPassRate: 92 },
-        },
-        recentRuns: [
-          {
-            _id: "run-source",
-            hasServerReplayConfig: false,
-            passCriteria: { minimumPassRate: 92 },
-          },
-        ],
-      };
 
       mockAuthFetch.mockResolvedValue(
         createFetchResponse({
@@ -324,16 +305,26 @@ describe("useEvalHandlers", () => {
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
-          selectedSuiteEntry: selectedSuiteEntry as any,
           selectedSuiteId: "suite-123",
+          connectedServerNames: new Set(["server-1"]),
+          latestRunBySuiteId: new Map([
+            [
+              "suite-123",
+              {
+                _id: "run-source",
+                hasServerReplayConfig: true,
+                passCriteria: { minimumPassRate: 92 },
+              },
+            ],
+          ]),
         }),
       );
 
       const mockSuite = {
         _id: "suite-123",
         name: "Hosted SDK Suite",
-        description: "A replay-ineligible suite",
-        source: "sdk",
+        description: "A replay-eligible suite with live connectivity",
+        source: "ui",
         environment: { servers: ["server-1"] },
       };
 
@@ -348,6 +339,55 @@ describe("useEvalHandlers", () => {
           headers: { "Content-Type": "application/json" },
         }),
       );
+    });
+
+    it("uses the clicked suite latest run instead of the selected suite entry", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          success: true,
+          suiteId: "suite-clicked",
+          runId: "run-replay",
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          selectedSuiteEntry: {
+            suite: { _id: "suite-selected" },
+            latestRun: {
+              _id: "run-selected",
+              hasServerReplayConfig: false,
+            },
+            recentRuns: [],
+          } as any,
+          latestRunBySuiteId: new Map([
+            [
+              "suite-clicked",
+              {
+                _id: "run-clicked",
+                hasServerReplayConfig: true,
+              },
+            ],
+          ]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-clicked",
+          name: "Clicked Suite",
+          description: "Uses clicked latest run",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      const callArgs = mockAuthFetch.mock.calls[0];
+      const requestBody = JSON.parse(callArgs[1].body);
+      expect(requestBody.runId).toBe("run-clicked");
     });
   });
 
@@ -681,7 +721,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-123",
         name: "Test Suite",
         description: "A test suite",
-        environment: { servers: [] },
+        environment: { servers: ["server-1"] },
       };
 
       await act(async () => {
@@ -794,7 +834,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-789",
         name: "Test Suite",
         description: "A test suite",
-        environment: { servers: [] },
+        environment: { servers: ["server-1"] },
       };
 
       expect(result.current.rerunningSuiteId).toBe(null);

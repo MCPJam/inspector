@@ -68,7 +68,7 @@ describe("SuiteHeader", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsHostedMode.mockReturnValue(true);
+    mockIsHostedMode.mockReturnValue(false);
   });
 
   it("shows a replay action for replayable CI runs in read-only run detail", async () => {
@@ -88,7 +88,7 @@ describe("SuiteHeader", () => {
     expect(baseProps.onRerun).not.toHaveBeenCalled();
   });
 
-  it("shows replay latest run in overview for hosted CI suites", () => {
+  it("shows replay latest run in overview without hosted-mode gating", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}

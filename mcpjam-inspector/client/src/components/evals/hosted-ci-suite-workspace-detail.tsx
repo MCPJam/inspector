@@ -89,6 +89,14 @@ export function HostedCiSuiteWorkspaceDetail({
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
+  const latestRun = useMemo(() => {
+    if (!runs.length) return null;
+    return [...runs].sort((a, b) => {
+      const aTime = a.completedAt ?? a.createdAt ?? 0;
+      const bTime = b.completedAt ?? b.createdAt ?? 0;
+      return bTime - aTime;
+    })[0];
+  }, [runs]);
   const navigation = useMemo(
     () => ({
       toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") =>
@@ -141,11 +149,10 @@ export function HostedCiSuiteWorkspaceDetail({
           isGeneratingTests={isGeneratingTests}
           showingOverview={
             !selectedTestId &&
-            !(
-              route.type === "suite-overview" && route.view === "test-cases"
-            )
+            !(route.type === "suite-overview" && route.view === "test-cases")
           }
           suite={suite}
+          latestRun={latestRun}
           onRerun={onRerun}
           rerunningSuiteId={rerunningSuiteId}
           connectedServerNames={connectedServerNames}

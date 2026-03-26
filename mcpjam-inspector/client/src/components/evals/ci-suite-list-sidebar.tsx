@@ -3,6 +3,7 @@ import { Play } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import type { CommitGroup, EvalSuite, EvalSuiteOverviewEntry } from "./types";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 import {
   evalOverviewEntryLeftBorderClass,
   evalOverviewEntryMiniBarClass,
@@ -20,15 +21,6 @@ function useTick(intervalMs = 60_000) {
     const id = setInterval(() => setTick((t) => t + 1), intervalMs);
     return () => clearInterval(id);
   }, [intervalMs]);
-}
-
-function getMissingServers(
-  suite: EvalSuite,
-  connectedServerNames: Set<string> | undefined,
-): string[] {
-  const servers = suite.environment?.servers ?? [];
-  if (!connectedServerNames || servers.length === 0) return [];
-  return servers.filter((name) => !connectedServerNames.has(name));
 }
 
 function sameMissingServerSet(a: string[], b: string[]): boolean {
@@ -215,9 +207,14 @@ function SuiteGroupItem({
   const timestamp = formatRelativeTime(
     latestRun?.completedAt ?? latestRun?.createdAt ?? primary.suite.updatedAt,
   );
-  const primaryMissing = getMissingServers(primary.suite, connectedServerNames);
+  const primaryReplayEligibility = getSuiteReplayEligibility({
+    suiteServers: primary.suite.environment?.servers,
+    connectedServerNames,
+    latestRun,
+  });
+  const primaryMissing = primaryReplayEligibility.missingServers;
   const canRunPrimary =
-    primaryMissing.length === 0 &&
+    primaryReplayEligibility.canRunNow &&
     !(rerunningSuiteId === primary.suite._id) &&
     Boolean(onRerunSuite);
 
@@ -287,7 +284,11 @@ function SuiteGroupItem({
             {primary.suite.tags && primary.suite.tags.length > 0 && (
               <TagBadges tags={primary.suite.tags} className="mt-0.5" />
             )}
-            {primaryMissing.length > 0 ? (
+            {primaryReplayEligibility.canReplayFallback ? (
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                Will use saved replay config.
+              </p>
+            ) : primaryMissing.length > 0 ? (
               <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
                 Connect {primaryMissing.join(", ")} to run.
               </p>
@@ -326,16 +327,28 @@ function SuiteGroupItem({
                 entry.latestRun?.createdAt ??
                 entry.suite.updatedAt,
             );
-            const missing = getMissingServers(entry.suite, connectedServerNames);
+            const entryReplayEligibility = getSuiteReplayEligibility({
+              suiteServers: entry.suite.environment?.servers,
+              connectedServerNames,
+              latestRun: entry.latestRun,
+            });
+            const missing = entryReplayEligibility.missingServers;
             const redundantBlockedChild =
               primaryMissing.length > 0 &&
               missing.length > 0 &&
               sameMissingServerSet(missing, primaryMissing);
             const showChildConnectCopy =
-              missing.length > 0 && !redundantBlockedChild;
-            const showChildPlay = Boolean(onRerunSuite && !redundantBlockedChild);
+              missing.length > 0 &&
+              !entryReplayEligibility.canReplayFallback &&
+              !redundantBlockedChild;
+            const showChildReplayCopy =
+              entryReplayEligibility.canReplayFallback &&
+              !redundantBlockedChild;
+            const showChildPlay = Boolean(
+              onRerunSuite && !redundantBlockedChild,
+            );
             const canRunEntry =
-              missing.length === 0 &&
+              entryReplayEligibility.canRunNow &&
               !(rerunningSuiteId === entry.suite._id) &&
               Boolean(onRerunSuite);
 
@@ -376,6 +389,10 @@ function SuiteGroupItem({
                     {showChildConnectCopy ? (
                       <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
                         Connect {missing.join(", ")} to run.
+                      </p>
+                    ) : showChildReplayCopy ? (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        Will use saved replay config.
                       </p>
                     ) : null}
                   </div>
@@ -424,9 +441,14 @@ function SuiteEntryButton({
   onRerunSuite?: (suite: EvalSuite) => void;
   rerunningSuiteId?: string | null;
 }) {
-  const missing = getMissingServers(entry.suite, connectedServerNames);
+  const replayEligibility = getSuiteReplayEligibility({
+    suiteServers: entry.suite.environment?.servers,
+    connectedServerNames,
+    latestRun: entry.latestRun,
+  });
+  const missing = replayEligibility.missingServers;
   const canRun =
-    missing.length === 0 &&
+    replayEligibility.canRunNow &&
     !(rerunningSuiteId === entry.suite._id) &&
     Boolean(onRerunSuite);
 
@@ -463,7 +485,11 @@ function SuiteEntryButton({
           {entry.suite.tags && entry.suite.tags.length > 0 && (
             <TagBadges tags={entry.suite.tags} className="mt-0.5" />
           )}
-          {missing.length > 0 ? (
+          {replayEligibility.canReplayFallback ? (
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Will use saved replay config.
+            </p>
+          ) : missing.length > 0 ? (
             <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
               Connect {missing.join(", ")} to run.
             </p>
@@ -472,10 +498,7 @@ function SuiteEntryButton({
         </div>
       </div>
       <div className="flex shrink-0 items-end gap-1">
-        <PassRateTrendMini
-          rawTrend={passRateTrend}
-          rowKey={entry.suite._id}
-        />
+        <PassRateTrendMini rawTrend={passRateTrend} rowKey={entry.suite._id} />
         {onRerunSuite ? (
           <Button
             type="button"

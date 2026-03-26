@@ -1,5 +1,9 @@
 import { ConvexHttpClient } from "convex/browser";
-import { MCPClientManager, type HttpServerConfig } from "@mcpjam/sdk";
+import {
+  MCPClientManager,
+  type HttpServerConfig,
+  type MCPServerReplayConfig,
+} from "@mcpjam/sdk";
 import type { DiscoveredTool } from "../eval-agent.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import { logger } from "../../utils/logger";
@@ -9,15 +13,7 @@ const INSPECTOR_SERVICE_TOKEN_HEADER = "X-Inspector-Service-Token";
 export type ReplayConfig = {
   runId: string;
   suiteId: string;
-  servers: Array<{
-    serverId: string;
-    url: string;
-    preferSSE?: boolean;
-    accessToken?: string;
-    refreshToken?: string;
-    clientId?: string;
-    clientSecret?: string;
-  }>;
+  servers: MCPServerReplayConfig[];
 };
 
 export async function collectToolsForServers(
@@ -129,6 +125,59 @@ export async function fetchReplayConfig(
   }
 
   return body.replayConfig ?? null;
+}
+
+export async function storeReplayConfig(
+  runId: string,
+  serverReplayConfigs: MCPServerReplayConfig[],
+  userAuthToken: string,
+): Promise<void> {
+  const convexHttpUrl = requireConvexHttpUrl();
+  const inspectorServiceToken = process.env.INSPECTOR_SERVICE_TOKEN;
+  if (!inspectorServiceToken) {
+    throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, WEB_CALL_TIMEOUT_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(
+      `${convexHttpUrl}/internal/v1/evals/runs/store-replay-config`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${userAuthToken}`,
+          [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
+        },
+        body: JSON.stringify({ runId, serverReplayConfigs }),
+        signal: controller.signal,
+      },
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      throw new Error("Timed out storing replay config");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+
+  const body = (await response.json()) as {
+    ok?: boolean;
+    error?: string;
+  };
+
+  if (!response.ok || !body.ok) {
+    throw new Error(body.error || "Failed to store replay config");
+  }
 }
 
 export function buildReplayManager(replayConfig: ReplayConfig) {

@@ -12,10 +12,7 @@ import {
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { buildEvalsHash } from "@/lib/evals-router";
-import {
-  withTestingSurface,
-  type TestingSurface,
-} from "@/lib/testing-surface";
+import { withTestingSurface, type TestingSurface } from "@/lib/testing-surface";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
 import { useEvalMutations } from "./evals/use-eval-mutations";
@@ -156,12 +153,24 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   }, [visibleSuites, selectedSuiteId]);
 
   const selectedSuite = selectedSuiteEntry?.suite ?? null;
+  const latestRunBySuiteId = useMemo(
+    () =>
+      new Map(
+        visibleSuites.map((entry) => [
+          entry.suite._id,
+          entry.latestRun ?? null,
+        ]),
+      ),
+    [visibleSuites],
+  );
 
   const handlers = useEvalHandlers({
     mutations,
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    connectedServerNames,
+    latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
   });
 
@@ -380,9 +389,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                   No runs yet
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Switch to <span className="font-medium text-foreground">Explore</span>{" "}
-                  in the Testing header to create and save suites. Re-run a saved
-                  suite to see manual and CI-backed history here.
+                  Switch to{" "}
+                  <span className="font-medium text-foreground">Explore</span>{" "}
+                  in the Testing header to create and save suites. Re-run a
+                  saved suite to see manual and CI-backed history here.
                 </p>
               </div>
             </div>

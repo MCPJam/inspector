@@ -15,6 +15,7 @@ import {
   type CiEvalsRoute,
 } from "@/lib/ci-evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -24,7 +25,6 @@ import {
   getEvalApiEndpoints,
   runEvals,
 } from "@/lib/apis/evals-api";
-import { isHostedMode } from "@/lib/apis/mode-client";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -32,6 +32,8 @@ interface UseEvalHandlersProps {
   selectedSuiteId: string | null;
   selectedTestId: string | null;
   workspaceId?: string | null;
+  connectedServerNames?: Set<string>;
+  latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
    * When `ci-evals`, navigation after test-case mutations stays on CI evals
    * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
@@ -48,6 +50,8 @@ export function useEvalHandlers({
   selectedSuiteId,
   selectedTestId,
   workspaceId = null,
+  connectedServerNames,
+  latestRunBySuiteId,
   evalsNavigationContext = "evals",
 }: UseEvalHandlersProps) {
   const convex = useConvex();
@@ -192,7 +196,7 @@ export function useEvalHandlers({
 
       if (!run.hasServerReplayConfig) {
         toast.error(
-          "This CI run can't be replayed because it doesn't have stored credentials.",
+          "This CI run can't be replayed because it doesn't have stored replay config.",
         );
         return;
       }
@@ -290,15 +294,36 @@ export function useEvalHandlers({
     async (suite: EvalSuite) => {
       if (rerunningSuiteId) return;
 
-      const latestRun = selectedSuiteEntry?.latestRun;
+      const latestRun =
+        latestRunBySuiteId?.get(suite._id) ??
+        (selectedSuiteEntry?.suite._id === suite._id
+          ? selectedSuiteEntry.latestRun
+          : null);
+      const rerunEligibility = getSuiteReplayEligibility({
+        suiteServers: suite.environment?.servers,
+        connectedServerNames,
+        latestRun,
+      });
+
       if (
-        isHostedMode() &&
-        suite.source === "sdk" &&
-        latestRun?._id &&
-        latestRun.hasServerReplayConfig
+        rerunEligibility.canReplayFallback &&
+        rerunEligibility.replayableLatestRun?._id
       ) {
-        await handleReplayRun(suite, latestRun);
+        await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
         return;
+      }
+
+      if (!rerunEligibility.canRunLive) {
+        if (!rerunEligibility.hasServersConfigured) {
+          toast.error("No MCP servers are configured for this suite.");
+          return;
+        }
+        if (rerunEligibility.missingServers.length > 0) {
+          toast.error(
+            `Connect ${rerunEligibility.missingServers.join(", ")} to run this suite.`,
+          );
+          return;
+        }
       }
 
       const executionContext = await getSuiteExecutionContext(suite);
@@ -372,6 +397,8 @@ export function useEvalHandlers({
     [
       rerunningSuiteId,
       selectedSuiteEntry,
+      latestRunBySuiteId,
+      connectedServerNames,
       getAccessToken,
       workspaceId,
       getSuiteExecutionContext,

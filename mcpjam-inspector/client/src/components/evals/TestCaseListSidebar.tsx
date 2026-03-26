@@ -26,7 +26,8 @@ import {
 import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import type { EvalCase, EvalSuite } from "./types";
+import type { EvalCase, EvalSuite, EvalSuiteRun } from "./types";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -50,6 +51,7 @@ interface TestCaseListSidebarProps {
   selectedServer?: string;
   // Rerun props
   suite?: EvalSuite | null;
+  latestRun?: EvalSuiteRun | null;
   onRerun?: (suite: EvalSuite) => void;
   rerunningSuiteId?: string | null;
   connectedServerNames?: Set<string>;
@@ -78,6 +80,7 @@ export function TestCaseListSidebar({
   noServerSelected,
   selectedServer,
   suite,
+  latestRun,
   onRerun,
   rerunningSuiteId,
   connectedServerNames,
@@ -90,11 +93,13 @@ export function TestCaseListSidebar({
   showSelection = false,
 }: TestCaseListSidebarProps) {
   // Calculate rerun availability
-  const suiteServers = suite?.environment?.servers || [];
-  const missingServers = suiteServers.filter(
-    (server) => !connectedServerNames?.has(server),
-  );
-  const canRerun = missingServers.length === 0 && suite && onRerun;
+  const rerunEligibility = getSuiteReplayEligibility({
+    suiteServers: suite?.environment?.servers,
+    connectedServerNames,
+    latestRun,
+  });
+  const missingServers = rerunEligibility.missingServers;
+  const canRerun = rerunEligibility.canRunNow && suite && onRerun;
   const isRerunning = rerunningSuiteId === suite?._id;
   const handleNavigateToOverview = () => {
     if (suiteId) {
@@ -146,6 +151,7 @@ export function TestCaseListSidebar({
                 <Button
                   variant="ghost"
                   size="sm"
+                  aria-label="Run suite"
                   onClick={() => {
                     if (suite && onRerun) {
                       posthog.capture("rerun_suite_button_clicked", {
@@ -168,11 +174,13 @@ export function TestCaseListSidebar({
             <TooltipContent>
               {testCases.length === 0
                 ? "Add cases first"
-                : !canRerun && missingServers.length > 0
-                  ? `Connect the following servers: ${missingServers.join(", ")}`
-                  : isRerunning
-                    ? "Running..."
-                    : "Run all cases"}
+                : rerunEligibility.canReplayFallback
+                  ? "Run all cases using saved replay config"
+                  : !canRerun && missingServers.length > 0
+                    ? `Connect the following servers: ${missingServers.join(", ")}`
+                    : isRerunning
+                      ? "Running..."
+                      : "Run all cases"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -204,9 +212,7 @@ export function TestCaseListSidebar({
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              {isGeneratingTests
-                ? "Generating..."
-                : "Generate cases with AI"}
+              {isGeneratingTests ? "Generating..." : "Generate cases with AI"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -268,7 +274,9 @@ export function TestCaseListSidebar({
               const showGroupLabel =
                 groupCases.length > 1 ||
                 groupCases.some(
-                  (c) => getEvalCaseSidebarGroupKey(c.title || "") !== c.title?.trim(),
+                  (c) =>
+                    getEvalCaseSidebarGroupKey(c.title || "") !==
+                    c.title?.trim(),
                 );
 
               return (
@@ -283,8 +291,7 @@ export function TestCaseListSidebar({
                   ) : null}
                   {groupCases.map((testCase) => {
                     const isTestSelected = selectedTestId === testCase._id;
-                    const isTestDeleting =
-                      deletingTestCaseId === testCase._id;
+                    const isTestDeleting = deletingTestCaseId === testCase._id;
                     const isTestDuplicating =
                       duplicatingTestCaseId === testCase._id;
                     const isCaseChecked = selectedCaseIds.includes(
@@ -377,10 +384,7 @@ export function TestCaseListSidebar({
                             <DropdownMenuItem
                               onClick={(e) => {
                                 e.stopPropagation();
-                                onDeleteTestCase(
-                                  testCase._id,
-                                  testCase.title,
-                                );
+                                onDeleteTestCase(testCase._id, testCase.title);
                               }}
                               disabled={isTestDeleting}
                               variant="destructive"

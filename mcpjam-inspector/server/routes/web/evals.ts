@@ -7,7 +7,9 @@ import {
   createConvexClient,
   fetchReplayConfig,
   requireConvexHttpUrl,
+  storeReplayConfig,
 } from "../../services/evals/route-helpers.js";
+import { logger } from "../../utils/logger";
 import {
   handleRoute,
   parseWithSchema,
@@ -127,7 +129,7 @@ evals.post("/replay-run", async (c) =>
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "This run does not have stored replay credentials",
+        "This run does not have stored replay config",
       );
     }
 
@@ -141,17 +143,30 @@ evals.post("/replay-run", async (c) =>
     }
 
     const manager = buildReplayManager(replayConfig);
+    const replayServerIds = replayConfig.servers.map(
+      (server) => server.serverId,
+    );
     try {
       const { runId, recorder, config } = await startSuiteRunWithRecorder({
         convexClient,
         suiteId: replayMetadata.suiteId,
         notes: body.notes,
         passCriteria: body.passCriteria,
-        serverIds:
-          replayMetadata.environment?.servers ??
-          replayConfig.servers.map((server) => server.serverId),
+        serverIds: replayServerIds,
         replayedFromRunId: body.runId,
       });
+
+      if (replayConfig.servers.length > 0) {
+        try {
+          await storeReplayConfig(runId, replayConfig.servers, convexAuthToken);
+        } catch (error) {
+          logger.warn("[evals] Failed to store replay config for replay run", {
+            runId,
+            sourceRunId: body.runId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
 
       await runEvalSuiteWithAiSdk({
         suiteId: replayMetadata.suiteId,
