@@ -42,9 +42,8 @@ function getReplayConfigs(
     return undefined;
   }
 
-  const getServerReplayConfigs = (
-    source as ReplayConfigProvider
-  ).getServerReplayConfigs;
+  const getServerReplayConfigs = (source as ReplayConfigProvider)
+    .getServerReplayConfigs;
   if (typeof getServerReplayConfigs !== "function") {
     return undefined;
   }
