@@ -23,9 +23,8 @@ export function useAvailableEvalModels() {
     let cancelled = false;
 
     const checkOllama = async () => {
-      const { isRunning, availableModels } = await detectOllamaModels(
-        getOllamaBaseUrl(),
-      );
+      const { isRunning, availableModels } =
+        await detectOllamaModels(getOllamaBaseUrl());
 
       if (cancelled) {
         return;

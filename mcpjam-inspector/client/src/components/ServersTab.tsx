@@ -744,7 +744,9 @@ export function ServersTab({
         navigateToEvalSuite(createdSuite._id);
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to create eval suite",
+          error instanceof Error
+            ? error.message
+            : "Failed to create eval suite",
         );
       } finally {
         setCreatingEvalSuiteServerName(null);

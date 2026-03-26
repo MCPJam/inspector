@@ -168,7 +168,10 @@ evals.post("/run", async (c) =>
         query: string;
         runs: number;
         models: Array<{ model: string; provider: string }>;
-        expectedToolCalls: Array<{ toolName: string; arguments: Record<string, any> }>;
+        expectedToolCalls: Array<{
+          toolName: string;
+          arguments: Record<string, any>;
+        }>;
         isNegativeTest?: boolean;
         scenario?: string;
         advancedConfig?: Record<string, unknown>;
@@ -272,7 +275,11 @@ evals.post("/run", async (c) =>
       }
     }
 
-    const { runId, config: runConfig, recorder } = await startSuiteRunWithRecorder({
+    const {
+      runId,
+      config: runConfig,
+      recorder,
+    } = await startSuiteRunWithRecorder({
       convexClient,
       suiteId: resolvedSuiteId,
       notes,
@@ -296,35 +303,40 @@ evals.post("/run", async (c) =>
       success: true,
       suiteId: resolvedSuiteId,
       runId,
-      message: "Evals completed successfully. Check the CI Evals tab for results.",
+      message:
+        "Evals completed successfully. Check the CI Evals tab for results.",
     };
   }),
 );
 
 evals.post("/generate-tests", async (c) =>
-  withEphemeralConnection(c, generateTestsSchema, async (clientManager, body) => {
-    const convexAuthToken = assertBearerToken(c);
-    const filteredTools = await collectToolsForServers(
-      clientManager,
-      body.serverIds,
-    );
+  withEphemeralConnection(
+    c,
+    generateTestsSchema,
+    async (clientManager, body) => {
+      const convexAuthToken = assertBearerToken(c);
+      const filteredTools = await collectToolsForServers(
+        clientManager,
+        body.serverIds,
+      );
 
-    if (filteredTools.length === 0) {
-      throw new Error("No tools found for selected servers");
-    }
+      if (filteredTools.length === 0) {
+        throw new Error("No tools found for selected servers");
+      }
 
-    const convexHttpUrl = requireConvexHttpUrl();
-    const testCases = await generateTestCases(
-      filteredTools,
-      convexHttpUrl,
-      convexAuthToken,
-    );
+      const convexHttpUrl = requireConvexHttpUrl();
+      const testCases = await generateTestCases(
+        filteredTools,
+        convexHttpUrl,
+        convexAuthToken,
+      );
 
-    return {
-      success: true,
-      tests: testCases,
-    };
-  }),
+      return {
+        success: true,
+        tests: testCases,
+      };
+    },
+  ),
 );
 
 evals.post("/replay-run", async (c) =>

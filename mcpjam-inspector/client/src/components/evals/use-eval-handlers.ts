@@ -233,9 +233,12 @@ export function useEvalHandlers({
         });
       } catch (error) {
         console.error("Failed to replay evals:", error);
-        toast.error(getBillingErrorMessage(error, "Failed to replay eval run"), {
-          id: replayToastId,
-        });
+        toast.error(
+          getBillingErrorMessage(error, "Failed to replay eval run"),
+          {
+            id: replayToastId,
+          },
+        );
       } finally {
         setRerunningSuiteId(null);
       }

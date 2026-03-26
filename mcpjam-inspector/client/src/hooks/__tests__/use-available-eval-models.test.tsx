@@ -34,7 +34,8 @@ vi.mock("@/lib/ollama-utils", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: (...args: unknown[]) => mockBuildAvailableModels(...args),
+  buildAvailableModels: (...args: unknown[]) =>
+    mockBuildAvailableModels(...args),
 }));
 
 describe("useAvailableEvalModels", () => {

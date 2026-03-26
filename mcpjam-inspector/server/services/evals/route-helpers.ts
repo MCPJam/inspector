@@ -42,10 +42,13 @@ export async function collectToolsForServers(
           serverId,
         }));
       } catch (error) {
-        logger.warn(`[${logPrefix}] Failed to list tools for server ${serverId}`, {
-          serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          `[${logPrefix}] Failed to list tools for server ${serverId}`,
+          {
+            serverId,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
         return [] as DiscoveredTool[];
       }
     }),

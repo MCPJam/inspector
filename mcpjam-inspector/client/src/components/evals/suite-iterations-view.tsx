@@ -41,7 +41,8 @@ const defaultNavigation: SuiteNavigation = {
     navigateToEvalsRoute({ type: "test-detail", suiteId, testId, iteration }),
   toTestEdit: (suiteId, testId) =>
     navigateToEvalsRoute({ type: "test-edit", suiteId, testId }),
-  toSuiteEdit: (suiteId) => navigateToEvalsRoute({ type: "suite-edit", suiteId }),
+  toSuiteEdit: (suiteId) =>
+    navigateToEvalsRoute({ type: "suite-edit", suiteId }),
 };
 
 export function SuiteIterationsView({
@@ -331,11 +332,15 @@ export function SuiteIterationsView({
                     (name) => connectedServerNames.has(name),
                   )}
                   suiteName={suite.name}
-                  onNavigateToSuite={() => navigation.toSuiteOverview(suite._id)}
+                  onNavigateToSuite={() =>
+                    navigation.toSuiteOverview(suite._id)
+                  }
                   onBack={() =>
                     navigation.toSuiteOverview(suite._id, "test-cases")
                   }
-                  onViewRun={(runId) => navigation.toRunDetail(suite._id, runId)}
+                  onViewRun={(runId) =>
+                    navigation.toRunDetail(suite._id, runId)
+                  }
                 />
               );
             })()

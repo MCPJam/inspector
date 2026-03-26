@@ -239,7 +239,7 @@ function resolveHostedServerEntries(
       serverName:
         hostedApiContext.serverIdsByName[serverNameOrId] !== undefined
           ? serverNameOrId
-          : findHostedServerName(serverId) ?? serverNameOrId,
+          : (findHostedServerName(serverId) ?? serverNameOrId),
     });
   }
 

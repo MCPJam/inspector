@@ -3,7 +3,10 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { navigateToCiEvalsRoute, type CiEvalsRoute } from "@/lib/ci-evals-router";
+import {
+  navigateToCiEvalsRoute,
+  type CiEvalsRoute,
+} from "@/lib/ci-evals-router";
 import { SuiteIterationsView } from "./suite-iterations-view";
 import { TestCaseListSidebar } from "./TestCaseListSidebar";
 import type {
@@ -151,7 +154,11 @@ export function HostedCiSuiteWorkspaceDetail({
             userMap={userMap}
             navigation={{
               toSuiteOverview: (suiteId, view) =>
-                navigateToCiEvalsRoute({ type: "suite-overview", suiteId, view }),
+                navigateToCiEvalsRoute({
+                  type: "suite-overview",
+                  suiteId,
+                  view,
+                }),
               toRunDetail: (suiteId, runId, iteration) =>
                 navigateToCiEvalsRoute({
                   type: "run-detail",
