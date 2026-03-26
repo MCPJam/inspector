@@ -264,22 +264,22 @@ export function evalStatusLeftBorderClasses(result: string): string {
 }
 
 /**
- * Thin vertical strip / dot fills — parity with pre–#1602 suite list (`bg-emerald-500`,
- * `bg-destructive`, `bg-warning`).
+ * Thin vertical strip fills — same opacity/hue as {@link evalStatusLeftBorderClasses}
+ * (`bg-success/50`, `bg-red-500/50`, `bg-warning/50`) so nested rows match parent rails.
  */
 export function evalStatusMiniBarClasses(result: string): string {
   switch (result) {
     case RESULT_STATUS.PASSED:
-      return "bg-emerald-500";
+      return "bg-success/50";
     case RESULT_STATUS.FAILED:
-      return "bg-destructive";
+      return "bg-red-500/50";
     case RESULT_STATUS.PENDING:
     case "running":
-      return "bg-warning animate-pulse";
+      return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted-foreground/40";
     case "mixed":
-      return "bg-warning";
+      return "bg-warning/50";
     default:
       return "bg-muted-foreground/40";
   }
@@ -309,13 +309,36 @@ export function evalOverviewEntryMiniBarClass(
   const r = entry.latestRun;
   if (!r) return "bg-muted-foreground/25";
   if (r.status === "running" || r.status === "pending") {
-    return "bg-warning animate-pulse";
+    return "bg-warning/50 animate-pulse";
   }
   if (r.result === "passed") {
-    return "bg-emerald-500";
+    return "bg-success/50";
   }
-  if (r.result === "failed") return "bg-destructive";
+  if (r.result === "failed") return "bg-red-500/50";
   return "bg-muted-foreground/40";
+}
+
+/**
+ * Selected nested suite row — borders use the same `/50` rails as the parent
+ * {@link evalOverviewEntryLeftBorderClass}.
+ */
+export function evalOverviewEntrySelectedRowClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) {
+    return "bg-primary/10 border-r-2 border-r-primary";
+  }
+  if (r.status === "running" || r.status === "pending") {
+    return "bg-warning/10 border-r-2 border-r-warning/50";
+  }
+  if (r.result === "passed") {
+    return "bg-success/10 border-r-2 border-r-success/50";
+  }
+  if (r.result === "failed") {
+    return "bg-red-500/10 border-r-2 border-r-red-500/50";
+  }
+  return "bg-primary/10 border-r-2 border-r-primary";
 }
 
 export function evalOverviewEntryOutcomeTitle(

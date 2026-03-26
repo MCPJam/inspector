@@ -7,6 +7,7 @@ import {
   evalOverviewEntryLeftBorderClass,
   evalOverviewEntryMiniBarClass,
   evalOverviewEntryOutcomeTitle,
+  evalOverviewEntrySelectedRowClass,
 } from "./helpers";
 import { TagBadges } from "./tag-editor";
 import { CommitListSidebar } from "./commit-list-sidebar";
@@ -303,10 +304,10 @@ function SuiteGroupItem({
                   className={cn(
                     "w-1 rounded-sm",
                     value >= 80
-                      ? "bg-emerald-500/70"
+                      ? "bg-success/50"
                       : value >= 50
-                        ? "bg-amber-500/70"
-                        : "bg-destructive/70",
+                        ? "bg-warning/50"
+                        : "bg-red-500/50",
                   )}
                   style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
                 />
@@ -371,7 +372,7 @@ function SuiteGroupItem({
                   className={cn(
                     "min-w-0 flex-1 cursor-pointer py-1.5 pl-1 pr-3 text-left transition-colors hover:bg-accent/50",
                     selectedSuiteId === entry.suite._id &&
-                      "bg-primary/10 border-r-2 border-r-primary",
+                      evalOverviewEntrySelectedRowClass(entry),
                   )}
                 >
                   <div className="min-w-0">
@@ -485,10 +486,10 @@ function SuiteEntryButton({
                 className={cn(
                   "w-1 rounded-sm",
                   value >= 80
-                    ? "bg-emerald-500/70"
+                    ? "bg-success/50"
                     : value >= 50
-                      ? "bg-amber-500/70"
-                      : "bg-destructive/70",
+                      ? "bg-warning/50"
+                      : "bg-red-500/50",
                 )}
                 style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
               />
