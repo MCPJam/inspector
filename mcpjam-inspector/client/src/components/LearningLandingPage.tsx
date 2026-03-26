@@ -78,16 +78,16 @@ function ModuleRow({
         <Checkbox checked={completed} />
       </div>
       <span
-        className={`w-5 shrink-0 text-xs tabular-nums ${completed ? "text-muted-foreground/60" : "text-muted-foreground"}`}
+        className={`w-5 shrink-0 text-sm tabular-nums ${completed ? "text-muted-foreground/60" : "text-muted-foreground"}`}
       >
         {number}.
       </span>
       <span
-        className={`flex-1 text-sm ${completed ? "text-muted-foreground/60" : "text-foreground"}`}
+        className={`flex-1 text-base ${completed ? "text-muted-foreground/60" : "text-foreground"}`}
       >
         {concept.title}
       </span>
-      <span className="flex shrink-0 items-center gap-1 text-[11px] text-muted-foreground/70">
+      <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
         <Clock className="h-3 w-3" />~{concept.estimatedMinutes} min
       </span>
       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover:text-muted-foreground" />
@@ -126,16 +126,16 @@ function GroupSection({
             className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]:-rotate-90"
           />
           <div className="text-left">
-            <h3 className="text-xs font-semibold text-foreground">
+            <h3 className="text-sm font-semibold text-foreground">
               {group.title}
             </h3>
-            <p className="text-[11px] text-muted-foreground">
+            <p className="text-xs text-muted-foreground">
               {group.subtitle}
             </p>
           </div>
         </div>
         <span
-          className={`text-[11px] font-medium tabular-nums ${allDone ? "text-primary" : "text-muted-foreground"}`}
+          className={`text-xs font-medium tabular-nums ${allDone ? "text-primary" : "text-muted-foreground"}`}
         >
           {completedInGroup}/{total}
           {allDone && " \u2713"}
@@ -174,11 +174,11 @@ export function LearningLandingPage({
       {/* Header */}
       <div className="shrink-0 border-b">
         <div className={`py-3 ${LEARNING_LANDING_MAX}`}>
-          <h2 className="text-sm font-semibold">Learning</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <h2 className="text-base font-semibold">Learning</h2>
+          <p className="mt-0.5 text-sm text-muted-foreground">
             Learn MCP step by step
           </p>
-          <p className="mt-1.5 text-[11px] text-muted-foreground/90">
+          <p className="mt-1.5 text-xs text-muted-foreground/90">
             {TOTAL_TRACKS} tracks · {TOTAL_MODULES} lessons · ~
             {TOTAL_ESTIMATED_MINUTES} min total
           </p>
@@ -186,13 +186,13 @@ export function LearningLandingPage({
           {/* Overall progress */}
           <div className="mt-3 flex items-center gap-3">
             <Progress value={progressPercent} className="h-1.5 flex-1" />
-            <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+            <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
               {completionCount} of {TOTAL_MODULES} completed
             </span>
           </div>
           {completionCount === 0 ? (
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-              <p className="m-0 w-fit max-w-full text-[11px] leading-relaxed text-muted-foreground">
+              <p className="m-0 w-fit max-w-full text-xs leading-relaxed text-muted-foreground">
                 New here? Start with{" "}
                 <span className="font-medium text-foreground/90">
                   {FIRST_GROUP.title}
