@@ -455,8 +455,21 @@ describe("MCPClientManager refreshToken integration", () => {
       // Verify we can actually use the connection
       const result = await manager.listTools("oauth-server");
       expect(result.tools.length).toBe(MOCK_TOOLS.length);
+      expect(
+        (manager as any).clientStates.get("oauth-server").authProvider
+      ).toBeInstanceOf(RefreshTokenOAuthProvider);
+      expect(manager.getServerReplayConfigs()).toEqual([
+        expect.objectContaining({
+          serverId: "oauth-server",
+          url,
+          refreshToken: "rt_initial",
+          clientId: "test-client",
+        }),
+      ]);
+      expect(manager.getServerReplayConfigs()[0]?.accessToken).toBeUndefined();
 
       await manager.disconnectAllServers();
+      expect((manager as any).clientStates.get("oauth-server")).toBeUndefined();
     } finally {
       await stop();
     }
@@ -478,6 +491,7 @@ describe("MCPClientManager refreshToken integration", () => {
       });
 
       expect(manager.getConnectionStatus("oauth-rotate")).toBe("connected");
+      await manager.listTools("oauth-rotate");
 
       // Check that at least one token request was made with the original token
       const tokenReqs = getTokenRequests();
@@ -489,6 +503,15 @@ describe("MCPClientManager refreshToken integration", () => {
       if (tokenReqs.length >= 2) {
         expect(tokenReqs[1].refresh_token).toBe("rt_rotated");
       }
+      expect(manager.getServerReplayConfigs()).toEqual([
+        expect.objectContaining({
+          serverId: "oauth-rotate",
+          url,
+          refreshToken: "rt_rotated",
+          clientId: "test-client",
+        }),
+      ]);
+      expect(manager.getServerReplayConfigs()[0]?.accessToken).toBeUndefined();
 
       await manager.disconnectAllServers();
     } finally {

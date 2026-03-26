@@ -14,7 +14,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  */
 function mergeExtensionsMaps(
   base?: Record<string, unknown>,
-  override?: Record<string, unknown>,
+  override?: Record<string, unknown>
 ): Record<string, unknown> | undefined {
   if (!base && !override) {
     return undefined;
@@ -50,7 +50,7 @@ export function getDefaultClientCapabilities(): ClientCapabilityOptions {
 }
 
 export function normalizeClientCapabilities(
-  capabilities?: ClientCapabilityOptions,
+  capabilities?: ClientCapabilityOptions
 ): ClientCapabilityOptions {
   const normalized: ClientCapabilityOptions = {
     ...(capabilities ?? {}),
@@ -65,7 +65,7 @@ export function normalizeClientCapabilities(
 
 export function mergeClientCapabilities(
   base?: ClientCapabilityOptions,
-  overrides?: ClientCapabilityOptions,
+  overrides?: ClientCapabilityOptions
 ): ClientCapabilityOptions {
   const baseRecord = base as Record<string, unknown> | undefined;
   const overrideRecord = overrides as Record<string, unknown> | undefined;
@@ -87,7 +87,7 @@ export function mergeClientCapabilities(
       } else if (isPlainObject(baseRecord?.extensions)) {
         merged.extensions = mergeExtensionsMaps(
           baseRecord.extensions as Record<string, unknown>,
-          overExt,
+          overExt
         );
       } else {
         merged.extensions = { ...overExt };

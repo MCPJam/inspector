@@ -9,7 +9,8 @@ jest.mock("../src/model-factory", () => {
   const actual = jest.requireActual("../src/model-factory");
   return {
     ...actual,
-    createModelFromString: (...args: any[]) => mockCreateModelFromString(...args),
+    createModelFromString: (...args: any[]) =>
+      mockCreateModelFromString(...args),
   };
 });
 

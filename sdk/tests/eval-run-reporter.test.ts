@@ -90,6 +90,217 @@ describe("createEvalRunReporter", () => {
     ).toEqual([`${externalRunId}-3`]);
   });
 
+  it("forwards serverReplayConfigs when starting a chunked run", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "chunked-reporter",
+      serverReplayConfigs: [
+        {
+          serverId: "remote",
+          url: "https://example.com/mcp",
+          accessToken: "at_123",
+        },
+      ],
+    });
+
+    reporter.add({
+      caseTitle: "case-1",
+      passed: true,
+      trace: "x".repeat(1024 * 1024),
+    });
+    await reporter.flush();
+    await reporter.finalize();
+
+    const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "remote",
+        url: "https://example.com/mcp",
+        accessToken: "at_123",
+      },
+    ]);
+  });
+
+  it("resolves replay configs from agent for one-shot finalize", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "agent",
+          url: "https://agent.example.com/mcp",
+          accessToken: "at_agent",
+        },
+      ]),
+    };
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "one-shot-reporter",
+      agent,
+    });
+
+    reporter.add({ caseTitle: "case-1", passed: true });
+    await reporter.finalize();
+
+    expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    const reportBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(reportBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "agent",
+        url: "https://agent.example.com/mcp",
+        accessToken: "at_agent",
+      },
+    ]);
+  });
+
+  it("resolves replay configs from mcpClientManager when starting a chunked run", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "completed",
+          result: "passed",
+          summary: successSummary,
+        })
+      );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([]),
+    };
+    const mcpClientManager = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "manager",
+          url: "https://manager.example.com/mcp",
+          refreshToken: "rt_manager",
+          clientId: "cid_manager",
+        },
+      ]),
+    };
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "chunked-manager-replay",
+      agent,
+      mcpClientManager: mcpClientManager as any,
+    });
+
+    reporter.add({
+      caseTitle: "case-1",
+      passed: true,
+      trace: "x".repeat(1024 * 1024),
+    });
+    await reporter.flush();
+    await reporter.finalize();
+
+    expect(agent.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    expect(mcpClientManager.getServerReplayConfigs).toHaveBeenCalledTimes(1);
+    const startBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(startBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "manager",
+        url: "https://manager.example.com/mcp",
+        refreshToken: "rt_manager",
+        clientId: "cid_manager",
+      },
+    ]);
+  });
+
+  it("filters inferred replay configs by serverNames for reporter uploads", async () => {
+    const fetchMock = jest.fn().mockResolvedValue(
+      okResponse({
+        suiteId: "suite_1",
+        runId: "run_1",
+        status: "completed",
+        result: "passed",
+        summary: successSummary,
+      })
+    );
+    global.fetch = fetchMock as any;
+
+    const agent = {
+      getServerReplayConfigs: jest.fn().mockReturnValue([
+        {
+          serverId: "asana",
+          url: "https://asana.example.com/mcp",
+          accessToken: "at_asana",
+        },
+        {
+          serverId: "github",
+          url: "https://github.example.com/mcp",
+          accessToken: "at_github",
+        },
+      ]),
+    };
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "filtered-reporter",
+      serverNames: ["asana"],
+      agent,
+    });
+
+    reporter.add({ caseTitle: "case-1", passed: true });
+    await reporter.finalize();
+
+    const reportBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(reportBody.serverReplayConfigs).toEqual([
+      {
+        serverId: "asana",
+        url: "https://asana.example.com/mcp",
+        accessToken: "at_asana",
+      },
+    ]);
+  });
+
   describe("getAddedCount", () => {
     it("tracks total added results", () => {
       const reporter = createEvalRunReporter({
@@ -446,7 +657,9 @@ describe("createEvalRunReporter", () => {
             result: "pending",
           })
         )
-        .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }))
+        .mockResolvedValueOnce(
+          okResponse({ inserted: 1, skipped: 0, total: 1 })
+        )
         .mockResolvedValueOnce({
           ok: false,
           status: 404,

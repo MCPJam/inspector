@@ -157,7 +157,9 @@ describe("sdk sentry wrapper", () => {
     );
     __setSentryModuleLoaderForTests(loader);
 
-    await expect(captureException(new Error("ignored"))).resolves.toBeUndefined();
+    await expect(
+      captureException(new Error("ignored"))
+    ).resolves.toBeUndefined();
     await expect(
       addBreadcrumb({ category: "eval-reporting", message: "ignored" })
     ).resolves.toBeUndefined();

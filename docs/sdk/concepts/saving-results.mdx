@@ -20,6 +20,8 @@ export MCPJAM_API_KEY=mcpjam_...
 
 That's it — both `EvalTest` and `EvalSuite` will auto-save results when this key is available.
 
+`MCPJAM_API_KEY` enables result uploads. If your evals connect to an authenticated HTTP MCP server and you also want MCPJam to securely persist replay credentials for debugging and reruns, attach the connected `MCPClientManager` to your `TestAgent` or pass `agent` / `mcpClientManager` to the manual reporting APIs. The SDK will derive the replay config automatically; you do not need to build a second secret object yourself.
+
 ## Auto-Save from EvalTest
 
 When `MCPJAM_API_KEY` is set, `EvalTest.run()` automatically saves results:
@@ -31,6 +33,35 @@ await test.run(agent, {
     suiteName: "Addition Eval",
     passCriteria: { minimumPassRate: 90 },
   },
+});
+```
+
+For authenticated HTTP servers:
+
+```typescript
+import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  asana: {
+    url: process.env.MCP_SERVER_URL!,
+    refreshToken: process.env.MCP_REFRESH_TOKEN!,
+    clientId: process.env.MCP_CLIENT_ID!,
+    clientSecret: process.env.MCP_CLIENT_SECRET,
+  },
+});
+
+await manager.connectToServer("asana");
+
+const agent = new TestAgent({
+  tools: await manager.getTools(),
+  model: "openai/gpt-4o-mini",
+  apiKey: process.env.OPENAI_API_KEY!,
+  mcpClientManager: manager,
+});
+
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: { suiteName: "Asana Eval" },
 });
 ```
 
@@ -78,6 +109,7 @@ import {
 // 1) One-shot save (strict — throws on failure)
 await reportEvalResults({
   suiteName: "Nightly",
+  mcpClientManager: manager,
   results: [{ caseTitle: "healthcheck", passed: true }],
 });
 
@@ -88,7 +120,11 @@ const result = await reportEvalResultsSafely({
 });
 
 // 3) Incremental reporter (long-running processes)
-const reporter = createEvalRunReporter({ suiteName: "Incremental" });
+// Assumes `agent` was created with `mcpClientManager: manager`
+const reporter = createEvalRunReporter({
+  suiteName: "Incremental",
+  agent,
+});
 await reporter.record({ caseTitle: "step-1", passed: true });
 await reporter.record({ caseTitle: "step-2", passed: false, error: "timeout" });
 const output = await reporter.finalize();
@@ -100,6 +136,16 @@ await uploadEvalArtifact({
   artifact: junitXmlString,
 });
 ```
+
+`reportEvalResults()` and `createEvalRunReporter()` resolve replay credentials in this order:
+
+1. `serverReplayConfigs` if you pass it explicitly
+2. `agent.getServerReplayConfigs()`
+3. `mcpClientManager.getServerReplayConfigs()`
+
+Most users should pass `agent` or `mcpClientManager` and let the SDK derive replay credentials automatically. Use `serverReplayConfigs` only as an advanced override.
+
+When replay configs are inferred from `agent` or `mcpClientManager`, the SDK limits them to the `serverNames` you attach to the run when `serverNames` is provided.
 
 ## CI Metadata
 

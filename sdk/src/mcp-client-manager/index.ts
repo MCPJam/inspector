@@ -23,6 +23,7 @@ export type {
   ServerSummary,
   ManagedClientState,
 } from "./types.js";
+export type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 // Types - Handlers and callbacks
 export type {

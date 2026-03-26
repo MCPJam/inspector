@@ -80,8 +80,11 @@ const agent = new TestAgent({
   tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
+  mcpClientManager: manager,
 });
 ```
+
+If `MCPJAM_API_KEY` is set, attaching the connected `MCPClientManager` also lets MCPJam securely persist replay credentials for authenticated HTTP MCP servers during eval reporting.
 
 ## Step 4: Run Prompts
 
@@ -145,6 +148,7 @@ async function main() {
     tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
     apiKey: process.env.ANTHROPIC_API_KEY,
+    mcpClientManager: manager,
   });
 
   // Quick test

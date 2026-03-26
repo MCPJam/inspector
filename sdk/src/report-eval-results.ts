@@ -5,6 +5,7 @@ import type {
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 import { EvalReportingError } from "./errors.js";
+import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import { addBreadcrumb, captureEvalReportingFailure } from "./sentry.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -46,17 +47,23 @@ type EvalArtifactUploadUrlResponse = {
   uploadUrl: string;
 };
 
-function resolveApiKey(input: Pick<ReportEvalResultsInput, "apiKey">): string | undefined {
+function resolveApiKey(
+  input: Pick<ReportEvalResultsInput, "apiKey">
+): string | undefined {
   return input.apiKey ?? process.env.MCPJAM_API_KEY;
 }
 
-function resolveBaseUrl(input: Pick<ReportEvalResultsInput, "baseUrl">): string {
+function resolveBaseUrl(
+  input: Pick<ReportEvalResultsInput, "baseUrl">
+): string {
   return trimTrailingSlash(
     input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
   );
 }
 
-function getResultCount(results: ReportEvalResultsInput["results"]): number | undefined {
+function getResultCount(
+  results: ReportEvalResultsInput["results"]
+): number | undefined {
   return Array.isArray(results) ? results.length : undefined;
 }
 
@@ -471,6 +478,7 @@ function shouldUseOneShotUpload(
     suiteName: input.suiteName,
     suiteDescription: input.suiteDescription,
     serverNames: input.serverNames,
+    serverReplayConfigs: input.serverReplayConfigs,
     notes: input.notes,
     passCriteria: input.passCriteria,
     externalRunId: input.externalRunId,
@@ -496,6 +504,7 @@ async function reportEvalResultsInternal(
   const config = createRuntimeConfig(input);
   const uploadedResults = await uploadWidgetSnapshots(config, input.results);
   const externalRunId = input.externalRunId ?? generateExternalRunId();
+  const serverReplayConfigs = resolveServerReplayConfigs(input);
   const resultsWithIterationIds = withExternalIterationIds(
     uploadedResults,
     externalRunId
@@ -503,7 +512,12 @@ async function reportEvalResultsInternal(
 
   if (
     shouldUseOneShotUpload(
-      { ...input, externalRunId, results: resultsWithIterationIds },
+      {
+        ...input,
+        externalRunId,
+        serverReplayConfigs,
+        results: resultsWithIterationIds,
+      },
       config
     )
   ) {
@@ -514,6 +528,7 @@ async function reportEvalResultsInternal(
         suiteName: input.suiteName,
         suiteDescription: input.suiteDescription,
         serverNames: input.serverNames,
+        serverReplayConfigs,
         notes: input.notes,
         passCriteria: input.passCriteria,
         externalRunId,
@@ -530,6 +545,7 @@ async function reportEvalResultsInternal(
     suiteName: input.suiteName,
     suiteDescription: input.suiteDescription,
     serverNames: input.serverNames,
+    serverReplayConfigs,
     notes: input.notes,
     passCriteria: input.passCriteria,
     externalRunId,
