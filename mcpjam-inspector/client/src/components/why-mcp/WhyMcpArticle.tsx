@@ -21,8 +21,8 @@ export function WhyMcpArticle() {
       <Section step={1} title="Smart, But Stuck">
         <p className="text-base text-muted-foreground leading-relaxed">
           A model can explain how to check a database or create a Jira ticket,
-          but by itself it cannot actually do those things. It can think, but
-          it needs a connection to the outside world.
+          but by itself it cannot actually do those things. It can think, but it
+          needs a connection to the outside world.
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-base text-muted-foreground">
@@ -47,7 +47,9 @@ export function WhyMcpArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-base text-muted-foreground">
-          <li>You tell the model which tools exist and what inputs they take.</li>
+          <li>
+            You tell the model which tools exist and what inputs they take.
+          </li>
           <li>The model chooses a tool when it needs one.</li>
           <li>The app runs the tool and returns the output.</li>
         </ul>
@@ -113,7 +115,10 @@ export function WhyMcpArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-base text-muted-foreground">
           <li>MCP turns many custom integrations into one shared protocol.</li>
-          <li>It commonly runs over stdio for local servers or HTTP for remote ones.</li>
+          <li>
+            It commonly runs over stdio for local servers or HTTP for remote
+            ones.
+          </li>
           <li>The main pieces are host, client, and server.</li>
         </ul>
       </Section>
@@ -126,10 +131,12 @@ export function WhyMcpArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-base text-muted-foreground">
           <li>
-            <strong>Tools:</strong> actions like searching, creating, or sending.
+            <strong>Tools:</strong> actions like searching, creating, or
+            sending.
           </li>
           <li>
-            <strong>Resources:</strong> read-only data like files, docs, and schemas.
+            <strong>Resources:</strong> read-only data like files, docs, and
+            schemas.
           </li>
           <li>
             <strong>Prompts:</strong> reusable templates a user can choose.
@@ -150,8 +157,12 @@ export function WhyMcpArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-base text-muted-foreground">
           <li>Tool calling gives AI a way to act.</li>
-          <li>MCP gives apps a standard way to expose those actions and data.</li>
-          <li>That makes tool integrations easier to reuse and easier to govern.</li>
+          <li>
+            MCP gives apps a standard way to expose those actions and data.
+          </li>
+          <li>
+            That makes tool integrations easier to reuse and easier to govern.
+          </li>
         </ul>
 
         <div className="space-y-2">
@@ -169,8 +180,8 @@ export function WhyMcpArticle() {
 
       <ArticleOutro>
         Next up: open{" "}
-        <span className="font-medium text-foreground/70">What is MCP?</span>{" "}
-        to see the architecture one piece at a time.
+        <span className="font-medium text-foreground/70">What is MCP?</span> to
+        see the architecture one piece at a time.
       </ArticleOutro>
     </div>
   );

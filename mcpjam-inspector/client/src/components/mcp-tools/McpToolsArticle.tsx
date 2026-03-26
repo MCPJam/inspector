@@ -57,7 +57,10 @@ export function McpToolsArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>Text is the most common result type.</li>
-          <li>Images or other rich data are useful for charts, screenshots, or media.</li>
+          <li>
+            Images or other rich data are useful for charts, screenshots, or
+            media.
+          </li>
           <li>A tool result can also mark itself as an error.</li>
         </ul>
       </Section>
@@ -71,8 +74,14 @@ export function McpToolsArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>Bad requests use JSON-RPC errors.</li>
-          <li>Domain problems like “user not found” use normal tool results with <code>isError</code>.</li>
-          <li>Clear error messages help the model recover or ask better follow-ups.</li>
+          <li>
+            Domain problems like “user not found” use normal tool results with{" "}
+            <code>isError</code>.
+          </li>
+          <li>
+            Clear error messages help the model recover or ask better
+            follow-ups.
+          </li>
         </ul>
 
         <Aside>
