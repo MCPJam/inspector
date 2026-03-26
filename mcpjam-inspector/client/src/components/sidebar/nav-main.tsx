@@ -33,7 +33,6 @@ interface NavMainItem {
 }
 
 interface LearnMoreProps {
-  hasVisited: (tabId: string) => boolean;
   onExpand: (tabId: string, sourceRect?: DOMRect | null) => void;
 }
 
@@ -79,7 +78,8 @@ export function NavMain({
     if (!learnMore || !sidebarOpen) return false;
     if (shouldShowBubble(item)) return false;
     const tabId = item.url.replace("#", "");
-    return tabId in learnMoreContent && learnMore.hasVisited(tabId);
+    const entry = learnMoreContent[tabId];
+    return !!entry?.previewVideoUrl;
   };
 
   const wrapWithHoverCard = (item: NavMainItem, child: React.ReactNode) => {

@@ -13,12 +13,19 @@ vi.mock("@/components/ui/sidebar", () => ({
     void tooltip;
     return <button {...props}>{children}</button>;
   },
+  useSidebar: () => ({ open: true }),
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: any) => <div>{children}</div>,
   TooltipTrigger: ({ children }: any) => <>{children}</>,
   TooltipContent: ({ children }: any) => <div>{children}</div>,
+}));
+
+vi.mock("@/components/learn-more/LearnMoreHoverCard", () => ({
+  LearnMoreHoverCard: ({ tabId, children }: any) => (
+    <div data-testid={`learn-more-${tabId}`}>{children}</div>
+  ),
 }));
 
 import { NavMain } from "../nav-main";
@@ -72,5 +79,28 @@ describe("NavMain", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Servers" }));
     expect(onItemClick).toHaveBeenCalledWith("#servers");
+  });
+
+  it("only wraps tabs that have preview videos", () => {
+    render(
+      <NavMain
+        items={[
+          {
+            title: "Servers",
+            url: "#servers",
+            icon: FakeIcon,
+          },
+          {
+            title: "Chat",
+            url: "#chat-v2",
+            icon: FakeIcon,
+          },
+        ]}
+        learnMore={{ onExpand: vi.fn() }}
+      />,
+    );
+
+    expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
+    expect(screen.queryByTestId("learn-more-chat-v2")).not.toBeInTheDocument();
   });
 });

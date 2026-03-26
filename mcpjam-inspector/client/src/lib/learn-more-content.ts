@@ -2,128 +2,63 @@ export interface LearnMoreEntry {
   title: string;
   videoUrl: string;
   videoThumbnail?: string;
+  /** Short looping preview clip for the hover card (hosted externally, e.g. Convex storage) */
+  previewVideoUrl?: string;
   description: string;
+  /** Longer, high-level description for the expanded modal */
+  expandedDescription?: string;
   docsUrl: string;
 }
 
 export const learnMoreContent: Record<string, LearnMoreEntry> = {
+  workspaces: {
+    title: "Workspaces",
+    videoUrl: "https://www.youtube.com/embed/iVLr4B_HOp0",
+    videoThumbnail: "https://outstanding-fennec-304.convex.cloud/api/storage/76ac7303-6c9a-46c9-b84e-4556c9008d73",
+    previewVideoUrl: "https://outstanding-fennec-304.convex.cloud/api/storage/f103041b-954b-49e3-83fb-bbeabdeaca03",
+    description: "Organize your MCP servers into workspaces.",
+    expandedDescription:
+      "Each workspace saves its own set of MCP servers. Switch between workspaces with one click, connect multiple servers in each, and share any workspace with teammates so everyone works with the same configuration. Changes sync in real time, and credentials stay private — each member authenticates on their own.",
+    docsUrl: "https://docs.mcpjam.com/inspector/workspaces",
+  },
   servers: {
     title: "Servers",
-    videoUrl: "",
-    description:
-      "Connect and manage your MCP servers. Add servers via stdio, HTTP, or SSE transports and monitor their connection status.",
+    videoUrl: "https://www.youtube.com/embed/a5MKoPLTmXw",
+    videoThumbnail: "https://outstanding-fennec-304.convex.cloud/api/storage/303425d5-a6cd-4225-a6fc-bea4889e3643",
+    previewVideoUrl: "https://outstanding-fennec-304.convex.cloud/api/storage/f0f85991-19aa-423e-bbd8-757b466cabae",
+    description: "Connect and manage your MCP servers.",
+    expandedDescription:
+      "Connect to MCP servers using STDIO, SSE, or Streamable HTTP. Run multiple servers side by side, toggle them on or off, authenticate with OAuth when needed, and get a full overview of each server at a glance.",
     docsUrl: "https://docs.mcpjam.com/servers",
-  },
-  "chat-v2": {
-    title: "Chat",
-    videoUrl: "",
-    description:
-      "Chat with your MCP servers using AI. Test tool calls, explore capabilities, and interact with your servers in natural language.",
-    docsUrl: "https://docs.mcpjam.com/chat",
-  },
-  sandboxes: {
-    title: "Sandboxes",
-    videoUrl: "",
-    description:
-      "Run MCP servers in isolated cloud sandboxes. Test and share servers without local setup.",
-    docsUrl: "https://docs.mcpjam.com/sandboxes",
   },
   "app-builder": {
     title: "App Builder",
-    videoUrl: "",
-    description:
-      "Build interactive UI apps powered by your MCP servers. Create custom views and interfaces with the App Builder.",
+    videoUrl: "https://www.youtube.com/embed/kaCL0WdeNy0",
+    videoThumbnail: "https://outstanding-fennec-304.convex.cloud/api/storage/a3676a4d-7262-4560-830b-60a620266f01",
+    previewVideoUrl: "https://outstanding-fennec-304.convex.cloud/api/storage/bc3fd8aa-af57-4807-9f69-d184e1e4b397",
+    description: "Build and test ChatGPT apps and MCP apps locally.",
+    expandedDescription:
+      "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and host styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
     docsUrl: "https://docs.mcpjam.com/app-builder",
-  },
-  views: {
-    title: "Views",
-    videoUrl: "",
-    description:
-      "Browse and interact with MCP App views exposed by your connected servers. Views provide rich UI experiences on top of MCP.",
-    docsUrl: "https://docs.mcpjam.com/views",
-  },
-  "client-config": {
-    title: "Client Config",
-    videoUrl: "",
-    description:
-      "Configure client capabilities and settings for how the inspector communicates with your MCP servers.",
-    docsUrl: "https://docs.mcpjam.com/client-config",
-  },
-  evals: {
-    title: "Generate Evals",
-    videoUrl: "",
-    description:
-      "Generate evaluation suites for your MCP servers. Test tool reliability and response quality with automated evals.",
-    docsUrl: "https://docs.mcpjam.com/evals",
-  },
-  "ci-evals": {
-    title: "Evals CI/CD",
-    videoUrl: "",
-    description:
-      "Run MCP evaluations in your CI/CD pipeline. Catch regressions and ensure server quality before deploying.",
-    docsUrl: "https://docs.mcpjam.com/ci-evals",
   },
   skills: {
     title: "Skills",
-    videoUrl: "",
-    description:
-      "Explore and manage skills that extend your MCP server capabilities. Skills are reusable prompt templates for common tasks.",
+    videoUrl: "https://www.youtube.com/embed/kUdPwm6GJe8",
+    videoThumbnail: "https://outstanding-fennec-304.convex.cloud/api/storage/8b3243cc-a853-4839-b5e4-f7690d5e982c",
+    previewVideoUrl: "https://outstanding-fennec-304.convex.cloud/api/storage/673acc12-a14d-4ea7-878c-855185264e70",
+    description: "View, add, and manage your skills.",
+    expandedDescription:
+      "View your installed skills, upload new ones, and manage them all in one place. MCPJam discovers skills from your .claude/, .mcpjam/, and .agents/ directories automatically. Use them in the App Builder or Chat — skills load based on your prompt, or inject one directly with the / command.",
     docsUrl: "https://docs.mcpjam.com/skills",
-  },
-  learning: {
-    title: "Learning",
-    videoUrl: "",
-    description:
-      "Interactive walkthroughs and guides to help you understand MCP concepts, transports, and app development.",
-    docsUrl: "https://docs.mcpjam.com/learning",
   },
   "oauth-flow": {
     title: "OAuth Debugger",
-    videoUrl: "",
-    description:
-      "Debug and inspect OAuth flows for your MCP servers. Step through the authorization process and inspect tokens.",
+    videoUrl: "https://www.youtube.com/embed/tQSEnr4T5Qc",
+    videoThumbnail: "https://outstanding-fennec-304.convex.cloud/api/storage/f28b5b8c-afdf-4411-9d39-199fe20fbb6b",
+    previewVideoUrl: "https://outstanding-fennec-304.convex.cloud/api/storage/13f37b5c-82c6-4d4a-b0c1-0339543b6d11",
+    description: "Debug your MCP server's OAuth implementation visually.",
+    expandedDescription:
+      "A visual, step-by-step interface for testing your MCP server's OAuth implementation. Walk through every step of the handshake with a live sequence diagram, inspect every network request, and validate against multiple spec versions and registration methods (CIMD, DCR, or pre-registration).",
     docsUrl: "https://docs.mcpjam.com/oauth",
-  },
-  tools: {
-    title: "Tools",
-    videoUrl: "/tool-vid-march.mp4",
-    description:
-      "Browse, call, and test the tools exposed by your connected MCP servers. Inspect input schemas and view responses.",
-    docsUrl: "https://docs.mcpjam.com/inspector/tools-prompts-resources#tools",
-  },
-  resources: {
-    title: "Resources",
-    videoUrl: "",
-    description:
-      "Explore resources provided by your MCP servers. Resources expose data like files, database records, and API responses.",
-    docsUrl: "https://docs.mcpjam.com/resources",
-  },
-  prompts: {
-    title: "Prompts",
-    videoUrl: "",
-    description:
-      "View and test prompt templates from your MCP servers. Prompts are reusable templates that guide AI interactions.",
-    docsUrl: "https://docs.mcpjam.com/prompts",
-  },
-  tasks: {
-    title: "Tasks",
-    videoUrl: "",
-    description:
-      "Monitor and manage long-running tasks from your MCP servers. Track progress, view results, and cancel operations.",
-    docsUrl: "https://docs.mcpjam.com/tasks",
-  },
-  support: {
-    title: "Support",
-    videoUrl: "",
-    description:
-      "Get help with the MCP Inspector. Find documentation, report issues, and connect with the community.",
-    docsUrl: "https://docs.mcpjam.com/support",
-  },
-  settings: {
-    title: "Settings",
-    videoUrl: "",
-    description:
-      "Configure the MCP Inspector. Manage themes, AI providers, and application preferences.",
-    docsUrl: "https://docs.mcpjam.com/settings",
   },
 };

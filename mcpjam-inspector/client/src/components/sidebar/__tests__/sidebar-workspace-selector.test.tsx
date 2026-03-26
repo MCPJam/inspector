@@ -64,6 +64,12 @@ vi.mock("@/components/ui/tooltip", () => ({
   ),
 }));
 
+vi.mock("@/components/learn-more/LearnMoreHoverCard", () => ({
+  LearnMoreHoverCard: ({ tabId, children }: { tabId: string; children: ReactNode }) => (
+    <div data-testid={`learn-more-${tabId}`}>{children}</div>
+  ),
+}));
+
 describe("SidebarWorkspaceSelector", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -149,5 +155,31 @@ describe("SidebarWorkspaceSelector", () => {
     );
 
     expect(onDeleteWorkspace).toHaveBeenCalledWith("workspace-owner");
+  });
+
+  it("keeps the workspace trigger wrapped with learn more content", () => {
+    render(
+      <SidebarWorkspaceSelector
+        activeWorkspaceId="workspace-owner"
+        workspaces={{
+          "workspace-owner": {
+            id: "workspace-owner",
+            name: "Owner Workspace",
+            servers: {},
+            createdAt: new Date(),
+            updatedAt: new Date(),
+          },
+        }}
+        onSwitchWorkspace={vi.fn()}
+        onCreateWorkspace={vi.fn(async () => "workspace-created")}
+        onDeleteWorkspace={vi.fn()}
+        onLearnMoreExpand={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId("learn-more-workspaces")).toBeInTheDocument();
+    expect(screen.getByTestId("learn-more-workspaces")).toHaveTextContent(
+      "Owner Workspace",
+    );
   });
 });

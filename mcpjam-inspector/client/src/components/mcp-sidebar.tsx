@@ -333,6 +333,7 @@ export function MCPSidebar({
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -413,11 +414,6 @@ export function MCPSidebar({
       if (section === "skills") {
         posthog.capture("skills_tab_opened");
       }
-      // Auto-show learn more modal on first visit to a tab
-      if (learnMore.shouldAutoShowModal(section)) {
-        learnMore.openExpandedModal(section);
-        learnMore.markTabVisited(section);
-      }
       onNavigate(section);
     } else {
       window.open(url, "_blank");
@@ -497,6 +493,7 @@ export function MCPSidebar({
           onDeleteWorkspace={onDeleteWorkspace}
           isLoading={isLoadingWorkspaces}
           onNavigateToSettings={() => handleNavClick("#workspace-settings")}
+          onLearnMoreExpand={learnMoreEnabled ? learnMore.openExpandedModal : undefined}
         />
       </SidebarHeader>
       <SidebarContent>
@@ -511,10 +508,9 @@ export function MCPSidebar({
               appBuilderBubble={
                 section.id === "mcp-apps" ? appBuilderBubble : null
               }
-              learnMore={{
-                hasVisited: learnMore.hasVisitedTab,
+              learnMore={learnMoreEnabled ? {
                 onExpand: learnMore.openExpandedModal,
-              }}
+              } : null}
             />
             {/* Add subtle divider between sections (except after the last section) */}
             {sectionIndex < visibleNavigationSections.length - 1 && (
@@ -527,11 +523,13 @@ export function MCPSidebar({
         <SidebarUser activeOrganizationId={activeOrganizationId} />
       </SidebarFooter>
     </Sidebar>
-    <LearnMoreExpandedPanel
-      tabId={learnMore.expandedTabId}
-      sourceRect={learnMore.sourceRect}
-      onClose={learnMore.closeExpandedModal}
-    />
+    {learnMoreEnabled && (
+      <LearnMoreExpandedPanel
+        tabId={learnMore.expandedTabId}
+        sourceRect={learnMore.sourceRect}
+        onClose={learnMore.closeExpandedModal}
+      />
+    )}
   </>
   );
 }
