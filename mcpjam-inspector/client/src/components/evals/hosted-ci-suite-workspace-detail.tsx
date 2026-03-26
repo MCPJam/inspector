@@ -39,6 +39,7 @@ interface HostedCiSuiteWorkspaceDetailProps {
   onDuplicateTestCase: (testCaseId: string) => void;
   onGenerateTests: () => void;
   rerunningSuiteId: string | null;
+  replayingRunId: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
@@ -70,6 +71,7 @@ export function HostedCiSuiteWorkspaceDetail({
   onDuplicateTestCase,
   onGenerateTests,
   rerunningSuiteId,
+  replayingRunId,
   cancellingRunId,
   deletingSuiteId,
   deletingRunId,
@@ -83,7 +85,9 @@ export function HostedCiSuiteWorkspaceDetail({
       ? route.testId
       : null;
   const selectedTestIdForSidebar =
-    route.type === "test-edit" ? route.testId : null;
+    route.type === "test-detail" || route.type === "test-edit"
+      ? route.testId
+      : null;
 
   return (
     <ResizablePanelGroup direction="horizontal" className="flex h-full">
@@ -146,6 +150,7 @@ export function HostedCiSuiteWorkspaceDetail({
             onDirectDeleteRun={onDirectDeleteRun}
             connectedServerNames={connectedServerNames}
             rerunningSuiteId={rerunningSuiteId}
+            replayingRunId={replayingRunId}
             cancellingRunId={cancellingRunId}
             deletingSuiteId={deletingSuiteId}
             deletingRunId={deletingRunId}

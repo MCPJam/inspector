@@ -5,6 +5,10 @@ import {
   generateTestCases,
   type DiscoveredTool,
 } from "../../services/eval-agent";
+import {
+  convertToEvalTestCases,
+  generateNegativeTestCases,
+} from "../../services/negative-test-agent";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
 import {
@@ -334,6 +338,37 @@ evals.post("/generate-tests", async (c) =>
       return {
         success: true,
         tests: testCases,
+      };
+    },
+  ),
+);
+
+evals.post("/generate-negative-tests", async (c) =>
+  withEphemeralConnection(
+    c,
+    generateTestsSchema,
+    async (clientManager, body) => {
+      const convexAuthToken = assertBearerToken(c);
+      const filteredTools = await collectToolsForServers(
+        clientManager,
+        body.serverIds,
+      );
+
+      if (filteredTools.length === 0) {
+        throw new Error("No tools found for selected servers");
+      }
+
+      const convexHttpUrl = requireConvexHttpUrl();
+      const tests = await generateNegativeTestCases(
+        filteredTools,
+        convexHttpUrl,
+        convexAuthToken,
+      );
+
+      return {
+        success: true,
+        tests,
+        evalTests: convertToEvalTestCases(tests),
       };
     },
   ),

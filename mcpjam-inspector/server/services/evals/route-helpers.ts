@@ -86,9 +86,9 @@ export async function fetchReplayConfig(
     throw new Error("INSPECTOR_SERVICE_TOKEN is not set");
   }
 
-  const response = await fetch(
-    `${convexHttpUrl}/internal/v1/evals/runs/replay-config`,
-    {
+  let response: Response;
+  try {
+    response = await fetch(`${convexHttpUrl}/internal/v1/evals/runs/replay-config`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -96,8 +96,17 @@ export async function fetchReplayConfig(
         [INSPECTOR_SERVICE_TOKEN_HEADER]: inspectorServiceToken,
       },
       body: JSON.stringify({ runId }),
-    },
-  );
+      signal: AbortSignal.timeout(WEB_CALL_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.name === "TimeoutError" || error.name === "AbortError")
+    ) {
+      throw new Error("Timed out fetching replay config");
+    }
+    throw error;
+  }
 
   const body = (await response.json()) as {
     ok?: boolean;

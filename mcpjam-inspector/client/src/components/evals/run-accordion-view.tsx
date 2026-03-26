@@ -20,7 +20,7 @@ interface RunAccordionViewProps {
   allIterations: EvalIteration[];
   onRunClick: (runId: string) => void;
   onReplayRun?: (run: EvalSuiteRun) => void;
-  isReplayingRun?: boolean;
+  replayingRunId?: string | null;
   onTestCaseClick?: (testCaseId: string) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
@@ -39,7 +39,7 @@ export function RunAccordionView({
   allIterations,
   onRunClick,
   onReplayRun,
-  isReplayingRun = false,
+  replayingRunId = null,
   onTestCaseClick,
   userMap,
 }: RunAccordionViewProps) {
@@ -145,6 +145,7 @@ export function RunAccordionView({
         const timeAgo = timestamp ? formatTimeAgo(timestamp) : null;
 
         const creator = run.createdBy && userMap?.get(run.createdBy);
+        const isReplayingRun = replayingRunId === run._id;
 
         const showCiMetadata =
           !!run.ciMetadata?.branch ||

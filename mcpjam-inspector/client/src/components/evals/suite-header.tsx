@@ -54,6 +54,7 @@ interface SuiteHeaderProps {
   onViewModeChange: (mode: "overview") => void;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  replayingRunId?: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
@@ -82,6 +83,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onViewModeChange,
     connectedServerNames,
     rerunningSuiteId,
+    replayingRunId = null,
     cancellingRunId,
     runs = [],
     testCases = [],
@@ -246,6 +248,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     isHosted && latestRunForMetadata?.hasServerReplayConfig
       ? latestRunForMetadata
       : null;
+  const isReplayingLatestRun =
+    replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
 
   if (isEditMode) {
     return (
@@ -261,6 +265,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
               autoFocus
               className="px-4 py-2 text-xl font-bold border border-input rounded-lg focus:outline-none focus:ring-2 focus:ring-ring bg-background"
             />
+          ) : readOnlyConfig ? (
+            <h1 className="px-4 py-2 text-xl font-bold">{suite.name}</h1>
           ) : (
             <Button
               variant="ghost"
@@ -288,7 +294,10 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     const isRunInProgress =
       selectedRunDetails.status === "running" ||
       selectedRunDetails.status === "pending";
-    const showAsRunning = isRerunning || isRunInProgress;
+    const showAsRunning =
+      isRunInProgress ||
+      rerunningSuiteId === suite._id ||
+      replayingRunId === selectedRunDetails._id;
     const replayableSelectedRun =
       isHosted && selectedRunDetails.hasServerReplayConfig
         ? selectedRunDetails
@@ -646,15 +655,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   }
                   disabled={
                     replayableLatestRun
-                      ? isRerunning || !onReplayRun
+                      ? isReplayingLatestRun || !onReplayRun
                       : !canRerun || isRerunning
                   }
                   className="gap-2"
                 >
                   <RotateCw
-                    className={`h-4 w-4 ${isRerunning ? "animate-spin" : ""}`}
+                    className={`h-4 w-4 ${(replayableLatestRun ? isReplayingLatestRun : isRerunning) ? "animate-spin" : ""}`}
                   />
-                  {isRerunning
+                  {(replayableLatestRun ? isReplayingLatestRun : isRerunning)
                     ? replayableLatestRun
                       ? "Replaying..."
                       : "Running..."

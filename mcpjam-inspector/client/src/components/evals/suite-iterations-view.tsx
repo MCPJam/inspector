@@ -61,6 +61,7 @@ export function SuiteIterationsView({
   onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
+  replayingRunId,
   cancellingRunId,
   deletingSuiteId,
   deletingRunId,
@@ -84,6 +85,7 @@ export function SuiteIterationsView({
   onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  replayingRunId?: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
@@ -287,6 +289,7 @@ export function SuiteIterationsView({
           onViewModeChange={handleBackToOverview}
           connectedServerNames={connectedServerNames}
           rerunningSuiteId={rerunningSuiteId}
+          replayingRunId={replayingRunId}
           cancellingRunId={cancellingRunId}
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}

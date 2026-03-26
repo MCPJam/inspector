@@ -665,11 +665,19 @@ export function ServersTab({
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
-  const { serversRecord: sharedWorkspaceServersRecord } =
+  const {
+    serversRecord: sharedWorkspaceServersRecord,
+    isLoading: isSharedWorkspaceServersLoading,
+  } =
     useRemoteWorkspaceServers({
       workspaceId: sharedWorkspaceId ?? null,
       isAuthenticated,
     });
+  const isSuiteOverviewLoading =
+    Boolean(registryWorkspaceId) && isAuthenticated && suiteOverview === undefined;
+  const isEvalSuiteActionsLoading =
+    Boolean(sharedWorkspaceId) &&
+    (isSharedWorkspaceServersLoading || isSuiteOverviewLoading);
 
   const evalLinksByServerName = useMemo(() => {
     const entries = suiteOverview ?? [];
@@ -713,13 +721,20 @@ export function ServersTab({
 
   const handleCreateEvalSuite = useCallback(
     async (serverName: string) => {
-      if (!sharedWorkspaceId || creatingEvalSuiteServerName) {
+      if (
+        !sharedWorkspaceId ||
+        creatingEvalSuiteServerName ||
+        isEvalSuiteActionsLoading
+      ) {
         return;
       }
 
       setCreatingEvalSuiteServerName(serverName);
       try {
         const hostedServerId = sharedWorkspaceServersRecord[serverName]?._id;
+        if (!hostedServerId) {
+          throw new Error("Server details are still syncing. Try again in a moment.");
+        }
         const createdSuite = await createTestSuiteMutation({
           workspaceId: sharedWorkspaceId,
           name: serverName,
@@ -755,6 +770,7 @@ export function ServersTab({
     [
       createTestSuiteMutation,
       creatingEvalSuiteServerName,
+      isEvalSuiteActionsLoading,
       navigateToEvalSuite,
       sharedWorkspaceId,
       sharedWorkspaceServersRecord,
@@ -818,9 +834,23 @@ export function ServersTab({
     (serverName: string) => {
       const link = evalLinksByServerName[serverName];
       const isCreatingSuite = creatingEvalSuiteServerName === serverName;
+      const hostedServerId = sharedWorkspaceServersRecord[serverName]?._id;
 
       if (!link && !sharedWorkspaceId) {
         return null;
+      }
+
+      if (isEvalSuiteActionsLoading) {
+        return (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-[11px]"
+            disabled
+          >
+            Loading eval suite...
+          </Button>
+        );
       }
 
       return (
@@ -839,10 +869,14 @@ export function ServersTab({
               variant="outline"
               size="sm"
               className="h-7 px-2 text-[11px]"
-              disabled={isCreatingSuite}
+              disabled={isCreatingSuite || !hostedServerId}
               onClick={() => void handleCreateEvalSuite(serverName)}
             >
-              {isCreatingSuite ? "Creating..." : "Create eval suite"}
+              {isCreatingSuite
+                ? "Creating..."
+                : !hostedServerId
+                  ? "Syncing server..."
+                  : "Create eval suite"}
             </Button>
           ) : null}
         </>
@@ -852,8 +886,10 @@ export function ServersTab({
       creatingEvalSuiteServerName,
       evalLinksByServerName,
       handleCreateEvalSuite,
+      isEvalSuiteActionsLoading,
       navigateToEvalSuite,
       sharedWorkspaceId,
+      sharedWorkspaceServersRecord,
     ],
   );
 

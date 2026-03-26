@@ -31,6 +31,7 @@ interface CiSuiteDetailProps {
   onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  replayingRunId: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
@@ -54,6 +55,7 @@ export function CiSuiteDetail({
   onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
+  replayingRunId,
   cancellingRunId,
   deletingSuiteId,
   deletingRunId,
@@ -249,7 +251,21 @@ export function CiSuiteDetail({
               onReplayLatestRun={
                 onReplayRun ? (run) => onReplayRun(suite, run) : undefined
               }
-              isReplayingLatestRun={rerunningSuiteId === suite._id}
+              isReplayingLatestRun={
+                replayingRunId != null &&
+                runs.some(
+                  (run) => run._id === replayingRunId && run.hasServerReplayConfig,
+                ) &&
+                runs
+                  .filter(
+                    (run) => run.isActive !== false && run.hasServerReplayConfig,
+                  )
+                  .sort((a, b) => {
+                    const aTime = a.completedAt ?? a.createdAt ?? 0;
+                    const bTime = b.completedAt ?? b.createdAt ?? 0;
+                    return bTime - aTime;
+                  })[0]?._id === replayingRunId
+              }
             />
             <RunAccordionView
               suite={suite}
@@ -259,7 +275,7 @@ export function CiSuiteDetail({
               onReplayRun={
                 onReplayRun ? (run) => onReplayRun(suite, run) : undefined
               }
-              isReplayingRun={rerunningSuiteId === suite._id}
+              replayingRunId={replayingRunId}
               onTestCaseClick={(testCaseId) => {
                 navigateToCiEvalsRoute({
                   type: "test-detail",

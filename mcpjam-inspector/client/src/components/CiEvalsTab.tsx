@@ -107,6 +107,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     () => visibleSuites.filter((entry) => entry.suite.source === "sdk"),
     [visibleSuites],
   );
+  const hasVisibleSuites = visibleSuites.length > 0;
 
   const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
 
@@ -339,18 +340,19 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
         >
           {route.type === "commit-detail" && selectedCommitGroup ? (
             <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
-          ) : sdkSuites.length === 0 ? (
+          ) : !hasVisibleSuites ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center max-w-md mx-auto p-8">
                 <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
                   <GitBranch className="h-10 w-10 text-muted-foreground" />
                 </div>
                 <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  No CI runs yet
+                  {HOSTED_MODE ? "No eval suites yet" : "No CI runs yet"}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Report eval results from your SDK or CI pipeline to see runs
-                  here.
+                  {HOSTED_MODE
+                    ? "Create a suite from Servers or report eval results from your SDK to see runs here."
+                    : "Report eval results from your SDK or CI pipeline to see runs here."}
                 </p>
               </div>
             </div>
@@ -401,6 +403,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               onDuplicateTestCase={handleDuplicateTestCase}
               onGenerateTests={handleGenerateTests}
               rerunningSuiteId={handlers.rerunningSuiteId}
+              replayingRunId={handlers.replayingRunId}
               cancellingRunId={handlers.cancellingRunId}
               deletingSuiteId={deletingSuiteId}
               deletingRunId={deletingRunId}
@@ -429,6 +432,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 onDirectDeleteRun={handlers.directDeleteRun}
                 connectedServerNames={connectedServerNames}
                 rerunningSuiteId={handlers.rerunningSuiteId}
+                replayingRunId={handlers.replayingRunId}
                 cancellingRunId={handlers.cancellingRunId}
                 deletingSuiteId={deletingSuiteId}
                 deletingRunId={deletingRunId}

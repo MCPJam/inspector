@@ -44,6 +44,7 @@ export function useEvalHandlers({
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
+  const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
@@ -155,7 +156,7 @@ export function useEvalHandlers({
       run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
       options?: { minimumPassRate?: number },
     ) => {
-      if (rerunningSuiteId) return;
+      if (rerunningSuiteId || replayingRunId) return;
 
       if (!run.hasServerReplayConfig) {
         toast.error(
@@ -177,7 +178,7 @@ export function useEvalHandlers({
         100;
       const criteriaNote = `Replay of run ${run._id}. Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-      setRerunningSuiteId(suite._id);
+      setReplayingRunId(run._id);
       const replayToastId = toast.loading("Replaying run...");
 
       try {
@@ -240,11 +241,12 @@ export function useEvalHandlers({
           },
         );
       } finally {
-        setRerunningSuiteId(null);
+        setReplayingRunId(null);
       }
     },
     [
       rerunningSuiteId,
+      replayingRunId,
       selectedSuiteEntry,
       getSuiteExecutionContext,
       getAccessToken,
@@ -815,6 +817,7 @@ export function useEvalHandlers({
     handleGenerateTests,
     // States
     rerunningSuiteId,
+    replayingRunId,
     cancellingRunId,
     deletingSuiteId,
     suiteToDelete,

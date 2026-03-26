@@ -1,4 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@mcpjam/sdk", () => ({
+  MCPClientManager: class MCPClientManager {},
+}));
+
 import { fetchReplayConfig } from "../route-helpers";
 
 const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;

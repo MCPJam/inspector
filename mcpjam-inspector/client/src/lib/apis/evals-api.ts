@@ -12,7 +12,7 @@ export const EVALS_API_ENDPOINTS = {
   hosted: {
     run: "/api/web/evals/run",
     generateTests: "/api/web/evals/generate-tests",
-    generateNegativeTests: "/api/mcp/evals/generate-negative-tests",
+    generateNegativeTests: "/api/web/evals/generate-negative-tests",
     runTestCase: "/api/web/evals/run-test-case",
     replayRun: "/api/web/evals/replay-run",
   },
