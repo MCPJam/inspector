@@ -66,25 +66,25 @@ function StepSection({
       <div className="pl-5 space-y-5">
         {/* Step counter */}
         <div className="flex items-center gap-2">
-          <span className="text-[10px] text-muted-foreground font-mono">
+          <span className="text-xs text-muted-foreground font-mono">
             Step {index + 1}
           </span>
         </div>
 
         {/* Title */}
-        <h2 className="text-xl font-semibold tracking-tight text-foreground -mt-1">
+        <h2 className="text-2xl font-semibold tracking-tight text-foreground -mt-1">
           {guide.title}
         </h2>
 
         {/* Summary */}
-        <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
+        <p className="text-base text-muted-foreground leading-relaxed max-w-prose">
           {guide.summary}
         </p>
 
         {/* Analogy */}
         {guide.analogy && (
           <aside className="border-l-2 border-border pl-4">
-            <p className="text-[13px] text-foreground/80 leading-relaxed italic">
+            <p className="text-sm text-foreground/80 leading-relaxed italic">
               {guide.analogy}
             </p>
           </aside>
@@ -92,7 +92,7 @@ function StepSection({
 
         {/* Teachable moments */}
         {guide.teachableMoments.length > 0 && (
-          <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
+          <ul className="list-disc pl-5 space-y-1 text-base text-muted-foreground">
             {guide.teachableMoments.map((moment, i) => (
               <li key={i}>{moment}</li>
             ))}
@@ -106,7 +106,7 @@ function StepSection({
               {guide.examples.map((example, i) => (
                 <li
                   key={i}
-                  className="text-[12px] font-mono text-foreground/70 leading-relaxed"
+                  className="text-sm font-mono text-foreground/70 leading-relaxed"
                 >
                   {example}
                 </li>
@@ -118,7 +118,7 @@ function StepSection({
         {/* Tips */}
         {guide.tips.length > 0 && (
           <aside className="border-l-2 border-border pl-4">
-            <ul className="space-y-1 text-[13px] text-foreground/80 leading-relaxed">
+            <ul className="space-y-1 text-sm text-foreground/80 leading-relaxed">
               {guide.tips.map((tip, i) => (
                 <li key={i}>{tip}</li>
               ))}
@@ -185,14 +185,12 @@ export function WhatIsMcpGuide({
       {/* Hero */}
       <div className="px-8 pt-8 pb-4">
         <div className="space-y-3">
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">
+          <h1 className="text-3xl font-bold tracking-tight text-foreground">
             What is MCP?
           </h1>
-          <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
-            Explore the Model Context Protocol architecture — how host
-            applications, clients, servers, and resources connect to give AI
-            access to the world. Scroll to move through the guide and sync the
-            diagram, or use{" "}
+          <p className="text-base text-muted-foreground leading-relaxed max-w-prose">
+            Learn the main parts of MCP and how they help AI use tools and
+            data. Scroll to move through the guide and sync the diagram, or use{" "}
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to jump to the next step.
           </p>
@@ -213,8 +211,8 @@ export function WhatIsMcpGuide({
 
         {/* Outro */}
         <div className="pt-8 pb-4 text-center">
-          <p className="text-sm text-muted-foreground/60">
-            That&apos;s the MCP architecture overview. Use{" "}
+          <p className="text-base text-muted-foreground/60">
+            That&apos;s the basic MCP picture. Use{" "}
             <span className="font-medium text-foreground/70">Start over</span>{" "}
             in the header or click any node in the diagram to jump back.
           </p>

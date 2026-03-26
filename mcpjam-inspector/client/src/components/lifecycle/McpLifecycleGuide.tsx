@@ -244,9 +244,8 @@ export function McpLifecycleGuide({
             HTTP Connection Lifecycle
           </h1>
           <p className="text-sm text-muted-foreground leading-relaxed max-w-prose">
-            Walk through the five steps of an HTTP-based MCP connection — from
-            the initial handshake to normal operations and shutdown. Scroll to
-            move through the guide and sync the diagram, or use{" "}
+            Walk through the five main steps of an HTTP MCP connection. Scroll
+            to move through the guide and sync the diagram, or use{" "}
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to jump to the next step.
           </p>
