@@ -150,6 +150,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    evalsNavigationContext: "ci-evals",
   });
 
   const suiteAggregate = useMemo(() => {

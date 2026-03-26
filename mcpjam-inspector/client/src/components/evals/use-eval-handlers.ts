@@ -9,8 +9,8 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
-import { navigateToEvalsRoute } from "@/lib/evals-router";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import { navigateToEvalsRoute, type EvalsRoute } from "@/lib/evals-router";
+import { navigateToCiEvalsRoute, type CiEvalsRoute } from "@/lib/ci-evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
@@ -27,6 +27,11 @@ interface UseEvalHandlersProps {
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
   selectedSuiteId: string | null;
   selectedTestId: string | null;
+  /**
+   * When `ci-evals`, navigation after test-case mutations stays on CI evals
+   * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
+   */
+  evalsNavigationContext?: "evals" | "ci-evals";
 }
 
 /**
@@ -37,6 +42,7 @@ export function useEvalHandlers({
   selectedSuiteEntry,
   selectedSuiteId,
   selectedTestId,
+  evalsNavigationContext = "evals",
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -65,6 +71,26 @@ export function useEvalHandlers({
     title: string;
   } | null>(null);
   const [isGeneratingTests, setIsGeneratingTests] = useState(false);
+
+  const navigateAfterTestCaseMutation = useCallback(
+    (
+      route:
+        | { type: "test-detail"; suiteId: string; testId: string }
+        | { type: "test-edit"; suiteId: string; testId: string }
+        | {
+            type: "suite-overview";
+            suiteId: string;
+            view?: "runs" | "test-cases";
+          },
+    ) => {
+      if (evalsNavigationContext === "ci-evals") {
+        navigateToCiEvalsRoute(route as CiEvalsRoute);
+      } else {
+        navigateToEvalsRoute(route as EvalsRoute);
+      }
+    },
+    [evalsNavigationContext],
+  );
 
   // Query to get test cases for a suite
   const getTestCasesForRerun = useCallback(
@@ -564,7 +590,7 @@ export function useEvalHandlers({
         });
 
         // Navigate to the new test case
-        navigateToEvalsRoute({
+        navigateAfterTestCaseMutation({
           type: "test-detail",
           suiteId,
           testId: testCaseId,
@@ -581,7 +607,12 @@ export function useEvalHandlers({
         setIsCreatingTestCase(false);
       }
     },
-    [isCreatingTestCase, mutations.createTestCaseMutation, convex],
+    [
+      isCreatingTestCase,
+      mutations.createTestCaseMutation,
+      convex,
+      navigateAfterTestCaseMutation,
+    ],
   );
 
   // Handle delete test case - opens confirmation modal
@@ -607,10 +638,18 @@ export function useEvalHandlers({
 
       // If we're viewing this test case, navigate back to suite overview
       if (selectedTestId === testCaseToDelete.id && selectedSuiteId) {
-        navigateToEvalsRoute({
-          type: "suite-overview",
-          suiteId: selectedSuiteId,
-        });
+        navigateAfterTestCaseMutation(
+          evalsNavigationContext === "ci-evals"
+            ? {
+                type: "suite-overview",
+                suiteId: selectedSuiteId,
+                view: "test-cases",
+              }
+            : {
+                type: "suite-overview",
+                suiteId: selectedSuiteId,
+              },
+        );
       }
 
       setTestCaseToDelete(null);
@@ -626,6 +665,8 @@ export function useEvalHandlers({
     mutations.deleteTestCaseMutation,
     selectedTestId,
     selectedSuiteId,
+    evalsNavigationContext,
+    navigateAfterTestCaseMutation,
   ]);
 
   // Duplicate test case handler
@@ -655,7 +696,7 @@ export function useEvalHandlers({
 
         // Navigate to the new duplicated test case
         if (newTestCase && newTestCase._id) {
-          navigateToEvalsRoute({
+          navigateAfterTestCaseMutation({
             type: "test-edit",
             suiteId,
             testId: newTestCase._id,
@@ -673,7 +714,11 @@ export function useEvalHandlers({
         setDuplicatingTestCaseId(null);
       }
     },
-    [duplicatingTestCaseId, mutations.duplicateTestCaseMutation],
+    [
+      duplicatingTestCaseId,
+      mutations.duplicateTestCaseMutation,
+      navigateAfterTestCaseMutation,
+    ],
   );
 
   // Generate tests handler - calls API and creates test cases
