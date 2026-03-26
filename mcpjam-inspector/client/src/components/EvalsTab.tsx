@@ -39,7 +39,6 @@ import {
 } from "@/components/ui/dialog";
 import {
   buildEvalsHash,
-  navigateToEvalsRoute,
   useEvalsRoute,
   type EvalsRoute,
 } from "@/lib/evals-router";
@@ -617,11 +616,14 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
   const handleReviewFindings = useCallback(() => {
     if (!exploreSuite || !firstFindingCaseId) return;
-    navigateToEvalsRoute({
-      type: "test-detail",
-      suiteId: exploreSuite._id,
-      testId: firstFindingCaseId,
-    });
+    window.location.hash = withTestingSurface(
+      buildEvalsHash({
+        type: "test-edit",
+        suiteId: exploreSuite._id,
+        testId: firstFindingCaseId,
+      }),
+      "explore",
+    );
   }, [exploreSuite, firstFindingCaseId]);
 
   if (isLoading) {
@@ -699,14 +701,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     (isPreparingExplore ||
       (selectedServer && isServerConnected && !exploreSuite && queries.isOverviewLoading));
 
-  /** Full-width detail only; list + suite overview use split pane with TestCaseListSidebar. */
-  const exploreDetailOnly =
-    surface === "explore" &&
-    (route.type === "test-detail" ||
-      route.type === "test-edit" ||
-      route.type === "run-detail" ||
-      route.type === "suite-edit");
-
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {surface === "explore" ? (
@@ -726,70 +720,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
       {surface === "explore" ? (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {exploreDetailOnly ? (
-            !isServerConnected ? (
-              <div className="flex flex-1 items-center justify-center px-6 py-10">
-                <EmptyState
-                  icon={FlaskConical}
-                  title="Connect a server to start exploring"
-                  description="Testing starts from a connected server."
-                  className="h-auto"
-                />
-              </div>
-            ) : showExploreLoading ? (
-              <div className="flex flex-1 flex-col items-center justify-center px-6 py-10">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <p className="mt-4 text-sm text-muted-foreground">
-                  Preparing the Explore workspace for {selectedServer}...
-                </p>
-              </div>
-            ) : !exploreSuite ? (
-              <div className="flex flex-1 items-center justify-center px-6 py-10">
-                <EmptyState
-                  icon={FlaskConical}
-                  title="Explore is waiting on a connected server"
-                  description="Reconnect the server or pick another one from the header."
-                  className="h-auto"
-                />
-              </div>
-            ) : queries.isSuiteDetailsLoading ? (
-              <div className="flex flex-1 items-center justify-center">
-                <div className="text-center">
-                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-                  <p className="mt-4 text-sm text-muted-foreground">
-                    Loading cases...
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-6">
-                <SuiteIterationsView
-                  suite={exploreSuite}
-                  cases={exploreCases}
-                  iterations={activeIterations}
-                  allIterations={sortedIterations}
-                  runs={runsForSelectedSuite}
-                  runsLoading={queries.isSuiteRunsLoading}
-                  aggregate={suiteAggregate}
-                  onRerun={handlers.handleRerun}
-                  onCancelRun={handlers.handleCancelRun}
-                  onDelete={handlers.handleDelete}
-                  onDeleteRun={handlers.handleDeleteRun}
-                  onDirectDeleteRun={handlers.directDeleteRun}
-                  connectedServerNames={connectedServerNames}
-                  rerunningSuiteId={handlers.rerunningSuiteId}
-                  cancellingRunId={handlers.cancellingRunId}
-                  deletingSuiteId={handlers.deletingSuiteId}
-                  deletingRunId={handlers.deletingRunId}
-                  availableModels={availableModels}
-                  route={route}
-                  userMap={userMap}
-                  workspaceId={workspaceId}
-                  navigation={exploreNavigation}
-                />
-              </div>
-            )
-          ) : (
             <>
               <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-3 sm:px-6">
                 {handlers.isGeneratingTests && exploreSuite ? (
@@ -1014,16 +944,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                             "explore",
                           );
                         }}
-                        onSelectTestCase={(suiteId, testId) => {
-                          window.location.hash = withTestingSurface(
-                            buildEvalsHash({
-                              type: "test-detail",
-                              suiteId,
-                              testId,
-                            }),
-                            "explore",
-                          );
-                        }}
                       />
                     </ResizablePanel>
                     <ResizableHandle withHandle />
@@ -1073,7 +993,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                 )}
               </div>
             </>
-          )}
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto px-4 pb-6 pt-4 sm:px-6">
