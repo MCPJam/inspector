@@ -173,6 +173,7 @@ export function HostedCiSuiteWorkspaceDetail({
             runs={runs}
             runsLoading={runsLoading}
             aggregate={aggregate}
+            caseListInSidebar
             onRerun={onRerun}
             onReplayRun={onReplayRun}
             onCancelRun={onCancelRun}

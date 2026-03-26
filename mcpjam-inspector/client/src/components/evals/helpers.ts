@@ -322,23 +322,24 @@ export function evalOverviewEntryMiniBarClass(
  * Selected nested suite row — borders use the same `/50` rails as the parent
  * {@link evalOverviewEntryLeftBorderClass}.
  */
+/** Selected nested row: inset ring + tint so left status border stays the outcome rail. */
 export function evalOverviewEntrySelectedRowClass(
   entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) {
-    return "bg-primary/10 border-r-2 border-r-primary";
+    return "bg-primary/10 ring-2 ring-primary/35 ring-inset";
   }
   if (r.status === "running" || r.status === "pending") {
-    return "bg-warning/10 border-r-2 border-r-warning/50";
+    return "bg-warning/10 ring-2 ring-warning/40 ring-inset";
   }
   if (r.result === "passed") {
-    return "bg-success/10 border-r-2 border-r-success/50";
+    return "bg-success/10 ring-2 ring-success/40 ring-inset";
   }
   if (r.result === "failed") {
-    return "bg-red-500/10 border-r-2 border-r-red-500/50";
+    return "bg-red-500/10 ring-2 ring-red-500/35 ring-inset";
   }
-  return "bg-primary/10 border-r-2 border-r-primary";
+  return "bg-primary/10 ring-2 ring-primary/35 ring-inset";
 }
 
 export function evalOverviewEntryOutcomeTitle(
@@ -352,6 +353,68 @@ export function evalOverviewEntryOutcomeTitle(
   if (r.result === "passed") return "Last run passed";
   if (r.result === "failed") return "Last run failed";
   return `Last run: ${r.status}`;
+}
+
+/** Normalize API trend points (0–1 or 0–100) to 0–100 integers. */
+export function toPercentEvalTrend(value: number): number {
+  const normalized = value <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(100, Math.round(normalized)));
+}
+
+export const SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS = 12;
+
+/** When history is longer than this, show a “+N” badge with a tooltip of older points. */
+export const SUITE_PASS_RATE_TREND_BADGE_THRESHOLD = 16;
+
+export type SuitePassRateTrendDisplay = {
+  percents: number[];
+  olderHiddenCount: number;
+  showOlderRunsBadge: boolean;
+  summaryLabel: string;
+  olderPercentsTooltip: string | null;
+};
+
+/**
+ * Prepare pass-rate trend for sidebar sparklines: last N segments, optional overflow badge, summary text.
+ */
+export function formatSuitePassRateTrendForDisplay(
+  rawTrend: number[] | undefined | null,
+): SuitePassRateTrendDisplay | null {
+  if (!rawTrend?.length) return null;
+  const len = rawTrend.length;
+  const slice = rawTrend.slice(-SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS);
+  const percents = slice.map(toPercentEvalTrend);
+  const olderHiddenCount = Math.max(
+    0,
+    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS,
+  );
+  const showOlderRunsBadge = len > SUITE_PASS_RATE_TREND_BADGE_THRESHOLD;
+  let good = 0;
+  for (const p of percents) {
+    if (p >= 80) good += 1;
+  }
+  const worst = Math.min(...percents);
+  const summaryLabel =
+    percents.length >= 3
+      ? `${good}/${percents.length} ≥80% · min ${worst}%`
+      : "";
+  const olderSlice =
+    olderHiddenCount > 0
+      ? rawTrend
+          .slice(0, len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS)
+          .map(toPercentEvalTrend)
+      : [];
+  const olderPercentsTooltip =
+    olderSlice.length > 0
+      ? `Earlier runs (pass rate %): ${olderSlice.join(", ")}`
+      : null;
+  return {
+    percents,
+    olderHiddenCount,
+    showOlderRunsBadge,
+    summaryLabel,
+    olderPercentsTooltip,
+  };
 }
 
 /**

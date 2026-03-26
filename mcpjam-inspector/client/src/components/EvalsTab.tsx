@@ -777,6 +777,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                             runs={runsForSelectedSuite}
                             runsLoading={queries.isSuiteRunsLoading}
                             aggregate={suiteAggregate}
+                            caseListInSidebar
                             onRerun={handlers.handleRerun}
                             onCancelRun={handlers.handleCancelRun}
                             onDelete={handlers.handleDelete}

@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   Plus,
   MoreVertical,
@@ -26,6 +27,11 @@ import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { EvalCase, EvalSuite } from "./types";
+import {
+  formatCaseTitleForSidebar,
+  getEvalCaseSidebarGroupKey,
+  groupEvalCasesForSidebar,
+} from "./case-name-utils";
 
 interface TestCaseListSidebarProps {
   testCases: EvalCase[];
@@ -99,6 +105,11 @@ export function TestCaseListSidebar({
       navigateToEvalsRoute({ type: "suite-overview", suiteId });
     }
   };
+
+  const sidebarCaseGroups = useMemo(
+    () => groupEvalCasesForSidebar(testCases),
+    [testCases],
+  );
 
   if (noServerSelected) {
     return (
@@ -253,88 +264,135 @@ export function TestCaseListSidebar({
           </div>
         ) : (
           <div className="py-2">
-            {testCases.map((testCase) => {
-              const isTestSelected = selectedTestId === testCase._id;
-              const isTestDeleting = deletingTestCaseId === testCase._id;
-              const isTestDuplicating = duplicatingTestCaseId === testCase._id;
-              const isCaseChecked = selectedCaseIds.includes(testCase._id);
+            {sidebarCaseGroups.map(({ groupKey, cases: groupCases }) => {
+              const showGroupLabel =
+                groupCases.length > 1 ||
+                groupCases.some(
+                  (c) => getEvalCaseSidebarGroupKey(c.title || "") !== c.title?.trim(),
+                );
 
               return (
-                <div
-                  key={testCase._id}
-                  onClick={() => {
-                    if (suiteId) {
-                      if (onSelectTestCase) {
-                        onSelectTestCase(suiteId, testCase._id);
-                        return;
-                      }
-                      navigateToEvalsRoute({
-                        type: "test-edit",
-                        suiteId: suiteId,
-                        testId: testCase._id,
-                      });
-                    }
-                  }}
-                  className={cn(
-                    "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm hover:bg-accent/50 transition-colors cursor-pointer",
-                    isTestSelected && "bg-accent font-medium",
-                  )}
-                >
-                  {showSelection && (
-                    <Checkbox
-                      checked={isCaseChecked}
-                      onCheckedChange={(checked) => {
-                        onToggleSelection?.(testCase._id, checked === true);
-                      }}
-                      onClick={(e) => e.stopPropagation()}
-                      aria-label={`Select ${testCase.title}`}
-                    />
-                  )}
-                  <div className="flex-1 min-w-0 text-left flex items-center gap-1.5">
-                    <span className="truncate">{testCase.title}</span>
-                    {testCase.isNegativeTest && (
-                      <span
-                        className="text-[10px] text-orange-500 shrink-0"
-                        title="Negative case"
-                      >
-                        NEG
-                      </span>
-                    )}
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        onClick={(e) => e.stopPropagation()}
-                        className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
-                        aria-label="Case options"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDuplicateTestCase(testCase._id);
+                <div key={groupKey} className="mb-1">
+                  {showGroupLabel ? (
+                    <div
+                      className="px-4 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground truncate"
+                      title={groupKey}
+                    >
+                      {groupKey}
+                    </div>
+                  ) : null}
+                  {groupCases.map((testCase) => {
+                    const isTestSelected = selectedTestId === testCase._id;
+                    const isTestDeleting =
+                      deletingTestCaseId === testCase._id;
+                    const isTestDuplicating =
+                      duplicatingTestCaseId === testCase._id;
+                    const isCaseChecked = selectedCaseIds.includes(
+                      testCase._id,
+                    );
+                    const { line1, line2, fullTitle } =
+                      formatCaseTitleForSidebar(testCase.title || "");
+
+                    return (
+                      <div
+                        key={testCase._id}
+                        onClick={() => {
+                          if (suiteId) {
+                            if (onSelectTestCase) {
+                              onSelectTestCase(suiteId, testCase._id);
+                              return;
+                            }
+                            navigateToEvalsRoute({
+                              type: "test-edit",
+                              suiteId: suiteId,
+                              testId: testCase._id,
+                            });
+                          }
                         }}
-                        disabled={isTestDuplicating}
+                        className={cn(
+                          "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm hover:bg-accent/50 transition-colors cursor-pointer",
+                          isTestSelected && "bg-accent font-medium",
+                        )}
+                        title={fullTitle}
                       >
-                        <Copy className="h-4 w-4 mr-2 text-foreground" />
-                        {isTestDuplicating ? "Duplicating..." : "Duplicate"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteTestCase(testCase._id, testCase.title);
-                        }}
-                        disabled={isTestDeleting}
-                        variant="destructive"
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        {isTestDeleting ? "Deleting..." : "Delete"}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                        {showSelection && (
+                          <Checkbox
+                            checked={isCaseChecked}
+                            onCheckedChange={(checked) => {
+                              onToggleSelection?.(
+                                testCase._id,
+                                checked === true,
+                              );
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select ${fullTitle}`}
+                          />
+                        )}
+                        <div className="flex-1 min-w-0 text-left flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="truncate leading-tight">
+                              {line1}
+                            </span>
+                            {testCase.isNegativeTest && (
+                              <span
+                                className="text-[10px] text-orange-500 shrink-0"
+                                title="Negative case"
+                              >
+                                NEG
+                              </span>
+                            )}
+                          </div>
+                          {line2 ? (
+                            <span
+                              className="truncate text-[11px] text-muted-foreground leading-tight"
+                              title={fullTitle}
+                            >
+                              {line2}
+                            </span>
+                          ) : null}
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                              aria-label="Case options"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDuplicateTestCase(testCase._id);
+                              }}
+                              disabled={isTestDuplicating}
+                            >
+                              <Copy className="h-4 w-4 mr-2 text-foreground" />
+                              {isTestDuplicating
+                                ? "Duplicating..."
+                                : "Duplicate"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteTestCase(
+                                  testCase._id,
+                                  testCase.title,
+                                );
+                              }}
+                              disabled={isTestDeleting}
+                              variant="destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              {isTestDeleting ? "Deleting..." : "Delete"}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}

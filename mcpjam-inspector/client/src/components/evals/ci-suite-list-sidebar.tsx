@@ -9,6 +9,7 @@ import {
   evalOverviewEntryOutcomeTitle,
   evalOverviewEntrySelectedRowClass,
 } from "./helpers";
+import { PassRateTrendMini } from "./pass-rate-trend-mini";
 import { TagBadges } from "./tag-editor";
 import { CommitListSidebar } from "./commit-list-sidebar";
 
@@ -30,6 +31,13 @@ function getMissingServers(
   return servers.filter((name) => !connectedServerNames.has(name));
 }
 
+function sameMissingServerSet(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((v, i) => v === sortedB[i]);
+}
+
 export type SidebarMode = "suites" | "runs";
 
 interface CiSuiteListSidebarProps {
@@ -45,11 +53,6 @@ interface CiSuiteListSidebarProps {
   connectedServerNames?: Set<string>;
   onRerunSuite?: (suite: EvalSuite) => void;
   rerunningSuiteId?: string | null;
-}
-
-function toPercent(value: number): number {
-  const normalized = value <= 1 ? value * 100 : value;
-  return Math.max(0, Math.min(100, Math.round(normalized)));
 }
 
 function formatRelativeTime(timestamp?: number): string {
@@ -209,9 +212,6 @@ function SuiteGroupItem({
   const [expanded, setExpanded] = useState(false);
 
   const latestRun = primary.latestRun;
-  const trend = primary.passRateTrend
-    .slice(-12)
-    .map((value) => toPercent(value));
   const timestamp = formatRelativeTime(
     latestRun?.completedAt ?? latestRun?.createdAt ?? primary.suite.updatedAt,
   );
@@ -228,7 +228,7 @@ function SuiteGroupItem({
         entry={primary}
         isSelected={selectedSuiteId === primary.suite._id}
         onSelect={() => onSelectSuite(primary.suite._id)}
-        trend={trend}
+        passRateTrend={primary.passRateTrend}
         timestamp={timestamp}
         connectedServerNames={connectedServerNames}
         onRerunSuite={onRerunSuite}
@@ -296,24 +296,10 @@ function SuiteGroupItem({
           </div>
         </div>
         <div className="flex shrink-0 items-end gap-1">
-          {trend.length >= 3 && (
-            <div className="flex h-5 shrink-0 items-end gap-px">
-              {trend.map((value, idx) => (
-                <div
-                  key={`${primary.suite._id}-t-${idx}`}
-                  className={cn(
-                    "w-1 rounded-sm",
-                    value >= 80
-                      ? "bg-success/50"
-                      : value >= 50
-                        ? "bg-warning/50"
-                        : "bg-red-500/50",
-                  )}
-                  style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
-                />
-              ))}
-            </div>
-          )}
+          <PassRateTrendMini
+            rawTrend={primary.passRateTrend}
+            rowKey={primary.suite._id}
+          />
           {onRerunSuite ? (
             <Button
               type="button"
@@ -341,6 +327,13 @@ function SuiteGroupItem({
                 entry.suite.updatedAt,
             );
             const missing = getMissingServers(entry.suite, connectedServerNames);
+            const redundantBlockedChild =
+              primaryMissing.length > 0 &&
+              missing.length > 0 &&
+              sameMissingServerSet(missing, primaryMissing);
+            const showChildConnectCopy =
+              missing.length > 0 && !redundantBlockedChild;
+            const showChildPlay = Boolean(onRerunSuite && !redundantBlockedChild);
             const canRunEntry =
               missing.length === 0 &&
               !(rerunningSuiteId === entry.suite._id) &&
@@ -373,20 +366,21 @@ function SuiteGroupItem({
                     "min-w-0 flex-1 cursor-pointer py-1.5 pl-1 pr-3 text-left transition-colors hover:bg-accent/50",
                     selectedSuiteId === entry.suite._id &&
                       evalOverviewEntrySelectedRowClass(entry),
+                    redundantBlockedChild && "opacity-90",
                   )}
                 >
                   <div className="min-w-0">
                     <div className="text-[11px] text-muted-foreground truncate">
                       {entryTimestamp}
                     </div>
-                    {missing.length > 0 ? (
+                    {showChildConnectCopy ? (
                       <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
                         Connect {missing.join(", ")} to run.
                       </p>
                     ) : null}
                   </div>
                 </div>
-                {onRerunSuite ? (
+                {showChildPlay ? (
                   <Button
                     type="button"
                     variant="ghost"
@@ -415,7 +409,7 @@ function SuiteEntryButton({
   entry,
   isSelected,
   onSelect,
-  trend,
+  passRateTrend,
   timestamp,
   connectedServerNames,
   onRerunSuite,
@@ -424,7 +418,7 @@ function SuiteEntryButton({
   entry: EvalSuiteOverviewEntry;
   isSelected: boolean;
   onSelect: () => void;
-  trend: number[];
+  passRateTrend: number[];
   timestamp: string;
   connectedServerNames?: Set<string>;
   onRerunSuite?: (suite: EvalSuite) => void;
@@ -478,24 +472,10 @@ function SuiteEntryButton({
         </div>
       </div>
       <div className="flex shrink-0 items-end gap-1">
-        {trend.length >= 3 && (
-          <div className="flex h-5 shrink-0 items-end gap-px">
-            {trend.map((value, idx) => (
-              <div
-                key={`${entry.suite._id}-t-${idx}`}
-                className={cn(
-                  "w-1 rounded-sm",
-                  value >= 80
-                    ? "bg-success/50"
-                    : value >= 50
-                      ? "bg-warning/50"
-                      : "bg-red-500/50",
-                )}
-                style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
-              />
-            ))}
-          </div>
-        )}
+        <PassRateTrendMini
+          rawTrend={passRateTrend}
+          rowKey={entry.suite._id}
+        />
         {onRerunSuite ? (
           <Button
             type="button"

@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect, useCallback } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { SuiteHeader } from "./suite-header";
+import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
 import { SuiteTestsConfig } from "./suite-tests-config";
@@ -21,6 +22,7 @@ import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { Button } from "@/components/ui/button";
 
 type SuiteRoute = EvalsRoute | CiEvalsRoute;
 
@@ -71,6 +73,7 @@ export function SuiteIterationsView({
   workspaceId = null,
   navigation = defaultNavigation,
   onSetupCi,
+  caseListInSidebar = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -97,6 +100,8 @@ export function SuiteIterationsView({
   workspaceId?: string | null;
   navigation?: SuiteNavigation;
   onSetupCi?: () => void;
+  /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
+  caseListInSidebar?: boolean;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -276,6 +281,25 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
+  const isReplayingLatestRun = useMemo(
+    () =>
+      replayingRunId != null &&
+      runs.some(
+        (run) =>
+          run._id === replayingRunId && run.hasServerReplayConfig,
+      ) &&
+      runs
+        .filter(
+          (run) => run.isActive !== false && run.hasServerReplayConfig,
+        )
+        .sort((a, b) => {
+          const aTime = a.completedAt ?? a.createdAt ?? 0;
+          const bTime = b.completedAt ?? b.createdAt ?? 0;
+          return bTime - aTime;
+        })[0]?._id === replayingRunId,
+    [replayingRunId, runs],
+  );
+
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
@@ -354,7 +378,7 @@ export function SuiteIterationsView({
               );
             })()
           ) : viewMode === "overview" ? (
-            <div key={runsViewMode} className="space-y-4">
+            <div key={runsViewMode} className="space-y-4 overflow-y-auto p-0.5">
               {runsViewMode === "runs" ? (
                 <RunOverview
                   suite={suite}
@@ -371,6 +395,39 @@ export function SuiteIterationsView({
                   }
                   userMap={userMap}
                 />
+              ) : caseListInSidebar ? (
+                <div className="space-y-4">
+                  <SuiteHeroStats
+                    runs={runs}
+                    allIterations={allIterations}
+                    runTrendData={runTrendData}
+                    modelStats={modelStats}
+                    testCaseCount={cases.length}
+                    isSDK={suite.source === "sdk"}
+                    onRunClick={handleRunClick}
+                    onReplayLatestRun={
+                      onReplayRun ? (run) => onReplayRun(suite, run) : undefined
+                    }
+                    isReplayingLatestRun={isReplayingLatestRun}
+                  />
+                  <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
+                    <p>
+                      Select a case from the list on the left to view its
+                      history and performance.
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-4"
+                      onClick={() =>
+                        navigation.toSuiteOverview(suite._id, "runs")
+                      }
+                    >
+                      View runs table
+                    </Button>
+                  </div>
+                </div>
               ) : (
                 <TestCasesOverview
                   suite={suite}
