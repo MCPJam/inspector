@@ -262,6 +262,7 @@ export const startSuiteRunWithRecorder = async ({
   notes,
   passCriteria,
   serverIds,
+  replayedFromRunId,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -270,6 +271,7 @@ export const startSuiteRunWithRecorder = async ({
     minimumPassRate: number;
   };
   serverIds?: string[];
+  replayedFromRunId?: string;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -277,6 +279,7 @@ export const startSuiteRunWithRecorder = async ({
       suiteId,
       notes,
       passCriteria,
+      replayedFromRunId,
     },
   );
 
@@ -300,19 +303,39 @@ export const startSuiteRunWithRecorder = async ({
 
   // Build config from test cases for backward compatibility
   const config = {
-    tests: testCases.flatMap((tc: any) =>
-      (tc.models || []).map((model: any) => ({
-        title: tc.title,
-        query: tc.query,
-        model: model.model,
-        provider: model.provider,
-        runs: tc.runs || 1,
-        expectedToolCalls: tc.expectedToolCalls || [],
-        isNegativeTest: tc.isNegativeTest,
-        advancedConfig: tc.advancedConfig,
-        testCaseId: tc._id,
-      })),
-    ),
+    tests: testCases.flatMap((tc: any) => {
+      if (Array.isArray(tc.models) && tc.models.length > 0) {
+        return tc.models.map((model: any) => ({
+          title: tc.title,
+          query: tc.query,
+          model: model.model,
+          provider: model.provider,
+          runs: tc.runs || 1,
+          expectedToolCalls: tc.expectedToolCalls || [],
+          isNegativeTest: tc.isNegativeTest,
+          advancedConfig: tc.advancedConfig,
+          testCaseId: tc._id,
+        }));
+      }
+
+      if (tc.model && tc.provider) {
+        return [
+          {
+            title: tc.title,
+            query: tc.query,
+            model: tc.model,
+            provider: tc.provider,
+            runs: tc.runs || 1,
+            expectedToolCalls: tc.expectedToolCalls || [],
+            isNegativeTest: tc.isNegativeTest,
+            advancedConfig: tc.advancedConfig,
+            testCaseId: tc.testCaseId ?? tc._id,
+          },
+        ];
+      }
+
+      return [];
+    }),
     environment: { servers: serverIds || [] },
   };
 

@@ -46,6 +46,8 @@ interface TestCaseListSidebarProps {
   onRerun?: (suite: EvalSuite) => void;
   rerunningSuiteId?: string | null;
   connectedServerNames?: Set<string>;
+  onNavigateToOverview?: (suiteId: string) => void;
+  onSelectTestCase?: (suiteId: string, testCaseId: string) => void;
 }
 
 export function TestCaseListSidebar({
@@ -67,6 +69,8 @@ export function TestCaseListSidebar({
   onRerun,
   rerunningSuiteId,
   connectedServerNames,
+  onNavigateToOverview,
+  onSelectTestCase,
 }: TestCaseListSidebarProps) {
   // Calculate rerun availability
   const suiteServers = suite?.environment?.servers || [];
@@ -77,6 +81,10 @@ export function TestCaseListSidebar({
   const isRerunning = rerunningSuiteId === suite?._id;
   const handleNavigateToOverview = () => {
     if (suiteId) {
+      if (onNavigateToOverview) {
+        onNavigateToOverview(suiteId);
+        return;
+      }
       navigateToEvalsRoute({ type: "suite-overview", suiteId });
     }
   };
@@ -244,6 +252,10 @@ export function TestCaseListSidebar({
                   key={testCase._id}
                   onClick={() => {
                     if (suiteId) {
+                      if (onSelectTestCase) {
+                        onSelectTestCase(suiteId, testCase._id);
+                        return;
+                      }
                       navigateToEvalsRoute({
                         type: "test-edit",
                         suiteId: suiteId,

@@ -1,5 +1,7 @@
 import { useMemo } from "react";
+import { RotateCw } from "lucide-react";
 import { ChartContainer } from "@/components/ui/chart";
+import { Button } from "@/components/ui/button";
 import { Area, AreaChart } from "recharts";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -23,6 +25,8 @@ interface SuiteHeroStatsProps {
   testCaseCount: number;
   isSDK: boolean;
   onRunClick?: (runId: string) => void;
+  onReplayLatestRun?: (run: EvalSuiteRun) => void;
+  isReplayingLatestRun?: boolean;
 }
 
 export function SuiteHeroStats({
@@ -33,6 +37,8 @@ export function SuiteHeroStats({
   testCaseCount,
   isSDK,
   onRunClick,
+  onReplayLatestRun,
+  isReplayingLatestRun = false,
 }: SuiteHeroStatsProps) {
   const stats = useMemo(() => {
     const activeRuns = runs.filter((run) => run.isActive !== false);
@@ -132,6 +138,13 @@ export function SuiteHeroStats({
   const metricLabel = isSDK ? "Pass Rate" : "Accuracy";
   const showTrend = runTrendData.length >= 3;
   const showModelComparison = modelStats.length >= 2;
+  const latestReplayableRun = [...runs]
+    .filter((run) => run.isActive !== false && run.hasServerReplayConfig)
+    .sort((a, b) => {
+      const aTime = a.completedAt ?? a.createdAt ?? 0;
+      const bTime = b.completedAt ?? b.createdAt ?? 0;
+      return bTime - aTime;
+    })[0];
 
   return (
     <div className="rounded-xl border bg-card text-card-foreground">
@@ -181,6 +194,23 @@ export function SuiteHeroStats({
             </span>
           </div>
         </div>
+
+        {latestReplayableRun && onReplayLatestRun && (
+          <div className="shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => onReplayLatestRun(latestReplayableRun)}
+              disabled={isReplayingLatestRun}
+              className="gap-2"
+            >
+              <RotateCw
+                className={`h-4 w-4 ${isReplayingLatestRun ? "animate-spin" : ""}`}
+              />
+              {isReplayingLatestRun ? "Replaying..." : "Replay latest run"}
+            </Button>
+          </div>
+        )}
 
         {/* Sparkline trend (only if ≥3 runs) */}
         {showTrend && (

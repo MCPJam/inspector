@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/resizable";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { useEvalsRoute, navigateToEvalsRoute } from "@/lib/evals-router";
-import { useChat } from "@/hooks/use-chat";
+import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite } from "./evals/helpers";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import { EvalRunner } from "./evals/eval-runner";
@@ -47,11 +47,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     route.type === "test-edit" ? route.testId : null;
 
   // Get available models for eval runner
-  const { availableModels } = useChat({
-    systemPrompt: "",
-    temperature: 1,
-    selectedServers: [],
-  });
+  const { availableModels } = useAvailableEvalModels();
 
   // Get app state for server connections
   const appState = useSharedAppState();

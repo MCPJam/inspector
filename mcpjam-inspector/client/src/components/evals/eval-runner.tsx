@@ -454,7 +454,6 @@ export function EvalRunner({
 
     try {
       const accessToken = await getAccessToken();
-
       const result = await generateNegativeEvalTests({
         workspaceId,
         serverIds: selectedServers,

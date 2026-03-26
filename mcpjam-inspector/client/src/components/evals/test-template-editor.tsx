@@ -7,6 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { listEvalTools, runEvalTestCase } from "@/lib/apis/evals-api";
 import {
   Tooltip,
   TooltipContent,
@@ -34,7 +35,6 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { listEvalTools, runEvalTestCase } from "@/lib/apis/evals-api";
 
 interface TestTemplate {
   title: string;
@@ -197,14 +197,9 @@ export function TestTemplateEditor({
   }, [selectedTestCaseId, currentTestCase?._id]); // Reset when switching test cases or when test case first loads
 
   // Get suite config for servers (to fetch available tools)
-  const suiteConfig = useQuery(
-    "testSuites:getTestSuitesOverview" as any,
-    {},
-  ) as any;
-  const suite = useMemo(() => {
-    if (!suiteConfig) return null;
-    return suiteConfig.find((entry: any) => entry.suite._id === suiteId)?.suite;
-  }, [suiteConfig, suiteId]);
+  const suite = useQuery("testSuites:getTestSuite" as any, {
+    suiteId,
+  }) as any;
 
   // Calculate missing servers
   const missingServers = useMemo(() => {
@@ -236,6 +231,7 @@ export function TestTemplateEditor({
         setAvailableTools(data.tools || []);
       } catch (error) {
         console.error("Failed to fetch tools:", error);
+        setAvailableTools([]);
       }
     }
 

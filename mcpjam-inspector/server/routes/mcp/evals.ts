@@ -1,8 +1,16 @@
-import { ConvexHttpClient } from "convex/browser";
 import { Hono } from "hono";
+import { z } from "zod";
+import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
+import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
+import {
+  buildReplayManager,
+  createConvexClient,
+  fetchReplayConfig,
+  requireConvexHttpUrl,
+} from "../../services/evals/route-helpers.js";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
-import { WebRouteError } from "../web/errors.js";
+import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
   GenerateNegativeTestsRequestSchema,
   GenerateTestsRequestSchema,
@@ -31,6 +39,18 @@ function jsonRouteError(c: any, error: unknown) {
   return c.json({ error: errorMessage }, 500);
 }
 
+const ReplayRunRequestSchema = z.object({
+  runId: z.string().min(1),
+  convexAuthToken: z.string(),
+  modelApiKeys: z.record(z.string(), z.string()).optional(),
+  notes: z.string().optional(),
+  passCriteria: z
+    .object({
+      minimumPassRate: z.number(),
+    })
+    .optional(),
+});
+
 evals.post("/run", async (c) => {
   try {
     const body = await c.req.json();
@@ -50,6 +70,94 @@ evals.post("/run", async (c) => {
     );
   } catch (error) {
     logger.error("[Error running evals]", error);
+    return jsonRouteError(c, error);
+  }
+});
+
+evals.post("/replay-run", async (c) => {
+  try {
+    const body = await c.req.json();
+    const validationResult = ReplayRunRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const { runId, convexAuthToken, modelApiKeys, notes, passCriteria } =
+      validationResult.data;
+
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
+    const replayMetadata = await convexClient.query(
+      "testSuites:getRunReplayMetadata" as any,
+      {
+        runId,
+      },
+    );
+
+    if (!replayMetadata?.hasServerReplayConfig) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "This run does not have stored replay credentials",
+      );
+    }
+
+    const replayConfig = await fetchReplayConfig(runId, convexAuthToken);
+    if (!replayConfig || replayConfig.servers.length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "No replay configuration found for this run",
+      );
+    }
+
+    const replayManager = buildReplayManager(replayConfig);
+    try {
+      const {
+        runId: replayRunId,
+        recorder,
+        config,
+      } = await startSuiteRunWithRecorder({
+        convexClient,
+        suiteId: replayMetadata.suiteId,
+        notes,
+        passCriteria,
+        serverIds:
+          replayMetadata.environment?.servers ??
+          replayConfig.servers.map((server) => server.serverId),
+        replayedFromRunId: runId,
+      });
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: replayMetadata.suiteId,
+        runId: replayRunId,
+        config,
+        modelApiKeys: modelApiKeys ?? undefined,
+        convexClient,
+        convexHttpUrl,
+        convexAuthToken,
+        mcpClientManager: replayManager,
+        recorder,
+      });
+
+      return c.json({
+        success: true,
+        suiteId: replayMetadata.suiteId,
+        runId: replayRunId,
+        sourceRunId: runId,
+        message: "Replay completed successfully.",
+      });
+    } finally {
+      await replayManager.disconnectAllServers();
+    }
+  } catch (error) {
+    logger.error("[Error replaying eval run]", error);
     return jsonRouteError(c, error);
   }
 });
@@ -93,13 +201,7 @@ evals.post("/cancel", async (c) => {
       return c.json({ error: "convexAuthToken is required" }, 401);
     }
 
-    const convexUrl = process.env.CONVEX_URL;
-    if (!convexUrl) {
-      throw new Error("CONVEX_URL is not set");
-    }
-
-    const convexClient = new ConvexHttpClient(convexUrl);
-    convexClient.setAuth(convexAuthToken);
+    const convexClient = createConvexClient(convexAuthToken);
 
     await convexClient.mutation("testSuites:cancelTestSuiteRun" as any, {
       runId,

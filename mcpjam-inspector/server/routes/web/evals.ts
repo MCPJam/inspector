@@ -1,6 +1,20 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { withEphemeralConnection } from "./auth.js";
+import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
+import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
+import {
+  buildReplayManager,
+  createConvexClient,
+  fetchReplayConfig,
+  requireConvexHttpUrl,
+} from "../../services/evals/route-helpers.js";
+import {
+  handleRoute,
+  parseWithSchema,
+  readJsonBody,
+  withEphemeralConnection,
+} from "./auth.js";
+import { assertBearerToken, ErrorCode, WebRouteError } from "./errors.js";
 import {
   GenerateNegativeTestsRequestSchema,
   GenerateTestsRequestSchema,
@@ -42,6 +56,17 @@ const hostedGenerateNegativeTestsSchema =
     serverIds: true,
   }).extend(hostedBatchSchema.shape);
 
+const hostedReplayRunSchema = z.object({
+  runId: z.string().min(1),
+  modelApiKeys: z.record(z.string(), z.string()).optional(),
+  notes: z.string().optional(),
+  passCriteria: z
+    .object({
+      minimumPassRate: z.number(),
+    })
+    .optional(),
+});
+
 evals.post("/run", async (c) =>
   withEphemeralConnection(c, hostedRunEvalsSchema, (manager, body) =>
     runEvalsWithManager(manager, body),
@@ -66,6 +91,74 @@ evals.post("/generate-negative-tests", async (c) =>
     hostedGenerateNegativeTestsSchema,
     (manager, body) => generateNegativeEvalTestsWithManager(manager, body),
   ),
+);
+
+evals.post("/replay-run", async (c) =>
+  handleRoute(c, async () => {
+    const body = parseWithSchema(hostedReplayRunSchema, await readJsonBody(c));
+    const convexAuthToken = assertBearerToken(c);
+    const convexClient = createConvexClient(convexAuthToken);
+    const convexHttpUrl = requireConvexHttpUrl();
+    const replayMetadata = await convexClient.query(
+      "testSuites:getRunReplayMetadata" as any,
+      {
+        runId: body.runId,
+      },
+    );
+
+    if (!replayMetadata?.hasServerReplayConfig) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "This run does not have stored replay credentials",
+      );
+    }
+
+    const replayConfig = await fetchReplayConfig(body.runId, convexAuthToken);
+    if (!replayConfig || replayConfig.servers.length === 0) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "No replay configuration found for this run",
+      );
+    }
+
+    const manager = buildReplayManager(replayConfig);
+    try {
+      const { runId, recorder, config } = await startSuiteRunWithRecorder({
+        convexClient,
+        suiteId: replayMetadata.suiteId,
+        notes: body.notes,
+        passCriteria: body.passCriteria,
+        serverIds:
+          replayMetadata.environment?.servers ??
+          replayConfig.servers.map((server) => server.serverId),
+        replayedFromRunId: body.runId,
+      });
+
+      await runEvalSuiteWithAiSdk({
+        suiteId: replayMetadata.suiteId,
+        runId,
+        config,
+        modelApiKeys: body.modelApiKeys ?? undefined,
+        convexClient,
+        convexHttpUrl,
+        convexAuthToken,
+        mcpClientManager: manager,
+        recorder,
+      });
+
+      return {
+        success: true,
+        suiteId: replayMetadata.suiteId,
+        runId,
+        sourceRunId: body.runId,
+        message: "Replay completed successfully.",
+      };
+    } finally {
+      await manager.disconnectAllServers();
+    }
+  }),
 );
 
 export default evals;

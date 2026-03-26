@@ -19,7 +19,31 @@ import type {
 } from "./types";
 import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
+import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+
+type SuiteRoute = EvalsRoute | CiEvalsRoute;
+
+export interface SuiteNavigation {
+  toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
+  toRunDetail: (suiteId: string, runId: string, iteration?: string) => void;
+  toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
+  toTestEdit: (suiteId: string, testId: string) => void;
+  toSuiteEdit: (suiteId: string) => void;
+}
+
+const defaultNavigation: SuiteNavigation = {
+  toSuiteOverview: (suiteId, view) =>
+    navigateToEvalsRoute({ type: "suite-overview", suiteId, view }),
+  toRunDetail: (suiteId, runId, iteration) =>
+    navigateToEvalsRoute({ type: "run-detail", suiteId, runId, iteration }),
+  toTestDetail: (suiteId, testId, iteration) =>
+    navigateToEvalsRoute({ type: "test-detail", suiteId, testId, iteration }),
+  toTestEdit: (suiteId, testId) =>
+    navigateToEvalsRoute({ type: "test-edit", suiteId, testId }),
+  toSuiteEdit: (suiteId) =>
+    navigateToEvalsRoute({ type: "suite-edit", suiteId }),
+};
 
 export function SuiteIterationsView({
   suite,
@@ -30,19 +54,22 @@ export function SuiteIterationsView({
   runsLoading,
   aggregate,
   onRerun,
+  onReplayRun,
   onCancelRun,
   onDelete,
   onDeleteRun,
   onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
+  replayingRunId,
   cancellingRunId,
   deletingSuiteId,
   deletingRunId,
   availableModels,
   route,
   userMap,
-  workspaceId,
+  workspaceId = null,
+  navigation = defaultNavigation,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -52,19 +79,22 @@ export function SuiteIterationsView({
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
   onRerun: (suite: EvalSuite) => void;
+  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  replayingRunId?: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
-  route: EvalsRoute;
+  route: SuiteRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  workspaceId: string | null;
+  workspaceId?: string | null;
+  navigation?: SuiteNavigation;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -136,23 +166,17 @@ export function SuiteIterationsView({
     const iterationIds = new Set(caseGroupsForSelectedRun.map((i) => i._id));
 
     if (!route.iteration || !iterationIds.has(route.iteration)) {
-      navigateToEvalsRoute({
-        type: "run-detail",
-        suiteId: route.suiteId,
-        runId: route.runId,
-        iteration: caseGroupsForSelectedRun[0]._id,
-      });
+      navigation.toRunDetail(
+        route.suiteId,
+        route.runId,
+        caseGroupsForSelectedRun[0]._id,
+      );
     }
-  }, [route, caseGroupsForSelectedRun]);
+  }, [route, caseGroupsForSelectedRun, navigation]);
 
   const handleSelectIteration = (iterationId: string) => {
     if (route.type === "run-detail") {
-      navigateToEvalsRoute({
-        type: "run-detail",
-        suiteId: route.suiteId,
-        runId: route.runId,
-        iteration: iterationId,
-      });
+      navigation.toRunDetail(route.suiteId, route.runId, iterationId);
     }
   };
 
@@ -242,19 +266,12 @@ export function SuiteIterationsView({
   };
 
   const handleRunClick = (runId: string) => {
-    navigateToEvalsRoute({
-      type: "run-detail",
-      suiteId: suite._id,
-      runId,
-    });
+    navigation.toRunDetail(suite._id, runId);
   };
 
   const handleBackToOverview = () => {
     setShowRunSummarySidebar(false);
-    navigateToEvalsRoute({
-      type: "suite-overview",
-      suiteId: suite._id,
-    });
+    navigation.toSuiteOverview(suite._id);
   };
 
   return (
@@ -267,12 +284,14 @@ export function SuiteIterationsView({
           selectedRunDetails={selectedRunDetails}
           isEditMode={isEditMode}
           onRerun={onRerun}
+          onReplayRun={onReplayRun}
           onDelete={onDelete}
           onCancelRun={onCancelRun}
           onDeleteRun={onDeleteRun}
           onViewModeChange={handleBackToOverview}
           connectedServerNames={connectedServerNames}
           rerunningSuiteId={rerunningSuiteId}
+          replayingRunId={replayingRunId}
           cancellingRunId={cancellingRunId}
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
@@ -285,6 +304,7 @@ export function SuiteIterationsView({
           testCases={cases}
           availableModels={availableModels}
           onUpdateModels={handleUpdateTests}
+          onEditSuite={() => navigation.toSuiteEdit(suite._id)}
         />
       </div>
 
@@ -318,26 +338,15 @@ export function SuiteIterationsView({
                     (name) => connectedServerNames.has(name),
                   )}
                   suiteName={suite.name}
-                  onNavigateToSuite={() => {
-                    navigateToEvalsRoute({
-                      type: "suite-overview",
-                      suiteId: suite._id,
-                    });
-                  }}
-                  onBack={() => {
-                    navigateToEvalsRoute({
-                      type: "suite-overview",
-                      suiteId: suite._id,
-                      view: "test-cases",
-                    });
-                  }}
-                  onViewRun={(runId) => {
-                    navigateToEvalsRoute({
-                      type: "run-detail",
-                      suiteId: suite._id,
-                      runId,
-                    });
-                  }}
+                  onNavigateToSuite={() =>
+                    navigation.toSuiteOverview(suite._id)
+                  }
+                  onBack={() =>
+                    navigation.toSuiteOverview(suite._id, "test-cases")
+                  }
+                  onViewRun={(runId) =>
+                    navigation.toRunDetail(suite._id, runId)
+                  }
                 />
               );
             })()
@@ -354,13 +363,9 @@ export function SuiteIterationsView({
                   onRunClick={handleRunClick}
                   onDirectDeleteRun={onDirectDeleteRun}
                   runsViewMode={runsViewMode}
-                  onViewModeChange={(value) => {
-                    navigateToEvalsRoute({
-                      type: "suite-overview",
-                      suiteId: suite._id,
-                      view: value,
-                    });
-                  }}
+                  onViewModeChange={(value) =>
+                    navigation.toSuiteOverview(suite._id, value)
+                  }
                   userMap={userMap}
                 />
               ) : (
@@ -370,20 +375,12 @@ export function SuiteIterationsView({
                   allIterations={allIterations}
                   runs={runs}
                   runsViewMode={runsViewMode}
-                  onViewModeChange={(value) => {
-                    navigateToEvalsRoute({
-                      type: "suite-overview",
-                      suiteId: suite._id,
-                      view: value,
-                    });
-                  }}
-                  onTestCaseClick={(testCaseId) => {
-                    navigateToEvalsRoute({
-                      type: "test-detail",
-                      suiteId: suite._id,
-                      testId: testCaseId,
-                    });
-                  }}
+                  onViewModeChange={(value) =>
+                    navigation.toSuiteOverview(suite._id, value)
+                  }
+                  onTestCaseClick={(testCaseId) =>
+                    navigation.toTestDetail(suite._id, testCaseId)
+                  }
                   runTrendData={runTrendData}
                   modelStats={modelStats}
                   runsLoading={runsLoading}

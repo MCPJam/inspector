@@ -24,12 +24,14 @@ interface CiSuiteDetailProps {
   runsLoading: boolean;
   aggregate: SuiteAggregate | null;
   onRerun: (suite: EvalSuite) => void;
+  onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
   onCancelRun: (runId: string) => void;
   onDeleteSuite: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
   connectedServerNames: Set<string>;
   rerunningSuiteId: string | null;
+  replayingRunId: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
@@ -46,12 +48,14 @@ export function CiSuiteDetail({
   runsLoading,
   aggregate,
   onRerun,
+  onReplayRun,
   onCancelRun,
   onDeleteSuite,
   onDeleteRun,
   onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
+  replayingRunId,
   cancellingRunId,
   deletingSuiteId,
   deletingRunId,
@@ -170,6 +174,7 @@ export function CiSuiteDetail({
           selectedRunDetails={selectedRunDetails}
           isEditMode={false}
           onRerun={onRerun}
+          onReplayRun={onReplayRun}
           onDelete={onDeleteSuite}
           onCancelRun={onCancelRun}
           onDeleteRun={onDeleteRun}
@@ -243,12 +248,36 @@ export function CiSuiteDetail({
               testCaseCount={cases.length}
               isSDK={suite.source === "sdk"}
               onRunClick={handleRunClick}
+              onReplayLatestRun={
+                onReplayRun ? (run) => onReplayRun(suite, run) : undefined
+              }
+              isReplayingLatestRun={
+                replayingRunId != null &&
+                runs.some(
+                  (run) =>
+                    run._id === replayingRunId && run.hasServerReplayConfig,
+                ) &&
+                runs
+                  .filter(
+                    (run) =>
+                      run.isActive !== false && run.hasServerReplayConfig,
+                  )
+                  .sort((a, b) => {
+                    const aTime = a.completedAt ?? a.createdAt ?? 0;
+                    const bTime = b.completedAt ?? b.createdAt ?? 0;
+                    return bTime - aTime;
+                  })[0]?._id === replayingRunId
+              }
             />
             <RunAccordionView
               suite={suite}
               runs={runs}
               allIterations={allIterations}
               onRunClick={handleRunClick}
+              onReplayRun={
+                onReplayRun ? (run) => onReplayRun(suite, run) : undefined
+              }
+              replayingRunId={replayingRunId}
               onTestCaseClick={(testCaseId) => {
                 navigateToCiEvalsRoute({
                   type: "test-detail",

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
@@ -21,8 +22,10 @@ import {
 } from "./evals/ci-suite-list-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
+import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-detail";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
+import { HOSTED_MODE } from "@/lib/config";
 
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
@@ -43,10 +46,16 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const selectedSuiteId =
     route.type === "suite-overview" ||
     route.type === "run-detail" ||
-    route.type === "test-detail"
+    route.type === "test-detail" ||
+    route.type === "test-edit" ||
+    route.type === "suite-edit"
       ? route.suiteId
       : null;
-  const selectedTestId = route.type === "test-detail" ? route.testId : null;
+  const selectedTestId =
+    route.type === "test-detail" || route.type === "test-edit"
+      ? route.testId
+      : null;
+  const { availableModels } = useAvailableEvalModels();
 
   const connectedServerNames = useMemo(
     () =>
@@ -86,16 +95,30 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     organizationId: null,
   });
 
-  const sdkSuites = useMemo(
-    () => queries.sortedSuites.filter((entry) => entry.suite.source === "sdk"),
+  const visibleSuites = useMemo(
+    () =>
+      HOSTED_MODE
+        ? queries.sortedSuites
+        : queries.sortedSuites.filter((entry) => entry.suite.source === "sdk"),
     [queries.sortedSuites],
   );
+
+  const sdkSuites = useMemo(
+    () => visibleSuites.filter((entry) => entry.suite.source === "sdk"),
+    [visibleSuites],
+  );
+  const hasVisibleSuites = visibleSuites.length > 0;
 
   const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
 
   // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
   useEffect(() => {
     if (hasAutoSwitchedMode) return;
+    if (HOSTED_MODE && commitGroups.length === 0) {
+      setSidebarMode("suites");
+      setHasAutoSwitchedMode(true);
+      return;
+    }
     if (commitGroups.length === 0) return;
     const allManual = commitGroups.every((g) =>
       g.commitSha.startsWith("manual-"),
@@ -116,9 +139,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
     return (
-      sdkSuites.find((entry) => entry.suite._id === selectedSuiteId) ?? null
+      visibleSuites.find((entry) => entry.suite._id === selectedSuiteId) ?? null
     );
-  }, [sdkSuites, selectedSuiteId]);
+  }, [visibleSuites, selectedSuiteId]);
 
   const selectedSuite = selectedSuiteEntry?.suite ?? null;
 
@@ -127,6 +150,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    evalsNavigationContext: "ci-evals",
   });
 
   const suiteAggregate = useMemo(() => {
@@ -224,6 +248,27 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [deletingRunId, handlers, route, selectedSuiteId],
   );
 
+  const handleCreateTestCase = useCallback(async () => {
+    if (!selectedSuiteId) return;
+    await handlers.handleCreateTestCase(selectedSuiteId);
+  }, [handlers, selectedSuiteId]);
+
+  const handleDuplicateTestCase = useCallback(
+    (testCaseId: string) => {
+      if (!selectedSuiteId) return;
+      handlers.handleDuplicateTestCase(testCaseId, selectedSuiteId);
+    },
+    [handlers, selectedSuiteId],
+  );
+
+  const handleGenerateTests = useCallback(async () => {
+    if (!selectedSuiteId || !selectedSuite) return;
+    await handlers.handleGenerateTests(
+      selectedSuiteId,
+      selectedSuite.environment?.servers || [],
+    );
+  }, [handlers, selectedSuite, selectedSuiteId]);
+
   if (isLoading) {
     return (
       <div className="p-6">
@@ -276,7 +321,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           className="border-r bg-muted/30 flex flex-col"
         >
           <CiSuiteListSidebar
-            suites={sdkSuites}
+            suites={visibleSuites}
             selectedSuiteId={selectedSuiteId}
             onSelectSuite={handleSelectSuite}
             isLoading={queries.isOverviewLoading}
@@ -296,18 +341,19 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
         >
           {route.type === "commit-detail" && selectedCommitGroup ? (
             <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
-          ) : sdkSuites.length === 0 ? (
+          ) : !hasVisibleSuites ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center max-w-md mx-auto p-8">
                 <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
                   <GitBranch className="h-10 w-10 text-muted-foreground" />
                 </div>
                 <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  No CI runs yet
+                  {HOSTED_MODE ? "No eval suites yet" : "No CI runs yet"}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  Report eval results from your SDK or CI pipeline to see runs
-                  here.
+                  {HOSTED_MODE
+                    ? "Create a suite from Servers or report eval results from your SDK to see runs here."
+                    : "Report eval results from your SDK or CI pipeline to see runs here."}
                 </p>
               </div>
             </div>
@@ -335,6 +381,38 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 </p>
               </div>
             </div>
+          ) : HOSTED_MODE ? (
+            <HostedCiSuiteWorkspaceDetail
+              suite={selectedSuite}
+              cases={queries.suiteDetails?.testCases || []}
+              iterations={queries.activeIterations}
+              allIterations={queries.sortedIterations}
+              runs={queries.runsForSelectedSuite}
+              runsLoading={queries.isSuiteRunsLoading}
+              aggregate={suiteAggregate}
+              route={route}
+              connectedServerNames={connectedServerNames}
+              availableModels={availableModels}
+              onRerun={handlers.handleRerun}
+              onReplayRun={handlers.handleReplayRun}
+              onCancelRun={handlers.handleCancelRun}
+              onDelete={handleDeleteSuite}
+              onDeleteRun={handleDeleteRun}
+              onDirectDeleteRun={handlers.directDeleteRun}
+              onCreateTestCase={handleCreateTestCase}
+              onDeleteTestCase={handlers.handleDeleteTestCase}
+              onDuplicateTestCase={handleDuplicateTestCase}
+              onGenerateTests={handleGenerateTests}
+              rerunningSuiteId={handlers.rerunningSuiteId}
+              replayingRunId={handlers.replayingRunId}
+              cancellingRunId={handlers.cancellingRunId}
+              deletingSuiteId={deletingSuiteId}
+              deletingRunId={deletingRunId}
+              deletingTestCaseId={handlers.deletingTestCaseId}
+              duplicatingTestCaseId={handlers.duplicatingTestCaseId}
+              isGeneratingTests={handlers.isGeneratingTests}
+              userMap={userMap}
+            />
           ) : (
             <div
               className={`flex-1 px-6 pb-6 pt-6 ${route.type === "run-detail" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}
@@ -348,12 +426,14 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 runsLoading={queries.isSuiteRunsLoading}
                 aggregate={suiteAggregate}
                 onRerun={handlers.handleRerun}
+                onReplayRun={handlers.handleReplayRun}
                 onCancelRun={handlers.handleCancelRun}
                 onDeleteSuite={handleDeleteSuite}
                 onDeleteRun={handleDeleteRun}
                 onDirectDeleteRun={handlers.directDeleteRun}
                 connectedServerNames={connectedServerNames}
                 rerunningSuiteId={handlers.rerunningSuiteId}
+                replayingRunId={handlers.replayingRunId}
                 cancellingRunId={handlers.cancellingRunId}
                 deletingSuiteId={deletingSuiteId}
                 deletingRunId={deletingRunId}

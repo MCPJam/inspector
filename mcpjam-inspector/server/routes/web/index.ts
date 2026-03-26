@@ -9,6 +9,7 @@ import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import sandboxes from "./sandboxes.js";
 import apps from "./apps.js";
+import evals from "./evals.js";
 import oauthWeb from "./oauth.js";
 import xrayPayload from "./xray-payload.js";
 import exporter from "./export.js";

@@ -50,7 +50,7 @@ import { CollapsedPanelStrip } from "./ui/collapsed-panel-strip";
 import { LoggerView } from "./logger-view";
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { Skeleton } from "./ui/skeleton";
-import { useConvexAuth } from "convex/react";
+import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { Workspace } from "@/state/app-types";
 import {
   clearPendingQuickConnect,
@@ -88,6 +88,11 @@ import {
 } from "@/lib/server-detail-modal-resume";
 import { cn } from "@/lib/utils";
 import { compareQuickConnectCatalogCards } from "@/lib/quick-connect-catalog-sort";
+import { toast } from "sonner";
+import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import { HOSTED_MODE } from "@/lib/config";
+import type { EvalSuiteOverviewEntry } from "./evals/types";
 
 const ORDER_STORAGE_KEY = "mcp-server-order";
 
@@ -309,6 +314,7 @@ function SortableServerCard({
   onRemove,
   hostedServerId,
   onOpenDetailModal,
+  footerActions,
 }: {
   id: string;
   dndDisabled: boolean;
@@ -325,6 +331,7 @@ function SortableServerCard({
     server: ServerWithName,
     defaultTab: ServerDetailTab,
   ) => void;
+  footerActions?: React.ReactNode;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
@@ -350,6 +357,7 @@ function SortableServerCard({
         onRemove={onRemove}
         hostedServerId={hostedServerId}
         onOpenDetailModal={onOpenDetailModal}
+        footerActions={footerActions}
       />
     </div>
   );
@@ -394,10 +402,21 @@ export function ServersTab({
 }: ServersTabProps) {
   const posthog = usePostHog();
   const { isAuthenticated } = useConvexAuth();
+  const createTestSuiteMutation = useMutation(
+    "testSuites:createTestSuite" as any,
+  );
   const [pendingQuickConnect, setPendingQuickConnect] =
     useState<PendingQuickConnectState | null>(() => readPendingQuickConnect());
+  const [creatingEvalSuiteServerName, setCreatingEvalSuiteServerName] =
+    useState<string | null>(null);
   const registryWorkspaceId =
     workspaces[activeWorkspaceId]?.sharedWorkspaceId ?? null;
+  const suiteOverview = useQuery(
+    "testSuites:getTestSuitesOverview" as any,
+    isAuthenticated && registryWorkspaceId
+      ? ({ workspaceId: registryWorkspaceId } as any)
+      : "skip",
+  ) as EvalSuiteOverviewEntry[] | undefined;
 
   const {
     catalogCards,
@@ -646,11 +665,120 @@ export function ServersTab({
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId;
-  const { serversRecord: sharedWorkspaceServersRecord } =
-    useRemoteWorkspaceServers({
-      workspaceId: sharedWorkspaceId ?? null,
-      isAuthenticated,
+  const {
+    serversRecord: sharedWorkspaceServersRecord,
+    isLoading: isSharedWorkspaceServersLoading,
+  } = useRemoteWorkspaceServers({
+    workspaceId: sharedWorkspaceId ?? null,
+    isAuthenticated,
+  });
+  const isSuiteOverviewLoading =
+    Boolean(registryWorkspaceId) &&
+    isAuthenticated &&
+    suiteOverview === undefined;
+  const isEvalSuiteActionsLoading =
+    Boolean(sharedWorkspaceId) &&
+    (isSharedWorkspaceServersLoading || isSuiteOverviewLoading);
+
+  const evalLinksByServerName = useMemo(() => {
+    const entries = suiteOverview ?? [];
+
+    return Object.fromEntries(
+      Object.keys(workspaceServers).map((serverName) => {
+        const hostedServerId = sharedWorkspaceServersRecord[serverName]?._id;
+        const uiSuite = entries.find((entry) => {
+          if (entry.suite.source === "sdk" || !hostedServerId) {
+            return false;
+          }
+
+          const bindings = entry.suite.environment?.serverBindings ?? [];
+          return bindings.some(
+            (binding) => binding.workspaceServerId === hostedServerId,
+          );
+        });
+
+        return [
+          serverName,
+          {
+            uiSuiteId: uiSuite?.suite._id ?? null,
+          },
+        ];
+      }),
+    ) as Record<string, { uiSuiteId: string | null }>;
+  }, [sharedWorkspaceServersRecord, suiteOverview, workspaceServers]);
+
+  const navigateToEvalSuite = useCallback((suiteId: string) => {
+    if (HOSTED_MODE) {
+      navigateToCiEvalsRoute({ type: "suite-overview", suiteId });
+      return;
+    }
+
+    navigateToEvalsRoute({
+      type: "suite-overview",
+      suiteId,
+      view: "test-cases",
     });
+  }, []);
+
+  const handleCreateEvalSuite = useCallback(
+    async (serverName: string) => {
+      if (
+        !sharedWorkspaceId ||
+        creatingEvalSuiteServerName ||
+        isEvalSuiteActionsLoading
+      ) {
+        return;
+      }
+
+      setCreatingEvalSuiteServerName(serverName);
+      try {
+        const hostedServerId = sharedWorkspaceServersRecord[serverName]?._id;
+        if (!hostedServerId) {
+          throw new Error(
+            "Server details are still syncing. Try again in a moment.",
+          );
+        }
+        const createdSuite = await createTestSuiteMutation({
+          workspaceId: sharedWorkspaceId,
+          name: serverName,
+          description: `Test suite for ${serverName}`,
+          environment: {
+            servers: [serverName],
+            serverBindings: hostedServerId
+              ? [
+                  {
+                    serverName,
+                    workspaceServerId: hostedServerId,
+                  },
+                ]
+              : undefined,
+          },
+        });
+
+        if (!createdSuite?._id) {
+          throw new Error("Failed to create eval suite");
+        }
+
+        navigateToEvalSuite(createdSuite._id);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to create eval suite",
+        );
+      } finally {
+        setCreatingEvalSuiteServerName(null);
+      }
+    },
+    [
+      createTestSuiteMutation,
+      creatingEvalSuiteServerName,
+      isEvalSuiteActionsLoading,
+      navigateToEvalSuite,
+      sharedWorkspaceId,
+      sharedWorkspaceServersRecord,
+    ],
+  );
 
   const handleOpenDetailModal = useCallback(
     (server: ServerWithName, defaultTab: ServerDetailTab) => {
@@ -703,6 +831,69 @@ export function ServersTab({
       return result;
     },
     [onUpdate, workspaceServers],
+  );
+
+  const renderEvalActions = useCallback(
+    (serverName: string) => {
+      const link = evalLinksByServerName[serverName];
+      const isCreatingSuite = creatingEvalSuiteServerName === serverName;
+      const hostedServerId = sharedWorkspaceServersRecord[serverName]?._id;
+
+      if (!link && !sharedWorkspaceId) {
+        return null;
+      }
+
+      if (isEvalSuiteActionsLoading) {
+        return (
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 px-2 text-[11px]"
+            disabled
+          >
+            Loading eval suite...
+          </Button>
+        );
+      }
+
+      return (
+        <>
+          {link?.uiSuiteId ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              onClick={() => navigateToEvalSuite(link.uiSuiteId!)}
+            >
+              Open eval suite
+            </Button>
+          ) : sharedWorkspaceId ? (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              disabled={isCreatingSuite || !hostedServerId}
+              onClick={() => void handleCreateEvalSuite(serverName)}
+            >
+              {isCreatingSuite
+                ? "Creating..."
+                : !hostedServerId
+                  ? "Syncing server..."
+                  : "Create eval suite"}
+            </Button>
+          ) : null}
+        </>
+      );
+    },
+    [
+      creatingEvalSuiteServerName,
+      evalLinksByServerName,
+      handleCreateEvalSuite,
+      isEvalSuiteActionsLoading,
+      navigateToEvalSuite,
+      sharedWorkspaceId,
+      sharedWorkspaceServersRecord,
+    ],
   );
 
   useEffect(() => {
@@ -1024,6 +1215,7 @@ export function ServersTab({
                       }}
                       hostedServerId={sharedWorkspaceServersRecord[name]?._id}
                       onOpenDetailModal={handleOpenDetailModal}
+                      footerActions={renderEvalActions(name)}
                     />
                   );
                 })}
@@ -1049,6 +1241,7 @@ export function ServersTab({
                     hostedServerId={
                       sharedWorkspaceServersRecord[activeId!]?._id
                     }
+                    footerActions={renderEvalActions(activeServer.name)}
                   />
                 </div>
               ) : null}

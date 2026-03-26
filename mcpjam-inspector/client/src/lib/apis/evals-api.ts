@@ -1,14 +1,27 @@
 import { API_ENDPOINTS } from "@/components/evals/constants";
-import { runByMode } from "@/lib/apis/mode-client";
-import { buildHostedServerBatchRequest } from "@/lib/apis/web/context";
+import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
+import {
+  buildHostedEvalServerBatchRequest,
+  buildHostedServerBatchRequest,
+} from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
 
-const HOSTED_EVALS_API_ENDPOINTS = {
-  run: "/api/web/evals/run",
-  runTestCase: "/api/web/evals/run-test-case",
-  generateTests: "/api/web/evals/generate-tests",
-  generateNegativeTests: "/api/web/evals/generate-negative-tests",
+export const EVALS_API_ENDPOINTS = {
+  local: {
+    run: "/api/mcp/evals/run",
+    generateTests: "/api/mcp/evals/generate-tests",
+    generateNegativeTests: "/api/mcp/evals/generate-negative-tests",
+    runTestCase: "/api/mcp/evals/run-test-case",
+    replayRun: "/api/mcp/evals/replay-run",
+  },
+  hosted: {
+    run: "/api/web/evals/run",
+    generateTests: "/api/web/evals/generate-tests",
+    generateNegativeTests: "/api/web/evals/generate-negative-tests",
+    runTestCase: "/api/web/evals/run-test-case",
+    replayRun: "/api/web/evals/replay-run",
+  },
 } as const;
 
 type JsonRecord = Record<string, unknown>;
@@ -58,6 +71,27 @@ type RunTestCaseRequest = EvalRequestWithServers & {
 type GenerateTestsRequest = EvalRequestWithServers & {
   convexAuthToken?: string | null;
 };
+
+export function getEvalApiEndpoints() {
+  return isHostedMode()
+    ? EVALS_API_ENDPOINTS.hosted
+    : EVALS_API_ENDPOINTS.local;
+}
+
+export function buildEvalServerBatchPayload(serverNames: string[]) {
+  if (isHostedMode()) {
+    return buildHostedEvalServerBatchRequest(serverNames);
+  }
+
+  return {
+    serverIds: serverNames,
+    serverNames,
+  };
+}
+
+export function buildEvalConvexAuthPayload(convexAuthToken: string) {
+  return isHostedMode() ? {} : { convexAuthToken };
+}
 
 function mergeHostedServerBatch<T extends EvalRequestWithServers>(
   request: T,
@@ -138,9 +172,9 @@ export async function listEvalTools(
 export async function runEvals(request: RunEvalsRequest): Promise<any> {
   return runByMode({
     local: () =>
-      postEvalRequest(API_ENDPOINTS.EVALS_RUN, request as JsonRecord),
+      postEvalRequest(EVALS_API_ENDPOINTS.local.run, request as JsonRecord),
     hosted: () =>
-      postEvalRequest(HOSTED_EVALS_API_ENDPOINTS.run, {
+      postEvalRequest(EVALS_API_ENDPOINTS.hosted.run, {
         ...mergeHostedServerBatch(request),
         storageServerIds: request.storageServerIds ?? request.serverIds,
       } as JsonRecord),
@@ -152,10 +186,13 @@ export async function runEvalTestCase(
 ): Promise<any> {
   return runByMode({
     local: () =>
-      postEvalRequest(API_ENDPOINTS.EVALS_RUN_TEST_CASE, request as JsonRecord),
+      postEvalRequest(
+        EVALS_API_ENDPOINTS.local.runTestCase,
+        request as JsonRecord,
+      ),
     hosted: () =>
       postEvalRequest(
-        HOSTED_EVALS_API_ENDPOINTS.runTestCase,
+        EVALS_API_ENDPOINTS.hosted.runTestCase,
         mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
@@ -167,12 +204,12 @@ export async function generateEvalTests(
   return runByMode({
     local: () =>
       postEvalRequest(
-        API_ENDPOINTS.EVALS_GENERATE_TESTS,
+        EVALS_API_ENDPOINTS.local.generateTests,
         request as JsonRecord,
       ),
     hosted: () =>
       postEvalRequest(
-        HOSTED_EVALS_API_ENDPOINTS.generateTests,
+        EVALS_API_ENDPOINTS.hosted.generateTests,
         mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
@@ -184,12 +221,12 @@ export async function generateNegativeEvalTests(
   return runByMode({
     local: () =>
       postEvalRequest(
-        API_ENDPOINTS.EVALS_GENERATE_NEGATIVE_TESTS,
+        EVALS_API_ENDPOINTS.local.generateNegativeTests,
         request as JsonRecord,
       ),
     hosted: () =>
       postEvalRequest(
-        HOSTED_EVALS_API_ENDPOINTS.generateNegativeTests,
+        EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
         mergeHostedServerBatch(request) as JsonRecord,
       ),
   });
