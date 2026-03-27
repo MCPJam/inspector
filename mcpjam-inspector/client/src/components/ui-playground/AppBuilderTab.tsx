@@ -33,18 +33,43 @@ import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
 import { PANEL_SIZES } from "./constants";
 import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
+// Onboarding
+import { useOnboarding } from "@/hooks/use-onboarding";
+import { WelcomeOverlay } from "@/components/app-builder/WelcomeOverlay";
+import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
+import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton";
+import { AddServerModal } from "@/components/connection/AddServerModal";
+import type { ServerFormData } from "@/shared/types.js";
+import type { ServerWithName } from "@/hooks/use-app-state";
+
 interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  servers?: Record<string, ServerWithName>;
+  registryEnabled?: boolean;
+  onConnect?: (formData: ServerFormData) => void;
+  onNavigate?: (section: string) => void;
 }
 
 export function AppBuilderTab({
   serverConfig,
   serverName,
+  servers = {},
+  registryEnabled = false,
+  onConnect,
+  onNavigate,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
   // Compute server key for saved requests storage
   const serverKey = useServerKey(serverConfig);
+
+  // Onboarding state machine
+  const onboarding = useOnboarding({
+    servers,
+    registryEnabled,
+    onNavigate: onNavigate ?? (() => {}),
+    onConnect: onConnect ?? (() => {}),
+  });
 
   // Get store state and actions
   const {
@@ -189,8 +214,40 @@ export function AppBuilderTab({
     ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
     : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
 
-  // No server selected
+  // No server selected — show onboarding overlay or empty state
   if (!serverConfig) {
+    if (onboarding.isOverlayVisible || onboarding.phase === "manual_modal_open") {
+      return (
+        <div className="h-full flex flex-col overflow-hidden relative">
+          <AppBuilderSkeleton />
+
+          {onboarding.isOverlayVisible && (
+            <WelcomeOverlay
+              phase={onboarding.phase}
+              registryEnabled={registryEnabled}
+              connectError={onboarding.connectError}
+              onConnectExcalidraw={onboarding.connectExcalidraw}
+              onBrowseRegistry={onboarding.browseRegistry}
+              onAddServerManually={onboarding.openManualModal}
+              onRetry={onboarding.retryConnect}
+              onDismiss={onboarding.dismissOverlay}
+            />
+          )}
+
+          {onboarding.phase === "manual_modal_open" && onConnect && (
+            <AddServerModal
+              isOpen={true}
+              onClose={onboarding.closeManualModal}
+              onSubmit={(formData: ServerFormData) => {
+                onConnect(formData);
+                onboarding.dismissOverlay();
+              }}
+            />
+          )}
+        </div>
+      );
+    }
+
     return (
       <EmptyState
         icon={Wrench}
@@ -201,7 +258,7 @@ export function AppBuilderTab({
   }
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <div className="h-full flex flex-col overflow-hidden relative">
       <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
         {/* Left Panel - Tools Sidebar */}
         {isSidebarVisible ? (
@@ -261,9 +318,25 @@ export function AppBuilderTab({
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}
+            initialInput={
+              onboarding.isGuidedPostConnect
+                ? "Draw me an MCP architecture diagram"
+                : undefined
+            }
+            pulseSubmit={onboarding.isGuidedPostConnect}
+            onFirstMessageSent={
+              onboarding.isGuidedPostConnect
+                ? onboarding.completeOnboarding
+                : undefined
+            }
           />
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      {/* Post-connect guide overlay */}
+      {onboarding.isGuidedPostConnect && (
+        <PostConnectGuide onDismiss={onboarding.completeOnboarding} />
+      )}
 
       <SaveRequestDialog
         open={savedRequestsHook.saveDialogState.isOpen}

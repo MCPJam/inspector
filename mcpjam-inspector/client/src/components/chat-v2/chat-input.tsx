@@ -92,6 +92,8 @@ interface ChatInputProps {
   onRequireToolApprovalChange?: (enabled: boolean) => void;
   /** Shared chat-only mode */
   minimalMode?: boolean;
+  /** Onboarding: pulse the send button with glow animation */
+  pulseSubmit?: boolean;
 }
 
 export function ChatInput({
@@ -131,6 +133,7 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  pulseSubmit = false,
 }: ChatInputProps) {
   const posthog = usePostHog();
   const sandboxHostStyle = useSandboxHostStyle();
@@ -603,7 +606,7 @@ export function ChatInput({
                 <TooltipContent>Stop generating</TooltipContent>
               </Tooltip>
             ) : (
-              <Tooltip>
+              <Tooltip open={pulseSubmit ? true : undefined}>
                 <TooltipTrigger asChild>
                   <Button
                     type="submit"
@@ -616,6 +619,7 @@ export function ChatInput({
                         !submitDisabled
                         ? activeSubmitButtonClasses
                         : inactiveSubmitButtonClasses,
+                      pulseSubmit && "animate-onboarding-pulse",
                     )}
                     disabled={
                       (!value.trim() && !hasResults) ||
@@ -626,7 +630,15 @@ export function ChatInput({
                     <ArrowUp size={16} />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>Send message</TooltipContent>
+                <TooltipContent>
+                  {pulseSubmit ? (
+                    <span className="font-semibold text-primary">
+                      SEND THIS
+                    </span>
+                  ) : (
+                    "Send message"
+                  )}
+                </TooltipContent>
               </Tooltip>
             )}
           </div>

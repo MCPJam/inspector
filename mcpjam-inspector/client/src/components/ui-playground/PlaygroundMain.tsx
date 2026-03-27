@@ -109,6 +109,10 @@ interface PlaygroundMainProps {
   disableChatInput?: boolean;
   hideSaveViewButton?: boolean;
   disabledInputPlaceholder?: string;
+  // Onboarding
+  initialInput?: string;
+  pulseSubmit?: boolean;
+  onFirstMessageSent?: () => void;
 }
 
 function ScrollToBottomButton() {
@@ -178,11 +182,21 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
+  initialInput,
+  pulseSubmit = false,
+  onFirstMessageSent,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialInput ?? "");
+
+  // Update input if initialInput changes from undefined to a value (e.g. after onboarding connect)
+  useEffect(() => {
+    if (initialInput && !input) {
+      setInput(initialInput);
+    }
+  }, [initialInput]);
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
@@ -529,6 +543,9 @@ export function PlaygroundMain({
       revokeFileAttachmentUrls(fileAttachments);
       setFileAttachments([]);
       setModelContextQueue([]); // Clear after sending
+
+      // Notify onboarding that the first message was sent
+      onFirstMessageSent?.();
     }
   };
 
@@ -573,6 +590,7 @@ export function PlaygroundMain({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
+    pulseSubmit,
   };
 
   // Check if widget should take over the full container

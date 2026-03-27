@@ -172,6 +172,45 @@ vi.mock("../../tools/SaveRequestDialog", () => ({
     open ? <div data-testid="save-dialog">Save Dialog</div> : null,
 }));
 
+// Mock AddServerModal
+vi.mock("../../connection/AddServerModal", () => ({
+  AddServerModal: ({ isOpen }: { isOpen: boolean }) =>
+    isOpen ? <div data-testid="add-server-modal">Add Server Modal</div> : null,
+}));
+
+// Mock onboarding hook
+const mockOnboarding = {
+  phase: "dismissed" as string,
+  isOverlayVisible: false,
+  isGuidedPostConnect: false,
+  connectExcalidraw: vi.fn(),
+  browseRegistry: vi.fn(),
+  openManualModal: vi.fn(),
+  closeManualModal: vi.fn(),
+  dismissOverlay: vi.fn(),
+  completeOnboarding: vi.fn(),
+  connectError: null as string | null,
+  retryConnect: vi.fn(),
+};
+vi.mock("@/hooks/use-onboarding", () => ({
+  useOnboarding: () => mockOnboarding,
+}));
+
+// Mock WelcomeOverlay
+vi.mock("../../app-builder/WelcomeOverlay", () => ({
+  WelcomeOverlay: () => <div data-testid="welcome-overlay">Welcome Overlay</div>,
+}));
+
+// Mock PostConnectGuide
+vi.mock("../../app-builder/PostConnectGuide", () => ({
+  PostConnectGuide: () => <div data-testid="post-connect-guide">Post Connect Guide</div>,
+}));
+
+// Mock AppBuilderSkeleton
+vi.mock("../../app-builder/AppBuilderSkeleton", () => ({
+  AppBuilderSkeleton: () => <div data-testid="app-builder-skeleton">Skeleton</div>,
+}));
+
 // Mock CollapsedPanelStrip
 vi.mock("../../ui/collapsed-panel-strip", () => ({
   CollapsedPanelStrip: ({
@@ -206,6 +245,14 @@ describe("AppBuilderTab", () => {
       formFields: [],
       isExecuting: false,
       isSidebarVisible: true,
+    });
+
+    // Reset onboarding state (default: dismissed, no overlay)
+    Object.assign(mockOnboarding, {
+      phase: "dismissed",
+      isOverlayVisible: false,
+      isGuidedPostConnect: false,
+      connectError: null,
     });
   });
 
@@ -441,6 +488,42 @@ describe("AppBuilderTab", () => {
         "theme",
         "light",
       );
+    });
+  });
+
+  describe("onboarding", () => {
+    it("renders welcome overlay when onboarding is active and no server", () => {
+      mockOnboarding.phase = "welcome";
+      mockOnboarding.isOverlayVisible = true;
+
+      render(<AppBuilderTab />);
+
+      expect(screen.getByTestId("welcome-overlay")).toBeInTheDocument();
+      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+    });
+
+    it("renders post-connect guide when in guided mode with server", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isGuidedPostConnect = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("post-connect-guide")).toBeInTheDocument();
+      });
+    });
+
+    it("does not show overlay when onboarding is dismissed", () => {
+      mockOnboarding.phase = "dismissed";
+      mockOnboarding.isOverlayVisible = false;
+
+      render(<AppBuilderTab />);
+
+      expect(screen.queryByTestId("welcome-overlay")).not.toBeInTheDocument();
+      expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
   });
 

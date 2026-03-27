@@ -24,6 +24,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
@@ -632,6 +633,15 @@ export default function App() {
       return;
     }
 
+    // First-run onboarding: auto-land on App Builder if eligible
+    const hasConnected = Object.values(workspaceServers).some(
+      (s) => s.connectionStatus === "connected",
+    );
+    if (isFirstRunEligible(hasConnected, window.location.hash)) {
+      window.location.hash = "app-builder";
+      // The hashchange listener below will pick this up
+    }
+
     const applyHash = () => {
       const currentHash = window.location.hash || "#servers";
       applyNavigation(currentHash, { enforceCanonicalHash: true });
@@ -1007,6 +1017,10 @@ export default function App() {
             <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
+              servers={workspaceServers}
+              registryEnabled={registryEnabled === true}
+              onConnect={handleConnect}
+              onNavigate={handleNavigate}
             />
           )}
           {activeTab === "client-config" && (
