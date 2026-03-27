@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
+import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { RunAccordionView } from "./run-accordion-view";
 import { RunDetailView } from "./run-detail-view";
 import { TestCaseDetailView } from "./test-case-detail-view";
@@ -265,6 +266,15 @@ export function CiSuiteDetail({
                   })[0]?._id === replayingRunId
               }
             />
+            {runs.filter((r) => r.isActive !== false).length > 0 && (
+              <SuiteRunsChartGrid
+                suiteSource={suite.source}
+                runTrendData={runTrendData}
+                modelStats={modelStats}
+                runsLoading={runsLoading}
+                onRunClick={handleRunClick}
+              />
+            )}
             <RunAccordionView
               suite={suite}
               runs={runs}

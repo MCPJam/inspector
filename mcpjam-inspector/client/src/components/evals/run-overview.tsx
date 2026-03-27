@@ -21,6 +21,7 @@ import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { toast } from "sonner";
 
 interface RunOverviewProps {
@@ -320,7 +321,16 @@ export function RunOverview({
   }, [selectedRunIds, onDirectDeleteRun]);
 
   return (
-    <>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+      {runs.length > 0 && (
+        <SuiteRunsChartGrid
+          suiteSource={suite.source}
+          runTrendData={runTrendData}
+          modelStats={modelStats}
+          runsLoading={runsLoading}
+          onRunClick={onRunClick}
+        />
+      )}
       {/* Runs List */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border bg-card text-card-foreground">
         {selectedRunIds.size > 0 ? (
@@ -656,7 +666,7 @@ export function RunOverview({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }
 
