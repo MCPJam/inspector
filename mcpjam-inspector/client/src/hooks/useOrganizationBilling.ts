@@ -223,9 +223,7 @@ export function useOrganizationBilling(
   const isLoadingOrganizationPremiumness =
     !!organizationId && organizationPremiumness === undefined;
   const isLoadingWorkspacePremiumness =
-    !!organizationId &&
-    !!workspaceId &&
-    workspacePremiumness === undefined;
+    !!organizationId && !!workspaceId && workspacePremiumness === undefined;
 
   return {
     billingStatus,

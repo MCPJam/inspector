@@ -461,8 +461,7 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
     ? "Connected"
     : "Not connected";
   const auditLogLocked =
-    billingUiEnabled &&
-    isGateAccessDenied(organizationPremiumness, "auditLog");
+    billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
     window.location.hash = getOrganizationRouteHash(
       organization._id,

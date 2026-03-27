@@ -1,5 +1,8 @@
 import { Button } from "@/components/ui/button";
-import type { BillingFeatureName, OrganizationPlan } from "@/hooks/useOrganizationBilling";
+import type {
+  BillingFeatureName,
+  OrganizationPlan,
+} from "@/hooks/useOrganizationBilling";
 import {
   formatBillingFeatureName,
   formatPlanName,
@@ -30,7 +33,9 @@ export function PremiumnessLockedPanel({
         <h2 className="text-lg font-semibold">{featureName} is locked</h2>
         <p className="text-sm text-muted-foreground">
           {featureName} is not included on your current plan
-          {upgradePlan ? ` — upgrade to ${targetPlan} or higher to unlock.` : "."}
+          {upgradePlan
+            ? ` — upgrade to ${targetPlan} or higher to unlock.`
+            : "."}
         </p>
         {!canManageBilling ? (
           <p className="text-sm text-muted-foreground">

@@ -231,8 +231,7 @@ export function OrganizationBillingSection({
   const effectivePlan = billingStatus?.effectivePlan ?? persistedPlan;
   const currentPlan = effectivePlan;
   const planMismatch =
-    billingStatus &&
-    billingStatus.effectivePlan !== billingStatus.plan;
+    billingStatus && billingStatus.effectivePlan !== billingStatus.plan;
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;

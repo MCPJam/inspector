@@ -37,8 +37,7 @@ export const LEARNING_GROUPS: LearningGroup[] = [
       {
         id: "why-mcp",
         title: "Why MCP?",
-        description:
-          "See why AI needs a standard way to reach tools and data.",
+        description: "See why AI needs a standard way to reach tools and data.",
         icon: Lightbulb,
         totalSteps: 7,
         category: "Concepts",
@@ -47,8 +46,7 @@ export const LEARNING_GROUPS: LearningGroup[] = [
       {
         id: "what-is-mcp",
         title: "What is MCP?",
-        description:
-          "Learn the basic parts of MCP and how they work together.",
+        description: "Learn the basic parts of MCP and how they work together.",
         icon: Network,
         totalSteps: 8,
         category: "Fundamentals",
@@ -73,8 +71,7 @@ export const LEARNING_GROUPS: LearningGroup[] = [
       {
         id: "mcp-tools",
         title: "MCP Tools",
-        description:
-          "Learn how AI uses MCP tools to do real work.",
+        description: "Learn how AI uses MCP tools to do real work.",
         icon: Wrench,
         totalSteps: 5,
         category: "Protocol",
@@ -93,8 +90,7 @@ export const LEARNING_GROUPS: LearningGroup[] = [
       {
         id: "mcp-prompts",
         title: "MCP Prompts",
-        description:
-          "Learn how reusable prompt templates fit into MCP.",
+        description: "Learn how reusable prompt templates fit into MCP.",
         icon: MessageSquare,
         totalSteps: 5,
         category: "Protocol",
@@ -119,8 +115,7 @@ export const LEARNING_GROUPS: LearningGroup[] = [
       {
         id: "apps-sdk",
         title: "OpenAI Apps SDK",
-        description:
-          "Learn what ChatGPT adds on top of standard MCP Apps.",
+        description: "Learn what ChatGPT adds on top of standard MCP Apps.",
         icon: Blocks,
         totalSteps: 7,
         category: "Extensions",
@@ -145,8 +140,7 @@ export const LEARNING_GROUPS: LearningGroup[] = [
       {
         id: "mcp-vs-api",
         title: "MCP vs REST APIs",
-        description:
-          "See how MCP works with APIs instead of replacing them.",
+        description: "See how MCP works with APIs instead of replacing them.",
         icon: Globe,
         totalSteps: 4,
         category: "Comparisons",

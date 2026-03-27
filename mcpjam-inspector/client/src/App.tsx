@@ -461,10 +461,9 @@ export default function App() {
     workspacePremiumness,
     selectFreeAfterTrial,
     isSelectingFreeAfterTrial,
-  } = useOrganizationBilling(
-    isAuthenticated ? billingOrganizationId : null,
-    { workspaceId: convexWorkspaceId },
-  );
+  } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
+    workspaceId: convexWorkspaceId,
+  });
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const navPremiumness =
     convexWorkspaceId && workspacePremiumness
@@ -923,9 +922,7 @@ export default function App() {
               <PremiumnessLockedPanel
                 feature={activeTabBillingFeature}
                 upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={
-                  shellBillingStatus?.canManageBilling ?? false
-                }
+                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
                 onViewBilling={() => {
                   if (billingOrganizationId) {
                     applyNavigation(
@@ -948,9 +945,7 @@ export default function App() {
               <PremiumnessLockedPanel
                 feature={activeTabBillingFeature}
                 upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={
-                  shellBillingStatus?.canManageBilling ?? false
-                }
+                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
                 onViewBilling={() => {
                   if (billingOrganizationId) {
                     applyNavigation(
@@ -973,9 +968,7 @@ export default function App() {
               <PremiumnessLockedPanel
                 feature={activeTabBillingFeature}
                 upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={
-                  shellBillingStatus?.canManageBilling ?? false
-                }
+                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
                 onViewBilling={() => {
                   if (billingOrganizationId) {
                     applyNavigation(

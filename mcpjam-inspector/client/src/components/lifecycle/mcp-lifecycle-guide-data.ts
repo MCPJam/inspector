@@ -75,8 +75,7 @@ export const LIFECYCLE_GUIDE_METADATA: Partial<
 
   initialize_result: {
     title: "Initialize Response",
-    summary:
-      "The server replies with the version and features it can support.",
+    summary: "The server replies with the version and features it can support.",
     phase: "initialization",
     teachableMoments: [
       "This is where version negotiation is settled.",
@@ -124,16 +123,13 @@ export const LIFECYCLE_GUIDE_METADATA: Partial<
 
   initialized_notification: {
     title: "Initialized Notification",
-    summary:
-      "The client sends one last message to say the handshake is done.",
+    summary: "The client sends one last message to say the handshake is done.",
     phase: "initialization",
     teachableMoments: [
       "It is a notification, so there is no id and no reply.",
       "After this, both sides can use the features they agreed on.",
     ],
-    tips: [
-      "This is the last step before normal MCP traffic starts.",
-    ],
+    tips: ["This is the last step before normal MCP traffic starts."],
     codeExample: JSON.stringify(
       {
         jsonrpc: "2.0",
