@@ -90,10 +90,12 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [appState.servers],
   );
 
-  const { members } = useWorkspaceMembers({
+  const { members, canManageMembers } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: convexWorkspaceId,
   });
+
+  const canDeleteRuns = !convexWorkspaceId || canManageMembers;
 
   const userMap = useMemo(() => {
     if (!members) return undefined;
@@ -611,6 +613,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                   : undefined
               }
               omitRunIterationList={route.type === "run-detail"}
+              canDeleteRuns={canDeleteRuns}
             />
           ) : (
             <div

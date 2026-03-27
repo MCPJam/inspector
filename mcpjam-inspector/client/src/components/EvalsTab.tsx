@@ -97,10 +97,12 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     selectedServer !== "none" &&
     appState.servers[selectedServer]?.connectionStatus === "connected";
 
-  const { members } = useWorkspaceMembers({
+  const { members, canManageMembers } = useWorkspaceMembers({
     isAuthenticated,
     workspaceId: workspaceId ?? null,
   });
+
+  const canDeleteRuns = !workspaceId || canManageMembers;
 
   const userMap = useMemo(() => {
     if (!members) return undefined;
@@ -711,6 +713,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                         userMap={userMap}
                         workspaceId={workspaceId}
                         navigation={exploreNavigation}
+                        canDeleteRuns={canDeleteRuns}
                       />
                     </div>
                   )}

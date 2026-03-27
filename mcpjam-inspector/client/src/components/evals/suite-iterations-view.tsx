@@ -23,6 +23,7 @@ import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { Button } from "@/components/ui/button";
+import { Loader2, Trash2 } from "lucide-react";
 
 type SuiteRoute = EvalsRoute | CiEvalsRoute;
 
@@ -77,6 +78,7 @@ export function SuiteIterationsView({
   runDetailSortByOverride,
   onRunDetailSortByChange,
   omitRunIterationList = false,
+  canDeleteRuns = true,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -110,6 +112,8 @@ export function SuiteIterationsView({
   onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
   /** When true, hide the iteration list in run detail (shown in a parent sidebar instead). */
   omitRunIterationList?: boolean;
+  /** Workspace admins only: run list batch delete and selection. */
+  canDeleteRuns?: boolean;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -407,6 +411,7 @@ export function SuiteIterationsView({
                     navigation.toSuiteOverview(suite._id, value)
                   }
                   userMap={userMap}
+                  canDeleteRuns={canDeleteRuns}
                 />
               </div>
             ) : (
@@ -582,6 +587,30 @@ export function SuiteIterationsView({
               onUpdate={handleUpdateTests}
               availableModels={availableModels}
             />
+
+            <div className="border-t border-border pt-8 space-y-3">
+              <h2 className="text-base font-semibold text-destructive">
+                Danger zone
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Deleting removes this suite from the workspace. Run history and
+                cases cannot be recovered.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                onClick={() => onDelete(suite)}
+                disabled={deletingSuiteId === suite._id}
+              >
+                {deletingSuiteId === suite._id ? (
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                ) : (
+                  <Trash2 className="h-4 w-4 mr-2" />
+                )}
+                Delete suite
+              </Button>
+            </div>
           </div>
         </div>
       )}

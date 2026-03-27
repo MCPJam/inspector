@@ -38,6 +38,7 @@ interface HostedCiSuiteWorkspaceDetailProps {
   runDetailSortByOverride?: "model" | "test" | "result";
   onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
   omitRunIterationList?: boolean;
+  canDeleteRuns?: boolean;
 }
 
 export function HostedCiSuiteWorkspaceDetail({
@@ -66,6 +67,7 @@ export function HostedCiSuiteWorkspaceDetail({
   runDetailSortByOverride,
   onRunDetailSortByChange,
   omitRunIterationList = false,
+  canDeleteRuns = true,
 }: HostedCiSuiteWorkspaceDetailProps) {
   const navigation = useMemo(
     () => ({
@@ -128,6 +130,7 @@ export function HostedCiSuiteWorkspaceDetail({
           route={route}
           userMap={userMap}
           navigation={navigation}
+          canDeleteRuns={canDeleteRuns}
         />
       </div>
     </div>

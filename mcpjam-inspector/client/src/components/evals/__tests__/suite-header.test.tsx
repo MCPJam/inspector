@@ -114,4 +114,24 @@ describe("SuiteHeader", () => {
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
   });
+
+  it("shows Delete suite in overview when editable and calls onDelete", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        readOnlyConfig={false}
+        onDelete={onDelete}
+        onEditSuite={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete suite" }));
+
+    expect(onDelete).toHaveBeenCalledWith(baseSuite);
+  });
 });

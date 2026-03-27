@@ -15,7 +15,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GitBranch, Loader2, RotateCw, Settings2, X } from "lucide-react";
+import { GitBranch, Loader2, RotateCw, Settings2, Trash2, X } from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -77,12 +77,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     isEditMode,
     onRerun,
     onReplayRun,
+    onDelete,
     onCancelRun,
     onViewModeChange,
     connectedServerNames,
     rerunningSuiteId,
     replayingRunId = null,
     cancellingRunId,
+    deletingSuiteId,
     runs = [],
     testCases = [],
     availableModels = [],
@@ -664,6 +666,27 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                     ? `Connect the following servers: ${missingServers.join(", ")}`
                     : "Run all cases"}
             </TooltipContent>
+          </Tooltip>
+        )}
+        {!readOnlyConfig && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onDelete(suite)}
+                disabled={deletingSuiteId === suite._id}
+                className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10"
+              >
+                {deletingSuiteId === suite._id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                Delete suite
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Remove this suite and its evaluation history</TooltipContent>
           </Tooltip>
         )}
       </div>
