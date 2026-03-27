@@ -3,6 +3,7 @@ import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
   getServerTransportLabel,
+  getServerUrl,
 } from "../server-card-utils.js";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
@@ -94,6 +95,27 @@ describe("getServerCommandDisplay", () => {
       args: [],
     };
     expect(getServerCommandDisplay(config)).toBe("server");
+  });
+});
+
+describe("getServerUrl", () => {
+  it("returns URL string for HTTP config", () => {
+    const config: MCPServerConfig = {
+      url: "http://localhost:3000/mcp",
+    };
+    expect(getServerUrl(config)).toBe("http://localhost:3000/mcp");
+  });
+
+  it("returns joined command for stdio config", () => {
+    const config: MCPServerConfig = {
+      command: "node",
+      args: ["server.js"],
+    };
+    expect(getServerUrl(config)).toBe("node server.js");
+  });
+
+  it("returns undefined for empty config", () => {
+    expect(getServerUrl({} as MCPServerConfig)).toBeUndefined();
   });
 });
 

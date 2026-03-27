@@ -1,8 +1,10 @@
 import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { useConvex, useConvexAuth, useMutation } from "convex/react";
+import { useConvexAuth, useMutation } from "convex/react";
+import { usePostHog } from "posthog-js/react";
 import {
   ArrowRight,
+  FileText,
   FlaskConical,
   Loader2,
   MoreHorizontal,
@@ -18,30 +20,22 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   buildEvalsHash,
   useEvalsRoute,
   type EvalsRoute,
 } from "@/lib/evals-router";
-import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { withTestingSurface } from "@/lib/testing-surface";
+import { exportServerApi } from "@/lib/apis/mcp-export-api";
+import { generateAgentBrief } from "@/lib/generate-agent-brief";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { getServerUrl } from "@/components/connection/server-card-utils";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite, sortExploreCasesBySignal } from "./evals/helpers";
 import {
@@ -74,22 +68,14 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const route = useEvalsRoute();
-  const convex = useConvex();
+  const posthog = usePostHog();
   const appState = useSharedAppState();
   const { availableModels } = useAvailableEvalModels();
   const updateSuiteMutation = useMutation("testSuites:updateTestSuite" as any);
-  const updateTestCaseMutation = useMutation(
-    "testSuites:updateTestCase" as any,
-  );
   const mutations = useEvalMutations();
 
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
-  const [saveModalSelectedIds, setSaveModalSelectedIds] = useState<string[]>(
-    [],
-  );
-  const [isSaveDialogOpen, setIsSaveDialogOpen] = useState(false);
-  const [suiteNameDraft, setSuiteNameDraft] = useState("");
-  const [isSavingSuite, setIsSavingSuite] = useState(false);
+  const [isCopyingExploreBrief, setIsCopyingExploreBrief] = useState(false);
   const initializedExploreRef = useRef<Set<string>>(new Set());
   const generatedExploreSuiteRef = useRef<Set<string>>(new Set());
 
@@ -158,16 +144,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       ) ?? null
     );
   }, [manualSuiteEntries, selectedServer, isServerConnected]);
-
-  const savedSuiteEntries = useMemo(
-    () =>
-      manualSuiteEntries.filter(
-        (entry) =>
-          !isExploreSuite(entry.suite) &&
-          entry.suite.environment?.servers?.length,
-      ),
-    [manualSuiteEntries],
-  );
 
   const selectedSuiteId = exploreSuiteEntry?.suite._id ?? null;
 
@@ -369,128 +345,70 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const shouldReviewFindings = findingCount > 0 && !hasReviewedCase;
   const allCasesPassed =
     exploreCases.length > 0 && totalRunCount > 0 && findingCount === 0;
-  const matchingSavedSuite = useMemo(() => {
-    const normalizedName = suiteNameDraft.trim().toLowerCase();
-    if (!normalizedName) return null;
-    return (
-      savedSuiteEntries.find(
-        (entry) => entry.suite.name.trim().toLowerCase() === normalizedName,
-      ) ?? null
-    );
-  }, [savedSuiteEntries, suiteNameDraft]);
 
-  const openSaveDialog = useCallback(() => {
-    setSuiteNameDraft(
-      selectedServer ? `${selectedServer} baseline` : "New suite",
-    );
-    setSaveModalSelectedIds(exploreCases.map((c) => c._id));
-    setIsSaveDialogOpen(true);
-  }, [exploreCases, selectedServer]);
+  const exploreBriefDisabled =
+    !exploreSuite ||
+    exploreCases.length === 0 ||
+    handlers.isGeneratingTests ||
+    isCopyingExploreBrief ||
+    !selectedServer ||
+    !workspaceId ||
+    !isServerConnected;
 
-  const handleSaveExploreCases = useCallback(async () => {
-    if (!workspaceId || !selectedServer) {
+  const handleCopyExploreAgentBrief = useCallback(async () => {
+    if (!workspaceId || !selectedServer || !isServerConnected) {
       toast.error("Select a workspace and connected server first.");
       return;
     }
+    if (exploreCases.length === 0) return;
 
-    const suiteName = suiteNameDraft.trim();
-    if (!suiteName) {
-      toast.error("Give this suite a name first.");
+    const serverConfig = appState.servers[selectedServer]?.config;
+    if (!serverConfig) {
+      toast.error("Server configuration not available.");
       return;
     }
 
-    const selectedCases = exploreCases.filter((testCase) =>
-      saveModalSelectedIds.includes(testCase._id),
-    );
-    if (selectedCases.length === 0) {
-      toast.error("Select at least one case to save.");
-      return;
-    }
-
-    setIsSavingSuite(true);
-
+    setIsCopyingExploreBrief(true);
     try {
-      let targetSuiteId = matchingSavedSuite?.suite._id ?? null;
-      if (!targetSuiteId) {
-        const createdSuite = await mutations.createTestSuiteMutation({
-          workspaceId,
-          name: suiteName,
-          description: `Saved from ${selectedServer} exploration`,
-          environment: { servers: [selectedServer] },
-        });
-        targetSuiteId = createdSuite?._id ?? null;
-      }
-
-      if (!targetSuiteId) {
-        throw new Error("Failed to create suite");
-      }
-
-      const existingCases = (await convex.query(
-        "testSuites:listTestCases" as any,
-        { suiteId: targetSuiteId },
-      )) as EvalCase[];
-
-      for (const testCase of selectedCases) {
-        const existingCase = existingCases.find(
-          (candidate) =>
-            candidate.title === testCase.title &&
-            candidate.query === testCase.query,
-        );
-
-        if (existingCase) {
-          await updateTestCaseMutation({
-            testCaseId: existingCase._id,
-            title: testCase.title,
-            query: testCase.query,
-            runs: testCase.runs,
-            models: testCase.models,
-            expectedToolCalls: testCase.expectedToolCalls,
-            isNegativeTest: testCase.isNegativeTest,
-            scenario: testCase.scenario,
-            expectedOutput: testCase.expectedOutput,
-            advancedConfig: testCase.advancedConfig,
-          });
-        } else {
-          await mutations.createTestCaseMutation({
-            suiteId: targetSuiteId,
-            title: testCase.title,
-            query: testCase.query,
-            models: testCase.models,
-            runs: testCase.runs,
-            expectedToolCalls: testCase.expectedToolCalls,
-            isNegativeTest: testCase.isNegativeTest,
-            scenario: testCase.scenario,
-            expectedOutput: testCase.expectedOutput,
-            advancedConfig: testCase.advancedConfig,
-          });
-        }
-      }
-
-      toast.success(
-        matchingSavedSuite
-          ? `Updated "${suiteName}" with ${selectedCases.length} case${selectedCases.length === 1 ? "" : "s"}`
-          : `Saved ${selectedCases.length} case${selectedCases.length === 1 ? "" : "s"} to "${suiteName}"`,
-      );
-      setIsSaveDialogOpen(false);
-      navigateToCiEvalsRoute({
-        type: "suite-overview",
-        suiteId: targetSuiteId,
+      const data = await exportServerApi(selectedServer);
+      const serverUrl = getServerUrl(serverConfig);
+      const exploreTestCases = exploreCases.map((c) => ({
+        title: c.title,
+        query: c.query,
+        isNegativeTest: c.isNegativeTest,
+        scenario: c.scenario,
+        expectedOutput: c.expectedOutput,
+        expectedToolCalls: c.expectedToolCalls?.map((tc) => ({
+          toolName: tc.toolName,
+          arguments: tc.arguments as Record<string, unknown>,
+        })),
+      }));
+      const markdown = generateAgentBrief(data, {
+        serverUrl,
+        exploreTestCases,
+      });
+      await navigator.clipboard.writeText(markdown);
+      toast.success("Agent brief copied to clipboard");
+      posthog.capture("copy_explore_agent_brief_clicked", {
+        location: "evals_tab_explore",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        server_id: selectedServer,
+        case_count: exploreCases.length,
       });
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to save suite"));
+      toast.error(
+        getBillingErrorMessage(error, "Failed to copy agent brief"),
+      );
     } finally {
-      setIsSavingSuite(false);
+      setIsCopyingExploreBrief(false);
     }
   }, [
-    convex,
+    appState.servers,
     exploreCases,
-    matchingSavedSuite,
-    mutations.createTestCaseMutation,
-    mutations.createTestSuiteMutation,
-    saveModalSelectedIds,
+    isServerConnected,
+    posthog,
     selectedServer,
-    suiteNameDraft,
-    updateTestCaseMutation,
     workspaceId,
   ]);
 
@@ -530,7 +448,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         <EmptyState
           icon={FlaskConical}
           title="Sign in to use Testing"
-          description="Create an account or sign in to explore cases, save suites, and investigate runs."
+          description="Create an account or sign in to explore cases and investigate runs."
           className="h-[calc(100vh-200px)]"
         />
       </div>
@@ -626,23 +544,39 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={openSaveDialog}
-                        disabled={!exploreSuite || exploreCases.length === 0}
+                        onClick={() => void handleCopyExploreAgentBrief()}
+                        disabled={exploreBriefDisabled}
                       >
-                        Save as Suite
+                        {isCopyingExploreBrief ? (
+                          <>
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            Copying...
+                          </>
+                        ) : (
+                          <>
+                            <FileText className="mr-2 h-4 w-4" />
+                            Copy markdown for agent evals
+                          </>
+                        )}
                       </Button>
                     </>
                   ) : (
                     <Button
                       size="sm"
-                      onClick={openSaveDialog}
-                      disabled={
-                        !exploreSuite ||
-                        exploreCases.length === 0 ||
-                        handlers.isGeneratingTests
-                      }
+                      onClick={() => void handleCopyExploreAgentBrief()}
+                      disabled={exploreBriefDisabled}
                     >
-                      Save as Suite
+                      {isCopyingExploreBrief ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Copying...
+                        </>
+                      ) : (
+                        <>
+                          <FileText className="mr-2 h-4 w-4" />
+                          Copy markdown for agent evals
+                        </>
+                      )}
                     </Button>
                   )}
                   <DropdownMenu>
@@ -823,100 +757,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           </div>
         </>
       </div>
-
-      <Dialog open={isSaveDialogOpen} onOpenChange={setIsSaveDialogOpen}>
-        <DialogContent className="max-h-[min(90vh,720px)] gap-0 overflow-hidden sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Save selected cases as a suite</DialogTitle>
-            <DialogDescription>
-              Keep the cases you discovered in Explore and rerun them over time.
-              Existing suites with the same name will be updated instead of
-              duplicated.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 overflow-y-auto py-2">
-            <div className="space-y-2">
-              <Label htmlFor="suite-name">Suite name</Label>
-              <Input
-                id="suite-name"
-                value={suiteNameDraft}
-                onChange={(event) => setSuiteNameDraft(event.target.value)}
-                placeholder="weather-api baseline"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label>Cases to include</Label>
-              <div className="max-h-[min(40vh,280px)] space-y-2 overflow-y-auto rounded-xl border bg-muted/20 p-2">
-                {exploreCases.map((c) => (
-                  <label
-                    key={c._id}
-                    className="flex cursor-pointer items-start gap-3 rounded-lg px-2 py-1.5 hover:bg-muted/50"
-                  >
-                    <Checkbox
-                      checked={saveModalSelectedIds.includes(c._id)}
-                      onCheckedChange={(checked) => {
-                        const on = checked === true;
-                        setSaveModalSelectedIds((prev) =>
-                          on
-                            ? prev.includes(c._id)
-                              ? prev
-                              : [...prev, c._id]
-                            : prev.filter((id) => id !== c._id),
-                        );
-                      }}
-                      className="mt-0.5"
-                    />
-                    <span className="text-sm leading-snug">{c.title}</span>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            <div className="rounded-xl border bg-muted/30 p-3 text-sm text-muted-foreground">
-              Saving{" "}
-              <span className="font-medium text-foreground">
-                {saveModalSelectedIds.length}
-              </span>{" "}
-              case{saveModalSelectedIds.length === 1 ? "" : "s"} from{" "}
-              <span className="font-medium text-foreground">
-                {selectedServer || "the current server"}
-              </span>
-              .
-              {matchingSavedSuite ? (
-                <p className="mt-2 text-xs">
-                  We&apos;ll update the existing suite named &quot;
-                  {matchingSavedSuite.suite.name}&quot; and add anything new.
-                </p>
-              ) : null}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="ghost"
-              onClick={() => setIsSaveDialogOpen(false)}
-              disabled={isSavingSuite}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={() => void handleSaveExploreCases()}
-              disabled={isSavingSuite}
-            >
-              {isSavingSuite ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Saving...
-                </>
-              ) : (
-                "Save as Suite"
-              )}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       <ConfirmationDialogs
         suiteToDelete={handlers.suiteToDelete}

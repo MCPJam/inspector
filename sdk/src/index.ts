@@ -202,4 +202,4 @@ export type {
 export { injectOpenAICompat } from "./widget-helpers.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
-export { SKILL_MD } from "./skill-reference.js";
+export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";

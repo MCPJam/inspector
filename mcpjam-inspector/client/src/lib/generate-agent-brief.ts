@@ -3,7 +3,10 @@
  * Pure utility — no React or DOM dependencies.
  */
 
-import { SKILL_MD } from "@mcpjam/sdk/skill-reference";
+import {
+  EXPLORE_TO_SDK_EVALS_SKILL_MD,
+  SKILL_MD,
+} from "@mcpjam/sdk/skill-reference";
 
 export interface ExportedTool {
   name: string;
@@ -40,6 +43,19 @@ export interface ExportPayload {
   prompts: ExportedPrompt[];
 }
 
+/** Serializable explore case slice for agent briefs (not tied to Convex / React). */
+export interface AgentBriefExploreCase {
+  title: string;
+  query: string;
+  isNegativeTest?: boolean;
+  scenario?: string;
+  expectedOutput?: string;
+  expectedToolCalls?: Array<{
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }>;
+}
+
 export interface GenerateAgentBriefOptions {
   /** Max tools to show in the full table (rest are listed as names). Default: 30 */
   maxToolsInTable?: number;
@@ -47,6 +63,8 @@ export interface GenerateAgentBriefOptions {
   maxDescriptionLength?: number;
   /** Server URL (for HTTP) or command string (for stdio) to embed in the brief */
   serverUrl?: string;
+  /** Optional MCPJam Explore-generated cases to include before the embedded skill */
+  exploreTestCases?: AgentBriefExploreCase[];
 }
 
 export function generateAgentBrief(
@@ -56,6 +74,7 @@ export function generateAgentBrief(
   const maxTools = options?.maxToolsInTable ?? 30;
   const maxDesc = options?.maxDescriptionLength ?? 120;
   const serverUrl = options?.serverUrl;
+  const exploreTestCases = options?.exploreTestCases;
 
   const lines: string[] = [];
 
@@ -207,16 +226,90 @@ export function generateAgentBrief(
   );
   lines.push("");
 
+  if (exploreTestCases && exploreTestCases.length > 0) {
+    lines.push("## Explore-generated test cases");
+    lines.push("");
+    lines.push(
+      "These prompts and expectations were produced in MCPJam Explore and can be turned into SDK eval tests using the skill reference below.",
+    );
+    lines.push("");
+    for (const c of exploreTestCases) {
+      lines.push(`### ${escapeHeadingText(c.title)}`);
+      lines.push("");
+      lines.push("**User prompt:**");
+      lines.push("");
+      lines.push("```");
+      lines.push(c.query);
+      lines.push("```");
+      lines.push("");
+      if (c.isNegativeTest) {
+        lines.push("- **Negative test:** expect no tool calls.");
+        if (c.scenario) {
+          lines.push(`- **Scenario:** ${escapeCell(c.scenario)}`);
+        }
+        lines.push("");
+      }
+      if (c.expectedOutput?.trim()) {
+        lines.push(`**Expected output / experience:** ${escapeCell(c.expectedOutput.trim())}`);
+        lines.push("");
+      }
+      if (c.expectedToolCalls && c.expectedToolCalls.length > 0) {
+        lines.push("**Expected tool calls (shape):**");
+        lines.push("");
+        for (const call of c.expectedToolCalls) {
+          lines.push(`- \`${formatCompactToolCall(call.toolName, call.arguments)}\``);
+        }
+        lines.push("");
+      }
+    }
+  }
+
   // ── Eval SDK Reference (embedded SKILL.md) ──
   lines.push("---");
   lines.push("");
-  lines.push(SKILL_MD);
+  lines.push(
+    exploreTestCases && exploreTestCases.length > 0
+      ? EXPLORE_TO_SDK_EVALS_SKILL_MD
+      : SKILL_MD,
+  );
   lines.push("");
 
   return lines.join("\n");
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+
+function escapeHeadingText(title: string): string {
+  return title.replace(/\s+/g, " ").trim() || "Untitled";
+}
+
+function formatCompactArgValue(value: unknown): string {
+  if (value === null || value === undefined) {
+    return String(value);
+  }
+  if (typeof value === "string") {
+    const q = JSON.stringify(value.length > 48 ? `${value.slice(0, 45)}...` : value);
+    return q;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  let s = JSON.stringify(value);
+  if (s.length > 72) {
+    s = `${s.slice(0, 69)}...`;
+  }
+  return s;
+}
+
+function formatCompactToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+): string {
+  const inner = Object.entries(args)
+    .map(([k, v]) => `${k}: ${formatCompactArgValue(v)}`)
+    .join(", ");
+  return `${toolName}({${inner}})`;
+}
 
 function truncate(str: string, max: number): string {
   if (str.length <= max) return str;

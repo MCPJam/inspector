@@ -31,6 +31,7 @@ import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
+  getServerUrl,
 } from "./server-card-utils";
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
@@ -232,14 +233,7 @@ export function ServerConnectionCard({
     setIsCopyingBrief(true);
     try {
       const data = await exportServerApi(server.name);
-      const serverUrl =
-        "url" in server.config && server.config.url
-          ? server.config.url.toString()
-          : "command" in server.config
-            ? [server.config.command, ...(server.config.args ?? [])]
-                .filter(Boolean)
-                .join(" ")
-            : undefined;
+      const serverUrl = getServerUrl(server.config);
       const markdown = generateAgentBrief(data, { serverUrl });
       await navigator.clipboard.writeText(markdown);
       toast.success("Agent brief copied to clipboard");
