@@ -70,7 +70,6 @@ export function CiSuiteDetail({
       : route.type === "test-detail"
         ? "test-detail"
         : "overview";
-  const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("result");
@@ -153,7 +152,6 @@ export function CiSuiteDetail({
   };
 
   const handleBackToOverview = () => {
-    setShowRunSummarySidebar(false);
     navigateToCiEvalsRoute({
       type: "suite-overview",
       suiteId: suite._id,
@@ -184,8 +182,6 @@ export function CiSuiteDetail({
           cancellingRunId={cancellingRunId}
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
-          showRunSummarySidebar={showRunSummarySidebar}
-          setShowRunSummarySidebar={setShowRunSummarySidebar}
           runsViewMode={"test-cases"}
           runs={runs}
           allIterations={allIterations}
@@ -296,8 +292,6 @@ export function CiSuiteDetail({
             selectedRunChartData={selectedRunChartData}
             runDetailSortBy={runDetailSortBy}
             onSortChange={setRunDetailSortBy}
-            showRunSummarySidebar={showRunSummarySidebar}
-            setShowRunSummarySidebar={setShowRunSummarySidebar}
             serverNames={connectedSuiteServers}
             selectedIterationId={selectedIterationId}
             onSelectIteration={handleSelectIteration}

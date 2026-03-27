@@ -124,7 +124,6 @@ export function SuiteIterationsView({
       : "runs";
 
   // Local state that's not in the URL
-  const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("model");
@@ -277,7 +276,6 @@ export function SuiteIterationsView({
   };
 
   const handleBackToOverview = () => {
-    setShowRunSummarySidebar(false);
     navigation.toSuiteOverview(suite._id);
   };
 
@@ -321,8 +319,6 @@ export function SuiteIterationsView({
           cancellingRunId={cancellingRunId}
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
-          showRunSummarySidebar={showRunSummarySidebar}
-          setShowRunSummarySidebar={setShowRunSummarySidebar}
           runsViewMode={runsViewMode}
           runs={runs}
           allIterations={allIterations}
@@ -471,8 +467,6 @@ export function SuiteIterationsView({
                 selectedRunChartData={selectedRunChartData}
                 runDetailSortBy={runDetailSortBy}
                 onSortChange={setRunDetailSortBy}
-                showRunSummarySidebar={showRunSummarySidebar}
-                setShowRunSummarySidebar={setShowRunSummarySidebar}
                 serverNames={(suite.environment?.servers || []).filter((name) =>
                   connectedServerNames.has(name),
                 )}

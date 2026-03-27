@@ -5,11 +5,20 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import { PieChart, Pie, Label } from "recharts";
+import {
+  PieChart,
+  Pie,
+  Label,
+} from "recharts";
 import { cn } from "@/lib/utils";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
-import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
+import {
+  evalStatusLeftBorderClasses,
+  formatDuration,
+  formatRunId,
+} from "./helpers";
+import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
 import {
   computeIterationResult,
   computeIterationPassed,
@@ -43,8 +52,6 @@ interface RunDetailViewProps {
   };
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
-  showRunSummarySidebar: boolean;
-  setShowRunSummarySidebar: (show: boolean) => void;
   serverNames?: string[];
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
@@ -60,8 +67,6 @@ export function RunDetailView({
   selectedRunChartData,
   runDetailSortBy,
   onSortChange,
-  showRunSummarySidebar,
-  setShowRunSummarySidebar,
   serverNames = [],
   selectedIterationId,
   onSelectIteration,
@@ -132,6 +137,16 @@ export function RunDetailView({
         : null,
     [selectedIterationId, caseGroupsForSelectedRun],
   );
+
+  const hasTokenData = useMemo(
+    () =>
+      selectedRunChartData.tokensData.length > 0 &&
+      selectedRunChartData.tokensData.some((d) => d.tokens > 0),
+    [selectedRunChartData.tokensData],
+  );
+
+  const hasRunBarCharts =
+    selectedRunChartData.durationData.length > 0 || hasTokenData;
 
   return (
     <div className="relative flex flex-col p-4">
@@ -323,6 +338,14 @@ export function RunDetailView({
                 </div>
               ))}
             </div>
+          )}
+
+          {hasRunBarCharts && (
+            <RunMetricsBarCharts
+              durationData={selectedRunChartData.durationData}
+              tokensData={selectedRunChartData.tokensData}
+              hasTokenData={hasTokenData}
+            />
           )}
         </div>
       </div>
@@ -619,25 +642,4 @@ function IterationListItem({
       </button>
     </div>
   );
-}
-
-function formatDuration(durationMs: number) {
-  if (durationMs < 1000) {
-    return `${durationMs}ms`;
-  }
-
-  const totalSeconds = Math.round(durationMs / 1000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) {
-    return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }

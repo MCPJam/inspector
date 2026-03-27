@@ -1,8 +1,12 @@
 import { useMemo } from "react";
 import { RotateCw } from "lucide-react";
-import { ChartContainer } from "@/components/ui/chart";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
-import { Area, AreaChart } from "recharts";
+import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
@@ -149,6 +153,58 @@ export function SuiteHeroStats({
   return (
     <div className="rounded-xl border bg-card text-card-foreground">
       <div className="flex items-center gap-6 p-5">
+        {/* Suite pass/fail donut */}
+        <div className="shrink-0">
+          <ChartContainer
+            config={{
+              passed: {
+                label: "Passed",
+                color: "hsl(142.1 76.2% 36.3%)",
+              },
+              failed: {
+                label: "Failed",
+                color: "hsl(0 84.2% 60.2%)",
+              },
+            }}
+            className="h-[88px] w-[88px]"
+          >
+            <PieChart>
+              <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+              <Pie
+                data={stats.donutData}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={28}
+                outerRadius={40}
+                strokeWidth={2}
+              >
+                <Label
+                  content={({ viewBox }) => {
+                    if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                      return (
+                        <text
+                          x={viewBox.cx}
+                          y={viewBox.cy}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                        >
+                          <tspan
+                            x={viewBox.cx}
+                            y={viewBox.cy}
+                            className="fill-foreground text-lg font-bold"
+                          >
+                            {stats.accuracy}%
+                          </tspan>
+                        </text>
+                      );
+                    }
+                  }}
+                />
+              </Pie>
+            </PieChart>
+          </ChartContainer>
+        </div>
+
         {/* Stats */}
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 mb-1">

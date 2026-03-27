@@ -56,8 +56,6 @@ describe("SuiteHeader", () => {
     cancellingRunId: null,
     deletingSuiteId: null,
     deletingRunId: null,
-    showRunSummarySidebar: false,
-    setShowRunSummarySidebar: vi.fn(),
     runs: [baseRun],
     allIterations: [],
     aggregate: null,

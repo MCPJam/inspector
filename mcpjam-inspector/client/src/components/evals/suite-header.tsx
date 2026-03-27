@@ -57,8 +57,6 @@ interface SuiteHeaderProps {
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
-  showRunSummarySidebar: boolean;
-  setShowRunSummarySidebar: (show: boolean) => void;
   runsViewMode?: "runs" | "test-cases";
   runs?: EvalSuiteRun[];
   allIterations?: EvalIteration[];

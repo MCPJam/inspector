@@ -380,8 +380,6 @@ function CommitSuiteRunDetail({
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
 }) {
-  const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
-
   // Load iterations for this suite
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
@@ -431,8 +429,6 @@ function CommitSuiteRunDetail({
       selectedRunChartData={selectedRunChartData}
       runDetailSortBy={runDetailSortBy}
       onSortChange={onSortChange}
-      showRunSummarySidebar={showRunSummarySidebar}
-      setShowRunSummarySidebar={setShowRunSummarySidebar}
       serverNames={run.configSnapshot?.environment?.servers ?? []}
       selectedIterationId={selectedIterationId}
       onSelectIteration={onSelectIteration}
