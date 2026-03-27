@@ -211,13 +211,13 @@ describe("getHostedNavigationSections", () => {
     ]);
   });
 
-  it("keeps Evals subnav entry with #evals in hosted mode", () => {
+  it("keeps Evaluate subnav entry with #evals in hosted mode", () => {
     const hostedSections = getHostedNavigationSections([
       {
         id: "mcp-apps",
         items: [
           {
-            title: "Evals",
+            title: "Evaluate",
             url: "#evals",
             icon: FakeIcon,
             billingFeature: "evals",
@@ -229,7 +229,7 @@ describe("getHostedNavigationSections", () => {
 
     expect(hostedSections[0].items).toEqual([
       {
-        title: "Evals",
+        title: "Evaluate",
         url: "#evals",
         icon: FakeIcon,
         billingFeature: "evals",

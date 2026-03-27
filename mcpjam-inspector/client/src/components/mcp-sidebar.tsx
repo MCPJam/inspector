@@ -17,7 +17,7 @@ import {
   Box,
   LayoutGrid,
   GitBranch,
-  Sparkles,
+  Puzzle,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -82,7 +82,7 @@ interface NavItem {
   hiddenByFlag?: string;
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
-  /** Nested Explore / Runs entries; omit from the flat main menu */
+  /** Nested Playground / Runs entries; omit from the flat main menu */
   evalsSubnav?: boolean;
 }
 
@@ -193,7 +193,7 @@ const navigationSections: NavSection[] = [
         featureFlag: "client-config-enabled",
       },
       {
-        title: "Evals",
+        title: "Evaluate",
         url: "#evals",
         icon: FlaskConical,
         billingFeature: "evals",
@@ -332,11 +332,13 @@ function navigateToEvalsRunsList() {
 }
 
 function SidebarEvalsNavGroup({
+  title,
   Icon,
   disabled,
   disabledTooltip,
   activeTab,
 }: {
+  title: string;
   Icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
@@ -348,7 +350,7 @@ function SidebarEvalsNavGroup({
 
   const parentButton = (
     <SidebarMenuButton
-      tooltip="Evals"
+      tooltip={title}
       isActive={!disabled && isEvalsFamily}
       onClick={() => {
         if (disabled) return;
@@ -365,7 +367,7 @@ function SidebarEvalsNavGroup({
       }
     >
       <Icon className="h-4 w-4" />
-      <span>Evals</span>
+      <span>{title}</span>
     </SidebarMenuButton>
   );
 
@@ -408,8 +410,8 @@ function SidebarEvalsNavGroup({
                     disabled ? "pointer-events-none opacity-50" : undefined
                   }
                 >
-                  <Sparkles className="h-4 w-4" />
-                  <span>Explore</span>
+                  <Puzzle className="h-4 w-4" />
+                  <span>Playground</span>
                 </SidebarMenuSubButton>
               </SidebarMenuSubItem>
               <SidebarMenuSubItem>
@@ -633,6 +635,7 @@ export function MCPSidebar({
               />
               {evalsEntry ? (
                 <SidebarEvalsNavGroup
+                  title={evalsEntry.title}
                   Icon={evalsEntry.icon}
                   disabled={evalsEntry.disabled}
                   disabledTooltip={evalsEntry.disabledTooltip}
