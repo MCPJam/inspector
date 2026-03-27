@@ -6,7 +6,6 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   Tooltip,
@@ -14,8 +13,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
-import { learnMoreContent } from "@/lib/learn-more-content";
-import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
 
 interface GuideBubble {
   message: string;
@@ -32,28 +29,18 @@ interface NavMainItem {
   disabledTooltip?: string;
 }
 
-interface LearnMoreProps {
-  hasVisited: (tabId: string) => boolean;
-  onExpand: (tabId: string, sourceRect?: DOMRect | null) => void;
-}
-
 interface NavMainProps {
   items: NavMainItem[];
   onItemClick?: (url: string) => void;
   /** Show a guide bubble on the App Builder item */
   appBuilderBubble?: GuideBubble | null;
-  /** Learn more hover card integration */
-  learnMore?: LearnMoreProps | null;
 }
 
 export function NavMain({
   items,
   onItemClick,
   appBuilderBubble,
-  learnMore,
 }: NavMainProps) {
-  const { open: sidebarOpen } = useSidebar();
-
   const handleClick = (url: string) => {
     if (onItemClick) {
       onItemClick(url);
@@ -74,23 +61,6 @@ export function NavMain({
           ? "[&[data-active=true]]:bg-accent cursor-pointer"
           : "cursor-pointer",
     );
-
-  const shouldShowHoverCard = (item: NavMainItem): boolean => {
-    if (!learnMore || !sidebarOpen) return false;
-    if (shouldShowBubble(item)) return false;
-    const tabId = item.url.replace("#", "");
-    return tabId in learnMoreContent && learnMore.hasVisited(tabId);
-  };
-
-  const wrapWithHoverCard = (item: NavMainItem, child: React.ReactNode) => {
-    if (!shouldShowHoverCard(item) || !learnMore) return child;
-    const tabId = item.url.replace("#", "");
-    return (
-      <LearnMoreHoverCard tabId={tabId} onExpand={learnMore.onExpand}>
-        {child}
-      </LearnMoreHoverCard>
-    );
-  };
 
   return (
     <SidebarGroup>
@@ -139,10 +109,10 @@ export function NavMain({
               <SidebarMenuItem key={item.title}>
                 {shouldShowBubble(item) ? (
                   <GuideBubbleWrapper guideBubble={appBuilderBubble!}>
-                    {wrapWithHoverCard(item, button)}
+                    {button}
                   </GuideBubbleWrapper>
                 ) : (
-                  wrapWithHoverCard(item, button)
+                  button
                 )}
               </SidebarMenuItem>
             );
