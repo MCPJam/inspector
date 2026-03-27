@@ -322,7 +322,7 @@ export function RunOverview({
   return (
     <>
       {/* Runs List */}
-      <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border bg-card text-card-foreground">
         {selectedRunIds.size > 0 ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
             <div className="flex items-center gap-3">
@@ -366,16 +366,20 @@ export function RunOverview({
               onChange={(e) =>
                 onViewModeChange(e.target.value as "runs" | "test-cases")
               }
-            className="text-xs border rounded px-2 py-1 bg-background"
-          >
+              className="text-xs border rounded px-2 py-1 bg-background"
+            >
             <option value="runs">Runs</option>
             <option value="test-cases">Cases</option>
           </select>
         </div>
         )}
 
-        <div ref={tableViewportRef} className="overflow-x-auto">
+        <div
+          ref={tableViewportRef}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto"
+        >
           <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
             style={
               responsiveLayout.enableHorizontalScroll
                 ? { minWidth: `${responsiveLayout.requiredTableWidthPx}px` }
@@ -384,7 +388,7 @@ export function RunOverview({
           >
             {/* Column Headers */}
             {runs.length > 0 && (
-              <div className="px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
+              <div className="shrink-0 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground">
                 <div
                   className="grid items-center gap-x-3"
                   style={{ gridTemplateColumns: fullGridTemplateColumns }}
@@ -408,7 +412,7 @@ export function RunOverview({
               </div>
             )}
 
-            <div className="divide-y overflow-y-auto">
+            <div className="min-h-0 flex-1 divide-y overflow-y-auto">
               {runs.length === 0 ? (
                 <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                   No runs found.

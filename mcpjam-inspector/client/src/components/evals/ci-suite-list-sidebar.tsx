@@ -102,29 +102,19 @@ export function CiSuiteListSidebar({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3 space-y-2">
-        <div className="flex rounded-md border bg-muted/50 p-0.5">
-          <button
-            onClick={() => onSidebarModeChange("runs")}
-            className={cn(
-              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
-              sidebarMode === "runs"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">Group By</span>
+          <select
+            value={sidebarMode}
+            onChange={(e) =>
+              onSidebarModeChange(e.target.value as SidebarMode)
+            }
+            className="text-xs border rounded px-2 py-1 bg-background"
+            aria-label="Group sidebar list by"
           >
-            By Commit
-          </button>
-          <button
-            onClick={() => onSidebarModeChange("suites")}
-            className={cn(
-              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
-              sidebarMode === "suites"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            By Suite
-          </button>
+            <option value="runs">Commit</option>
+            <option value="suites">Suite</option>
+          </select>
         </div>
       </div>
 

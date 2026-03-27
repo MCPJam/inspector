@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen } from "@/test";
+import { renderWithProviders, screen, userEvent } from "@/test";
 import { CiSuiteListSidebar } from "../ci-suite-list-sidebar";
 
 vi.mock("../commit-list-sidebar", () => ({
@@ -7,7 +7,33 @@ vi.mock("../commit-list-sidebar", () => ({
 }));
 
 describe("CiSuiteListSidebar", () => {
-  it("renders suite name, last-run tooltip, and relative time in By Suite mode", () => {
+  it("shows Group By select and switches mode on change", async () => {
+    const u = userEvent.setup();
+    const onSidebarModeChange = vi.fn();
+    renderWithProviders(
+      <CiSuiteListSidebar
+        suites={[]}
+        selectedSuiteId={null}
+        onSelectSuite={vi.fn()}
+        sidebarMode="suites"
+        onSidebarModeChange={onSidebarModeChange}
+        commitGroups={[]}
+        selectedCommitSha={null}
+        onSelectCommit={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Group By")).toBeTruthy();
+    const select = screen.getByRole("combobox", {
+      name: "Group sidebar list by",
+    });
+    expect(select).toHaveValue("suites");
+
+    await u.selectOptions(select, "runs");
+    expect(onSidebarModeChange).toHaveBeenCalledWith("runs");
+  });
+
+  it("renders suite name, last-run tooltip, and relative time when grouped by suite", () => {
     const now = Date.now();
     renderWithProviders(
       <CiSuiteListSidebar

@@ -301,7 +301,7 @@ export function SuiteIterationsView({
   );
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
       <div className="shrink-0">
         <SuiteHeader
@@ -337,9 +337,9 @@ export function SuiteIterationsView({
 
       {/* Content */}
       {!isEditMode && (
-        <div className="flex-1 min-h-0">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {viewMode === "test-edit" && selectedTestId ? (
-            <div className="h-full">
+            <div className="h-full min-h-0 overflow-y-auto">
               <TestTemplateEditor
                 suiteId={suite._id}
                 selectedTestCaseId={selectedTestId}
@@ -357,29 +357,34 @@ export function SuiteIterationsView({
               );
 
               return (
-                <TestCaseDetailView
-                  testCase={selectedCase}
-                  iterations={caseIterations}
-                  runs={runs}
-                  serverNames={(suite.environment?.servers || []).filter(
-                    (name) => connectedServerNames.has(name),
-                  )}
-                  suiteName={suite.name}
-                  onNavigateToSuite={() =>
-                    navigation.toSuiteOverview(suite._id)
-                  }
-                  onBack={() =>
-                    navigation.toSuiteOverview(suite._id, "test-cases")
-                  }
-                  onViewRun={(runId) =>
-                    navigation.toRunDetail(suite._id, runId)
-                  }
-                />
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <TestCaseDetailView
+                    testCase={selectedCase}
+                    iterations={caseIterations}
+                    runs={runs}
+                    serverNames={(suite.environment?.servers || []).filter(
+                      (name) => connectedServerNames.has(name),
+                    )}
+                    suiteName={suite.name}
+                    onNavigateToSuite={() =>
+                      navigation.toSuiteOverview(suite._id)
+                    }
+                    onBack={() =>
+                      navigation.toSuiteOverview(suite._id, "test-cases")
+                    }
+                    onViewRun={(runId) =>
+                      navigation.toRunDetail(suite._id, runId)
+                    }
+                  />
+                </div>
               );
             })()
           ) : viewMode === "overview" ? (
-            <div key={runsViewMode} className="space-y-4 overflow-y-auto p-0.5">
-              {runsViewMode === "runs" ? (
+            runsViewMode === "runs" ? (
+              <div
+                key={runsViewMode}
+                className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+              >
                 <RunOverview
                   suite={suite}
                   runs={runs}
@@ -395,75 +400,86 @@ export function SuiteIterationsView({
                   }
                   userMap={userMap}
                 />
-              ) : caseListInSidebar ? (
-                <div className="space-y-4">
-                  <SuiteHeroStats
-                    runs={runs}
+              </div>
+            ) : (
+              <div
+                key={runsViewMode}
+                className="min-h-0 flex-1 space-y-4 overflow-y-auto p-0.5"
+              >
+                {caseListInSidebar ? (
+                  <div className="space-y-4">
+                    <SuiteHeroStats
+                      runs={runs}
+                      allIterations={allIterations}
+                      runTrendData={runTrendData}
+                      modelStats={modelStats}
+                      testCaseCount={cases.length}
+                      isSDK={suite.source === "sdk"}
+                      onRunClick={handleRunClick}
+                      onReplayLatestRun={
+                        onReplayRun
+                          ? (run) => onReplayRun(suite, run)
+                          : undefined
+                      }
+                      isReplayingLatestRun={isReplayingLatestRun}
+                    />
+                    <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
+                      <p>
+                        Select a case from the list on the left to view its
+                        history and performance.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="mt-4"
+                        onClick={() =>
+                          navigation.toSuiteOverview(suite._id, "runs")
+                        }
+                      >
+                        View runs table
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <TestCasesOverview
+                    suite={suite}
+                    cases={cases}
                     allIterations={allIterations}
+                    runs={runs}
+                    runsViewMode={runsViewMode}
+                    onViewModeChange={(value) =>
+                      navigation.toSuiteOverview(suite._id, value)
+                    }
+                    onTestCaseClick={(testCaseId) =>
+                      navigation.toTestDetail(suite._id, testCaseId)
+                    }
                     runTrendData={runTrendData}
                     modelStats={modelStats}
-                    testCaseCount={cases.length}
-                    isSDK={suite.source === "sdk"}
+                    runsLoading={runsLoading}
                     onRunClick={handleRunClick}
-                    onReplayLatestRun={
-                      onReplayRun ? (run) => onReplayRun(suite, run) : undefined
-                    }
-                    isReplayingLatestRun={isReplayingLatestRun}
                   />
-                  <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
-                    <p>
-                      Select a case from the list on the left to view its
-                      history and performance.
-                    </p>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="mt-4"
-                      onClick={() =>
-                        navigation.toSuiteOverview(suite._id, "runs")
-                      }
-                    >
-                      View runs table
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <TestCasesOverview
-                  suite={suite}
-                  cases={cases}
-                  allIterations={allIterations}
-                  runs={runs}
-                  runsViewMode={runsViewMode}
-                  onViewModeChange={(value) =>
-                    navigation.toSuiteOverview(suite._id, value)
-                  }
-                  onTestCaseClick={(testCaseId) =>
-                    navigation.toTestDetail(suite._id, testCaseId)
-                  }
-                  runTrendData={runTrendData}
-                  modelStats={modelStats}
-                  runsLoading={runsLoading}
-                  onRunClick={handleRunClick}
-                />
-              )}
-            </div>
+                )}
+              </div>
+            )
           ) : viewMode === "run-detail" && selectedRunDetails ? (
-            <RunDetailView
-              selectedRunDetails={selectedRunDetails}
-              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-              source={suite.source}
-              selectedRunChartData={selectedRunChartData}
-              runDetailSortBy={runDetailSortBy}
-              onSortChange={setRunDetailSortBy}
-              showRunSummarySidebar={showRunSummarySidebar}
-              setShowRunSummarySidebar={setShowRunSummarySidebar}
-              serverNames={(suite.environment?.servers || []).filter((name) =>
-                connectedServerNames.has(name),
-              )}
-              selectedIterationId={selectedIterationId}
-              onSelectIteration={handleSelectIteration}
-            />
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <RunDetailView
+                selectedRunDetails={selectedRunDetails}
+                caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                source={suite.source}
+                selectedRunChartData={selectedRunChartData}
+                runDetailSortBy={runDetailSortBy}
+                onSortChange={setRunDetailSortBy}
+                showRunSummarySidebar={showRunSummarySidebar}
+                setShowRunSummarySidebar={setShowRunSummarySidebar}
+                serverNames={(suite.environment?.servers || []).filter((name) =>
+                  connectedServerNames.has(name),
+                )}
+                selectedIterationId={selectedIterationId}
+                onSelectIteration={handleSelectIteration}
+              />
+            </div>
           ) : null}
         </div>
       )}
