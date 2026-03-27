@@ -206,7 +206,11 @@ function SandboxBuilderChrome({
                 <RefreshCw className="mr-1.5 size-4" />
                 Reload preview
               </Button>
-              <Button variant="outline" className="rounded-xl" onClick={onEditSetup}>
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={onEditSetup}
+              >
                 Edit setup
               </Button>
             </>
@@ -337,7 +341,11 @@ export function SandboxBuilderView({
               link: null,
               members: [],
               welcomeDialog: { enabled: true, body: "" },
-              feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
+              feedbackDialog: {
+                enabled: true,
+                everyNToolCalls: 1,
+                promptHint: "",
+              },
             } as SandboxSettings),
         ),
     );
@@ -800,7 +808,10 @@ export function SandboxBuilderView({
         serverCount: sandbox.servers.length,
         welcomeOn: sandbox.welcomeDialog?.enabled ?? true,
         feedbackOn: sandbox.feedbackDialog?.enabled ?? true,
-        feedbackEvery: Math.max(1, sandbox.feedbackDialog?.everyNToolCalls ?? 1),
+        feedbackEvery: Math.max(
+          1,
+          sandbox.feedbackDialog?.everyNToolCalls ?? 1,
+        ),
       };
     }
     return {
@@ -837,9 +848,7 @@ export function SandboxBuilderView({
 
   const setupPanelDesktop = (
     <div className="sandbox-builder-pane flex h-full min-h-0 flex-col border-l border-border/70">
-      <SetupChecklistPanel
-        {...setupPanelSharedProps}
-      />
+      <SetupChecklistPanel {...setupPanelSharedProps} />
     </div>
   );
 
@@ -852,20 +861,15 @@ export function SandboxBuilderView({
     </div>
   );
 
-  const showDesktopSetupPanel =
-    viewMode === "setup" && !isMobile;
+  const showDesktopSetupPanel = viewMode === "setup" && !isMobile;
 
   return (
     <div className="flex h-full min-h-0 flex-col">
       <SandboxBuilderChrome
-        title={
-          viewMode === "usage"
-            ? "Usage"
-            : viewModel.title
-        }
+        title={viewMode === "usage" ? "Usage" : viewModel.title}
         subtitle={
           viewMode === "usage"
-            ? sandbox?.description ?? undefined
+            ? (sandbox?.description ?? undefined)
             : viewModel.description || undefined
         }
         headerMode={
@@ -903,9 +907,7 @@ export function SandboxBuilderView({
         </div>
       ) : (
         <div className="relative min-h-0 flex-1 p-4">
-          {isMobile &&
-          viewMode === "setup" &&
-          !isSetupSheetOpen ? (
+          {isMobile && viewMode === "setup" && !isSetupSheetOpen ? (
             <Button
               type="button"
               className="absolute right-6 bottom-6 z-10 rounded-full shadow-lg"
@@ -927,7 +929,8 @@ export function SandboxBuilderView({
                         {isDirty && sandbox ? (
                           <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-950 dark:text-amber-100">
                             <span className="font-medium">
-                              Preview is showing the last saved sandbox configuration.
+                              Preview is showing the last saved sandbox
+                              configuration.
                             </span>{" "}
                             <Button
                               variant="link"
@@ -1071,18 +1074,20 @@ export function SandboxBuilderView({
                             </div>
                             <div className="flex justify-between gap-2">
                               <dt className="text-muted-foreground">Servers</dt>
-                              <dd>
-                                {previewRailConfig.serverCount} connected
-                              </dd>
+                              <dd>{previewRailConfig.serverCount} connected</dd>
                             </div>
                             <div className="flex justify-between gap-2">
                               <dt className="text-muted-foreground">
                                 Welcome dialog
                               </dt>
-                              <dd>{previewRailConfig.welcomeOn ? "On" : "Off"}</dd>
+                              <dd>
+                                {previewRailConfig.welcomeOn ? "On" : "Off"}
+                              </dd>
                             </div>
                             <div className="flex justify-between gap-2">
-                              <dt className="text-muted-foreground">Feedback</dt>
+                              <dt className="text-muted-foreground">
+                                Feedback
+                              </dt>
                               <dd>
                                 {previewRailConfig.feedbackOn
                                   ? `Every ${previewRailConfig.feedbackEvery} tool call(s)`
@@ -1128,7 +1133,9 @@ export function SandboxBuilderView({
                         }}
                         onSelectNode={(nodeId) => {
                           setSelectedNodeId(nodeId);
-                          setFocusedSetupSection(getSetupSectionForNode(nodeId));
+                          setFocusedSetupSection(
+                            getSetupSectionForNode(nodeId),
+                          );
                           setIsSetupSheetOpen(true);
                         }}
                         onClearSelection={() => {

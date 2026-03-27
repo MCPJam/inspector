@@ -41,9 +41,7 @@ export function SandboxUsagePanel({ sandbox }: SandboxUsagePanelProps) {
     const filtered =
       usageFilter === "all"
         ? rawThreads
-        : rawThreads.filter((t) =>
-            threadMatchesUsageFilter(t, usageFilter),
-          );
+        : rawThreads.filter((t) => threadMatchesUsageFilter(t, usageFilter));
     return [...filtered].sort(compareThreadsForUsageList);
   }, [rawThreads, usageFilter]);
 
@@ -57,10 +55,7 @@ export function SandboxUsagePanel({ sandbox }: SandboxUsagePanelProps) {
       return;
     }
     setSelectedThreadId((current) => {
-      if (
-        current &&
-        sortedFilteredThreads.some((t) => t._id === current)
-      ) {
+      if (current && sortedFilteredThreads.some((t) => t._id === current)) {
         return current;
       }
       return sortedFilteredThreads[0]?._id ?? null;

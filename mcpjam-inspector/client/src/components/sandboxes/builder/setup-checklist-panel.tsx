@@ -36,10 +36,7 @@ import {
   getSandboxHostStyleShortLabel,
   type SandboxHostStyle,
 } from "@/lib/sandbox-host-style";
-import {
-  isMCPJamProvidedModel,
-  SUPPORTED_MODELS,
-} from "@/shared/types";
+import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import type { SandboxDraftConfig } from "./types";
 
 export type SetupSectionId =
@@ -299,8 +296,7 @@ function computeSectionStatuses(
     : "optional";
 
   const feedbackInvalid =
-    draft.feedbackDialog.enabled &&
-    draft.feedbackDialog.everyNToolCalls < 1;
+    draft.feedbackDialog.enabled && draft.feedbackDialog.everyNToolCalls < 1;
   const feedback: SectionStatusKind = feedbackInvalid
     ? "attention"
     : draft.feedbackDialog.enabled
@@ -348,13 +344,13 @@ export function SetupChecklistPanel({
     [sandboxDraft, workspaceServers],
   );
 
-  const sectionRefs = useRef<Partial<Record<SetupSectionId, HTMLDivElement | null>>>(
-    {},
-  );
+  const sectionRefs = useRef<
+    Partial<Record<SetupSectionId, HTMLDivElement | null>>
+  >({});
 
-  const [openMap, setOpenMap] = useState<Partial<Record<SetupSectionId, boolean>>>(
-    {},
-  );
+  const [openMap, setOpenMap] = useState<
+    Partial<Record<SetupSectionId, boolean>>
+  >({});
   const didAutoExpandRef = useRef(false);
 
   useEffect(() => {
@@ -456,8 +452,8 @@ export function SetupChecklistPanel({
                       }
                     />
                     <p className="text-xs text-muted-foreground">
-                      Optional — helpful for collaborators, not required for first
-                      save.
+                      Optional — helpful for collaborators, not required for
+                      first save.
                     </p>
                   </div>
 
@@ -813,10 +809,7 @@ export function SetupChecklistPanel({
                           step={1}
                           value={sandboxDraft.feedbackDialog.everyNToolCalls}
                           onChange={(event) => {
-                            const n = Number.parseInt(
-                              event.target.value,
-                              10,
-                            );
+                            const n = Number.parseInt(event.target.value, 10);
                             onDraftChange((draft) => ({
                               ...draft,
                               feedbackDialog: {
@@ -910,7 +903,9 @@ export function SetupChecklistPanel({
                   </div>
                   <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4">
                     <div>
-                      <p className="text-sm font-medium">Require tool approval</p>
+                      <p className="text-sm font-medium">
+                        Require tool approval
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         Visitors must approve tool calls before execution.
                       </p>

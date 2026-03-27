@@ -22,9 +22,13 @@ describe("SandboxIndexPage", () => {
     expect(
       screen.getByRole("heading", { name: "Create your first sandbox" }),
     ).toBeInTheDocument();
-    expect(screen.queryByPlaceholderText(/Search sandboxes/)).not.toBeInTheDocument();
+    expect(
+      screen.queryByPlaceholderText(/Search sandboxes/),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("Internal QA sandbox")).toBeInTheDocument();
-    expect(screen.getByText("ICP demo / share-link sandbox")).toBeInTheDocument();
+    expect(
+      screen.getByText("ICP demo / share-link sandbox"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Blank sandbox")).toBeInTheDocument();
   });
 

@@ -38,9 +38,7 @@ export function ShareUsageThreadList({
     const filtered =
       usageFilter === "all"
         ? rawThreads
-        : rawThreads.filter((t) =>
-            threadMatchesUsageFilter(t, usageFilter),
-          );
+        : rawThreads.filter((t) => threadMatchesUsageFilter(t, usageFilter));
     return [...filtered].sort(compareThreadsForUsageList);
   }, [rawThreads, usageFilter]);
 

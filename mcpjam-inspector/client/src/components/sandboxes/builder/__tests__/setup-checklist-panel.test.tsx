@@ -22,7 +22,9 @@ describe("SetupChecklistPanel", () => {
       />,
     );
 
-    expect(screen.queryByRole("heading", { name: "Setup" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Setup" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Basics/i })).toBeInTheDocument();
   });
 

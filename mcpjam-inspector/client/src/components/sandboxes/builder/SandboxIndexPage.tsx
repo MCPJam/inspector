@@ -1,5 +1,14 @@
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
-import { LayoutGrid, List, Loader2, Plus, Search, Sparkles, Users, Wand2 } from "lucide-react";
+import {
+  LayoutGrid,
+  List,
+  Loader2,
+  Plus,
+  Search,
+  Sparkles,
+  Users,
+  Wand2,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -234,7 +243,9 @@ export function SandboxIndexPage({
             <div className="flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-muted/30">
               <Search className="size-5 text-muted-foreground" />
             </div>
-            <h3 className="mt-5 text-xl font-semibold">No matching sandboxes</h3>
+            <h3 className="mt-5 text-xl font-semibold">
+              No matching sandboxes
+            </h3>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
               Try a different search, or clear the filter to see all sandboxes.
             </p>

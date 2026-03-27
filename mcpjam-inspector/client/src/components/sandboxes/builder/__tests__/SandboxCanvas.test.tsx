@@ -6,9 +6,8 @@ import { buildSandboxCanvas } from "../sandboxCanvasBuilder";
 import type { SandboxBuilderContext } from "../types";
 
 vi.mock("@xyflow/react", async () => {
-  const actual = await vi.importActual<typeof import("@xyflow/react")>(
-    "@xyflow/react",
-  );
+  const actual =
+    await vi.importActual<typeof import("@xyflow/react")>("@xyflow/react");
   return {
     ...actual,
     useNodesInitialized: () => true,
