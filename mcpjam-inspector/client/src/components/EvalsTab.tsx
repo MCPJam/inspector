@@ -442,58 +442,61 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <>
-          <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2 sm:px-6">
-            {handlers.isGeneratingTests && exploreSuite ? (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {(handlers.isGeneratingTests || exploreCases.length > 0) && (
+            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2 sm:px-6">
+              {handlers.isGeneratingTests && exploreSuite ? (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                    <p className="text-sm text-muted-foreground">
+                      Generating cases for{" "}
+                      <span className="font-medium text-foreground">
+                        {selectedServer ?? "this server"}
+                      </span>
+                      …
+                    </p>
+                  </div>
+                </div>
+              ) : handlers.isGeneratingTests ? (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
                   <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
                   <p className="text-sm text-muted-foreground">
-                    Generating cases for{" "}
-                    <span className="font-medium text-foreground">
-                      {selectedServer ?? "this server"}
-                    </span>
-                    …
+                    Generating cases…
                   </p>
                 </div>
-              </div>
-            ) : (
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-between">
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-                  <p className="min-w-0 text-sm text-muted-foreground">
-                  {findingCount > 0 ? (
-                    <>
-                      <span className="font-medium text-foreground">
-                        {findingCount}
-                      </span>{" "}
-                      finding{findingCount === 1 ? "" : "s"} across{" "}
-                      <span className="font-medium text-foreground">
-                        {exploreCases.length}
-                      </span>{" "}
-                      case{exploreCases.length === 1 ? "" : "s"}
-                    </>
-                  ) : allCasesPassed ? (
-                    <>
-                      All{" "}
-                      <span className="font-medium text-foreground">
-                        {exploreCases.length}
-                      </span>{" "}
-                      passed
-                    </>
-                  ) : exploreCases.length > 0 ? (
-                    <>
-                      <span className="font-medium text-foreground">
-                        {exploreCases.length}
-                      </span>{" "}
-                      case{exploreCases.length === 1 ? "" : "s"} ready
-                    </>
-                  ) : selectedServer && isServerConnected ? (
-                    "Connect and generate cases to explore"
-                  ) : (
-                    "Connect a server to start discovering cases"
-                  )}
-                  </p>
-                </div>
-                {exploreCases.length > 0 ? (
+              ) : (
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-between">
+                  <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                    <p className="min-w-0 text-sm text-muted-foreground">
+                      {findingCount > 0 ? (
+                        <>
+                          <span className="font-medium text-foreground">
+                            {findingCount}
+                          </span>{" "}
+                          finding{findingCount === 1 ? "" : "s"} across{" "}
+                          <span className="font-medium text-foreground">
+                            {exploreCases.length}
+                          </span>{" "}
+                          case{exploreCases.length === 1 ? "" : "s"}
+                        </>
+                      ) : allCasesPassed ? (
+                        <>
+                          All{" "}
+                          <span className="font-medium text-foreground">
+                            {exploreCases.length}
+                          </span>{" "}
+                          passed
+                        </>
+                      ) : (
+                        <>
+                          <span className="font-medium text-foreground">
+                            {exploreCases.length}
+                          </span>{" "}
+                          case{exploreCases.length === 1 ? "" : "s"} ready
+                        </>
+                      )}
+                    </p>
+                  </div>
                   <div className="flex shrink-0 flex-wrap items-center gap-2">
                     {shouldReviewFindings ? (
                       <>
@@ -594,10 +597,10 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                       </DropdownMenuContent>
                     </DropdownMenu>
                   </div>
-                ) : null}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             {!isServerConnected ? (

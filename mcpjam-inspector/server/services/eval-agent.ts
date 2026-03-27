@@ -207,6 +207,8 @@ ${toolsContext}
       model: "anthropic/claude-haiku-4.5",
       tools: [],
       messages: JSON.stringify(messageHistory),
+      // Keeps OpenRouter spend reservation low (JSON test list fits easily).
+      maxOutputTokens: 12288,
     }),
   });
 

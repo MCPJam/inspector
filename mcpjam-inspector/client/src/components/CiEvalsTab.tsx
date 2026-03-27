@@ -126,23 +126,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   );
   const hasVisibleSuites = visibleSuites.length > 0;
 
-  // Sidebar defaults to Runs; send empty workspaces to Explore instead of an empty Runs shell.
-  useEffect(() => {
-    if (!isAuthenticated || !convexWorkspaceId) return;
-    if (queries.isOverviewLoading) return;
-    if (hasVisibleSuites) return;
-    if (route.type !== "list") return;
-    const exploreHash = withTestingSurface(buildEvalsHash({ type: "list" }));
-    if (window.location.hash === exploreHash) return;
-    window.location.hash = exploreHash;
-  }, [
-    convexWorkspaceId,
-    hasVisibleSuites,
-    isAuthenticated,
-    queries.isOverviewLoading,
-    route.type,
-  ]);
-
   const commitGroups = useMemo(
     () => groupRunsByCommit(visibleSuites),
     [visibleSuites],

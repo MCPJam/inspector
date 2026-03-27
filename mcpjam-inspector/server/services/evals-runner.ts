@@ -584,6 +584,7 @@ const runIterationViaBackend = async ({
           ...(systemPrompt ? { systemPrompt } : {}),
           ...(temperature == null ? {} : { temperature }),
           tools: toolDefs,
+          maxOutputTokens: 16384,
         }),
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
