@@ -33,7 +33,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "Connect and manage your MCP servers.",
     expandedDescription:
       "Connect to MCP servers using STDIO, SSE, or Streamable HTTP. Run multiple servers side by side, toggle them on or off, authenticate with OAuth when needed, and get a full overview of each server at a glance.",
-    docsUrl: "https://docs.mcpjam.com/servers",
+    docsUrl: "https://docs.mcpjam.com/inspector/connecting-servers",
   },
   "app-builder": {
     title: "App Builder",
@@ -45,7 +45,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "Build and test ChatGPT apps and MCP apps locally.",
     expandedDescription:
       "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and host styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
-    docsUrl: "https://docs.mcpjam.com/app-builder",
+    docsUrl: "https://docs.mcpjam.com/inspector/app-builder",
   },
   skills: {
     title: "Skills",
@@ -57,7 +57,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "View, add, and manage your skills.",
     expandedDescription:
       "View your installed skills, upload new ones, and manage them all in one place. MCPJam discovers skills from your .claude/, .mcpjam/, and .agents/ directories automatically. Use them in the App Builder or Chat — skills load based on your prompt, or inject one directly with the / command.",
-    docsUrl: "https://docs.mcpjam.com/skills",
+    docsUrl: "https://docs.mcpjam.com/inspector/skills",
   },
   "oauth-flow": {
     title: "OAuth Debugger",
@@ -69,6 +69,6 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "Debug your MCP server's OAuth implementation visually.",
     expandedDescription:
       "A visual, step-by-step interface for testing your MCP server's OAuth implementation. Walk through every step of the handshake with a live sequence diagram, inspect every network request, and validate against multiple spec versions and registration methods (CIMD, DCR, or pre-registration).",
-    docsUrl: "https://docs.mcpjam.com/oauth",
+    docsUrl: "https://docs.mcpjam.com/inspector/guided-oauth",
   },
 };
