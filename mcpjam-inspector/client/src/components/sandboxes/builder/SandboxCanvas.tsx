@@ -10,11 +10,13 @@ import {
 } from "react";
 import {
   Background,
+  BackgroundVariant,
   Controls,
   Handle,
   Position,
   ReactFlow,
   SmoothStepEdge,
+  useNodesInitialized,
   useReactFlow,
   type HandleProps,
   type Node,
@@ -31,10 +33,7 @@ import type {
   SandboxBuilderViewModel,
   SandboxSectionLabelData,
 } from "./types";
-import {
-  getSandboxCanvasCenter,
-  getSandboxCanvasLayoutSignature,
-} from "./sandbox-canvas-viewport";
+import { getSandboxCanvasLayoutSignature } from "./sandbox-canvas-viewport";
 
 const SandboxCanvasContext = createContext<{ onAddServer?: () => void }>({});
 
@@ -106,7 +105,7 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
   return (
     <div
       className={cn(
-        "sandbox-builder-card relative w-[220px] overflow-visible rounded-xl border border-border/60 bg-card/90 px-3.5 py-3 text-card-foreground transition-all",
+        "sandbox-builder-card relative w-[280px] overflow-visible rounded-xl border border-border/60 bg-card/90 px-3.5 py-3 text-card-foreground transition-all",
         selected && "ring-2 shadow-xl",
         stateRing(data.state),
       )}
@@ -125,9 +124,14 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
             <Icon className="size-3.5" />
           </div>
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{data.title}</p>
+            <p className="truncate text-sm font-semibold" title={data.title}>
+              {data.title}
+            </p>
             {data.subtitle ? (
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+              <p
+                className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                title={data.subtitle}
+              >
                 {data.subtitle}
               </p>
             ) : null}
@@ -220,19 +224,18 @@ const VIEWPORT_SETTLE_DELAY_MS = 50;
 interface CanvasViewportControllerProps {
   containerRef: RefObject<HTMLDivElement | null>;
   layoutSignature: string;
-  center: { x: number; y: number } | null;
 }
 
 function CanvasViewportController({
   containerRef,
   layoutSignature,
-  center,
 }: CanvasViewportControllerProps) {
   const reactFlow = useReactFlow();
-  const [containerWidth, setContainerWidth] = useState<number | null>(null);
-  const lastLayoutSignatureRef = useRef<string | null>(null);
-  const lastContainerWidthRef = useRef<number | null>(null);
-  const hasFitViewportRef = useRef(false);
+  const nodesInitialized = useNodesInitialized();
+  const [containerBox, setContainerBox] = useState<{
+    width: number;
+    height: number;
+  }>({ width: 0, height: 0 });
 
   useEffect(() => {
     const container = containerRef.current;
@@ -240,21 +243,29 @@ function CanvasViewportController({
       return;
     }
 
-    const updateWidth = (nextWidth: number) => {
-      setContainerWidth((currentWidth) =>
-        currentWidth !== null && Math.abs(currentWidth - nextWidth) < 1
-          ? currentWidth
-          : nextWidth,
-      );
+    const updateBox = (width: number, height: number) => {
+      setContainerBox((prev) => {
+        if (
+          Math.abs(prev.width - width) < 1 &&
+          Math.abs(prev.height - height) < 1
+        ) {
+          return prev;
+        }
+        return { width, height };
+      });
     };
 
-    updateWidth(container.getBoundingClientRect().width);
+    const rect = container.getBoundingClientRect();
+    updateBox(rect.width, rect.height);
 
     const observer = new ResizeObserver((entries) => {
-      const observedWidth =
-        entries[0]?.contentRect.width ??
-        container.getBoundingClientRect().width;
-      updateWidth(observedWidth);
+      const cr = entries[0]?.contentRect;
+      if (cr) {
+        updateBox(cr.width, cr.height);
+        return;
+      }
+      const r = container.getBoundingClientRect();
+      updateBox(r.width, r.height);
     });
 
     observer.observe(container);
@@ -263,14 +274,10 @@ function CanvasViewportController({
   }, [containerRef]);
 
   useEffect(() => {
-    if (!layoutSignature) {
+    if (!nodesInitialized || !layoutSignature) {
       return;
     }
-
-    const layoutChanged = lastLayoutSignatureRef.current !== layoutSignature;
-    lastLayoutSignatureRef.current = layoutSignature;
-
-    if (!layoutChanged) {
+    if (containerBox.width < 1 || containerBox.height < 1) {
       return;
     }
 
@@ -279,45 +286,16 @@ function CanvasViewportController({
         padding: VIEWPORT_FIT_PADDING,
         duration: VIEWPORT_ANIMATION_DURATION,
       });
-      hasFitViewportRef.current = true;
-      if (containerRef.current) {
-        lastContainerWidthRef.current =
-          containerRef.current.getBoundingClientRect().width;
-      }
     }, VIEWPORT_SETTLE_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [containerRef, layoutSignature, reactFlow]);
-
-  useEffect(() => {
-    if (!center || containerWidth === null) {
-      return;
-    }
-
-    if (lastContainerWidthRef.current === null) {
-      lastContainerWidthRef.current = containerWidth;
-      return;
-    }
-
-    if (Math.abs(lastContainerWidthRef.current - containerWidth) < 1) {
-      return;
-    }
-
-    lastContainerWidthRef.current = containerWidth;
-
-    if (!hasFitViewportRef.current) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      reactFlow.setCenter(center.x, center.y, {
-        zoom: reactFlow.getZoom(),
-        duration: VIEWPORT_ANIMATION_DURATION,
-      });
-    }, VIEWPORT_SETTLE_DELAY_MS);
-
-    return () => window.clearTimeout(timer);
-  }, [center, containerWidth, reactFlow]);
+  }, [
+    nodesInitialized,
+    layoutSignature,
+    containerBox.width,
+    containerBox.height,
+    reactFlow,
+  ]);
 
   return null;
 }
@@ -350,11 +328,6 @@ export function SandboxCanvas({
     () => getSandboxCanvasLayoutSignature(viewModel.nodes),
     [viewModel.nodes],
   );
-  const layoutCenter = useMemo(
-    () => getSandboxCanvasCenter(viewModel.nodes),
-    [viewModel.nodes],
-  );
-
   const ctxValue = useMemo(() => ({ onAddServer }), [onAddServer]);
 
   return (
@@ -383,9 +356,15 @@ export function SandboxCanvas({
           <CanvasViewportController
             containerRef={canvasRef}
             layoutSignature={layoutSignature}
-            center={layoutCenter}
           />
-          <Background />
+          <Background
+            id="sandbox-builder-dots"
+            variant={BackgroundVariant.Dots}
+            gap={30}
+            size={0.9}
+            color="oklch(0.55 0.02 250 / 0.22)"
+            patternClassName="opacity-[0.4]"
+          />
           <Controls
             showInteractive={false}
             className="!rounded-xl !border !border-border/70 !bg-card/95"

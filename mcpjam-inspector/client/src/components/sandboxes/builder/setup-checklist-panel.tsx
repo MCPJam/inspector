@@ -63,7 +63,7 @@ function SectionStatusBadge({ kind }: { kind: SectionStatusKind }) {
       return (
         <Badge
           variant="outline"
-          className="border-emerald-500/50 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+          className="border-emerald-600/55 bg-emerald-500/[0.14] px-3 py-0.5 text-emerald-900 dark:border-emerald-400/45 dark:bg-emerald-950/50 dark:text-emerald-200"
         >
           Complete
         </Badge>
@@ -395,14 +395,14 @@ export function SetupChecklistPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b border-border/70 px-4 py-3">
-        <h3 className="text-base font-semibold">Setup</h3>
-        {onCloseMobile ? (
-          <Button variant="ghost" size="sm" className="md:hidden" onClick={onCloseMobile}>
+      {onCloseMobile ? (
+        <div className="flex items-center justify-between border-b border-border/70 px-4 py-3 md:hidden">
+          <h3 className="text-base font-semibold">Setup</h3>
+          <Button variant="ghost" size="sm" onClick={onCloseMobile}>
             Done
           </Button>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-2 p-4 pb-28">
@@ -446,7 +446,7 @@ export function SetupChecklistPanel({
                     </Label>
                     <Textarea
                       id="setup-sandbox-description"
-                      rows={3}
+                      rows={2}
                       value={sandboxDraft.description}
                       onChange={(event) =>
                         onDraftChange((draft) => ({

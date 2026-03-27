@@ -7,6 +7,7 @@ import type {
 } from "./types";
 import { getSandboxHostStyleShortLabel } from "@/lib/sandbox-host-style";
 import { getModelById } from "@/shared/types";
+import { SANDBOX_BUILDER_NODE_WIDTH } from "./sandbox-canvas-viewport";
 
 const SECTION_Y = {
   host: 0,
@@ -92,9 +93,8 @@ function resolveServerState(
   };
 }
 
-const NODE_WIDTH = 220;
 const NODE_GAP = 40;
-const COL_PITCH = NODE_WIDTH + NODE_GAP; // 260
+const COL_PITCH = SANDBOX_BUILDER_NODE_WIDTH + NODE_GAP;
 
 function centerRow(rowCount: number, totalWidth: number): number {
   return (totalWidth - rowCount * COL_PITCH + NODE_GAP) / 2;
@@ -117,7 +117,7 @@ export function buildSandboxCanvas(
   const serverRowCount = Math.max(1, selectedServerIds.length);
   const totalWidth = Math.max(1, serverRowCount) * COL_PITCH - NODE_GAP;
 
-  const hostX = (totalWidth - NODE_WIDTH) / 2;
+  const hostX = (totalWidth - SANDBOX_BUILDER_NODE_WIDTH) / 2;
   const serverX = centerRow(serverRowCount, totalWidth);
 
   const nodes: SandboxFlowNode[] = [

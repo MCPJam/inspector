@@ -84,8 +84,10 @@ interface SandboxBuilderViewProps {
   onSavedDraft: (sandbox: SandboxSettings) => void;
 }
 
-const DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT = 35;
-const DESKTOP_SETTINGS_PANE_MAX_PERCENT = 70;
+/** Right (setup) rail: favor setup on desktop */
+const DESKTOP_SETUP_RAIL_DEFAULT_PERCENT = 60;
+const DESKTOP_SETUP_RAIL_MIN_PERCENT = 40;
+const DESKTOP_SETUP_RAIL_MAX_PERCENT = 70;
 
 type ViewMode = "setup" | "preview" | "usage";
 
@@ -227,7 +229,7 @@ function SandboxBuilderChrome({
 
       <div className="border-t border-border/60 px-6">
         <nav
-          className="flex w-full gap-0 overflow-x-auto"
+          className="flex w-full justify-center gap-1 overflow-x-auto py-1"
           aria-label="Sandbox modes"
         >
           {(
@@ -248,7 +250,7 @@ function SandboxBuilderChrome({
                 type="button"
                 disabled={disabled}
                 onClick={() => onModeChange(mode)}
-                className={`relative shrink-0 px-4 py-3 text-sm font-medium transition-colors ${
+                className={`relative min-h-12 shrink-0 px-6 py-3 text-base font-medium transition-colors ${
                   active
                     ? "text-foreground"
                     : "text-muted-foreground hover:text-foreground"
@@ -256,7 +258,7 @@ function SandboxBuilderChrome({
               >
                 {label}
                 {active ? (
-                  <span className="absolute inset-x-4 bottom-0 h-0.5 rounded-full bg-primary" />
+                  <span className="absolute inset-x-6 bottom-0 h-0.5 rounded-full bg-primary" />
                 ) : null}
               </button>
             );
@@ -349,7 +351,7 @@ export function SandboxBuilderView({
   const [focusedSetupSection, setFocusedSetupSection] =
     useState<SetupSectionId | null>(null);
   const [desktopSettingsPaneSize, setDesktopSettingsPaneSize] = useState(
-    DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT,
+    DESKTOP_SETUP_RAIL_DEFAULT_PERCENT,
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
@@ -816,24 +818,35 @@ export function SandboxBuilderView({
     setChatKey((k) => k + 1);
   }, []);
 
-  const setupPanel = (
+  const setupPanelSharedProps = {
+    sandboxDraft: draftSandboxConfig,
+    savedSandbox: sandbox ?? null,
+    workspaceServers,
+    workspaceName,
+    focusedSection: focusedSetupSection,
+    isUnsavedNewDraft: !sandboxId,
+    onDraftChange: (updater: (d: SandboxDraftConfig) => SandboxDraftConfig) =>
+      setDraftSandboxConfig((current) => updater(current)),
+    onOpenAddServer: () => {
+      setFocusedSetupSection("servers");
+      setIsSetupSheetOpen(true);
+      setIsAddServerOpen(true);
+    },
+    onToggleServer: handleToggleServer,
+  };
+
+  const setupPanelDesktop = (
     <div className="sandbox-builder-pane flex h-full min-h-0 flex-col border-l border-border/70">
       <SetupChecklistPanel
-        sandboxDraft={draftSandboxConfig}
-        savedSandbox={sandbox ?? null}
-        workspaceServers={workspaceServers}
-        workspaceName={workspaceName}
-        focusedSection={focusedSetupSection}
-        isUnsavedNewDraft={!sandboxId}
-        onDraftChange={(updater) =>
-          setDraftSandboxConfig((current) => updater(current))
-        }
-        onOpenAddServer={() => {
-          setFocusedSetupSection("servers");
-          setIsSetupSheetOpen(true);
-          setIsAddServerOpen(true);
-        }}
-        onToggleServer={handleToggleServer}
+        {...setupPanelSharedProps}
+      />
+    </div>
+  );
+
+  const setupPanelMobile = (
+    <div className="sandbox-builder-pane flex h-full min-h-0 flex-col border-l border-border/70">
+      <SetupChecklistPanel
+        {...setupPanelSharedProps}
         onCloseMobile={() => setIsSetupSheetOpen(false)}
       />
     </div>
@@ -1133,25 +1146,28 @@ export function SandboxBuilderView({
                   <ResizablePanel
                     ref={rightPanelRef}
                     defaultSize={desktopRightPanelDefaultSize}
-                    minSize={DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT}
-                    maxSize={DESKTOP_SETTINGS_PANE_MAX_PERCENT}
+                    minSize={DESKTOP_SETUP_RAIL_MIN_PERCENT}
+                    maxSize={DESKTOP_SETUP_RAIL_MAX_PERCENT}
                     onResize={(size) => setDesktopSettingsPaneSize(size)}
                   >
-                    {setupPanel}
+                    {setupPanelDesktop}
                   </ResizablePanel>
                 </>
               ) : null}
             </ResizablePanelGroup>
           </div>
           {viewMode === "setup" ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center border-t border-border/60 bg-background/80 p-4 backdrop-blur-md">
-              <Button
-                className="pointer-events-auto rounded-xl"
-                onClick={() => void saveAndOpenPreview()}
-                disabled={isSaving}
-              >
-                Save and open preview
-              </Button>
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4 pb-5">
+              <div className="pointer-events-auto flex max-w-lg flex-col items-center gap-2 rounded-4xl border border-border/50 bg-background/90 px-5 py-3 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.28)] backdrop-blur-md dark:shadow-[0_12px_48px_-10px_rgba(0,0,0,0.55)]">
+                <Button
+                  size="lg"
+                  className="h-12 rounded-full px-8 text-base font-semibold shadow-md"
+                  onClick={() => void saveAndOpenPreview()}
+                  disabled={isSaving}
+                >
+                  Save and open preview
+                </Button>
+              </div>
             </div>
           ) : null}
         </div>
@@ -1175,7 +1191,7 @@ export function SandboxBuilderView({
               Configure host style, servers, access, and feedback.
             </SheetDescription>
           </SheetHeader>
-          {setupPanel}
+          {setupPanelMobile}
         </SheetContent>
       </Sheet>
 

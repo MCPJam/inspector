@@ -14,8 +14,9 @@ import {
 import { readBuilderSession, clearBuilderSession } from "@/lib/sandbox-session";
 import { SandboxIndexPage } from "./SandboxIndexPage";
 import { SandboxBuilderView } from "./SandboxBuilderView";
-import { getDefaultHostedModelId, SANDBOX_STARTERS } from "./drafts";
-import type { SandboxDraftConfig } from "./types";
+import { SandboxLauncher } from "./SandboxLauncher";
+import { getDefaultHostedModelId } from "./drafts";
+import type { SandboxDraftConfig, SandboxStarterDefinition } from "./types";
 
 interface SandboxBuilderExperienceProps {
   workspaceId: string | null;
@@ -44,6 +45,7 @@ export default function SandboxBuilderExperience({
   const [restoredViewMode, setRestoredViewMode] = useState<
     "setup" | "preview" | "usage" | undefined
   >();
+  const [starterLauncherOpen, setStarterLauncherOpen] = useState(false);
 
   // Restore builder session from sessionStorage when workspaceId becomes
   // available. After an OAuth redirect the page reloads and Convex needs to
@@ -72,14 +74,25 @@ export default function SandboxBuilderExperience({
     });
   }, [workspaceId]);
 
-  const handleCreateSandbox = useCallback(() => {
-    const blankStarter = SANDBOX_STARTERS.find((s) => s.id === "blank")!;
+  const applyStarterDraft = useCallback((starter: SandboxStarterDefinition) => {
     startTransition(() => {
       setSelectedSandboxId(null);
-      setDraft(blankStarter.createDraft(getDefaultHostedModelId()));
+      setDraft(starter.createDraft(getDefaultHostedModelId()));
       setRestoredViewMode(undefined);
+      setStarterLauncherOpen(false);
     });
   }, []);
+
+  const handleOpenStarterLauncher = useCallback(() => {
+    setStarterLauncherOpen(true);
+  }, []);
+
+  const handleSelectStarterFromLauncher = useCallback(
+    (starter: SandboxStarterDefinition) => {
+      applyStarterDraft(starter);
+    },
+    [applyStarterDraft],
+  );
 
   const handleSavedDraft = useCallback((sandbox: SandboxSettings) => {
     startTransition(() => {
@@ -103,6 +116,11 @@ export default function SandboxBuilderExperience({
 
   return (
     <>
+      <SandboxLauncher
+        open={starterLauncherOpen}
+        onOpenChange={setStarterLauncherOpen}
+        onSelectStarter={handleSelectStarterFromLauncher}
+      />
       {isBuilderOpen ? (
         <SandboxBuilderView
           workspaceId={workspaceId}
@@ -131,7 +149,8 @@ export default function SandboxBuilderExperience({
               setRestoredViewMode(undefined);
             })
           }
-          onCreateSandbox={handleCreateSandbox}
+          onOpenStarterLauncher={handleOpenStarterLauncher}
+          onSelectStarter={applyStarterDraft}
         />
       )}
     </>

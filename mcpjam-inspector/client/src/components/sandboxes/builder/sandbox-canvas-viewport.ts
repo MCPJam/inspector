@@ -1,7 +1,8 @@
 import type { SandboxFlowNode } from "./types";
 
-const SANDBOX_NODE_WIDTH = 220;
-const SANDBOX_NODE_HEIGHT = 128;
+/** Keep in sync with builder node card width (`SandboxCanvas` / `sandboxCanvasBuilder`). */
+export const SANDBOX_BUILDER_NODE_WIDTH = 280;
+export const SANDBOX_BUILDER_NODE_HEIGHT = 128;
 
 interface SandboxCanvasBounds {
   minX: number;
@@ -16,7 +17,10 @@ function getNodeDimensions(node: SandboxFlowNode): {
 } {
   switch (node.type) {
     case "sandboxNode":
-      return { width: SANDBOX_NODE_WIDTH, height: SANDBOX_NODE_HEIGHT };
+      return {
+        width: SANDBOX_BUILDER_NODE_WIDTH,
+        height: SANDBOX_BUILDER_NODE_HEIGHT,
+      };
     default:
       return { width: 0, height: 0 };
   }
