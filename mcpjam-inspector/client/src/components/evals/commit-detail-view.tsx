@@ -1,5 +1,17 @@
 import { useState, useMemo, useEffect } from "react";
-import { GitBranch, GitCommit, Clock, Sparkles, Loader2 } from "lucide-react";
+import {
+  GitBranch,
+  GitCommit,
+  Clock,
+  Sparkles,
+  Loader2,
+  ChevronDown,
+} from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { useQuery } from "convex/react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -250,27 +262,42 @@ export function CommitDetailView({
           {commitGroup.runs.length !== 1 ? "s" : ""}
         </div>
 
-        {/* AI triage inline */}
+        {/* AI triage inline — collapsible, expanded by default */}
         {totalCases.failed > 0 &&
           !aiTriage.unavailable &&
           (aiTriage.summary || aiTriage.loading) && (
-            <div className="mt-3 flex items-start gap-2 rounded-md border border-orange-200/60 bg-orange-50/30 px-3 py-2 dark:border-orange-900/40 dark:bg-orange-950/10">
-              <Badge
-                variant="outline"
-                className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider shrink-0 dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
-              >
-                <Sparkles className="mr-1 h-3 w-3" />
-                AI
-              </Badge>
-              {aiTriage.summary ? (
-                <p className="text-xs leading-relaxed">{aiTriage.summary}</p>
-              ) : (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  analyzing...
+            <Collapsible
+              defaultOpen
+              className="group/commit-insights mt-3 rounded-md border border-orange-200/60 bg-orange-50/30 dark:border-orange-900/40 dark:bg-orange-950/10"
+            >
+              <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left outline-none hover:bg-orange-100/40 dark:hover:bg-orange-950/20 focus-visible:ring-2 focus-visible:ring-ring">
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/commit-insights:-rotate-90 group-data-[state=open]/commit-insights:rotate-0" />
+                <Badge
+                  variant="outline"
+                  className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider shrink-0 dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
+                >
+                  <Sparkles className="mr-1 h-3 w-3" />
+                  AI
+                </Badge>
+                <span className="text-xs font-medium text-foreground">
+                  Commit insights
                 </span>
-              )}
-            </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="px-3 pb-2 pt-0 border-t border-orange-200/40 dark:border-orange-900/40">
+                  {aiTriage.summary ? (
+                    <p className="text-xs leading-relaxed pl-6">
+                      {aiTriage.summary}
+                    </p>
+                  ) : (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1 pl-6">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      analyzing...
+                    </span>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
       </div>
 

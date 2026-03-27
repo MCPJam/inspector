@@ -52,6 +52,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { ShareServerDialog } from "./ShareServerDialog";
+import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -81,6 +82,8 @@ interface ServerConnectionCardProps {
     defaultTab: ServerDetailTab,
   ) => void;
   footerActions?: React.ReactNode;
+  /** When set (e.g. active workspace on Servers tab), prefetches Explore AI test cases on MCP connect. */
+  workspaceId?: string | null;
 }
 
 export function ServerConnectionCard({
@@ -93,7 +96,10 @@ export function ServerConnectionCard({
   hostedServerId,
   onOpenDetailModal,
   footerActions,
+  workspaceId,
 }: ServerConnectionCardProps) {
+  useExploreCasesPrefetchOnConnect(workspaceId ?? null, server);
+
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();

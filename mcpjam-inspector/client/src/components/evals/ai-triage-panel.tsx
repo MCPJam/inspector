@@ -1,5 +1,10 @@
-import { Loader2, Sparkles, AlertCircle, RotateCw } from "lucide-react";
+import { Loader2, Sparkles, AlertCircle, RotateCw, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import type { EvalSuiteRun } from "./types";
 import { useAiTriage } from "./use-ai-triage";
 
@@ -40,23 +45,26 @@ export function AiTriagePanel({
     );
   }
 
-  // Completed — render results
+  // Completed — render results (collapsible; expanded by default)
   if (triageStatus === "completed" && triageSummary) {
     return (
-      <div className="rounded-lg border bg-card text-card-foreground border-l-2 border-l-orange-500">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
+      <Collapsible
+        defaultOpen
+        className="group/collapse rounded-lg border bg-card text-card-foreground border-l-2 border-l-orange-500"
+      >
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b">
+          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 rounded-sm py-0.5 text-left -my-0.5 outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/collapse:-rotate-90 group-data-[state=open]/collapse:rotate-0" />
+            <Sparkles className="h-4 w-4 shrink-0 text-primary" />
             <span className="text-xs font-semibold">AI Triage</span>
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[10px] text-muted-foreground truncate">
               {triageSummary.modelUsed}
             </span>
-          </div>
+          </CollapsibleTrigger>
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 gap-1.5 text-[10px] text-muted-foreground"
+            className="h-6 shrink-0 gap-1.5 text-[10px] text-muted-foreground"
             onClick={requestTriage}
             disabled={requested}
           >
@@ -65,6 +73,7 @@ export function AiTriagePanel({
           </Button>
         </div>
 
+        <CollapsibleContent>
         <div className="px-4 py-3 space-y-4">
           {/* Summary */}
           <p className="text-sm leading-relaxed">{triageSummary.summary}</p>
@@ -130,7 +139,8 @@ export function AiTriagePanel({
             </div>
           )}
         </div>
-      </div>
+        </CollapsibleContent>
+      </Collapsible>
     );
   }
 

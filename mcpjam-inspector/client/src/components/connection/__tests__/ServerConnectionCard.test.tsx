@@ -47,6 +47,10 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-explore-cases-prefetch-on-connect", () => ({
+  useExploreCasesPrefetchOnConnect: vi.fn(),
+}));
+
 // Mock sonner toast
 vi.mock("sonner", () => ({
   toast: {

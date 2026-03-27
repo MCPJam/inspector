@@ -22,6 +22,7 @@ import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
+import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { toast } from "sonner";
 
 interface RunOverviewProps {
@@ -331,6 +332,7 @@ export function RunOverview({
           onRunClick={onRunClick}
         />
       )}
+      <SuiteInsightsCollapsible runs={runs} />
       {/* Runs List */}
       <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border bg-card text-card-foreground">
         {selectedRunIds.size > 0 ? (

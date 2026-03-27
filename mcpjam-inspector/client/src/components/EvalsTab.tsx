@@ -77,7 +77,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
   const [isCopyingExploreBrief, setIsCopyingExploreBrief] = useState(false);
   const initializedExploreRef = useRef<Set<string>>(new Set());
-  const generatedExploreSuiteRef = useRef<Set<string>>(new Set());
 
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
@@ -247,44 +246,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     selectedServer,
     updateSuiteMutation,
     workspaceId,
-  ]);
-
-  useEffect(() => {
-    if (
-      !exploreSuite ||
-      !selectedServer ||
-      !isServerConnected ||
-      queries.isSuiteDetailsLoading ||
-      handlers.isGeneratingTests
-    ) {
-      return;
-    }
-
-    if (generatedExploreSuiteRef.current.has(exploreSuite._id)) {
-      return;
-    }
-
-    if (exploreCases.length > 0) {
-      return;
-    }
-
-    generatedExploreSuiteRef.current.add(exploreSuite._id);
-    void (async () => {
-      try {
-        await handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
-        await handlers.handleRerun(exploreSuite);
-      } catch (error) {
-        generatedExploreSuiteRef.current.delete(exploreSuite._id);
-        console.error("Failed to prepare explore cases:", error);
-      }
-    })();
-  }, [
-    exploreCases.length,
-    exploreSuite,
-    handlers,
-    isServerConnected,
-    queries.isSuiteDetailsLoading,
-    selectedServer,
   ]);
 
   const exploreNavigation = useMemo((): SuiteNavigation => {
