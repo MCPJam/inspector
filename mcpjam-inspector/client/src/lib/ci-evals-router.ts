@@ -36,7 +36,11 @@ export type CiEvalsRoute =
  * Parse the current hash to extract CI evals route information.
  */
 export function parseCiEvalsRoute(): CiEvalsRoute | null {
-  const hash = window.location.hash.replace("#", "");
+  let hash = window.location.hash.replace(/^#/, "");
+  // Sidebar / navigation uses `#ci-evals`; internal navigations use `#/ci-evals`.
+  if (!hash.startsWith("/")) {
+    hash = `/${hash}`;
+  }
 
   if (!hash.startsWith("/ci-evals")) {
     return null;

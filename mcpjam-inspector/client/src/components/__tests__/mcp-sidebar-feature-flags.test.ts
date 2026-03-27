@@ -16,7 +16,7 @@ const makeSections = () => [
       { title: "Always Visible", url: "#always", icon: FakeIcon },
       {
         title: "Testing",
-        url: "#evals",
+        url: "#ci-evals",
         icon: FakeIcon,
       },
     ],
@@ -102,7 +102,7 @@ describe("filterByBillingEntitlements", () => {
           items: [
             {
               title: "Testing",
-              url: "#evals",
+              url: "#ci-evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -126,7 +126,7 @@ describe("filterByBillingEntitlements", () => {
           items: [
             {
               title: "Testing",
-              url: "#evals",
+              url: "#ci-evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -158,7 +158,7 @@ describe("getHostedNavigationSections", () => {
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
-            url: "#evals",
+            url: "#ci-evals",
             icon: FakeIcon,
             billingFeature: "evals",
           },
@@ -178,7 +178,7 @@ describe("getHostedNavigationSections", () => {
       },
       {
         title: "Testing",
-        url: "#evals",
+        url: "#ci-evals",
         icon: FakeIcon,
         billingFeature: "evals",
       },
@@ -197,7 +197,7 @@ describe("getHostedNavigationSections", () => {
         items: [
           {
             title: "Testing",
-            url: "#evals",
+            url: "#ci-evals",
             icon: FakeIcon,
           },
         ],

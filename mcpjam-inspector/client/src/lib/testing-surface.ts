@@ -16,7 +16,7 @@ export function readTestingSurfaceFromHash(hashValue: string): TestingSurface {
   return "explore";
 }
 
-/** Strips legacy `surface` query params from evals hashes (Explore is default). */
+/** Strips legacy `surface` query params from evals hashes. */
 export function withTestingSurface(hash: string): string {
   const normalizedHash = hash.startsWith("#") ? hash.slice(1) : hash;
   const [path, queryString] = normalizedHash.split("?");

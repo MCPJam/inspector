@@ -7,6 +7,11 @@ describe("ci-evals-router", () => {
     expect(parseCiEvalsRoute()).toEqual({ type: "list" });
   });
 
+  it("parses list route without leading slash after hash", () => {
+    window.location.hash = "#ci-evals";
+    expect(parseCiEvalsRoute()).toEqual({ type: "list" });
+  });
+
   it("parses create route", () => {
     window.location.hash = "#/ci-evals/create";
     expect(parseCiEvalsRoute()).toEqual({ type: "create" });

@@ -451,8 +451,8 @@ export default function App() {
           // Ignore localStorage failures and still navigate.
         }
         setSelectedServer(firstVisitServer);
-        if (window.location.hash !== "#/evals") {
-          window.location.hash = "/evals";
+        if (window.location.hash !== "#ci-evals") {
+          window.location.hash = "ci-evals";
         }
       }
     }

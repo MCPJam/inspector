@@ -16,7 +16,7 @@ export function TestingSurfaceNav({
       value={value}
       onChange={onChange}
       size="default"
-      className="w-full sm:w-auto"
+      className="shrink-0"
       options={[
         {
           value: "explore",

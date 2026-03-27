@@ -174,7 +174,7 @@ const navigationSections: NavSection[] = [
       },
       {
         title: "Evals",
-        url: "#evals",
+        url: "#ci-evals",
         icon: FlaskConical,
         billingFeature: "evals",
       },
@@ -486,7 +486,7 @@ export function MCPSidebar({
               items={section.items.map((item) => ({
                 ...item,
                 isActive:
-                  item.url === "#evals"
+                  item.url === "#ci-evals"
                     ? activeTab === "evals" || activeTab === "ci-evals"
                     : item.url === `#${activeTab}`,
               }))}

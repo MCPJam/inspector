@@ -28,7 +28,7 @@ import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 import { HOSTED_MODE } from "@/lib/config";
-import { TestingShellHeader } from "./evals/testing-shell-header";
+import { TestingSurfaceNav } from "./evals/testing-surface-nav";
 
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
@@ -109,6 +109,23 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [queries.sortedSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
+
+  // Sidebar defaults to Runs; send empty workspaces to Explore instead of an empty Runs shell.
+  useEffect(() => {
+    if (!isAuthenticated || !convexWorkspaceId) return;
+    if (queries.isOverviewLoading) return;
+    if (hasVisibleSuites) return;
+    if (route.type !== "list") return;
+    const exploreHash = withTestingSurface(buildEvalsHash({ type: "list" }));
+    if (window.location.hash === exploreHash) return;
+    window.location.hash = exploreHash;
+  }, [
+    convexWorkspaceId,
+    hasVisibleSuites,
+    isAuthenticated,
+    queries.isOverviewLoading,
+    route.type,
+  ]);
 
   const commitGroups = useMemo(
     () => groupRunsByCommit(visibleSuites),
@@ -337,10 +354,16 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <TestingShellHeader
-        surface="runs"
-        onSurfaceChange={handleSurfaceChange}
-      />
+      <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2 sm:px-6">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-between">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+            <TestingSurfaceNav value="runs" onChange={handleSurfaceChange} />
+            <p className="min-w-0 text-sm text-muted-foreground">
+              Saved suites and CI-backed run history
+            </p>
+          </div>
+        </div>
+      </div>
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 overflow-hidden"

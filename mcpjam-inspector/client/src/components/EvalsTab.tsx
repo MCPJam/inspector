@@ -49,7 +49,7 @@ import {
   type SuiteNavigation,
 } from "./evals/suite-iterations-view";
 import { TestCaseListSidebar } from "./evals/TestCaseListSidebar";
-import { TestingShellHeader } from "./evals/testing-shell-header";
+import { TestingSurfaceNav } from "./evals/testing-surface-nav";
 import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
@@ -569,28 +569,34 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <TestingShellHeader
-        surface="explore"
-        onSurfaceChange={handleSurfaceChange}
-      />
-
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <>
           <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2 sm:px-6">
             {handlers.isGeneratingTests && exploreSuite ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
-                <p className="text-sm text-muted-foreground">
-                  Generating cases for{" "}
-                  <span className="font-medium text-foreground">
-                    {selectedServer ?? "this server"}
-                  </span>
-                  …
-                </p>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                <TestingSurfaceNav
+                  value="explore"
+                  onChange={handleSurfaceChange}
+                />
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-muted-foreground" />
+                  <p className="text-sm text-muted-foreground">
+                    Generating cases for{" "}
+                    <span className="font-medium text-foreground">
+                      {selectedServer ?? "this server"}
+                    </span>
+                    …
+                  </p>
+                </div>
               </div>
             ) : (
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="min-w-0 text-sm text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-between">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
+                  <TestingSurfaceNav
+                    value="explore"
+                    onChange={handleSurfaceChange}
+                  />
+                  <p className="min-w-0 text-sm text-muted-foreground">
                   {findingCount > 0 ? (
                     <>
                       <span className="font-medium text-foreground">
@@ -622,7 +628,8 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                   ) : (
                     "Connect a server to start discovering cases"
                   )}
-                </p>
+                  </p>
+                </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   {shouldReviewFindings ? (
                     <>
