@@ -1044,7 +1044,7 @@ function InlineFailureTag({ tag }: { tag: FailureTag }) {
     regression: {
       label: "regression",
       className:
-        "text-destructive bg-red-50 border-red-200 dark:bg-red-950/50 dark:border-red-800",
+        "text-destructive bg-destructive/10 border-destructive/30 dark:bg-destructive/20 dark:border-destructive/40",
     },
     flaky: {
       label: "flaky",

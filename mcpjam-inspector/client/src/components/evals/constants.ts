@@ -60,9 +60,9 @@ export const UI_CONFIG = {
   SIDEBAR_WIDTH: "w-64",
   CHART_COLORS: {
     PASS_RATE: "var(--chart-1)",
-    PASSED: "hsl(142.1 76.2% 36.3%)",
-    FAILED: "hsl(0 84.2% 60.2%)",
-    PENDING: "hsl(45.4 93.4% 47.5%)",
+    PASSED: "var(--color-success)",
+    FAILED: "var(--color-destructive)",
+    PENDING: "var(--color-warning)",
     CANCELLED: "hsl(240 3.7% 15.9%)",
   },
 } as const;
@@ -70,7 +70,7 @@ export const UI_CONFIG = {
 // Border colors for iteration results
 export const BORDER_COLORS = {
   [RESULT_STATUS.PASSED]: "bg-success/50",
-  [RESULT_STATUS.FAILED]: "bg-red-500/50",
+  [RESULT_STATUS.FAILED]: "bg-destructive/50",
   [RESULT_STATUS.CANCELLED]: "bg-muted",
   [RESULT_STATUS.PENDING]: "bg-warning/50",
 } as const;

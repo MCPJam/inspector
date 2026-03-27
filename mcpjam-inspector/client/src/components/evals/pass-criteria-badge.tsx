@@ -48,7 +48,7 @@ export function PassCriteriaBadge({
                 ? "gap-1 bg-amber-500/20 text-amber-600 border-amber-500/40 hover:bg-amber-500/30 dark:text-amber-400"
                 : passed
                   ? "gap-1 bg-success/50 text-success-foreground border-success/50 hover:bg-success/70"
-                  : "gap-1 bg-destructive/50 text-destructive-foreground border-destructive/50 hover:bg-destructive/70"
+                  : "gap-1 bg-destructive/50 text-destructive border-destructive/50 hover:bg-destructive/70"
             }
           >
             {passedWithFailures ? (
@@ -115,7 +115,7 @@ export function PassCriteriaBadge({
         </div>
 
         {!passed && passRate < minimumPassRate && (
-          <div className="mt-2 rounded border-l-2 border-destructive bg-destructive/10 p-2 text-xs">
+          <div className="mt-2 rounded border-l-2 border-destructive bg-destructive/10 p-2 text-xs text-destructive">
             {metricLabel} {passRate.toFixed(1)}% below threshold{" "}
             {minimumPassRate}%
           </div>

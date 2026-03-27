@@ -39,7 +39,7 @@ export function PassRateTrendMini({
                   ? "bg-success/50"
                   : value >= 50
                     ? "bg-warning/50"
-                    : "bg-red-500/50",
+                    : "bg-destructive/50",
               )}
               style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
             />

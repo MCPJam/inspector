@@ -18,6 +18,7 @@ value: soft-pop
   --accent: oklch(0.7686 0.1647 70.0804);
   --accent-foreground: oklch(0 0 0);
   --destructive: oklch(0.6368 0.2078 25.3313);
+  --destructive-foreground: oklch(1 0 0);
   --border: oklch(0 0 0);
   --input: oklch(0.5555 0 0);
   --ring: oklch(0.7853 0.1041 274.7134);
@@ -54,6 +55,7 @@ value: soft-pop
   --accent: oklch(0.879 0.1534 91.6054);
   --accent-foreground: oklch(0 0 0);
   --destructive: oklch(0.7106 0.1661 22.2162);
+  --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.4459 0 0);
   --input: oklch(1 0 0);
   --ring: oklch(0.6801 0.1583 276.9349);

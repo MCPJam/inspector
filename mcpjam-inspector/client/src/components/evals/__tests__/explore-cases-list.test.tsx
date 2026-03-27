@@ -80,7 +80,7 @@ describe("ExploreCasesList", () => {
       container.querySelector("button.border-l-warning\\/50"),
     ).toBeTruthy();
     expect(
-      container.querySelector("button.border-l-red-500\\/50"),
+      container.querySelector("button.border-l-destructive\\/50"),
     ).toBeNull();
     expect(screen.getByRole("button", { name: /Example case/i })).toBeInTheDocument();
   });

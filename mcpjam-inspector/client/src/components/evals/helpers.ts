@@ -243,14 +243,14 @@ export function formatTokens(tokens: number): string {
 
 /**
  * Left `border-l-2` accents — parity with pre–#1602 `getIterationBorderColor` stripes
- * (`bg-success/50`, `bg-red-500/50`, `bg-warning/50`, …).
+ * (`bg-success/50`, `bg-destructive/50`, `bg-warning/50`, …).
  */
 export function evalStatusLeftBorderClasses(result: string): string {
   switch (result) {
     case RESULT_STATUS.PASSED:
       return "border-l-success/50";
     case RESULT_STATUS.FAILED:
-      return "border-l-red-500/50";
+      return "border-l-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
       return "border-l-warning/50";
@@ -265,14 +265,14 @@ export function evalStatusLeftBorderClasses(result: string): string {
 
 /**
  * Thin vertical strip fills — same opacity/hue as {@link evalStatusLeftBorderClasses}
- * (`bg-success/50`, `bg-red-500/50`, `bg-warning/50`) so nested rows match parent rails.
+ * (`bg-success/50`, `bg-destructive/50`, `bg-warning/50`) so nested rows match parent rails.
  */
 export function evalStatusMiniBarClasses(result: string): string {
   switch (result) {
     case RESULT_STATUS.PASSED:
       return "bg-success/50";
     case RESULT_STATUS.FAILED:
-      return "bg-red-500/50";
+      return "bg-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
       return "bg-warning/50 animate-pulse";
@@ -314,7 +314,7 @@ export function evalOverviewEntryMiniBarClass(
   if (r.result === "passed") {
     return "bg-success/50";
   }
-  if (r.result === "failed") return "bg-red-500/50";
+  if (r.result === "failed") return "bg-destructive/50";
   return "bg-muted-foreground/40";
 }
 
@@ -337,7 +337,7 @@ export function evalOverviewEntrySelectedRowClass(
     return "bg-success/10 ring-2 ring-success/40 ring-inset";
   }
   if (r.result === "failed") {
-    return "bg-red-500/10 ring-2 ring-red-500/35 ring-inset";
+    return "bg-destructive/10 ring-2 ring-destructive/35 ring-inset";
   }
   return "bg-primary/10 ring-2 ring-primary/35 ring-inset";
 }
@@ -460,7 +460,7 @@ export function getIterationBorderColor(result: string): string {
     case RESULT_STATUS.PASSED:
       return "bg-success/50";
     case RESULT_STATUS.FAILED:
-      return "bg-red-500/50";
+      return "bg-destructive/50";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted";
     case RESULT_STATUS.PENDING:

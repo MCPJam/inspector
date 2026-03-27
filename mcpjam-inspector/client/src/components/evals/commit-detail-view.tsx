@@ -479,7 +479,7 @@ function StatusBadge({
   }
   if (status === "failed") {
     return (
-      <Badge className="gap-1.5 bg-red-50 text-destructive border-red-200 hover:bg-red-100 dark:bg-red-950/50 dark:text-red-400">
+      <Badge className="gap-1.5 bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20 dark:bg-destructive/20 dark:border-destructive/40">
         <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
         {failCount} Failed
       </Badge>
