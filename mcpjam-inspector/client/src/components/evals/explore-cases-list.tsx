@@ -37,21 +37,31 @@ function caseRowLeftBorder(
   aggregate: SuiteAggregate | null,
   latest: EvalIteration | undefined,
 ): string {
-  if (!latest) return "border-l-transparent";
-  const row = aggregate?.byCase.find((b) => b.testCaseId === testCaseId);
-  const failedHist = row?.failed ?? 0;
-  const computed = computeIterationResult(latest);
-  if (failedHist > 0 || computed === "failed") {
-    return evalStatusLeftBorderClasses("failed");
+  const histRow = aggregate?.byCase.find((b) => b.testCaseId === testCaseId);
+  const failedHist = histRow?.failed ?? 0;
+
+  if (!latest) {
+    if (failedHist > 0) return evalStatusLeftBorderClasses("failed");
+    return "border-l-transparent";
   }
+
+  const computed = computeIterationResult(latest);
+  // Latest iteration reflects the current run; don't mix in historical failures
+  // while this case is still in flight or has already passed on this latest result.
   if (computed === "pending") {
     return evalStatusLeftBorderClasses("running");
   }
   if (computed === "cancelled") {
     return evalStatusLeftBorderClasses("cancelled");
   }
+  if (computed === "failed") {
+    return evalStatusLeftBorderClasses("failed");
+  }
   if (computed === "passed") {
     return evalStatusLeftBorderClasses("passed");
+  }
+  if (failedHist > 0) {
+    return evalStatusLeftBorderClasses("failed");
   }
   return evalStatusLeftBorderClasses(computed);
 }
@@ -61,14 +71,19 @@ function caseRowOutcomeTitle(
   aggregate: SuiteAggregate | null,
   latest: EvalIteration | undefined,
 ): string {
-  if (!latest) return "Not run yet";
-  const row = aggregate?.byCase.find((b) => b.testCaseId === testCaseId);
-  const failedHist = row?.failed ?? 0;
+  const histRow = aggregate?.byCase.find((b) => b.testCaseId === testCaseId);
+  const failedHist = histRow?.failed ?? 0;
+
+  if (!latest) {
+    return failedHist > 0 ? "Failed before" : "Not run yet";
+  }
+
   const computed = computeIterationResult(latest);
-  if (failedHist > 0 || computed === "failed") return "Failed";
   if (computed === "pending") return "Pending";
   if (computed === "cancelled") return "Cancelled";
+  if (computed === "failed") return "Failed";
   if (computed === "passed") return "Passed";
+  if (failedHist > 0) return "Failed";
   return "Case status";
 }
 
@@ -78,6 +93,9 @@ export interface ExploreCasesListProps {
   iterations: EvalIteration[];
   isLoading: boolean;
   onRowClick: (testCaseId: string) => void;
+  /** Narrow CI/Runs sidebar: single-column scroll, optional selection highlight. */
+  variant?: "default" | "sidebar";
+  selectedCaseId?: string | null;
 }
 
 export function ExploreCasesList({
@@ -86,10 +104,21 @@ export function ExploreCasesList({
   iterations,
   isLoading,
   onRowClick,
+  variant = "default",
+  selectedCaseId = null,
 }: ExploreCasesListProps) {
+  const isSidebar = variant === "sidebar";
+
   if (isLoading) {
     return (
-      <div className="flex min-h-[200px] items-center justify-center rounded-xl border bg-card">
+      <div
+        className={cn(
+          "flex items-center justify-center",
+          isSidebar
+            ? "min-h-[120px] flex-1"
+            : "min-h-[200px] rounded-xl border bg-card",
+        )}
+      >
         <div className="text-center">
           <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
           <p className="mt-3 text-sm text-muted-foreground">Loading cases…</p>
@@ -100,8 +129,58 @@ export function ExploreCasesList({
 
   if (cases.length === 0) {
     return (
-      <div className="rounded-xl border bg-card px-4 py-12 text-center text-sm text-muted-foreground">
+      <div
+        className={cn(
+          "text-center text-sm text-muted-foreground",
+          isSidebar ? "px-3 py-8" : "rounded-xl border bg-card px-4 py-12",
+        )}
+      >
         No cases yet.
+      </div>
+    );
+  }
+
+  if (isSidebar) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="shrink-0 border-b px-3 py-1.5 text-[10px] font-medium text-muted-foreground">
+          Cases
+        </div>
+        <div className="min-h-0 flex-1 divide-y overflow-y-auto">
+          {cases.map((c) => {
+            const latest = latestIterationForCase(c._id, iterations);
+            const leftBorder = caseRowLeftBorder(c._id, aggregate, latest);
+            const title = caseRowOutcomeTitle(c._id, aggregate, latest);
+            const selected = selectedCaseId === c._id;
+            const a11yPrefix = c.isNegativeTest ? "Negative case — " : "";
+            return (
+              <button
+                key={c._id}
+                type="button"
+                title={`${a11yPrefix}${c.title}. ${title}`}
+                aria-label={`${a11yPrefix}${c.title}: ${title}`}
+                onClick={() => onRowClick(c._id)}
+                className={cn(
+                  "flex w-full items-start gap-2 border-l-2 py-2 pl-[11px] pr-3 text-left transition-colors",
+                  leftBorder,
+                  "hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60",
+                  selected && "bg-primary/10",
+                )}
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-medium text-foreground">
+                    {c.title}
+                  </div>
+                </div>
+                <div className="shrink-0 text-right text-[10px] text-muted-foreground">
+                  {latest?.updatedAt
+                    ? formatRelativeTime(latest.updatedAt)
+                    : "—"}
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     );
   }

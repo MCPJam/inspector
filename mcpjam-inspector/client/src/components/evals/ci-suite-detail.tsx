@@ -38,6 +38,9 @@ interface CiSuiteDetailProps {
   deletingRunId: string | null;
   route: CiEvalsRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  runDetailSortByOverride?: "model" | "test" | "result";
+  onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
+  omitRunIterationList?: boolean;
 }
 
 export function CiSuiteDetail({
@@ -62,6 +65,9 @@ export function CiSuiteDetail({
   deletingRunId,
   route,
   userMap,
+  runDetailSortByOverride,
+  onRunDetailSortByChange,
+  omitRunIterationList = false,
 }: CiSuiteDetailProps) {
   const selectedTestId = route.type === "test-detail" ? route.testId : null;
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
@@ -74,6 +80,10 @@ export function CiSuiteDetail({
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("result");
+  const effectiveRunDetailSortBy =
+    runDetailSortByOverride ?? runDetailSortBy;
+  const effectiveRunDetailSortChange =
+    onRunDetailSortByChange ?? setRunDetailSortBy;
 
   const { runTrendData, modelStats } = useSuiteData(
     suite,
@@ -87,7 +97,7 @@ export function CiSuiteDetail({
   const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
     selectedRunId,
     allIterations,
-    runDetailSortBy,
+    effectiveRunDetailSortBy,
   );
 
   const selectedRunDetails = useMemo(() => {
@@ -300,12 +310,13 @@ export function CiSuiteDetail({
             caseGroupsForSelectedRun={caseGroupsForSelectedRun}
             source={suite.source}
             selectedRunChartData={selectedRunChartData}
-            runDetailSortBy={runDetailSortBy}
-            onSortChange={setRunDetailSortBy}
+            runDetailSortBy={effectiveRunDetailSortBy}
+            onSortChange={effectiveRunDetailSortChange}
             serverNames={connectedSuiteServers}
             selectedIterationId={selectedIterationId}
             onSelectIteration={handleSelectIteration}
             hideReplayLineage
+            omitIterationList={omitRunIterationList}
           />
         ) : null}
       </div>

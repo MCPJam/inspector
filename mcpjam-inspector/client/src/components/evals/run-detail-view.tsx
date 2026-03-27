@@ -1,5 +1,4 @@
 import { useMemo } from "react";
-import { Loader2 } from "lucide-react";
 import {
   ChartContainer,
   ChartTooltip,
@@ -58,6 +57,169 @@ interface RunDetailViewProps {
   hideCiMetadata?: boolean;
   /** When true, omit replay source line (shown in SuiteHeader instead). */
   hideReplayLineage?: boolean;
+  /** When true, only the iteration detail pane is shown (list lives in a parent sidebar). */
+  omitIterationList?: boolean;
+}
+
+function IterationListItem({
+  iteration,
+  isSelected,
+  onSelect,
+}: {
+  iteration: EvalIteration;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const isPending =
+    iteration.status === "pending" || iteration.status === "running";
+
+  const testInfo = iteration.testCaseSnapshot;
+  const modelName = testInfo?.model || "—";
+
+  const computedResult = computeIterationResult(iteration);
+
+  return (
+    <div
+      className={cn(
+        "relative border-l-2",
+        evalStatusLeftBorderClasses(
+          isPending ? "running" : computedResult,
+        ),
+        isPending && "opacity-60",
+      )}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        title={
+          testInfo?.isNegativeTest
+            ? "Negative test — expects the tool NOT to be called"
+            : undefined
+        }
+        aria-label={
+          testInfo?.isNegativeTest
+            ? `Negative test (expects the tool not to be called): ${testInfo?.title || "Iteration"}, ${modelName}`
+            : undefined
+        }
+        className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer ${
+          isSelected
+            ? "bg-primary/10 border-r-2 border-r-primary"
+            : "hover:bg-muted/50"
+        }`}
+      >
+        <span className="text-xs font-medium leading-snug line-clamp-2">
+          {testInfo?.title || "Iteration"}
+        </span>
+        <span className="truncate text-[10px] font-mono text-muted-foreground">
+          {modelName}
+        </span>
+      </button>
+    </div>
+  );
+}
+
+function IterationListWithSections({
+  iterations,
+  sortBy,
+  selectedIterationId,
+  onSelectIteration,
+}: {
+  iterations: EvalIteration[];
+  sortBy: "model" | "test" | "result";
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
+}) {
+  if (sortBy !== "result") {
+    return (
+      <>
+        {iterations.map((iteration) => (
+          <IterationListItem
+            key={iteration._id}
+            iteration={iteration}
+            isSelected={selectedIterationId === iteration._id}
+            onSelect={() => onSelectIteration(iteration._id)}
+          />
+        ))}
+      </>
+    );
+  }
+
+  const failing = iterations.filter(
+    (i) => computeIterationResult(i) === "failed",
+  );
+  const passing = iterations.filter(
+    (i) => computeIterationResult(i) === "passed",
+  );
+  const other = iterations.filter((i) => {
+    const r = computeIterationResult(i);
+    return r !== "failed" && r !== "passed";
+  });
+
+  const ordered = [...failing, ...passing, ...other];
+
+  return (
+    <>
+      {ordered.map((iteration) => (
+        <IterationListItem
+          key={iteration._id}
+          iteration={iteration}
+          isSelected={selectedIterationId === iteration._id}
+          onSelect={() => onSelectIteration(iteration._id)}
+        />
+      ))}
+    </>
+  );
+}
+
+/** Iteration list + sort (used inside run detail or the CI Runs drilldown sidebar). */
+export function RunIterationsSidebar({
+  caseGroupsForSelectedRun,
+  runDetailSortBy,
+  onSortChange,
+  selectedIterationId,
+  onSelectIteration,
+}: {
+  caseGroupsForSelectedRun: EvalIteration[];
+  runDetailSortBy: "model" | "test" | "result";
+  onSortChange: (sortBy: "model" | "test" | "result") => void;
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
+}) {
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
+        <div className="text-xs font-semibold">Iterations</div>
+        <select
+          value={runDetailSortBy}
+          onChange={(e) =>
+            onSortChange(e.target.value as "model" | "test" | "result")
+          }
+          className="rounded border bg-background px-1.5 py-0.5 text-[10px]"
+          aria-label="Sort iterations"
+        >
+          <option value="model">Model</option>
+          <option value="test">Test</option>
+          <option value="result">Result</option>
+        </select>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="divide-y">
+          {caseGroupsForSelectedRun.length === 0 ? (
+            <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+              No iterations found.
+            </div>
+          ) : (
+            <IterationListWithSections
+              iterations={caseGroupsForSelectedRun}
+              sortBy={runDetailSortBy}
+              selectedIterationId={selectedIterationId}
+              onSelectIteration={onSelectIteration}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function RunDetailView({
@@ -72,6 +234,7 @@ export function RunDetailView({
   onSelectIteration,
   hideCiMetadata,
   hideReplayLineage,
+  omitIterationList = false,
 }: RunDetailViewProps) {
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
@@ -149,7 +312,12 @@ export function RunDetailView({
     selectedRunChartData.durationData.length > 0 || hasTokenData;
 
   return (
-    <div className="relative flex flex-col p-4">
+    <div
+      className={cn(
+        "relative flex flex-col p-4",
+        omitIterationList && "min-h-0 flex-1 overflow-hidden",
+      )}
+    >
       {/* Run Header */}
       <div className="shrink-0">
         {!hideCiMetadata &&
@@ -356,47 +524,31 @@ export function RunDetailView({
         failedCount={computedStats.failed}
       />
 
-      {/* Two-pane body */}
+      {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
-        className="flex mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden"
-        style={{ height: "calc(100vh - 200px)", minHeight: "400px" }}
+        className={cn(
+          "mt-4 flex gap-0 overflow-hidden rounded-xl border bg-card text-card-foreground",
+          omitIterationList ? "min-h-0 flex-1 flex-col" : "",
+        )}
+        style={
+          omitIterationList
+            ? { minHeight: "400px" }
+            : { height: "calc(100vh - 200px)", minHeight: "400px" }
+        }
       >
-        {/* Left pane: iteration list */}
-        <div className="w-[280px] shrink-0 border-r flex flex-col">
-          <div className="border-b px-3 py-2 shrink-0 flex items-center justify-between">
-            <div className="text-xs font-semibold">Iterations</div>
-            <select
-              value={runDetailSortBy}
-              onChange={(e) =>
-                onSortChange(e.target.value as "model" | "test" | "result")
-              }
-              className="text-[10px] border rounded px-1.5 py-0.5 bg-background"
-            >
-              <option value="model">Model</option>
-              <option value="test">Test</option>
-              <option value="result">Result</option>
-            </select>
+        {!omitIterationList ? (
+          <div className="flex w-[280px] shrink-0 flex-col border-r">
+            <RunIterationsSidebar
+              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+              runDetailSortBy={runDetailSortBy}
+              onSortChange={onSortChange}
+              selectedIterationId={selectedIterationId}
+              onSelectIteration={onSelectIteration}
+            />
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="divide-y">
-              {caseGroupsForSelectedRun.length === 0 ? (
-                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  No iterations found.
-                </div>
-              ) : (
-                <IterationListWithSections
-                  iterations={caseGroupsForSelectedRun}
-                  sortBy={runDetailSortBy}
-                  selectedIterationId={selectedIterationId}
-                  onSelectIteration={onSelectIteration}
-                />
-              )}
-            </div>
-          </div>
-        </div>
+        ) : null}
 
-        {/* Right pane: iteration detail */}
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {selectedIteration ? (
             <div
               key={selectedIterationId}
@@ -420,226 +572,6 @@ export function RunDetailView({
           )}
         </div>
       </div>
-    </div>
-  );
-}
-
-// Iteration list with section headers when sorted by result
-function IterationListWithSections({
-  iterations,
-  sortBy,
-  selectedIterationId,
-  onSelectIteration,
-}: {
-  iterations: EvalIteration[];
-  sortBy: "model" | "test" | "result";
-  selectedIterationId: string | null;
-  onSelectIteration: (id: string) => void;
-}) {
-  if (sortBy !== "result") {
-    // No sections — just render flat list
-    return (
-      <>
-        {iterations.map((iteration, idx) => (
-          <IterationListItem
-            key={iteration._id}
-            iteration={iteration}
-            index={idx + 1}
-            isSelected={selectedIterationId === iteration._id}
-            onSelect={() => onSelectIteration(iteration._id)}
-          />
-        ))}
-      </>
-    );
-  }
-
-  // Group by result: failing first, then passing, then pending/cancelled
-  const failing = iterations.filter(
-    (i) => computeIterationResult(i) === "failed",
-  );
-  const passing = iterations.filter(
-    (i) => computeIterationResult(i) === "passed",
-  );
-  const other = iterations.filter((i) => {
-    const r = computeIterationResult(i);
-    return r !== "failed" && r !== "passed";
-  });
-
-  let globalIdx = 0;
-
-  return (
-    <>
-      {failing.length > 0 && (
-        <>
-          <div className="px-3 py-1.5 bg-destructive/10 text-[10px] font-semibold text-destructive uppercase tracking-wide sticky top-0 z-[1]">
-            Failing ({failing.length})
-          </div>
-          {failing.map((iteration) => {
-            globalIdx++;
-            return (
-              <IterationListItem
-                key={iteration._id}
-                iteration={iteration}
-                index={globalIdx}
-                isSelected={selectedIterationId === iteration._id}
-                onSelect={() => onSelectIteration(iteration._id)}
-              />
-            );
-          })}
-        </>
-      )}
-      {passing.length > 0 && (
-        <>
-          <div className="px-3 py-1.5 bg-emerald-500/10 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400 uppercase tracking-wide sticky top-0 z-[1]">
-            Passing ({passing.length})
-          </div>
-          {passing.map((iteration) => {
-            globalIdx++;
-            return (
-              <IterationListItem
-                key={iteration._id}
-                iteration={iteration}
-                index={globalIdx}
-                isSelected={selectedIterationId === iteration._id}
-                onSelect={() => onSelectIteration(iteration._id)}
-              />
-            );
-          })}
-        </>
-      )}
-      {other.length > 0 && (
-        <>
-          <div className="px-3 py-1.5 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide sticky top-0 z-[1]">
-            Pending / Cancelled ({other.length})
-          </div>
-          {other.map((iteration) => {
-            globalIdx++;
-            return (
-              <IterationListItem
-                key={iteration._id}
-                iteration={iteration}
-                index={globalIdx}
-                isSelected={selectedIterationId === iteration._id}
-                onSelect={() => onSelectIteration(iteration._id)}
-              />
-            );
-          })}
-        </>
-      )}
-    </>
-  );
-}
-
-// Compact iteration list item for the left pane
-function IterationListItem({
-  iteration,
-  index,
-  isSelected,
-  onSelect,
-}: {
-  iteration: EvalIteration;
-  index: number;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  const startedAt = iteration.startedAt ?? iteration.createdAt;
-  const completedAt = iteration.updatedAt ?? iteration.createdAt;
-  const durationMs =
-    startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
-  const isPending =
-    iteration.status === "pending" || iteration.status === "running";
-
-  const testInfo = iteration.testCaseSnapshot;
-  const modelName = testInfo?.model || "—";
-
-  const computedResult = computeIterationResult(iteration);
-
-  // Extract a distinguishing detail from the query or expected tool call args
-  const distinguisher = useMemo(() => {
-    if (!testInfo) return null;
-    // Try to get key params from expected tool calls
-    const expectedArgs = testInfo.expectedToolCalls?.[0]?.arguments;
-    if (expectedArgs && Object.keys(expectedArgs).length > 0) {
-      const entries = Object.entries(expectedArgs).slice(0, 2);
-      return entries
-        .map(
-          ([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`,
-        )
-        .join(", ");
-    }
-    // Fall back to first ~60 chars of query if different from title
-    if (testInfo.query && testInfo.query !== testInfo.title) {
-      return testInfo.query.length > 60
-        ? testInfo.query.slice(0, 57) + "..."
-        : testInfo.query;
-    }
-    return null;
-  }, [testInfo]);
-
-  return (
-    <div
-      className={cn(
-        "relative border-l-2",
-        evalStatusLeftBorderClasses(
-          isPending ? "running" : computedResult,
-        ),
-        isPending && "opacity-60",
-      )}
-    >
-      <button
-        onClick={onSelect}
-        className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer ${
-          isSelected
-            ? "bg-primary/10 border-r-2 border-r-primary"
-            : "hover:bg-muted/50"
-        }`}
-      >
-        <div className="flex items-center gap-1.5 min-w-0">
-          <span className="text-[10px] text-muted-foreground font-mono shrink-0 w-4 text-right">
-            {index}
-          </span>
-          {isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-500 shrink-0" />
-          ) : null}
-          <span className="text-xs font-medium truncate flex-1">
-            {testInfo?.title || "Iteration"}
-          </span>
-          {testInfo?.isNegativeTest && (
-            <span
-              className="text-[9px] font-medium px-1 py-0.5 rounded bg-orange-500/15 text-orange-500 shrink-0"
-              title="Negative test — expects the tool NOT to be called"
-            >
-              Negative
-            </span>
-          )}
-        </div>
-        {/* Distinguishing detail */}
-        {distinguisher && (
-          <div
-            className={cn(
-              "text-[10px] text-muted-foreground/70 truncate italic",
-              isPending ? "ml-[calc(1rem+0.375rem+0.875rem)]" : "ml-[1.375rem]",
-            )}
-          >
-            {distinguisher}
-          </div>
-        )}
-        <div
-          className={cn(
-            "flex items-center gap-2 text-[10px] text-muted-foreground",
-            isPending ? "ml-[calc(1rem+0.375rem+0.875rem)]" : "ml-[1.375rem]",
-          )}
-        >
-          <span className="font-mono truncate">{modelName}</span>
-          <span className="shrink-0">
-            {isPending
-              ? "—"
-              : durationMs !== null
-                ? formatDuration(durationMs)
-                : "—"}
-          </span>
-        </div>
-      </button>
     </div>
   );
 }

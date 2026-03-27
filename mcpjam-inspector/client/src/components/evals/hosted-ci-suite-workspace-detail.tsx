@@ -35,6 +35,9 @@ interface HostedCiSuiteWorkspaceDetailProps {
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  runDetailSortByOverride?: "model" | "test" | "result";
+  onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
+  omitRunIterationList?: boolean;
 }
 
 export function HostedCiSuiteWorkspaceDetail({
@@ -60,6 +63,9 @@ export function HostedCiSuiteWorkspaceDetail({
   deletingSuiteId,
   deletingRunId,
   userMap,
+  runDetailSortByOverride,
+  onRunDetailSortByChange,
+  omitRunIterationList = false,
 }: HostedCiSuiteWorkspaceDetailProps) {
   const navigation = useMemo(
     () => ({
@@ -102,7 +108,10 @@ export function HostedCiSuiteWorkspaceDetail({
           runs={runs}
           runsLoading={runsLoading}
           aggregate={aggregate}
-          caseListInSidebar={false}
+          caseListInSidebar
+          runDetailSortByOverride={runDetailSortByOverride}
+          onRunDetailSortByChange={onRunDetailSortByChange}
+          omitRunIterationList={omitRunIterationList}
           onRerun={onRerun}
           onReplayRun={onReplayRun}
           onCancelRun={onCancelRun}

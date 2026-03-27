@@ -3,6 +3,14 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { GitBranch, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   ResizableHandle,
@@ -10,11 +18,15 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
-import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import {
+  useCiEvalsRoute,
+  navigateToCiEvalsRoute,
+} from "@/lib/ci-evals-router";
 import { buildEvalsHash } from "@/lib/evals-router";
 import { withTestingSurface, type TestingSurface } from "@/lib/testing-surface";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
-import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
+import { aggregateSuite, formatRunId, groupRunsByCommit } from "./evals/helpers";
+import { useRunDetailData } from "./evals/use-suite-data";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
@@ -22,6 +34,7 @@ import {
   CiSuiteListSidebar,
   type SidebarMode,
 } from "./evals/ci-suite-list-sidebar";
+import { CiEvalsSuiteDrilldownSidebar } from "./evals/ci-evals-suite-drilldown-sidebar";
 import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
 import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-detail";
@@ -51,6 +64,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("runs");
   const [hasAutoSwitchedMode, setHasAutoSwitchedMode] = useState(false);
+  const [runDetailSidebarSortBy, setRunDetailSidebarSortBy] = useState<
+    "model" | "test" | "result"
+  >("result");
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -158,6 +174,21 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const selectedCommitSha =
     route.type === "commit-detail" ? route.commitSha : null;
 
+  const selectedRunIdForSidebar =
+    route.type === "run-detail" ? route.runId : null;
+
+  const { caseGroupsForSelectedRun } = useRunDetailData(
+    selectedRunIdForSidebar,
+    queries.sortedIterations,
+    runDetailSidebarSortBy,
+  );
+
+  useEffect(() => {
+    if (route.type !== "run-detail") {
+      setRunDetailSidebarSortBy("result");
+    }
+  }, [route.type]);
+
   const selectedCommitGroup = useMemo(() => {
     if (!selectedCommitSha) return null;
     return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
@@ -199,6 +230,19 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
       queries.activeIterations,
     );
   }, [selectedSuite, queries.suiteDetails, queries.activeIterations]);
+
+  const showCiSuiteDrilldownSidebar = useMemo(
+    () =>
+      Boolean(
+        selectedSuiteId &&
+          selectedSuite &&
+          route.type !== "list" &&
+          route.type !== "create" &&
+          route.type !== "commit-detail" &&
+          hasVisibleSuites,
+      ),
+    [selectedSuiteId, selectedSuite, route.type, hasVisibleSuites],
+  );
 
   useEffect(() => {
     if (route.type === "list" || route.type === "create") return;
@@ -313,6 +357,18 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
   }, []);
 
+  const handleCiBreadcrumbToSuiteList = useCallback(() => {
+    navigateToCiEvalsRoute({ type: "list" });
+  }, []);
+
+  const handleCiBreadcrumbToSuiteOverview = useCallback(() => {
+    if (!selectedSuite) return;
+    navigateToCiEvalsRoute({
+      type: "suite-overview",
+      suiteId: selectedSuite._id,
+    });
+  }, [selectedSuite]);
+
   if (isLoading) {
     return (
       <div className="p-6">
@@ -354,14 +410,58 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2 sm:px-6">
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 sm:justify-between">
-          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1">
-            <TestingSurfaceNav value="runs" onChange={handleSurfaceChange} />
-            <p className="min-w-0 text-sm text-muted-foreground">
-              Saved suites and CI-backed run history
-            </p>
-          </div>
+      <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+          <TestingSurfaceNav value="runs" onChange={handleSurfaceChange} />
+          {showCiSuiteDrilldownSidebar && selectedSuite ? (
+            <Breadcrumb className="min-w-0 flex-1">
+              <BreadcrumbList className="min-w-0 flex-nowrap">
+                <BreadcrumbItem>
+                  <BreadcrumbLink asChild>
+                    <button
+                      type="button"
+                      onClick={handleCiBreadcrumbToSuiteList}
+                      className="inline-flex border-0 bg-transparent p-0 font-medium"
+                    >
+                      Suites
+                    </button>
+                  </BreadcrumbLink>
+                </BreadcrumbItem>
+                <BreadcrumbSeparator />
+                {route.type === "run-detail" ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          onClick={handleCiBreadcrumbToSuiteOverview}
+                          title={selectedSuite.name}
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                        >
+                          {selectedSuite.name}
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    <BreadcrumbItem>
+                      <BreadcrumbPage className="font-mono text-xs tabular-nums">
+                        Run {formatRunId(route.runId)}
+                      </BreadcrumbPage>
+                    </BreadcrumbItem>
+                  </>
+                ) : (
+                  <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                    <BreadcrumbPage
+                      className="truncate font-medium"
+                      title={selectedSuite.name}
+                    >
+                      {selectedSuite.name}
+                    </BreadcrumbPage>
+                  </BreadcrumbItem>
+                )}
+              </BreadcrumbList>
+            </Breadcrumb>
+          ) : null}
         </div>
       </div>
       <ResizablePanelGroup
@@ -372,19 +472,65 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           defaultSize={24}
           minSize={20}
           maxSize={35}
-          className="border-r bg-muted/30 flex flex-col"
+          className="flex min-h-0 flex-col border-r bg-muted/30"
         >
-          <CiSuiteListSidebar
-            suites={visibleSuites}
-            selectedSuiteId={selectedSuiteId}
-            onSelectSuite={handleSelectSuite}
-            isLoading={queries.isOverviewLoading}
-            sidebarMode={sidebarMode}
-            onSidebarModeChange={setSidebarMode}
-            commitGroups={commitGroups}
-            selectedCommitSha={selectedCommitSha}
-            onSelectCommit={handleSelectCommit}
-          />
+          {route.type === "commit-detail" || !showCiSuiteDrilldownSidebar ? (
+            <CiSuiteListSidebar
+              suites={visibleSuites}
+              selectedSuiteId={selectedSuiteId}
+              onSelectSuite={handleSelectSuite}
+              isLoading={queries.isOverviewLoading}
+              sidebarMode={sidebarMode}
+              onSidebarModeChange={setSidebarMode}
+              commitGroups={commitGroups}
+              selectedCommitSha={selectedCommitSha}
+              onSelectCommit={handleSelectCommit}
+            />
+          ) : (
+            <CiEvalsSuiteDrilldownSidebar
+              route={route}
+              cases={queries.suiteDetails?.testCases ?? []}
+              aggregate={suiteAggregate}
+              activeIterations={queries.activeIterations}
+              isCasesLoading={queries.isSuiteDetailsLoading}
+              selectedTestId={
+                route.type === "test-detail" || route.type === "test-edit"
+                  ? route.testId
+                  : null
+              }
+              onSelectCase={(testCaseId) =>
+                navigateToCiEvalsRoute(
+                  route.type === "test-edit"
+                    ? {
+                        type: "test-edit",
+                        suiteId: selectedSuite!._id,
+                        testId: testCaseId,
+                      }
+                    : {
+                        type: "test-detail",
+                        suiteId: selectedSuite!._id,
+                        testId: testCaseId,
+                      },
+                )
+              }
+              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+              runDetailSortBy={runDetailSidebarSortBy}
+              onRunDetailSortChange={setRunDetailSidebarSortBy}
+              selectedIterationId={
+                route.type === "run-detail" ? (route.iteration ?? null) : null
+              }
+              onSelectIteration={(iterationId) => {
+                if (route.type === "run-detail") {
+                  navigateToCiEvalsRoute({
+                    type: "run-detail",
+                    suiteId: route.suiteId,
+                    runId: route.runId,
+                    iteration: iterationId,
+                  });
+                }
+              }}
+            />
+          )}
         </ResizablePanel>
 
         <ResizableHandle withHandle />
@@ -464,6 +610,17 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               deletingSuiteId={deletingSuiteId}
               deletingRunId={deletingRunId}
               userMap={userMap}
+              runDetailSortByOverride={
+                route.type === "run-detail"
+                  ? runDetailSidebarSortBy
+                  : undefined
+              }
+              onRunDetailSortByChange={
+                route.type === "run-detail"
+                  ? setRunDetailSidebarSortBy
+                  : undefined
+              }
+              omitRunIterationList={route.type === "run-detail"}
             />
           ) : (
             <div
@@ -491,6 +648,17 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 deletingRunId={deletingRunId}
                 route={route}
                 userMap={userMap}
+                runDetailSortByOverride={
+                  route.type === "run-detail"
+                    ? runDetailSidebarSortBy
+                    : undefined
+                }
+                onRunDetailSortByChange={
+                  route.type === "run-detail"
+                    ? setRunDetailSidebarSortBy
+                    : undefined
+                }
+                omitRunIterationList={route.type === "run-detail"}
               />
             </div>
           )}

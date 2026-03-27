@@ -74,6 +74,9 @@ export function SuiteIterationsView({
   navigation = defaultNavigation,
   onSetupCi,
   caseListInSidebar = false,
+  runDetailSortByOverride,
+  onRunDetailSortByChange,
+  omitRunIterationList = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -102,6 +105,11 @@ export function SuiteIterationsView({
   onSetupCi?: () => void;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
+  /** When set with onRunDetailSortByChange, controls iteration sort (e.g. CI Runs parent sidebar). */
+  runDetailSortByOverride?: "model" | "test" | "result";
+  onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
+  /** When true, hide the iteration list in run detail (shown in a parent sidebar instead). */
+  omitRunIterationList?: boolean;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -127,6 +135,10 @@ export function SuiteIterationsView({
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("model");
+  const effectiveRunDetailSortBy =
+    runDetailSortByOverride ?? runDetailSortBy;
+  const effectiveRunDetailSortChange =
+    onRunDetailSortByChange ?? setRunDetailSortBy;
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
   const [editedDescription, setEditedDescription] = useState(
     suite.description || "",
@@ -149,7 +161,7 @@ export function SuiteIterationsView({
   const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
     selectedRunId,
     allIterations,
-    runDetailSortBy,
+    effectiveRunDetailSortBy,
   );
 
   // Selected run details
@@ -465,14 +477,15 @@ export function SuiteIterationsView({
                 caseGroupsForSelectedRun={caseGroupsForSelectedRun}
                 source={suite.source}
                 selectedRunChartData={selectedRunChartData}
-                runDetailSortBy={runDetailSortBy}
-                onSortChange={setRunDetailSortBy}
+                runDetailSortBy={effectiveRunDetailSortBy}
+                onSortChange={effectiveRunDetailSortChange}
                 serverNames={(suite.environment?.servers || []).filter((name) =>
                   connectedServerNames.has(name),
                 )}
                 selectedIterationId={selectedIterationId}
                 onSelectIteration={handleSelectIteration}
                 hideReplayLineage
+                omitIterationList={omitRunIterationList}
               />
             </div>
           ) : null}

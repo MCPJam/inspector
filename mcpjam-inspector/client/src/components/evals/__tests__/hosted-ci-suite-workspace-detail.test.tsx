@@ -46,7 +46,7 @@ const baseProps = {
 };
 
 describe("HostedCiSuiteWorkspaceDetail", () => {
-  it("does not render the Cases sidebar; main workspace uses SuiteIterationsView only", () => {
+  it("renders SuiteIterationsView with caseListInSidebar (cases list lives in CiEvalsTab)", () => {
     const { container } = renderWithProviders(
       <HostedCiSuiteWorkspaceDetail
         {...baseProps}
