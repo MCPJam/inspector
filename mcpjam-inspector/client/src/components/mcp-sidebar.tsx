@@ -460,76 +460,84 @@ export function MCPSidebar({
 
   return (
     <>
-    <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
-        <button
-          onClick={() => handleNavClick("#servers")}
-          className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
-        >
-          <img
-            src={
-              themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"
-            }
-            alt="MCP Jam"
-            className="h-4 w-auto"
-          />
-        </button>
-        {updateReady && (
-          <div className="px-2 pb-2">
-            <Button
-              size="sm"
-              onClick={restartAndInstall}
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
-            >
-              Update & Restart
-            </Button>
-          </div>
-        )}
-        <SidebarWorkspaceSelector
-          activeWorkspaceId={activeWorkspaceId}
-          workspaces={workspaces}
-          onSwitchWorkspace={onSwitchWorkspace}
-          onCreateWorkspace={onCreateWorkspace}
-          onDeleteWorkspace={onDeleteWorkspace}
-          isLoading={isLoadingWorkspaces}
-          onNavigateToSettings={() => handleNavClick("#workspace-settings")}
-          onLearnMoreExpand={learnMoreEnabled ? learnMore.openExpandedModal : undefined}
-        />
-      </SidebarHeader>
-      <SidebarContent>
-        {visibleNavigationSections.map((section, sectionIndex) => (
-          <React.Fragment key={section.id}>
-            <NavMain
-              items={section.items.map((item) => ({
-                ...item,
-                isActive: item.url === `#${activeTab}`,
-              }))}
-              onItemClick={handleNavClick}
-              appBuilderBubble={
-                section.id === "mcp-apps" ? appBuilderBubble : null
+      <Sidebar collapsible="icon" {...props}>
+        <SidebarHeader>
+          <button
+            onClick={() => handleNavClick("#servers")}
+            className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
+          >
+            <img
+              src={
+                themeMode === "dark"
+                  ? "/mcp_jam_dark.png"
+                  : "/mcp_jam_light.png"
               }
-              learnMore={learnMoreEnabled ? {
-                onExpand: learnMore.openExpandedModal,
-              } : null}
+              alt="MCP Jam"
+              className="h-4 w-auto"
             />
-            {/* Add subtle divider between sections (except after the last section) */}
-            {sectionIndex < visibleNavigationSections.length - 1 && (
-              <div className="mx-4 my-2 border-t border-border/50" />
-            )}
-          </React.Fragment>
-        ))}
-      </SidebarContent>
-      <SidebarFooter>
-        <SidebarUser activeOrganizationId={activeOrganizationId} />
-      </SidebarFooter>
-    </Sidebar>
-    {learnMoreEnabled && (
-      <LearnMoreExpandedPanel
-        tabId={learnMore.expandedTabId}
-        sourceRect={learnMore.sourceRect}
-        onClose={learnMore.closeExpandedModal}
-      />
-    )}
-  </>
+          </button>
+          {updateReady && (
+            <div className="px-2 pb-2">
+              <Button
+                size="sm"
+                onClick={restartAndInstall}
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
+              >
+                Update & Restart
+              </Button>
+            </div>
+          )}
+          <SidebarWorkspaceSelector
+            activeWorkspaceId={activeWorkspaceId}
+            workspaces={workspaces}
+            onSwitchWorkspace={onSwitchWorkspace}
+            onCreateWorkspace={onCreateWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
+            isLoading={isLoadingWorkspaces}
+            onNavigateToSettings={() => handleNavClick("#workspace-settings")}
+            onLearnMoreExpand={
+              learnMoreEnabled ? learnMore.openExpandedModal : undefined
+            }
+          />
+        </SidebarHeader>
+        <SidebarContent>
+          {visibleNavigationSections.map((section, sectionIndex) => (
+            <React.Fragment key={section.id}>
+              <NavMain
+                items={section.items.map((item) => ({
+                  ...item,
+                  isActive: item.url === `#${activeTab}`,
+                }))}
+                onItemClick={handleNavClick}
+                appBuilderBubble={
+                  section.id === "mcp-apps" ? appBuilderBubble : null
+                }
+                learnMore={
+                  learnMoreEnabled
+                    ? {
+                        onExpand: learnMore.openExpandedModal,
+                      }
+                    : null
+                }
+              />
+              {/* Add subtle divider between sections (except after the last section) */}
+              {sectionIndex < visibleNavigationSections.length - 1 && (
+                <div className="mx-4 my-2 border-t border-border/50" />
+              )}
+            </React.Fragment>
+          ))}
+        </SidebarContent>
+        <SidebarFooter>
+          <SidebarUser activeOrganizationId={activeOrganizationId} />
+        </SidebarFooter>
+      </Sidebar>
+      {learnMoreEnabled && (
+        <LearnMoreExpandedPanel
+          tabId={learnMore.expandedTabId}
+          sourceRect={learnMore.sourceRect}
+          onClose={learnMore.closeExpandedModal}
+        />
+      )}
+    </>
   );
 }

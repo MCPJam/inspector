@@ -14,7 +14,14 @@ vi.mock("framer-motion", async () => {
       transition?: unknown;
     }
   >(function MotionDiv(
-    { children, initial: _initial, animate: _animate, exit: _exit, transition: _transition, ...props },
+    {
+      children,
+      initial: _initial,
+      animate: _animate,
+      exit: _exit,
+      transition: _transition,
+      ...props
+    },
     ref,
   ) {
     return (

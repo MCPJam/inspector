@@ -65,9 +65,13 @@ vi.mock("@/components/ui/tooltip", () => ({
 }));
 
 vi.mock("@/components/learn-more/LearnMoreHoverCard", () => ({
-  LearnMoreHoverCard: ({ tabId, children }: { tabId: string; children: ReactNode }) => (
-    <div data-testid={`learn-more-${tabId}`}>{children}</div>
-  ),
+  LearnMoreHoverCard: ({
+    tabId,
+    children,
+  }: {
+    tabId: string;
+    children: ReactNode;
+  }) => <div data-testid={`learn-more-${tabId}`}>{children}</div>,
 }));
 
 describe("SidebarWorkspaceSelector", () => {

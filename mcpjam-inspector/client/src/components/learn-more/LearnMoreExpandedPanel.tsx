@@ -12,14 +12,20 @@ interface LearnMoreExpandedPanelProps {
 const PANEL_WIDTH = 900;
 const EASING: [number, number, number, number] = [0.16, 1, 0.3, 1]; // ease-out-expo
 
-function VideoThumbnail({ entry }: { entry: { title: string; videoUrl: string; videoThumbnail?: string } }) {
+function VideoThumbnail({
+  entry,
+}: {
+  entry: { title: string; videoUrl: string; videoThumbnail?: string };
+}) {
   const [playing, setPlaying] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const isMP4 = entry.videoUrl?.endsWith(".mp4");
   const isYouTube = entry.videoUrl?.includes("youtube.com/embed/");
-  const youtubeId = isYouTube ? entry.videoUrl.split("/embed/")[1]?.split("?")[0] : null;
-  const hasVideo = !!(entry.videoUrl);
+  const youtubeId = isYouTube
+    ? entry.videoUrl.split("/embed/")[1]?.split("?")[0]
+    : null;
+  const hasVideo = !!entry.videoUrl;
 
   if (!hasVideo) {
     return (

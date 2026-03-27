@@ -62,10 +62,19 @@ export function LearnMoreHoverCard({
   };
 
   const hasPreview = !!entry.previewVideoUrl;
-  const hasThumbnail = hasPreview || entry.videoUrl?.endsWith(".mp4") || entry.videoUrl?.includes("youtube.com/embed/") || entry.videoThumbnail;
+  const hasThumbnail =
+    hasPreview ||
+    entry.videoUrl?.endsWith(".mp4") ||
+    entry.videoUrl?.includes("youtube.com/embed/") ||
+    entry.videoThumbnail;
 
   return (
-    <HoverCard openDelay={400} closeDelay={200} open={open} onOpenChange={setOpen}>
+    <HoverCard
+      openDelay={400}
+      closeDelay={200}
+      open={open}
+      onOpenChange={setOpen}
+    >
       <HoverCardTrigger asChild>{children}</HoverCardTrigger>
       <HoverCardContent side="right" sideOffset={8} className="w-72">
         <div ref={wrapperRef}>
@@ -122,9 +131,7 @@ export function LearnMoreHoverCard({
           </div>
 
           <div className="flex items-end justify-between gap-2">
-            <p className="text-sm text-muted-foreground">
-              {entry.description}
-            </p>
+            <p className="text-sm text-muted-foreground">{entry.description}</p>
             <button
               type="button"
               onClick={handleExpand}

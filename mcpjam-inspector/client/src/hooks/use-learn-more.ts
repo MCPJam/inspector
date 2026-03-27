@@ -9,10 +9,13 @@ export function useLearnMore() {
     return tabId in learnMoreContent;
   }, []);
 
-  const openExpandedModal = useCallback((tabId: string, rect?: DOMRect | null): void => {
-    sourceRectRef.current = rect ?? null;
-    setExpandedTabId(tabId);
-  }, []);
+  const openExpandedModal = useCallback(
+    (tabId: string, rect?: DOMRect | null): void => {
+      sourceRectRef.current = rect ?? null;
+      setExpandedTabId(tabId);
+    },
+    [],
+  );
 
   const closeExpandedModal = useCallback((): void => {
     setExpandedTabId(null);

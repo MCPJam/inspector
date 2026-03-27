@@ -131,13 +131,64 @@ export function SidebarWorkspaceSelector({
                   size="lg"
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
                 >
+                  <WorkspaceIconBadge
+                    icon={activeWorkspace?.icon}
+                    fallback={initial}
+                    size={8}
+                  />
+                  <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
+                    <span className="truncate font-semibold">
+                      {workspaceName}
+                    </span>
+                    {displayMembers.length > 0 && (
+                      <div className="flex -space-x-1.5 mt-0.5">
+                        {displayMembers.map((member) => {
+                          const name = member.user?.name || member.email;
+                          const initials = getInitials(name);
+                          return (
+                            <Avatar
+                              key={member._id}
+                              className="size-5 border border-sidebar-background"
+                            >
+                              <AvatarImage
+                                src={member.user?.imageUrl || undefined}
+                                alt={name}
+                              />
+                              <AvatarFallback className="text-[8px] bg-muted">
+                                {initials}
+                              </AvatarFallback>
+                            </Avatar>
+                          );
+                        })}
+                        {activeMembers.length > 3 && (
+                          <div className="size-5 rounded-full border border-sidebar-background bg-muted flex items-center justify-center">
+                            <span className="text-[8px] text-muted-foreground font-medium">
+                              +{activeMembers.length - 3}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+            </LearnMoreHoverCard>
+          ) : (
+            <DropdownMenuTrigger asChild>
+              <SidebarMenuButton
+                size="lg"
+                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              >
                 <WorkspaceIconBadge
                   icon={activeWorkspace?.icon}
                   fallback={initial}
                   size={8}
                 />
                 <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                  <span className="truncate font-semibold">{workspaceName}</span>
+                  <span className="truncate font-semibold">
+                    {workspaceName}
+                  </span>
                   {displayMembers.length > 0 && (
                     <div className="flex -space-x-1.5 mt-0.5">
                       {displayMembers.map((member) => {
@@ -169,53 +220,6 @@ export function SidebarWorkspaceSelector({
                   )}
                 </div>
                 <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
-                </SidebarMenuButton>
-              </DropdownMenuTrigger>
-            </LearnMoreHoverCard>
-          ) : (
-            <DropdownMenuTrigger asChild>
-              <SidebarMenuButton
-                size="lg"
-                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-              >
-              <WorkspaceIconBadge
-                icon={activeWorkspace?.icon}
-                fallback={initial}
-                size={8}
-              />
-              <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                <span className="truncate font-semibold">{workspaceName}</span>
-                {displayMembers.length > 0 && (
-                  <div className="flex -space-x-1.5 mt-0.5">
-                    {displayMembers.map((member) => {
-                      const name = member.user?.name || member.email;
-                      const initials = getInitials(name);
-                      return (
-                        <Avatar
-                          key={member._id}
-                          className="size-5 border border-sidebar-background"
-                        >
-                          <AvatarImage
-                            src={member.user?.imageUrl || undefined}
-                            alt={name}
-                          />
-                          <AvatarFallback className="text-[8px] bg-muted">
-                            {initials}
-                          </AvatarFallback>
-                        </Avatar>
-                      );
-                    })}
-                    {activeMembers.length > 3 && (
-                      <div className="size-5 rounded-full border border-sidebar-background bg-muted flex items-center justify-center">
-                        <span className="text-[8px] text-muted-foreground font-medium">
-                          +{activeMembers.length - 3}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-              <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
               </SidebarMenuButton>
             </DropdownMenuTrigger>
           )}
