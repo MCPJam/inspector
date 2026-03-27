@@ -12,6 +12,7 @@ vi.mock("@/components/ui/sidebar", () => ({
     void tooltip;
     return <button {...props}>{children}</button>;
   },
+  useSidebar: () => ({ open: true }),
 }));
 
 vi.mock("@/components/ui/tooltip", () => ({
