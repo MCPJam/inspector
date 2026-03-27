@@ -299,6 +299,7 @@ vi.mock("../playground-helpers", () => ({
 // Mock preferences store
 const mockPreferencesState = {
   themeMode: "light",
+  themePreset: "soft-pop",
   setThemeMode: vi.fn(),
 };
 
@@ -413,6 +414,7 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockPreferencesState.themeMode = "light";
+    mockPreferencesState.themePreset = "soft-pop";
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -460,6 +462,7 @@ describe("PlaygroundMain", () => {
         "light",
       );
       expect(threadShell).toHaveAttribute("data-host-style", "claude");
+      expect(threadShell).toHaveAttribute("data-theme-preset", "soft-pop");
       expect(threadShell).toHaveAttribute("data-thread-theme", "light");
       expect(threadShell).not.toHaveClass("dark");
       expect(header).not.toHaveClass("dark");

@@ -68,7 +68,6 @@ import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
-import { getDefaultAppThemeScopeStyle } from "@/lib/app-theme-scope";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -315,6 +314,7 @@ export function PlaygroundMain({
   const globalThemeMode = usePreferencesStore(
     (s) => s.themeMode,
   ) as ThreadThemeMode;
+  const themePreset = usePreferencesStore((s) => s.themePreset);
   const [threadThemeOverride, setThreadThemeOverride] = useState<
     ThreadThemeMode | null
   >(null);
@@ -324,9 +324,6 @@ export function PlaygroundMain({
       ? CHATGPT_CHAT_BACKGROUND
       : CLAUDE_DESKTOP_CHAT_BACKGROUND;
   const hostBackgroundColor = chatBg[effectiveThreadTheme];
-  const threadThemeScopeStyle = getDefaultAppThemeScopeStyle(
-    effectiveThreadTheme,
-  );
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 
@@ -790,14 +787,14 @@ export function PlaygroundMain({
           <SandboxHostThemeProvider value={effectiveThreadTheme}>
             <div
               className={cn(
-                "sandbox-host-shell relative flex flex-col overflow-hidden",
+                "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
                 effectiveThreadTheme === "dark" && "dark",
               )}
               data-testid="playground-thread-shell"
               data-host-style={hostStyle}
+              data-theme-preset={themePreset}
               data-thread-theme={effectiveThreadTheme}
               style={{
-                ...threadThemeScopeStyle,
                 width: deviceConfig.width,
                 maxWidth: "100%",
                 height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
