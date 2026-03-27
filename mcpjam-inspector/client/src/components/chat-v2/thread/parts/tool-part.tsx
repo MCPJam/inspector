@@ -129,9 +129,7 @@ export function ToolPart({
       ? "text-[11px] font-medium text-pending"
       : "text-[11px] font-medium text-pending-foreground";
   const approvedToolClasses =
-    resolvedThemeMode === "dark"
-      ? "flex items-center gap-1 text-[11px] font-medium text-success"
-      : "flex items-center gap-1 text-[11px] font-medium text-success";
+    "flex items-center gap-1 text-[11px] font-medium text-success";
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");

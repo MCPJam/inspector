@@ -739,7 +739,7 @@ export function PlaygroundMain({
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
       <div
-        className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
+        className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
         data-testid="playground-main-header"
       >
         {/* All controls centered */}
