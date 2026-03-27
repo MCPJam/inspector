@@ -210,6 +210,33 @@ describe("getHostedNavigationSections", () => {
       "Testing",
     ]);
   });
+
+  it("keeps Evals subnav entry with #evals in hosted mode", () => {
+    const hostedSections = getHostedNavigationSections([
+      {
+        id: "mcp-apps",
+        items: [
+          {
+            title: "Evals",
+            url: "#evals",
+            icon: FakeIcon,
+            billingFeature: "evals",
+            evalsSubnav: true,
+          },
+        ],
+      },
+    ]);
+
+    expect(hostedSections[0].items).toEqual([
+      {
+        title: "Evals",
+        url: "#evals",
+        icon: FakeIcon,
+        billingFeature: "evals",
+        evalsSubnav: true,
+      },
+    ]);
+  });
 });
 
 describe("shouldPrefetchSidebarTools", () => {

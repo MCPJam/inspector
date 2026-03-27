@@ -23,7 +23,7 @@ import {
   navigateToCiEvalsRoute,
 } from "@/lib/ci-evals-router";
 import { buildEvalsHash } from "@/lib/evals-router";
-import { withTestingSurface, type TestingSurface } from "@/lib/testing-surface";
+import { withTestingSurface } from "@/lib/testing-surface";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
 import { aggregateSuite, formatRunId, groupRunsByCommit } from "./evals/helpers";
 import { useRunDetailData } from "./evals/use-suite-data";
@@ -41,8 +41,6 @@ import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 import { HOSTED_MODE } from "@/lib/config";
-import { TestingSurfaceNav } from "./evals/testing-surface-nav";
-
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
 }
@@ -350,13 +348,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     );
   }, [handlers, selectedSuite, selectedSuiteId]);
 
-  const handleSurfaceChange = useCallback((nextSurface: TestingSurface) => {
-    if (nextSurface === "runs") {
-      return;
-    }
-    window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
-  }, []);
-
   const handleCiBreadcrumbToSuiteList = useCallback(() => {
     navigateToCiEvalsRoute({ type: "list" });
   }, []);
@@ -410,10 +401,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-          <TestingSurfaceNav value="runs" onChange={handleSurfaceChange} />
-          {showCiSuiteDrilldownSidebar && selectedSuite ? (
+      {showCiSuiteDrilldownSidebar && selectedSuite ? (
+        <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
             <Breadcrumb className="min-w-0 flex-1">
               <BreadcrumbList className="min-w-0 flex-nowrap">
                 <BreadcrumbItem>
@@ -461,9 +451,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 )}
               </BreadcrumbList>
             </Breadcrumb>
-          ) : null}
+          </div>
         </div>
-      </div>
+      ) : null}
       <ResizablePanelGroup
         direction="horizontal"
         className="flex-1 overflow-hidden"
