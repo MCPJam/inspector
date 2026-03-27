@@ -31,7 +31,6 @@ import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { TagEditor, TagBadges } from "./tag-editor";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 
@@ -439,27 +438,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ciMetadata={latestRunForMetadata.ciMetadata}
             compact={true}
           />
-        )}
-        {!readOnlyConfig && (
-          <TagEditor
-            tags={suite.tags ?? []}
-            onTagsChange={async (newTags) => {
-              try {
-                await updateSuite({
-                  suiteId: suite._id,
-                  tags: newTags,
-                });
-              } catch (error) {
-                toast.error(
-                  getBillingErrorMessage(error, "Failed to update tags"),
-                );
-                console.error("Failed to update tags:", error);
-              }
-            }}
-          />
-        )}
-        {readOnlyConfig && suite.tags && suite.tags.length > 0 && (
-          <TagBadges tags={suite.tags} />
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
