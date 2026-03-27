@@ -43,6 +43,7 @@ import {
   type DeviceType,
   type DisplayMode,
 } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import {
@@ -62,10 +63,7 @@ import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import {
-  extractEffectiveHostDisplayMode,
-  extractHostTheme,
-} from "@/lib/client-config";
+import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -307,12 +305,15 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
-  const hostTheme = extractHostTheme(hostContext) ?? "dark";
+  // Intentionally follows the global app theme for app-builder parity with the
+  // pre-hostContext thread colors. Other host emulation controls still read
+  // from hostContext below.
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   const chatBg =
     hostStyle === "chatgpt"
       ? CHATGPT_CHAT_BACKGROUND
       : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[hostTheme];
+  const hostBackgroundColor = chatBg[themeMode];
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
 

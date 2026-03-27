@@ -45,13 +45,13 @@ import {
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { updateThemeMode } from "@/lib/theme-utils";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,
-  extractHostTheme,
   extractHostTimeZone,
 } from "@/lib/client-config";
 
@@ -205,13 +205,17 @@ export function DisplayContextHeader({
   const fallbackLocale = navigator.language || "en-US";
   const fallbackTimeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const themePreference = usePreferencesStore((s) => s.themeMode);
-  const theme = extractHostTheme(hostContext) ?? themePreference;
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
 
+  // Theme stays on the global preference path so the app-builder thread colors
+  // match the older pre-hostContext behavior. Locale/timezone/display mode and
+  // capabilities still flow through hostContext.
   const handleThemeChange = useCallback(() => {
-    const newTheme = theme === "dark" ? "light" : "dark";
-    patchHostContext({ theme: newTheme });
-  }, [theme, patchHostContext]);
+    const newTheme = themeMode === "dark" ? "light" : "dark";
+    updateThemeMode(newTheme);
+    setThemeMode(newTheme);
+  }, [themeMode, setThemeMode]);
 
   // Device config - use custom dimensions from store for custom type
   const deviceConfig = useMemo(() => {
@@ -928,7 +932,7 @@ export function DisplayContextHeader({
                 onClick={handleThemeChange}
                 className="h-7 w-7 border bg-background shadow-xs"
               >
-                {theme === "dark" ? (
+                {themeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
                 ) : (
                   <Moon className="h-3.5 w-3.5" />
@@ -936,7 +940,7 @@ export function DisplayContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {theme === "dark" ? "Light mode" : "Dark mode"}
+              {themeMode === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
         )}
