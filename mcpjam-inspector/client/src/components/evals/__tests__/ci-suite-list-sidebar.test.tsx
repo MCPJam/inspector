@@ -2,16 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test";
 import { CiSuiteListSidebar } from "../ci-suite-list-sidebar";
 
-vi.mock("../pass-rate-trend-mini", () => ({
-  PassRateTrendMini: () => <div data-testid="pass-rate-trend-mini" />,
-}));
-
 vi.mock("../commit-list-sidebar", () => ({
   CommitListSidebar: () => <div data-testid="commit-list-sidebar" />,
 }));
 
 describe("CiSuiteListSidebar", () => {
-  it("enables rerun and shows replay copy when live servers are missing but replay is available", () => {
+  it("renders suite name, last-run tooltip, and relative time in By Suite mode", () => {
+    const now = Date.now();
     renderWithProviders(
       <CiSuiteListSidebar
         suites={[
@@ -23,8 +20,8 @@ describe("CiSuiteListSidebar", () => {
               configRevision: "1",
               environment: { servers: ["asana"] },
               createdBy: "user-1",
-              createdAt: 1,
-              updatedAt: 1,
+              createdAt: now,
+              updatedAt: now,
             },
             latestRun: {
               _id: "run-1",
@@ -37,8 +34,10 @@ describe("CiSuiteListSidebar", () => {
                 environment: { servers: ["asana"] },
               },
               status: "completed",
+              result: "passed",
               hasServerReplayConfig: true,
-              createdAt: 1,
+              createdAt: now,
+              completedAt: now,
             },
             recentRuns: [],
             passRateTrend: [100],
@@ -56,13 +55,11 @@ describe("CiSuiteListSidebar", () => {
         commitGroups={[]}
         selectedCommitSha={null}
         onSelectCommit={vi.fn()}
-        connectedServerNames={new Set()}
-        onRerunSuite={vi.fn()}
-        rerunningSuiteId={null}
       />,
     );
 
-    expect(screen.getByText("Will use saved replay config.")).toBeTruthy();
-    expect(screen.getByTitle("Run now")).not.toBeDisabled();
+    expect(screen.getByText("Asana MCP Evals")).toBeTruthy();
+    expect(screen.getByTitle("Last run passed")).toBeTruthy();
+    expect(screen.getByText("Just now")).toBeTruthy();
   });
 });

@@ -355,6 +355,41 @@ export function evalOverviewEntryOutcomeTitle(
   return `Last run: ${r.status}`;
 }
 
+/** Short status label for compact list rows (sidebar). */
+export function evalOverviewEntryLastRunStatusLabel(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "No runs yet";
+  if (r.status === "running" || r.status === "pending") return "Running";
+  if (r.result === "passed") return "Passed";
+  if (r.result === "failed" || r.status === "failed") return "Failed";
+  if (r.result === "cancelled" || r.status === "cancelled") {
+    return "Cancelled";
+  }
+  if (r.status === "completed") return "Completed";
+  return r.status.replace(/-/g, " ");
+}
+
+/** Tailwind classes for {@link evalOverviewEntryLastRunStatusLabel}. */
+export function evalOverviewEntryLastRunStatusClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "text-muted-foreground";
+  if (r.status === "running" || r.status === "pending") {
+    return "text-amber-600 dark:text-amber-400";
+  }
+  if (r.result === "passed") return "text-success";
+  if (r.result === "failed" || r.status === "failed") {
+    return "text-destructive";
+  }
+  if (r.result === "cancelled" || r.status === "cancelled") {
+    return "text-muted-foreground";
+  }
+  return "text-muted-foreground";
+}
+
 /** Normalize API trend points (0–1 or 0–100) to 0–100 integers. */
 export function toPercentEvalTrend(value: number): number {
   const normalized = value <= 1 ? value * 100 : value;

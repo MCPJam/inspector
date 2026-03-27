@@ -1,17 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
-import { Play } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import type { CommitGroup, EvalSuite, EvalSuiteOverviewEntry } from "./types";
-import { getSuiteReplayEligibility } from "./replay-eligibility";
+import type { CommitGroup, EvalSuiteOverviewEntry } from "./types";
 import {
   evalOverviewEntryLeftBorderClass,
   evalOverviewEntryMiniBarClass,
   evalOverviewEntryOutcomeTitle,
   evalOverviewEntrySelectedRowClass,
 } from "./helpers";
-import { PassRateTrendMini } from "./pass-rate-trend-mini";
-import { TagBadges } from "./tag-editor";
 import { CommitListSidebar } from "./commit-list-sidebar";
 
 /** Force a re-render every `intervalMs` so relative timestamps stay fresh. */
@@ -21,13 +16,6 @@ function useTick(intervalMs = 60_000) {
     const id = setInterval(() => setTick((t) => t + 1), intervalMs);
     return () => clearInterval(id);
   }, [intervalMs]);
-}
-
-function sameMissingServerSet(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  const sortedA = [...a].sort();
-  const sortedB = [...b].sort();
-  return sortedA.every((v, i) => v === sortedB[i]);
 }
 
 export type SidebarMode = "suites" | "runs";
@@ -42,13 +30,10 @@ interface CiSuiteListSidebarProps {
   commitGroups: CommitGroup[];
   selectedCommitSha: string | null;
   onSelectCommit: (commitSha: string) => void;
-  connectedServerNames?: Set<string>;
-  onRerunSuite?: (suite: EvalSuite) => void;
-  rerunningSuiteId?: string | null;
 }
 
 function formatRelativeTime(timestamp?: number): string {
-  if (!timestamp) return "No runs yet";
+  if (!timestamp) return "—";
   const now = Date.now();
   const diff = now - timestamp;
   const minutes = Math.floor(diff / 60000);
@@ -61,6 +46,12 @@ function formatRelativeTime(timestamp?: number): string {
   return new Date(timestamp).toLocaleDateString();
 }
 
+function formatLastRunRelativeTime(entry: EvalSuiteOverviewEntry): string {
+  const r = entry.latestRun;
+  if (!r) return "—";
+  return formatRelativeTime(r.completedAt ?? r.createdAt);
+}
+
 export function CiSuiteListSidebar({
   suites,
   selectedSuiteId,
@@ -71,9 +62,6 @@ export function CiSuiteListSidebar({
   commitGroups,
   selectedCommitSha,
   onSelectCommit,
-  connectedServerNames,
-  onRerunSuite,
-  rerunningSuiteId,
 }: CiSuiteListSidebarProps) {
   useTick(); // keep "Xm ago" labels ticking
 
@@ -167,9 +155,6 @@ export function CiSuiteListSidebar({
                     entries={entries}
                     selectedSuiteId={selectedSuiteId}
                     onSelectSuite={onSelectSuite}
-                    connectedServerNames={connectedServerNames}
-                    onRerunSuite={onRerunSuite}
-                    rerunningSuiteId={rerunningSuiteId}
                   />
                 ),
               )}
@@ -186,37 +171,18 @@ function SuiteGroupItem({
   entries,
   selectedSuiteId,
   onSelectSuite,
-  connectedServerNames,
-  onRerunSuite,
-  rerunningSuiteId,
 }: {
   suiteName: string;
   entries: EvalSuiteOverviewEntry[];
   selectedSuiteId: string | null;
   onSelectSuite: (suiteId: string) => void;
-  connectedServerNames?: Set<string>;
-  onRerunSuite?: (suite: EvalSuite) => void;
-  rerunningSuiteId?: string | null;
 }) {
   const primary = entries[0]; // most recent
   const hasMultiple = entries.length > 1;
   const isAnySelected = entries.some((e) => e.suite._id === selectedSuiteId);
   const [expanded, setExpanded] = useState(false);
 
-  const latestRun = primary.latestRun;
-  const timestamp = formatRelativeTime(
-    latestRun?.completedAt ?? latestRun?.createdAt ?? primary.suite.updatedAt,
-  );
-  const primaryReplayEligibility = getSuiteReplayEligibility({
-    suiteServers: primary.suite.environment?.servers,
-    connectedServerNames,
-    latestRun,
-  });
-  const primaryMissing = primaryReplayEligibility.missingServers;
-  const canRunPrimary =
-    primaryReplayEligibility.canRunNow &&
-    !(rerunningSuiteId === primary.suite._id) &&
-    Boolean(onRerunSuite);
+  const lastRunTimeLabel = formatLastRunRelativeTime(primary);
 
   // For single-entry groups, render directly
   if (!hasMultiple) {
@@ -225,11 +191,6 @@ function SuiteGroupItem({
         entry={primary}
         isSelected={selectedSuiteId === primary.suite._id}
         onSelect={() => onSelectSuite(primary.suite._id)}
-        passRateTrend={primary.passRateTrend}
-        timestamp={timestamp}
-        connectedServerNames={connectedServerNames}
-        onRerunSuite={onRerunSuite}
-        rerunningSuiteId={rerunningSuiteId}
       />
     );
   }
@@ -239,7 +200,7 @@ function SuiteGroupItem({
     <div>
       <div
         className={cn(
-          "group flex w-full items-center gap-2.5 border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
+          "group flex w-full items-center border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
           evalOverviewEntryLeftBorderClass(primary),
           isAnySelected && "bg-accent shadow-sm",
         )}
@@ -265,7 +226,7 @@ function SuiteGroupItem({
               }
             }
           }}
-          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
+          className="flex min-w-0 flex-1 cursor-pointer items-center text-left"
         >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
@@ -281,141 +242,49 @@ function SuiteGroupItem({
                 {entries.length}
               </span>
             </div>
-            {primary.suite.tags && primary.suite.tags.length > 0 && (
-              <TagBadges tags={primary.suite.tags} className="mt-0.5" />
-            )}
-            {primaryReplayEligibility.canReplayFallback ? (
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                Will use saved replay config.
-              </p>
-            ) : primaryMissing.length > 0 ? (
-              <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
-                Connect {primaryMissing.join(", ")} to run.
-              </p>
-            ) : null}
-            <div className="text-[11px] text-muted-foreground">{timestamp}</div>
+            <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+              {lastRunTimeLabel}
+            </div>
           </div>
-        </div>
-        <div className="flex shrink-0 items-end gap-1">
-          <PassRateTrendMini
-            rawTrend={primary.passRateTrend}
-            rowKey={primary.suite._id}
-          />
-          {onRerunSuite ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-              disabled={!canRunPrimary}
-              title="Run now"
-              onClick={(e) => {
-                e.stopPropagation();
-                void onRerunSuite(primary.suite);
-              }}
-            >
-              <Play className="h-4 w-4 fill-current" />
-            </Button>
-          ) : null}
         </div>
       </div>
       {(expanded || isAnySelected) && entries.length > 1 && (
         <div className="border-l-2 border-muted ml-6">
-          {entries.map((entry) => {
-            const entryTimestamp = formatRelativeTime(
-              entry.latestRun?.completedAt ??
-                entry.latestRun?.createdAt ??
-                entry.suite.updatedAt,
-            );
-            const entryReplayEligibility = getSuiteReplayEligibility({
-              suiteServers: entry.suite.environment?.servers,
-              connectedServerNames,
-              latestRun: entry.latestRun,
-            });
-            const missing = entryReplayEligibility.missingServers;
-            const redundantBlockedChild =
-              primaryMissing.length > 0 &&
-              missing.length > 0 &&
-              sameMissingServerSet(missing, primaryMissing);
-            const showChildConnectCopy =
-              missing.length > 0 &&
-              !entryReplayEligibility.canReplayFallback &&
-              !redundantBlockedChild;
-            const showChildReplayCopy =
-              entryReplayEligibility.canReplayFallback &&
-              !redundantBlockedChild;
-            const showChildPlay = Boolean(
-              onRerunSuite && !redundantBlockedChild,
-            );
-            const canRunEntry =
-              entryReplayEligibility.canRunNow &&
-              !(rerunningSuiteId === entry.suite._id) &&
-              Boolean(onRerunSuite);
-
-            return (
+          {entries.map((entry) => (
+            <div
+              key={entry.suite._id}
+              className="flex w-full items-stretch gap-2 border-b border-border/40 last:border-b-0"
+            >
               <div
-                key={entry.suite._id}
-                className="flex w-full items-stretch gap-2 border-b border-border/40 last:border-b-0"
+                className={cn(
+                  "my-2 ml-2 w-0.5 shrink-0 self-stretch rounded-full",
+                  evalOverviewEntryMiniBarClass(entry),
+                )}
+                aria-hidden
+              />
+              <div
+                role="button"
+                tabIndex={0}
+                title={evalOverviewEntryOutcomeTitle(entry)}
+                onClick={() => onSelectSuite(entry.suite._id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectSuite(entry.suite._id);
+                  }
+                }}
+                className={cn(
+                  "min-w-0 flex-1 cursor-pointer py-1.5 pl-1 pr-3 text-left transition-colors hover:bg-accent/50",
+                  selectedSuiteId === entry.suite._id &&
+                    evalOverviewEntrySelectedRowClass(entry),
+                )}
               >
-                <div
-                  className={cn(
-                    "my-2 ml-2 w-0.5 shrink-0 self-stretch rounded-full",
-                    evalOverviewEntryMiniBarClass(entry),
-                  )}
-                  aria-hidden
-                />
-                <div
-                  role="button"
-                  tabIndex={0}
-                  title={evalOverviewEntryOutcomeTitle(entry)}
-                  onClick={() => onSelectSuite(entry.suite._id)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onSelectSuite(entry.suite._id);
-                    }
-                  }}
-                  className={cn(
-                    "min-w-0 flex-1 cursor-pointer py-1.5 pl-1 pr-3 text-left transition-colors hover:bg-accent/50",
-                    selectedSuiteId === entry.suite._id &&
-                      evalOverviewEntrySelectedRowClass(entry),
-                    redundantBlockedChild && "opacity-90",
-                  )}
-                >
-                  <div className="min-w-0">
-                    <div className="text-[11px] text-muted-foreground truncate">
-                      {entryTimestamp}
-                    </div>
-                    {showChildConnectCopy ? (
-                      <p className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
-                        Connect {missing.join(", ")} to run.
-                      </p>
-                    ) : showChildReplayCopy ? (
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">
-                        Will use saved replay config.
-                      </p>
-                    ) : null}
-                  </div>
+                <div className="text-[11px] text-muted-foreground tabular-nums">
+                  {formatLastRunRelativeTime(entry)}
                 </div>
-                {showChildPlay ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-7 w-7 shrink-0 text-muted-foreground"
-                    disabled={!canRunEntry}
-                    title="Run now"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      void onRerunSuite(entry.suite);
-                    }}
-                  >
-                    <Play className="h-3.5 w-3.5 fill-current" />
-                  </Button>
-                ) : null}
               </div>
-            );
-          })}
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -426,36 +295,15 @@ function SuiteEntryButton({
   entry,
   isSelected,
   onSelect,
-  passRateTrend,
-  timestamp,
-  connectedServerNames,
-  onRerunSuite,
-  rerunningSuiteId,
 }: {
   entry: EvalSuiteOverviewEntry;
   isSelected: boolean;
   onSelect: () => void;
-  passRateTrend: number[];
-  timestamp: string;
-  connectedServerNames?: Set<string>;
-  onRerunSuite?: (suite: EvalSuite) => void;
-  rerunningSuiteId?: string | null;
 }) {
-  const replayEligibility = getSuiteReplayEligibility({
-    suiteServers: entry.suite.environment?.servers,
-    connectedServerNames,
-    latestRun: entry.latestRun,
-  });
-  const missing = replayEligibility.missingServers;
-  const canRun =
-    replayEligibility.canRunNow &&
-    !(rerunningSuiteId === entry.suite._id) &&
-    Boolean(onRerunSuite);
-
   return (
     <div
       className={cn(
-        "group flex w-full items-center gap-2.5 border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
+        "group flex w-full items-center border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
         evalOverviewEntryLeftBorderClass(entry),
         isSelected && "bg-accent shadow-sm",
       )}
@@ -471,7 +319,7 @@ function SuiteEntryButton({
             onSelect();
           }
         }}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 text-left"
+        className="flex min-w-0 flex-1 cursor-pointer items-center text-left"
       >
         <div className="min-w-0 flex-1">
           <div
@@ -482,39 +330,10 @@ function SuiteEntryButton({
           >
             {entry.suite.name || "Untitled suite"}
           </div>
-          {entry.suite.tags && entry.suite.tags.length > 0 && (
-            <TagBadges tags={entry.suite.tags} className="mt-0.5" />
-          )}
-          {replayEligibility.canReplayFallback ? (
-            <p className="mt-0.5 text-[11px] text-muted-foreground">
-              Will use saved replay config.
-            </p>
-          ) : missing.length > 0 ? (
-            <p className="mt-0.5 text-[11px] text-amber-600 dark:text-amber-400">
-              Connect {missing.join(", ")} to run.
-            </p>
-          ) : null}
-          <div className="text-[11px] text-muted-foreground">{timestamp}</div>
+          <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+            {formatLastRunRelativeTime(entry)}
+          </div>
         </div>
-      </div>
-      <div className="flex shrink-0 items-end gap-1">
-        <PassRateTrendMini rawTrend={passRateTrend} rowKey={entry.suite._id} />
-        {onRerunSuite ? (
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            className="h-8 w-8 shrink-0 text-muted-foreground hover:text-foreground"
-            disabled={!canRun}
-            title="Run now"
-            onClick={(e) => {
-              e.stopPropagation();
-              void onRerunSuite(entry.suite);
-            }}
-          >
-            <Play className="h-4 w-4 fill-current" />
-          </Button>
-        ) : null}
       </div>
     </div>
   );

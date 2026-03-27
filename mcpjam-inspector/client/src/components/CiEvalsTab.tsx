@@ -384,9 +384,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             commitGroups={commitGroups}
             selectedCommitSha={selectedCommitSha}
             onSelectCommit={handleSelectCommit}
-            connectedServerNames={connectedServerNames}
-            onRerunSuite={handlers.handleRerun}
-            rerunningSuiteId={handlers.rerunningSuiteId}
           />
         </ResizablePanel>
 
@@ -461,18 +458,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               onDelete={handleDeleteSuite}
               onDeleteRun={handleDeleteRun}
               onDirectDeleteRun={handlers.directDeleteRun}
-              onCreateTestCase={handleCreateTestCase}
-              onDeleteTestCase={handlers.handleDeleteTestCase}
-              onDuplicateTestCase={handleDuplicateTestCase}
-              onGenerateTests={handleGenerateTests}
               rerunningSuiteId={handlers.rerunningSuiteId}
               replayingRunId={handlers.replayingRunId}
               cancellingRunId={handlers.cancellingRunId}
               deletingSuiteId={deletingSuiteId}
               deletingRunId={deletingRunId}
-              deletingTestCaseId={handlers.deletingTestCaseId}
-              duplicatingTestCaseId={handlers.duplicatingTestCaseId}
-              isGeneratingTests={handlers.isGeneratingTests}
               userMap={userMap}
             />
           ) : (

@@ -1,15 +1,9 @@
 import { useMemo } from "react";
 import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
-import {
   navigateToCiEvalsRoute,
   type CiEvalsRoute,
 } from "@/lib/ci-evals-router";
 import { SuiteIterationsView } from "./suite-iterations-view";
-import { TestCaseListSidebar } from "./TestCaseListSidebar";
 import type {
   EvalCase,
   EvalIteration,
@@ -35,18 +29,11 @@ interface HostedCiSuiteWorkspaceDetailProps {
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
-  onCreateTestCase: () => void;
-  onDeleteTestCase: (testCaseId: string, title: string) => void;
-  onDuplicateTestCase: (testCaseId: string) => void;
-  onGenerateTests: () => void;
   rerunningSuiteId: string | null;
   replayingRunId: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
-  deletingTestCaseId: string | null;
-  duplicatingTestCaseId: string | null;
-  isGeneratingTests: boolean;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
 
@@ -67,36 +54,13 @@ export function HostedCiSuiteWorkspaceDetail({
   onDelete,
   onDeleteRun,
   onDirectDeleteRun,
-  onCreateTestCase,
-  onDeleteTestCase,
-  onDuplicateTestCase,
-  onGenerateTests,
   rerunningSuiteId,
   replayingRunId,
   cancellingRunId,
   deletingSuiteId,
   deletingRunId,
-  deletingTestCaseId,
-  duplicatingTestCaseId,
-  isGeneratingTests,
   userMap,
 }: HostedCiSuiteWorkspaceDetailProps) {
-  const selectedTestId =
-    route.type === "test-detail" || route.type === "test-edit"
-      ? route.testId
-      : null;
-  const selectedTestIdForSidebar =
-    route.type === "test-detail" || route.type === "test-edit"
-      ? route.testId
-      : null;
-  const latestRun = useMemo(() => {
-    if (!runs.length) return null;
-    return [...runs].sort((a, b) => {
-      const aTime = a.completedAt ?? a.createdAt ?? 0;
-      const bTime = b.completedAt ?? b.createdAt ?? 0;
-      return bTime - aTime;
-    })[0];
-  }, [runs]);
   const navigation = useMemo(
     () => ({
       toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") =>
@@ -128,78 +92,35 @@ export function HostedCiSuiteWorkspaceDetail({
   );
 
   return (
-    <ResizablePanelGroup direction="horizontal" className="flex h-full">
-      <ResizablePanel
-        defaultSize={26}
-        minSize={18}
-        maxSize={36}
-        className="border-r bg-muted/30 flex flex-col"
-      >
-        <TestCaseListSidebar
-          testCases={cases}
-          suiteId={suite._id}
-          selectedTestId={selectedTestIdForSidebar}
-          isLoading={runsLoading && cases.length === 0}
-          onCreateTestCase={onCreateTestCase}
-          onDeleteTestCase={onDeleteTestCase}
-          onDuplicateTestCase={onDuplicateTestCase}
-          onGenerateTests={onGenerateTests}
-          deletingTestCaseId={deletingTestCaseId}
-          duplicatingTestCaseId={duplicatingTestCaseId}
-          isGeneratingTests={isGeneratingTests}
-          showingOverview={
-            !selectedTestId &&
-            !(route.type === "suite-overview" && route.view === "test-cases")
-          }
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-6 pt-6">
+        <SuiteIterationsView
           suite={suite}
-          latestRun={latestRun}
+          cases={cases}
+          iterations={iterations}
+          allIterations={allIterations}
+          runs={runs}
+          runsLoading={runsLoading}
+          aggregate={aggregate}
+          caseListInSidebar={false}
           onRerun={onRerun}
-          rerunningSuiteId={rerunningSuiteId}
+          onReplayRun={onReplayRun}
+          onCancelRun={onCancelRun}
+          onDelete={onDelete}
+          onDeleteRun={onDeleteRun}
+          onDirectDeleteRun={onDirectDeleteRun}
           connectedServerNames={connectedServerNames}
-          onNavigateToOverview={(suiteId) =>
-            navigateToCiEvalsRoute({ type: "suite-overview", suiteId })
-          }
-          onSelectTestCase={(suiteId, testId) =>
-            navigateToCiEvalsRoute({ type: "test-edit", suiteId, testId })
-          }
+          rerunningSuiteId={rerunningSuiteId}
+          replayingRunId={replayingRunId}
+          cancellingRunId={cancellingRunId}
+          deletingSuiteId={deletingSuiteId}
+          deletingRunId={deletingRunId}
+          availableModels={availableModels}
+          route={route}
+          userMap={userMap}
+          navigation={navigation}
         />
-      </ResizablePanel>
-
-      <ResizableHandle withHandle />
-
-      <ResizablePanel
-        defaultSize={74}
-        className="flex min-h-0 flex-col overflow-hidden"
-      >
-        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
-          <SuiteIterationsView
-            suite={suite}
-            cases={cases}
-            iterations={iterations}
-            allIterations={allIterations}
-            runs={runs}
-            runsLoading={runsLoading}
-            aggregate={aggregate}
-            caseListInSidebar
-            onRerun={onRerun}
-            onReplayRun={onReplayRun}
-            onCancelRun={onCancelRun}
-            onDelete={onDelete}
-            onDeleteRun={onDeleteRun}
-            onDirectDeleteRun={onDirectDeleteRun}
-            connectedServerNames={connectedServerNames}
-            rerunningSuiteId={rerunningSuiteId}
-            replayingRunId={replayingRunId}
-            cancellingRunId={cancellingRunId}
-            deletingSuiteId={deletingSuiteId}
-            deletingRunId={deletingRunId}
-            availableModels={availableModels}
-            route={route}
-            userMap={userMap}
-            navigation={navigation}
-          />
-        </div>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+      </div>
+    </div>
   );
 }
