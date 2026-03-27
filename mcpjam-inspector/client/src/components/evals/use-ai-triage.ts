@@ -11,12 +11,22 @@ import type { EvalSuiteRun } from "./types";
  *
  * Triage results are reactive — they live on the `testSuiteRun` document
  * (`triageStatus` / `triageSummary`), so no polling or separate query is needed.
- * This hook only manages the mutation call and local error state.
+ * This hook manages the mutation call, local error state, and auto-request when
+ * the user opens a failed run that has not started triage yet.
+ *
+ * @param options.autoRequest - When false, only manual `requestTriage` runs (defaults to true).
  */
-export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
+export function useAiTriage(
+  run: EvalSuiteRun | null,
+  failedCount?: number,
+  options?: { autoRequest?: boolean },
+) {
+  const autoRequest = options?.autoRequest !== false;
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [requested, setRequested] = useState(false);
+  const hasAutoAttemptedRef = useRef(false);
+  const runIdRef = useRef<string | null>(null);
 
   const requestTriageMutation = useMutation("triage:requestTriage" as any);
 
@@ -30,7 +40,8 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
     !unavailable;
 
   const requestTriage = useCallback(() => {
-    if (!run || requested) return;
+    if (!run || unavailable) return;
+    if (requested) return;
 
     setError(null);
     setRequested(true);
@@ -40,6 +51,7 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
 
     requestTriageMutation({ suiteRunId: run._id, force } as any).catch(
       (err: unknown) => {
+        setRequested(false);
         const message = err instanceof Error ? err.message : String(err);
         if (
           message.includes("Could not find") ||
@@ -53,66 +65,47 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
         }
       },
     );
-  }, [run, requested, requestTriageMutation]);
+  }, [run, requested, unavailable, requestTriageMutation]);
 
-  return { canTriage, error, unavailable, requested, requestTriage };
-}
-
-// ---------------------------------------------------------------------------
-// Hook: triage for a commit (multiple runs) — used by commit-detail-view
-// and overview-panel
-// ---------------------------------------------------------------------------
-
-export function useCommitTriage(failedRunIds: string[]): {
-  summary: string | null;
-  loading: boolean;
-  error: string | null;
-  unavailable: boolean;
-  requestTriage: () => void;
-} {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<string | null>(null);
-  const [unavailable, setUnavailable] = useState(false);
-  const hasAttemptedRef = useRef(false);
-
-  const requestTriageMutation = useMutation("triage:requestTriage" as any);
-
-  // Reset state when the run IDs change
-  const runKey = failedRunIds.join(",");
-  const prevRunKeyRef = useRef(runKey);
+  const runKey = run?._id ?? "";
   useEffect(() => {
-    if (prevRunKeyRef.current !== runKey) {
-      prevRunKeyRef.current = runKey;
-      setSummary(null);
+    if (runIdRef.current !== runKey) {
+      runIdRef.current = runKey;
       setError(null);
-      setLoading(false);
-      hasAttemptedRef.current = false;
+      setRequested(false);
+      hasAutoAttemptedRef.current = false;
     }
   }, [runKey]);
 
-  const requestTriage = useCallback(() => {
-    if (failedRunIds.length === 0 || unavailable || hasAttemptedRef.current)
+  useEffect(() => {
+    if (
+      run?.triageStatus === "completed" ||
+      run?.triageStatus === "failed"
+    ) {
+      setRequested(false);
+    }
+  }, [run?.triageStatus, run?._id]);
+
+  useEffect(() => {
+    if (!autoRequest) return;
+    if (!run || unavailable || hasAutoAttemptedRef.current) return;
+    if (run.status !== "completed" || failed <= 0) return;
+    if (
+      run.triageStatus === "pending" ||
+      run.triageStatus === "completed" ||
+      run.triageStatus === "failed"
+    ) {
       return;
+    }
 
-    hasAttemptedRef.current = true;
-    setLoading(true);
+    hasAutoAttemptedRef.current = true;
     setError(null);
+    setRequested(true);
 
-    const primaryRunId = failedRunIds[0];
-    requestTriageMutation({ suiteRunId: primaryRunId } as any)
-      .then((result: any) => {
-        if (result?.summary) {
-          setSummary(result.summary);
-          setLoading(false);
-        } else {
-          setLoading(false);
-          setSummary(
-            "Triage requested — results will appear when backend processing completes.",
-          );
-        }
-      })
-      .catch((err: unknown) => {
+    requestTriageMutation({ suiteRunId: run._id, force: false } as any).catch(
+      (err: unknown) => {
+        hasAutoAttemptedRef.current = false;
+        setRequested(false);
         const message = err instanceof Error ? err.message : String(err);
         if (
           message.includes("Could not find") ||
@@ -125,9 +118,80 @@ export function useCommitTriage(failedRunIds: string[]): {
         } else {
           setError(message);
         }
-        setLoading(false);
-      });
-  }, [failedRunIds, requestTriageMutation, unavailable]);
+      },
+    );
+  }, [
+    run,
+    failed,
+    unavailable,
+    requestTriageMutation,
+    run?.triageStatus,
+    run?._id,
+    run?.status,
+    autoRequest,
+  ]);
+
+  return { canTriage, error, unavailable, requested, requestTriage };
+}
+
+// ---------------------------------------------------------------------------
+// Hook: triage for a commit (multiple runs) — used by commit-detail-view
+// and overview-panel
+// ---------------------------------------------------------------------------
+
+export function useCommitTriage(failedRuns: EvalSuiteRun[]): {
+  summary: string | null;
+  loading: boolean;
+  error: string | null;
+  unavailable: boolean;
+  requestTriage: () => void;
+} {
+  const [error, setError] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+  const hasAttemptedRef = useRef(false);
+  const requestTriageMutation = useMutation("triage:requestTriage" as any);
+
+  const primaryRun = failedRuns[0] ?? null;
+  const summary = primaryRun?.triageSummary?.summary ?? null;
+  const loading = failedRuns.some((r) => r.triageStatus === "pending");
+
+  const runKey = failedRuns.map((r) => r._id).join(",");
+  const prevRunKeyRef = useRef(runKey);
+  useEffect(() => {
+    if (prevRunKeyRef.current !== runKey) {
+      prevRunKeyRef.current = runKey;
+      setError(null);
+      hasAttemptedRef.current = false;
+    }
+  }, [runKey]);
+
+  const requestTriage = useCallback(() => {
+    if (!primaryRun || unavailable || hasAttemptedRef.current) return;
+
+    hasAttemptedRef.current = true;
+    setError(null);
+
+    const force =
+      primaryRun.triageStatus === "completed" ||
+      primaryRun.triageStatus === "failed";
+
+    requestTriageMutation({ suiteRunId: primaryRun._id, force } as any).catch(
+      (err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        if (
+          message.includes("Could not find") ||
+          message.includes("not found") ||
+          message.includes("is not a function") ||
+          message.includes("Server Error")
+        ) {
+          setUnavailable(true);
+          setError(null);
+        } else {
+          setError(message);
+        }
+      },
+    );
+  }, [primaryRun, requestTriageMutation, unavailable]);
 
   return { summary, loading, error, unavailable, requestTriage };
 }

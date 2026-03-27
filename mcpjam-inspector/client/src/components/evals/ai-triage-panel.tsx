@@ -6,11 +6,17 @@ import { useAiTriage } from "./use-ai-triage";
 interface AiTriagePanelProps {
   run: EvalSuiteRun;
   failedCount?: number;
+  /** When false, triage starts only when the user clicks (default: true). */
+  autoRequestTriage?: boolean;
 }
 
-export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
+export function AiTriagePanel({
+  run,
+  failedCount,
+  autoRequestTriage = true,
+}: AiTriagePanelProps) {
   const { canTriage, error, unavailable, requested, requestTriage } =
-    useAiTriage(run, failedCount);
+    useAiTriage(run, failedCount, { autoRequest: autoRequestTriage });
 
   // Don't render anything if the backend isn't available
   if (unavailable) return null;

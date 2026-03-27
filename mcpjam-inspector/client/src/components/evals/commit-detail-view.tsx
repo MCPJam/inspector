@@ -135,15 +135,11 @@ export function CommitDetailView({
     () => commitGroup.runs.filter((r) => (r.summary?.failed ?? 0) > 0),
     [commitGroup.runs],
   );
-  const failedRunIds = useMemo(
-    () => runsWithFailedCases.map((r) => r._id),
-    [runsWithFailedCases],
-  );
-  const aiTriage = useCommitTriage(failedRunIds);
+  const aiTriage = useCommitTriage(runsWithFailedCases);
 
   useEffect(() => {
     if (
-      failedRunIds.length > 0 &&
+      runsWithFailedCases.length > 0 &&
       !aiTriage.summary &&
       !aiTriage.loading &&
       !aiTriage.unavailable
@@ -151,7 +147,7 @@ export function CommitDetailView({
       aiTriage.requestTriage();
     }
   }, [
-    failedRunIds.length,
+    runsWithFailedCases.length,
     aiTriage.summary,
     aiTriage.loading,
     aiTriage.unavailable,

@@ -274,23 +274,22 @@ export function OverviewPanel({
   // ---------------------------------------------------------------------------
   // AI Overview Triage
   // ---------------------------------------------------------------------------
-  // Collect run IDs from suites with failures for backend triage
-  const failedOverviewRunIds = useMemo(() => {
+  const failedOverviewRuns = useMemo(() => {
     return filteredSuites
       .filter(
         (e) =>
           (e.totals.failed > 0 || e.latestRun?.result === "failed") &&
           e.latestRun,
       )
-      .map((e) => e.latestRun!._id);
+      .map((e) => e.latestRun!);
   }, [filteredSuites]);
 
-  const aiOverviewTriage = useCommitTriage(failedOverviewRunIds);
+  const aiOverviewTriage = useCommitTriage(failedOverviewRuns);
 
   // Auto-request triage when failures exist (skip if already unavailable or errored)
   useEffect(() => {
     if (
-      failedOverviewRunIds.length > 0 &&
+      failedOverviewRuns.length > 0 &&
       !aiOverviewTriage.summary &&
       !aiOverviewTriage.loading &&
       !aiOverviewTriage.unavailable &&
@@ -299,7 +298,7 @@ export function OverviewPanel({
       aiOverviewTriage.requestTriage();
     }
   }, [
-    failedOverviewRunIds.length,
+    failedOverviewRuns.length,
     aiOverviewTriage.summary,
     aiOverviewTriage.loading,
     aiOverviewTriage.unavailable,
@@ -517,7 +516,7 @@ export function OverviewPanel({
       </div>
 
       {/* AI Overview Summary — only when failures exist and triage is active */}
-      {failedOverviewRunIds.length > 0 &&
+      {failedOverviewRuns.length > 0 &&
         !aiOverviewTriage.unavailable &&
         (aiOverviewTriage.summary ||
           aiOverviewTriage.loading ||
@@ -567,8 +566,8 @@ export function OverviewPanel({
                   <div className="flex items-center gap-2 text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     <span>
-                      Analyzing {failedOverviewRunIds.length} suite
-                      {failedOverviewRunIds.length !== 1 ? "s" : ""} with
+                      Analyzing {failedOverviewRuns.length} suite
+                      {failedOverviewRuns.length !== 1 ? "s" : ""} with
                       failures...
                     </span>
                   </div>
