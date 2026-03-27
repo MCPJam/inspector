@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import {
+  SandboxHostStyleProvider,
+  SandboxHostThemeProvider,
+} from "@/contexts/sandbox-host-style-context";
 import type { ModelDefinition } from "@/shared/types";
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
 
 // Mock child components
 vi.mock("../chat-input/model-selector", () => ({
@@ -158,6 +166,21 @@ describe("ChatInput", () => {
 
       expect(screen.getByRole("button", { name: "Send message" })).toHaveClass(
         "bg-[#1f1f1f]",
+      );
+    });
+
+    it("keeps the textarea transparent inside a dark host-scoped composer", () => {
+      render(
+        <SandboxHostStyleProvider value="chatgpt">
+          <SandboxHostThemeProvider value="dark">
+            <ChatInput {...defaultProps} />
+          </SandboxHostThemeProvider>
+        </SandboxHostStyleProvider>,
+      );
+
+      expect(screen.getByPlaceholderText("Type your message...")).toHaveClass(
+        "bg-transparent",
+        "dark:bg-transparent",
       );
     });
   });

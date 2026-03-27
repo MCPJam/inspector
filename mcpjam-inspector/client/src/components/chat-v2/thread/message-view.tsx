@@ -7,7 +7,10 @@ import { PartSwitch } from "./part-switch";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import {
+  useSandboxHostStyle,
+  useSandboxHostTheme,
+} from "@/contexts/sandbox-host-style-context";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
@@ -70,9 +73,10 @@ export function MessageView({
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
+  const sandboxHostTheme = useSandboxHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode,
+    themeMode: sandboxHostTheme ?? themeMode,
     sandboxHostStyle,
   });
   // Hide widget state messages (these are internal and sent to the model)

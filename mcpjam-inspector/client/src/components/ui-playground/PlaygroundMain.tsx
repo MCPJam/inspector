@@ -64,12 +64,19 @@ import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
+import {
+  SandboxHostStyleProvider,
+  SandboxHostThemeProvider,
+} from "@/contexts/sandbox-host-style-context";
+import { getDefaultAppThemeScopeStyle } from "@/lib/app-theme-scope";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
   icon: Settings2,
 };
+
+type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
   serverName: string;
@@ -305,17 +312,36 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
-  // Intentionally follows the global app theme for app-builder parity with the
-  // pre-hostContext thread colors. Other host emulation controls still read
-  // from hostContext below.
-  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const globalThemeMode = usePreferencesStore(
+    (s) => s.themeMode,
+  ) as ThreadThemeMode;
+  const [threadThemeOverride, setThreadThemeOverride] = useState<
+    ThreadThemeMode | null
+  >(null);
+  const effectiveThreadTheme = threadThemeOverride ?? globalThemeMode;
   const chatBg =
     hostStyle === "chatgpt"
       ? CHATGPT_CHAT_BACKGROUND
       : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[themeMode];
+  const hostBackgroundColor = chatBg[effectiveThreadTheme];
+  const threadThemeScopeStyle = getDefaultAppThemeScopeStyle(
+    effectiveThreadTheme,
+  );
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
+
+  // The App Builder theme toggle is intentionally local to the emulated thread
+  // and composer surface. It should not change MCPJam's global theme or leak
+  // into other tabs.
+  const toggleLocalThreadTheme = useCallback(() => {
+    setThreadThemeOverride((currentThemeOverride) => {
+      const currentTheme = currentThemeOverride ?? globalThemeMode;
+      const nextTheme: ThreadThemeMode =
+        currentTheme === "dark" ? "light" : "dark";
+
+      return nextTheme === globalThemeMode ? null : nextTheme;
+    });
+  }, [globalThemeMode]);
 
   const handleDisplayModeChange = useCallback(
     (mode: DisplayMode) => {
@@ -715,9 +741,17 @@ export function PlaygroundMain({
   return (
     <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
       {/* Device frame header */}
-      <div className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
+      <div
+        className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
+        data-testid="playground-main-header"
+      >
         {/* All controls centered */}
-        <DisplayContextHeader protocol={selectedProtocol} showThemeToggle />
+        <DisplayContextHeader
+          protocol={selectedProtocol}
+          showThemeToggle
+          themeModeOverride={effectiveThreadTheme}
+          onThemeToggleOverride={toggleLocalThreadTheme}
+        />
 
         {/* Right actions - absolutely positioned */}
         {!isThreadEmpty && (
@@ -752,54 +786,65 @@ export function PlaygroundMain({
 
       {/* Device frame container */}
       <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
-        <div
-          className="relative flex flex-col overflow-hidden"
-          style={{
-            width: deviceConfig.width,
-            maxWidth: "100%",
-            height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
-            maxHeight: "100%",
-            transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-            backgroundColor: hostBackgroundColor,
-          }}
-        >
-          {/* X-Ray mode: show raw JSON view of AI payload */}
-          {xrayMode && (
-            <StickToBottom
-              className="relative flex flex-1 flex-col min-h-0"
-              resize="smooth"
-              initial="smooth"
+        <SandboxHostStyleProvider value={hostStyle}>
+          <SandboxHostThemeProvider value={effectiveThreadTheme}>
+            <div
+              className={cn(
+                "sandbox-host-shell relative flex flex-col overflow-hidden",
+                effectiveThreadTheme === "dark" && "dark",
+              )}
+              data-testid="playground-thread-shell"
+              data-host-style={hostStyle}
+              data-thread-theme={effectiveThreadTheme}
+              style={{
+                ...threadThemeScopeStyle,
+                width: deviceConfig.width,
+                maxWidth: "100%",
+                height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
+                maxHeight: "100%",
+                transform: isWidgetFullscreen ? "none" : "translateZ(0)",
+                backgroundColor: hostBackgroundColor,
+              }}
             >
-              <div className="relative flex-1 min-h-0">
-                <StickToBottom.Content className="flex flex-col min-h-0">
-                  <XRaySnapshotView
-                    systemPrompt={systemPrompt}
-                    messages={messages}
-                    selectedServers={selectedServers}
-                    onClose={() => setXrayMode(false)}
-                  />
-                </StickToBottom.Content>
-                <ScrollToBottomButton />
+              {/* X-Ray mode: show raw JSON view of AI payload */}
+              {xrayMode && (
+                <StickToBottom
+                  className="relative flex flex-1 flex-col min-h-0"
+                  resize="smooth"
+                  initial="smooth"
+                >
+                  <div className="relative flex-1 min-h-0">
+                    <StickToBottom.Content className="flex flex-col min-h-0">
+                      <XRaySnapshotView
+                        systemPrompt={systemPrompt}
+                        messages={messages}
+                        selectedServers={selectedServers}
+                        onClose={() => setXrayMode(false)}
+                      />
+                    </StickToBottom.Content>
+                    <ScrollToBottomButton />
+                  </div>
+                  <div className="flex-shrink-0 border-t border-border">
+                    <div className="max-w-xl mx-auto w-full p-3">
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={!isThreadEmpty}
+                      />
+                    </div>
+                  </div>
+                </StickToBottom>
+              )}
+              {/* Thread: kept mounted (but hidden) during X-Ray to preserve
+                  MCPAppsRenderer iframes and bridge connections */}
+              <div
+                className="flex flex-col flex-1 min-h-0"
+                style={xrayMode ? { display: "none" } : undefined}
+              >
+                {threadContent}
               </div>
-              <div className="flex-shrink-0 border-t border-border">
-                <div className="max-w-xl mx-auto w-full p-3">
-                  <ChatInput
-                    {...sharedChatInputProps}
-                    hasMessages={!isThreadEmpty}
-                  />
-                </div>
-              </div>
-            </StickToBottom>
-          )}
-          {/* Thread: kept mounted (but hidden) during X-Ray to preserve
-              MCPAppsRenderer iframes and bridge connections */}
-          <div
-            className="flex flex-col flex-1 min-h-0"
-            style={xrayMode ? { display: "none" } : undefined}
-          >
-            {threadContent}
-          </div>
-        </div>
+            </div>
+          </SandboxHostThemeProvider>
+        </SandboxHostStyleProvider>
       </div>
     </div>
   );

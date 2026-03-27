@@ -145,6 +145,10 @@ export interface DisplayContextHeaderProps {
   protocol: UIType | null;
   /** Optional: show theme toggle (default: false) */
   showThemeToggle?: boolean;
+  /** Optional: local theme mode override for surfaces that should not touch global app theme */
+  themeModeOverride?: "light" | "dark";
+  /** Optional: local theme toggle handler paired with themeModeOverride */
+  onThemeToggleOverride?: () => void;
   /** Optional: custom class name */
   className?: string;
 }
@@ -152,6 +156,8 @@ export interface DisplayContextHeaderProps {
 export function DisplayContextHeader({
   protocol,
   showThemeToggle = false,
+  themeModeOverride,
+  onThemeToggleOverride,
   className,
 }: DisplayContextHeaderProps) {
   // Popover states
@@ -207,15 +213,22 @@ export function DisplayContextHeader({
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+  const usesThemeOverride =
+    themeModeOverride !== undefined && onThemeToggleOverride !== undefined;
+  const effectiveThemeMode = usesThemeOverride ? themeModeOverride : themeMode;
 
-  // Theme stays on the global preference path so the app-builder thread colors
-  // match the older pre-hostContext behavior. Locale/timezone/display mode and
-  // capabilities still flow through hostContext.
+  // App Builder can scope theme changes to the emulated thread/composer surface.
+  // Other consumers still fall back to the global MCPJam preference theme.
   const handleThemeChange = useCallback(() => {
+    if (usesThemeOverride && onThemeToggleOverride) {
+      onThemeToggleOverride();
+      return;
+    }
+
     const newTheme = themeMode === "dark" ? "light" : "dark";
     updateThemeMode(newTheme);
     setThemeMode(newTheme);
-  }, [themeMode, setThemeMode]);
+  }, [onThemeToggleOverride, setThemeMode, themeMode, usesThemeOverride]);
 
   // Device config - use custom dimensions from store for custom type
   const deviceConfig = useMemo(() => {
@@ -930,9 +943,10 @@ export function DisplayContextHeader({
                 variant="ghost"
                 size="icon"
                 onClick={handleThemeChange}
+                data-testid="display-context-theme-toggle"
                 className="h-7 w-7 border bg-background shadow-xs"
               >
-                {themeMode === "dark" ? (
+                {effectiveThemeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
                 ) : (
                   <Moon className="h-3.5 w-3.5" />
@@ -940,7 +954,7 @@ export function DisplayContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {themeMode === "dark" ? "Light mode" : "Dark mode"}
+              {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
         )}
