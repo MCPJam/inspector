@@ -530,20 +530,40 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                   )}
                   </p>
                 </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  {shouldReviewFindings ? (
-                    <>
+                {exploreCases.length > 0 ? (
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {shouldReviewFindings ? (
+                      <>
+                        <Button
+                          size="sm"
+                          onClick={handleReviewFindings}
+                          disabled={!exploreSuite || !firstFindingCaseId}
+                        >
+                          Review findings
+                          <ArrowRight className="ml-2 h-4 w-4" />
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void handleCopyExploreAgentBrief()}
+                          disabled={exploreBriefDisabled}
+                        >
+                          {isCopyingExploreBrief ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              Copying...
+                            </>
+                          ) : (
+                            <>
+                              <FileText className="mr-2 h-4 w-4" />
+                              Copy markdown for agent evals
+                            </>
+                          )}
+                        </Button>
+                      </>
+                    ) : (
                       <Button
                         size="sm"
-                        onClick={handleReviewFindings}
-                        disabled={!exploreSuite || !firstFindingCaseId}
-                      >
-                        Review findings
-                        <ArrowRight className="ml-2 h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
                         onClick={() => void handleCopyExploreAgentBrief()}
                         disabled={exploreBriefDisabled}
                       >
@@ -559,77 +579,59 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                           </>
                         )}
                       </Button>
-                    </>
-                  ) : (
-                    <Button
-                      size="sm"
-                      onClick={() => void handleCopyExploreAgentBrief()}
-                      disabled={exploreBriefDisabled}
-                    >
-                      {isCopyingExploreBrief ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Copying...
-                        </>
-                      ) : (
-                        <>
-                          <FileText className="mr-2 h-4 w-4" />
-                          Copy markdown for agent evals
-                        </>
-                      )}
-                    </Button>
-                  )}
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-8 w-8"
-                        disabled={!exploreSuite}
-                        aria-label="More actions"
-                      >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={() => void handleGenerateMore()}
-                        disabled={handlers.isGeneratingTests}
-                      >
-                        <Sparkles className="mr-2 h-4 w-4" />
-                        Generate more
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          if (exploreSuite) {
-                            void handlers.handleRerun(exploreSuite);
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-8 w-8"
+                          disabled={!exploreSuite}
+                          aria-label="More actions"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => void handleGenerateMore()}
+                          disabled={handlers.isGeneratingTests}
+                        >
+                          <Sparkles className="mr-2 h-4 w-4" />
+                          Generate more
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            if (exploreSuite) {
+                              void handlers.handleRerun(exploreSuite);
+                            }
+                          }}
+                          disabled={
+                            !exploreSuite ||
+                            handlers.rerunningSuiteId === exploreSuite?._id
                           }
-                        }}
-                        disabled={
-                          !exploreSuite ||
-                          handlers.rerunningSuiteId === exploreSuite?._id
-                        }
-                      >
-                        <RefreshCw
-                          className={`mr-2 h-4 w-4 ${handlers.rerunningSuiteId === exploreSuite?._id ? "animate-spin" : ""}`}
-                        />
-                        Re-run
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => {
-                          if (exploreSuite) {
-                            void handlers.handleCreateTestCase(
-                              exploreSuite._id,
-                            );
-                          }
-                        }}
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        Add case
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+                        >
+                          <RefreshCw
+                            className={`mr-2 h-4 w-4 ${handlers.rerunningSuiteId === exploreSuite?._id ? "animate-spin" : ""}`}
+                          />
+                          Re-run
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => {
+                            if (exploreSuite) {
+                              void handlers.handleCreateTestCase(
+                                exploreSuite._id,
+                              );
+                            }
+                          }}
+                        >
+                          <Plus className="mr-2 h-4 w-4" />
+                          Add case
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                ) : null}
               </div>
             )}
           </div>
@@ -640,7 +642,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                 <EmptyState
                   icon={FlaskConical}
                   title="Connect a server to start exploring"
-                  description="Testing starts from a connected server. Once you connect one, MCPJam will generate cases and show you what it learns."
+                  description="MCPJam generates explore cases after you connect."
                   className="h-auto min-h-[240px]"
                 />
               </div>
