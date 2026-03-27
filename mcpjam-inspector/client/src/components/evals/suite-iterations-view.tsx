@@ -478,6 +478,7 @@ export function SuiteIterationsView({
                 )}
                 selectedIterationId={selectedIterationId}
                 onSelectIteration={handleSelectIteration}
+                hideReplayLineage
               />
             </div>
           ) : null}

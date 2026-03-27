@@ -322,20 +322,21 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
-        <div>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-            <button
-              onClick={() => onViewModeChange("overview")}
-              className="hover:text-foreground hover:underline transition-colors cursor-pointer"
-            >
-              {suite.name}
-            </button>
-            <span className="text-muted-foreground/50">/</span>
-            <span className="text-primary font-medium">Run</span>
-          </div>
-          <h2 className="text-lg font-semibold">
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+          <h2 className="text-lg font-semibold tracking-tight">
             Run {formatRunId(selectedRunDetails._id)}
           </h2>
+          {selectedRunDetails.replayedFromRunId ? (
+            <span
+              className="text-xs text-muted-foreground"
+              title={selectedRunDetails.replayedFromRunId}
+            >
+              Replay of{" "}
+              <span className="font-mono text-foreground/80">
+                Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+              </span>
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {!readOnlyConfig &&

@@ -301,6 +301,7 @@ export function CiSuiteDetail({
             serverNames={connectedSuiteServers}
             selectedIterationId={selectedIterationId}
             onSelectIteration={handleSelectIteration}
+            hideReplayLineage
           />
         ) : null}
       </div>

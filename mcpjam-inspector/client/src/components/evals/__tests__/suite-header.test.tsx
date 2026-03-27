@@ -71,6 +71,21 @@ describe("SuiteHeader", () => {
     mockIsHostedMode.mockReturnValue(false);
   });
 
+  it("shows replay lineage under the run title when replayedFromRunId is set", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          replayedFromRunId: "n573zfck8sdhjg7by2s31ex2yx83m6sh",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Replay of")).toBeTruthy();
+    expect(screen.getByText("Run n573zfck")).toBeTruthy();
+  });
+
   it("shows a replay action for replayable CI runs in read-only run detail", async () => {
     const user = userEvent.setup();
 

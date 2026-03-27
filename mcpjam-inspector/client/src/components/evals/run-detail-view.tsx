@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
-import { evalStatusLeftBorderClasses } from "./helpers";
+import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import {
   computeIterationResult,
   computeIterationPassed,
@@ -43,6 +43,8 @@ interface RunDetailViewProps {
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
   hideCiMetadata?: boolean;
+  /** When true, omit replay source line (shown in SuiteHeader instead). */
+  hideReplayLineage?: boolean;
 }
 
 export function RunDetailView({
@@ -58,6 +60,7 @@ export function RunDetailView({
   selectedIterationId,
   onSelectIteration,
   hideCiMetadata,
+  hideReplayLineage,
 }: RunDetailViewProps) {
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
@@ -119,11 +122,17 @@ export function RunDetailView({
             </div>
           )}
 
-        {selectedRunDetails.replayedFromRunId && (
-          <div className="mb-4 inline-flex rounded-md bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-blue-600">
-            Replayed from run {selectedRunDetails.replayedFromRunId}
-          </div>
-        )}
+        {!hideReplayLineage && selectedRunDetails.replayedFromRunId ? (
+          <p
+            className="mb-4 text-xs text-muted-foreground"
+            title={selectedRunDetails.replayedFromRunId}
+          >
+            Replay of{" "}
+            <span className="font-mono text-foreground/90">
+              Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+            </span>
+          </p>
+        ) : null}
 
         {/* Run Metrics and Chart */}
         <div className="rounded-xl border bg-card text-card-foreground">
