@@ -8,6 +8,7 @@ import {
   Sparkles,
   RotateCw,
   Loader2,
+  FileCode2,
 } from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
@@ -43,6 +44,9 @@ interface TestCaseListSidebarProps {
   onDeleteTestCase: (testCaseId: string, testCaseTitle: string) => void;
   onDuplicateTestCase: (testCaseId: string) => void;
   onGenerateTests?: () => void;
+  /** Explore: copy agent brief with explore cases + embedded explore-to-sdk-evals skill */
+  onCopySdkEvalBrief?: () => void;
+  isCopyingSdkEvalBrief?: boolean;
   deletingTestCaseId: string | null;
   duplicatingTestCaseId: string | null;
   isGeneratingTests?: boolean;
@@ -73,6 +77,8 @@ export function TestCaseListSidebar({
   onDeleteTestCase,
   onDuplicateTestCase,
   onGenerateTests,
+  onCopySdkEvalBrief,
+  isCopyingSdkEvalBrief = false,
   deletingTestCaseId,
   duplicatingTestCaseId,
   isGeneratingTests,
@@ -215,6 +221,38 @@ export function TestCaseListSidebar({
               {isGeneratingTests ? "Generating..." : "Generate cases with AI"}
             </TooltipContent>
           </Tooltip>
+          {onCopySdkEvalBrief ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Copy SDK eval agent brief"
+                    onClick={() => onCopySdkEvalBrief()}
+                    disabled={
+                      testCases.length === 0 ||
+                      isCopyingSdkEvalBrief
+                    }
+                    className="h-7 w-7 p-0"
+                  >
+                    {isCopyingSdkEvalBrief ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileCode2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {testCases.length === 0
+                  ? "Add at least one case first"
+                  : isCopyingSdkEvalBrief
+                    ? "Copying…"
+                    : "Copy markdown brief with all cases and the explore-to-sdk-evals skill—paste into your coding agent to generate @mcpjam/sdk tests"}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button

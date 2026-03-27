@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   generateAgentBrief,
+  mapEvalCasesToAgentBriefExploreCases,
   type ExportPayload,
 } from "../generate-agent-brief";
 
@@ -63,5 +64,45 @@ describe("generateAgentBrief", () => {
     expect(empty).not.toContain("## Explore-generated test cases");
     expect(empty).toContain("name: create-mcp-eval");
     expect(empty).not.toContain("name: explore-to-sdk-evals");
+  });
+
+  it("mapEvalCasesToAgentBriefExploreCases maps Eval-shaped rows for the explore skill tail", () => {
+    const mapped = mapEvalCasesToAgentBriefExploreCases([
+      {
+        title: "Flowchart",
+        query: "Draw a flowchart",
+        isNegativeTest: false,
+        scenario: "User wants a diagram",
+        expectedOutput: "A rendered chart",
+        expectedToolCalls: [
+          { toolName: "draw", arguments: { format: "mermaid" } },
+        ],
+      },
+      {
+        title: "Small talk",
+        query: "Hello",
+        isNegativeTest: true,
+        scenario: "No tools",
+        expectedToolCalls: [],
+      },
+    ]);
+
+    expect(mapped).toHaveLength(2);
+    expect(mapped[0]).toMatchObject({
+      title: "Flowchart",
+      query: "Draw a flowchart",
+      isNegativeTest: false,
+      scenario: "User wants a diagram",
+      expectedOutput: "A rendered chart",
+      expectedToolCalls: [{ toolName: "draw", arguments: { format: "mermaid" } }],
+    });
+    expect(mapped[1].expectedToolCalls).toBeUndefined();
+
+    const out = generateAgentBrief(minimalPayload, {
+      serverUrl: "http://localhost/mcp",
+      exploreTestCases: mapped,
+    });
+    expect(out).toContain("## Explore-generated test cases");
+    expect(out).toContain("name: explore-to-sdk-evals");
   });
 });

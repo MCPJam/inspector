@@ -56,6 +56,46 @@ export interface AgentBriefExploreCase {
   }>;
 }
 
+/** Minimal case shape (e.g. Convex EvalCase) for `mapEvalCasesToAgentBriefExploreCases`. */
+export interface EvalCaseForAgentBrief {
+  title: string;
+  query: string;
+  isNegativeTest?: boolean;
+  scenario?: string;
+  expectedOutput?: string;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, any>;
+  }>;
+}
+
+export function mapEvalCasesToAgentBriefExploreCases(
+  cases: EvalCaseForAgentBrief[],
+): AgentBriefExploreCase[] {
+  return cases.map((c) => {
+    const slice: AgentBriefExploreCase = {
+      title: c.title,
+      query: c.query,
+    };
+    if (c.isNegativeTest !== undefined) {
+      slice.isNegativeTest = c.isNegativeTest;
+    }
+    if (c.scenario !== undefined && c.scenario !== "") {
+      slice.scenario = c.scenario;
+    }
+    if (c.expectedOutput !== undefined && c.expectedOutput.trim() !== "") {
+      slice.expectedOutput = c.expectedOutput;
+    }
+    if (c.expectedToolCalls.length > 0) {
+      slice.expectedToolCalls = c.expectedToolCalls.map((t) => ({
+        toolName: t.toolName,
+        arguments: { ...t.arguments } as Record<string, unknown>,
+      }));
+    }
+    return slice;
+  });
+}
+
 export interface GenerateAgentBriefOptions {
   /** Max tools to show in the full table (rest are listed as names). Default: 30 */
   maxToolsInTable?: number;

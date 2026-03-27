@@ -2,6 +2,7 @@ import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
+import posthog from "posthog-js";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
@@ -25,6 +26,14 @@ import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { exportServerApi } from "@/lib/apis/mcp-export-api";
+import {
+  generateAgentBrief,
+  mapEvalCasesToAgentBriefExploreCases,
+} from "@/lib/generate-agent-brief";
+import { getServerUrl } from "@/components/connection/server-card-utils";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { EvalCase, EvalSuite } from "./evals/types";
 
 interface EvalsTabProps {
@@ -49,6 +58,8 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const mutations = useEvalMutations();
 
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
+  const [isCopyingExploreSdkBrief, setIsCopyingExploreSdkBrief] =
+    useState(false);
   const initializedExploreRef = useRef<Set<string>>(new Set());
 
   const selectedTestId =
@@ -166,6 +177,38 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
+
+  const handleCopyExploreSdkEvalBrief = useCallback(async () => {
+    if (!selectedServer || exploreCases.length === 0) return;
+    setIsCopyingExploreSdkBrief(true);
+    try {
+      const data = await exportServerApi(selectedServer);
+      const serverUrl = getServerUrl(
+        appState.servers[selectedServer]?.config ?? ({} as MCPServerConfig),
+      );
+      const exploreTestCases =
+        mapEvalCasesToAgentBriefExploreCases(exploreCases);
+      const markdown = generateAgentBrief(data, {
+        serverUrl,
+        exploreTestCases,
+      });
+      await navigator.clipboard.writeText(markdown);
+      toast.success("SDK eval brief copied to clipboard");
+      posthog.capture("explore_copy_sdk_eval_brief_clicked", {
+        location: "test_case_list_sidebar",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        server_id: selectedServer,
+        case_count: exploreCases.length,
+      });
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+      toast.error(`Failed to copy SDK eval brief: ${errorMessage}`);
+    } finally {
+      setIsCopyingExploreSdkBrief(false);
+    }
+  }, [appState.servers, exploreCases, selectedServer]);
 
   useEffect(() => {
     if (
@@ -365,6 +408,8 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                   )
                 }
                 onGenerateTests={() => void handleGenerateMore()}
+                onCopySdkEvalBrief={() => void handleCopyExploreSdkEvalBrief()}
+                isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
                 deletingTestCaseId={handlers.deletingTestCaseId}
                 duplicatingTestCaseId={handlers.duplicatingTestCaseId}
                 isGeneratingTests={handlers.isGeneratingTests}
