@@ -1,17 +1,13 @@
 import { useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import {
-  XIcon,
-  Loader2,
-  LayoutGrid,
-  AlertCircle,
-  Pencil,
-  RefreshCw,
-} from "lucide-react";
+import { XIcon, Loader2, LayoutGrid, Plus, AlertCircle } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Separator } from "@/components/ui/separator";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type { OnboardingPhase } from "@/lib/onboarding-state";
 
 const EASING: [number, number, number, number] = [0.16, 1, 0.3, 1];
+const PANEL_WIDTH = 480;
 
 interface WelcomeOverlayProps {
   phase: OnboardingPhase;
@@ -22,42 +18,6 @@ interface WelcomeOverlayProps {
   onAddServerManually: () => void;
   onRetry: () => void;
   onDismiss: () => void;
-}
-
-function OptionCard({
-  icon,
-  title,
-  description,
-  onClick,
-  disabled,
-  loading,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  onClick: () => void;
-  disabled?: boolean;
-  loading?: boolean;
-}) {
-  return (
-    <div className="flex flex-col items-center gap-3">
-      <button
-        onClick={onClick}
-        disabled={disabled}
-        className="group flex h-14 w-14 items-center justify-center rounded-xl border border-border bg-card transition-all duration-200 hover:border-primary/40 hover:shadow-md hover:shadow-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-50"
-      >
-        <div className="flex h-7 w-7 items-center justify-center text-muted-foreground transition-colors duration-200 group-hover:text-primary">
-          {loading ? <Loader2 className="h-5 w-5 animate-spin" /> : icon}
-        </div>
-      </button>
-      <div className="flex flex-col items-center gap-1">
-        <p className="text-xs font-medium text-foreground">{title}</p>
-        <p className="text-[11px] leading-relaxed text-muted-foreground text-center max-w-32">
-          {description}
-        </p>
-      </div>
-    </div>
-  );
 }
 
 export function WelcomeOverlay({
@@ -89,7 +49,7 @@ export function WelcomeOverlay({
       {/* Overlay backdrop */}
       <motion.div
         key="welcome-overlay-backdrop"
-        className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm"
+        className="fixed inset-0 z-50 bg-black/50"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
@@ -97,106 +57,123 @@ export function WelcomeOverlay({
         onClick={onDismiss}
       />
 
-      {/* Panel wrapper */}
+      {/* Panel */}
       <motion.div
         key="welcome-overlay-panel"
-        className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none px-4"
-        initial={{ opacity: 0, scale: 0.96, y: 8 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{
-          opacity: 0,
-          scale: 0.97,
-          y: 4,
-          transition: { duration: 0.15, ease: EASING } as any,
+        className="fixed z-50 bg-background rounded-lg border shadow-lg overflow-y-auto"
+        style={{
+          top: "10vh",
+          left: "50%",
+          marginLeft: -(PANEL_WIDTH / 2),
+          width: PANEL_WIDTH,
+          maxWidth: "calc(100vw - 2rem)",
+          maxHeight: "80vh",
         }}
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.15, ease: EASING } as any }}
         transition={{ duration: 0.35, ease: EASING }}
       >
-        <div className="pointer-events-auto relative w-full max-w-xl bg-background rounded-2xl border shadow-xl overflow-y-auto max-h-[90vh]">
-          {/* Close button */}
-          <button
-            onClick={onDismiss}
-            className="absolute top-5 right-5 z-10 rounded-full p-1.5 text-muted-foreground/60 transition-colors hover:text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            aria-label="Close"
-          >
-            <XIcon className="h-4 w-4" />
-          </button>
+        {/* Close button */}
+        <button
+          onClick={onDismiss}
+          className="absolute top-3 right-3 z-10 rounded-full bg-background/80 backdrop-blur-sm p-1.5 opacity-70 transition-opacity hover:opacity-100 focus:outline-none"
+        >
+          <XIcon className="h-4 w-4" />
+          <span className="sr-only">Close</span>
+        </button>
 
-          <div className="flex flex-col items-center px-10 pt-10 pb-8 sm:px-14 sm:pt-10 sm:pb-10">
-            {/* Logo */}
-            <img
-              src={
-                themeMode === "dark"
-                  ? "/mcp_jam_dark.png"
-                  : "/mcp_jam_light.png"
-              }
-              alt="MCPJam"
-              className="h-8 w-auto mb-6"
-            />
+        <div className="flex flex-col items-center px-10 pt-10 pb-8">
+          {/* Logo */}
+          <img
+            src={
+              themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"
+            }
+            alt="MCPJam"
+            className="h-10 w-auto mb-6"
+          />
 
-            {/* Subtitle */}
-            <p className="text-xs text-muted-foreground text-center leading-relaxed max-w-sm mb-6">
-              Connect an MCP server to explore its tools, test prompts, and
-              build apps — all from one place.
-            </p>
+          {/* Subtitle */}
+          <p className="text-sm text-muted-foreground text-center mb-1">
+            Your playground for MCP servers.
+          </p>
+          <p className="text-sm text-muted-foreground text-center mb-6">
+            Inspect tools, test prompts, and build AI-powered apps.
+          </p>
+
+          <Separator className="mb-6" />
+
+          {/* Demo server section */}
+          <p className="text-sm text-muted-foreground mb-5">
+            Try a demo server
+          </p>
+
+          <div className="flex flex-col gap-3 w-full">
+            {/* Primary: Connect Excalidraw */}
+            <Button
+              onClick={isError ? onRetry : onConnectExcalidraw}
+              disabled={buttonsDisabled}
+              className="w-full"
+              size="lg"
+            >
+              {isConnecting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Connecting...
+                </>
+              ) : (
+                <>
+                  <img
+                    src="https://excalidraw.com/favicon.ico"
+                    alt=""
+                    className="h-4 w-4 mr-2"
+                    onError={(e) => {
+                      (e.target as HTMLImageElement).style.display = "none";
+                    }}
+                  />
+                  {isError ? "Retry Excalidraw" : "Connect Excalidraw"}
+                </>
+              )}
+            </Button>
 
             {/* Error message */}
             {isError && connectError && (
-              <div className="flex items-start gap-2 rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2.5 mb-6 w-full">
+              <div className="flex items-start gap-2 rounded-md bg-destructive/10 border border-destructive/20 px-3 py-2">
                 <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
                 <p className="text-sm text-destructive">{connectError}</p>
               </div>
             )}
+          </div>
 
-            {/* Section label */}
-            <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground/60 mb-4">
-              Get started
-            </p>
+          <p className="text-xs text-muted-foreground my-4">or</p>
 
-            {/* Option cards */}
-            <div className="flex items-start justify-center gap-8">
-              {/* Connect Excalidraw */}
-              <OptionCard
-                icon={
-                  isError ? (
-                    <RefreshCw className="h-5 w-5" />
-                  ) : (
-                    <img
-                      src="https://excalidraw.com/favicon.ico"
-                      alt=""
-                      className="h-5 w-5"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = "none";
-                      }}
-                    />
-                  )
-                }
-                title={isError ? "Retry Excalidraw" : "Try Excalidraw"}
-                description="Try a demo server"
-                onClick={isError ? onRetry : onConnectExcalidraw}
+          {/* Other options */}
+          <div className="flex flex-col gap-3 w-full">
+            {/* Secondary: Browse Registry (conditional) */}
+            {registryEnabled && (
+              <Button
+                variant="outline"
+                onClick={onBrowseRegistry}
                 disabled={buttonsDisabled}
-                loading={isConnecting}
-              />
+                className="w-full"
+                size="lg"
+              >
+                <LayoutGrid className="h-4 w-4 mr-2" />
+                Browse Registry
+              </Button>
+            )}
 
-              {/* Browse Registry */}
-              {registryEnabled && (
-                <OptionCard
-                  icon={<LayoutGrid className="h-5 w-5" />}
-                  title="Browse Registry"
-                  description="Find servers to connect"
-                  onClick={onBrowseRegistry}
-                  disabled={buttonsDisabled}
-                />
-              )}
-
-              {/* Add manually */}
-              <OptionCard
-                icon={<Pencil className="h-5 w-5" />}
-                title="Add Manually"
-                description="Enter a URL or command"
-                onClick={onAddServerManually}
-                disabled={buttonsDisabled}
-              />
-            </div>
+            {/* Secondary: Add server manually */}
+            <Button
+              variant="outline"
+              onClick={onAddServerManually}
+              disabled={buttonsDisabled}
+              className="w-full"
+              size="lg"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add server manually
+            </Button>
           </div>
         </div>
       </motion.div>

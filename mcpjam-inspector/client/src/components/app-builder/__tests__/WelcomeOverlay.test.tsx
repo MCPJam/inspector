@@ -48,13 +48,13 @@ describe("WelcomeOverlay", () => {
     onDismiss: vi.fn(),
   };
 
-  it("renders title and subtitle", () => {
+  it("renders subtitle and demo section", () => {
     render(<WelcomeOverlay {...defaultProps} />);
 
-    expect(screen.getByText("Welcome to MCPJam")).toBeInTheDocument();
     expect(
       screen.getByText("Your playground for MCP servers."),
     ).toBeInTheDocument();
+    expect(screen.getByText("Try a demo server")).toBeInTheDocument();
   });
 
   it("renders all 3 buttons when registry is enabled", () => {
