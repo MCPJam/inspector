@@ -25,7 +25,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
   },
   servers: {
     title: "Servers",
-    videoUrl: "https://www.youtube.com/embed/a5MKoPLTmXw",
+    videoUrl: "https://www.youtube.com/embed/uNn33JkyyLo",
     videoThumbnail:
       "https://outstanding-fennec-304.convex.cloud/api/storage/303425d5-a6cd-4225-a6fc-bea4889e3643",
     previewVideoUrl:
