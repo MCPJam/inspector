@@ -27,6 +27,7 @@ import { Bot, ChevronRight, Network, Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@/components/ui/badge";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { getSandboxHostLogo } from "@/lib/sandbox-host-style";
 import { cn } from "@/lib/utils";
 import type {
   SandboxBuilderNodeData,
@@ -101,11 +102,17 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
   const { data, selected } = props;
   const Icon = getNodeIcon(data.kind);
   const { onAddServer } = useContext(SandboxCanvasContext);
+  const isHostPreview = data.kind === "host";
+  const hostStyle = data.hostStyle ?? "claude";
+  const hostLogoSrc = isHostPreview ? getSandboxHostLogo(hostStyle) : null;
 
   return (
     <div
       className={cn(
-        "sandbox-builder-card relative w-[280px] overflow-visible rounded-xl border border-border/60 bg-card/90 px-3.5 py-3 text-card-foreground transition-all",
+        "sandbox-builder-card relative w-[280px] overflow-visible rounded-xl border border-border/60 px-3.5 py-3 text-card-foreground transition-all",
+        isHostPreview
+          ? "bg-gradient-to-b from-muted/80 to-muted/40 shadow-sm"
+          : "bg-card/90",
         selected && "ring-2 shadow-xl",
         stateRing(data.state),
       )}
@@ -118,46 +125,105 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
           className={handleClass}
         />
       )}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
-            <Icon className="size-3.5" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold" title={data.title}>
-              {data.title}
-            </p>
-            {data.subtitle ? (
-              <p
-                className="mt-1 line-clamp-2 text-xs text-muted-foreground"
-                title={data.subtitle}
+      {isHostPreview ? (
+        <>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            {data.eyebrow ? (
+              <Badge
+                variant="secondary"
+                className="rounded-md px-2 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
               >
-                {data.subtitle}
-              </p>
+                {data.eyebrow}
+              </Badge>
+            ) : null}
+            {selected ? (
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
             ) : null}
           </div>
-        </div>
-        {selected ? (
-          <ChevronRight className="mt-0.5 size-4 text-muted-foreground" />
-        ) : null}
-      </div>
+          <div className="flex gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-border/50 bg-background/80 shadow-inner">
+              <img
+                src={hostLogoSrc ?? undefined}
+                alt=""
+                className="size-7 object-contain"
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p
+                className="truncate text-sm font-semibold leading-tight"
+                title={data.title}
+              >
+                {data.title}
+              </p>
+              {data.subtitle ? (
+                <p
+                  className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                  title={data.subtitle}
+                >
+                  {data.subtitle}
+                </p>
+              ) : null}
+              {data.detailLine ? (
+                <p
+                  className="mt-1.5 text-[11px] text-muted-foreground/90"
+                  title={data.detailLine}
+                >
+                  {data.detailLine}
+                </p>
+              ) : null}
+            </div>
+          </div>
+          <p className="mt-3 rounded-lg border border-dashed border-border/50 bg-background/50 px-2.5 py-2 text-[11px] leading-snug text-muted-foreground">
+            Hosted chat preview — mirrors{" "}
+            {hostStyle === "chatgpt" ? "ChatGPT" : "Claude"}-style host in
+            Setup.
+          </p>
+        </>
+      ) : (
+        <>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
+                <Icon className="size-3.5" />
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold" title={data.title}>
+                  {data.title}
+                </p>
+                {data.subtitle ? (
+                  <p
+                    className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                    title={data.subtitle}
+                  >
+                    {data.subtitle}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+            {selected ? (
+              <ChevronRight className="mt-0.5 size-4 text-muted-foreground" />
+            ) : null}
+          </div>
 
-      {data.chips.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {data.chips.map((item) => (
-            <Badge
-              key={`${data.kind}:${item.label}`}
-              variant="outline"
-              className={cn(
-                "rounded-full text-[10px]",
-                CHIP_STYLES[item.tone ?? "neutral"],
-              )}
-            >
-              {item.label}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
+          {data.chips.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {data.chips.map((item) => (
+                <Badge
+                  key={`${data.kind}:${item.label}`}
+                  variant="outline"
+                  className={cn(
+                    "rounded-full text-[10px]",
+                    CHIP_STYLES[item.tone ?? "neutral"],
+                  )}
+                >
+                  {item.label}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+        </>
+      )}
+
       {data.kind === "host" ? (
         <ButtonHandle
           type="source"

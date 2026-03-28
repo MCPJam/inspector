@@ -51,9 +51,15 @@ export interface SandboxBuilderNodeData extends Record<string, unknown> {
   kind: SandboxBuilderNodeKind;
   title: string;
   subtitle?: string;
+  /** Small label above the title (e.g. Preview on the host chat card). */
+  eyebrow?: string;
+  /** Extra line under subtitle (e.g. model name on the host card). */
+  detailLine?: string;
   chips: SandboxBuilderChip[];
   state: SandboxBuilderNodeState;
   serverId?: string;
+  /** Host preview only: drives Claude vs ChatGPT-style logo on the canvas. */
+  hostStyle?: SandboxHostStyle;
 }
 
 export interface SandboxSectionLabelData extends Record<string, unknown> {

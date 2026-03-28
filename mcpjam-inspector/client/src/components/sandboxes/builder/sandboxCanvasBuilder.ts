@@ -7,7 +7,6 @@ import type {
   SandboxBuilderViewModel,
   SandboxFlowNode,
 } from "./types";
-import { getSandboxHostStyleShortLabel } from "@/lib/sandbox-host-style";
 import { getModelById } from "@/shared/types";
 import { SANDBOX_BUILDER_NODE_WIDTH } from "./sandbox-canvas-viewport";
 
@@ -55,19 +54,15 @@ function resolveHostState(
   const modelName = source
     ? (getModelById(source.modelId)?.name ?? source.modelId)
     : "Model";
+  const hostStyle = source?.hostStyle ?? "claude";
   return {
     kind: "host",
-    title: "Host",
-    subtitle: source?.name || "New sandbox",
-    chips: [
-      chip(
-        source
-          ? getSandboxHostStyleShortLabel(source.hostStyle)
-          : getSandboxHostStyleShortLabel("claude"),
-      ),
-      chip(modelName),
-      chip(source ? `Temp ${source.temperature.toFixed(2)}` : "Temp 0.70"),
-    ],
+    title: "Sandbox chat",
+    eyebrow: "Preview",
+    subtitle: source?.name?.trim() || "Untitled sandbox",
+    detailLine: `Model · ${modelName}`,
+    hostStyle,
+    chips: [],
     state: source ? "ready" : "draft",
   };
 }

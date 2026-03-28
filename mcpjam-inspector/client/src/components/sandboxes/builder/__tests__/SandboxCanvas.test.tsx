@@ -64,8 +64,8 @@ describe("SandboxCanvas", () => {
       </ReactFlowProvider>,
     );
 
-    const hostTitle = screen.getByText("Host");
-    expect(hostTitle).toHaveAttribute("title", "Host");
+    const hostTitle = screen.getByText("Sandbox chat");
+    expect(hostTitle).toHaveAttribute("title", "Sandbox chat");
 
     const nameSubtitle = screen.getByText(
       "My very long sandbox name that might truncate in the UI",

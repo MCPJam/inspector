@@ -1,10 +1,23 @@
-import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
+import {
+  isMCPJamProvidedModel,
+  isModelSupported,
+  SUPPORTED_MODELS,
+} from "@/shared/types";
 import type { SandboxDraftConfig, SandboxStarterDefinition } from "./types";
 import type { SandboxSettings } from "@/hooks/useSandboxes";
 
 export const DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant.";
 
+/** Prefer a stable default; the first MCPJam model in SUPPORTED_MODELS is often gpt-oss-120b. */
+const DEFAULT_HOSTED_SANDBOX_MODEL_ID = "openai/gpt-5-mini";
+
 export function getDefaultHostedModelId(): string {
+  if (
+    isModelSupported(DEFAULT_HOSTED_SANDBOX_MODEL_ID) &&
+    isMCPJamProvidedModel(DEFAULT_HOSTED_SANDBOX_MODEL_ID)
+  ) {
+    return DEFAULT_HOSTED_SANDBOX_MODEL_ID;
+  }
   return (
     SUPPORTED_MODELS.find((model) =>
       isMCPJamProvidedModel(String(model.id)),
