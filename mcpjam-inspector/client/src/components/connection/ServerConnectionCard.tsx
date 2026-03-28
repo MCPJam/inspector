@@ -601,15 +601,6 @@ export function ServerConnectionCard({
             </div>
           )}
 
-          {server.connectionStatus === "connecting" && (
-            <div
-              className="mt-3 rounded-md border border-blue-300/40 bg-blue-500/10 p-2 text-xs text-muted-foreground"
-              onClick={(e) => e.stopPropagation()}
-            >
-              Authorization complete. Finalizing the MCP connection.
-            </div>
-          )}
-
           <div className="mt-3 flex items-center justify-end">
             <div
               className="flex flex-wrap items-center justify-end gap-2"

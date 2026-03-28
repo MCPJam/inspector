@@ -176,11 +176,6 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          "Authorization complete. Finalizing the MCP connection.",
-        ),
-      ).toBeInTheDocument();
     });
 
     it("shows oauth browser authorization state", () => {
