@@ -47,7 +47,7 @@ E2E testing simulates real user workflows by testing complete chains of interact
 
 An LLM judge can analyze the agent's trace to determine if the test passed.
 
-If you run evals through the SDK, pass the connected `MCPClientManager` into [`TestAgent`](/sdk/reference/test-agent) (or pass `agent` / `mcpClientManager` to reporting APIs) so MCPJam can **persist replay credentials** for authenticated HTTP servers **and** capture **MCP App widget HTML** (via `readResource` on `ui.resourceUri`) for **offline widget replay** in Eval traces. Without `mcpClientManager` on `TestAgent`, uploaded traces still include messages and spans but not embedded app previews.
+If you run evals through the SDK, pass the connected `MCPClientManager` into [`TestAgent`](/sdk/reference/test-agent) **and** into manual reporting (`reportEvalResults` / [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter)) when you use both — so MCPJam can **persist server replay credentials** for typical HTTP MCP connections **and** capture **MCP App widget HTML** (via `readResource` on `ui.resourceUri`) for **offline widget replay** in Eval traces. **Finalize uploads before disconnecting** the manager in test teardown; see [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui). **Replay this run** in the UI still uses **your Settings API keys** for each LLM provider in the suite; provider keys are not stored on the run.
 
 ### Pass/fail and tool errors
 

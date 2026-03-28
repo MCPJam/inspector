@@ -154,6 +154,8 @@ Most users should pass `agent` or `mcpClientManager` and let the SDK derive repl
 
 When replay configs are inferred from `agent` or `mcpClientManager`, the SDK limits them to the `serverNames` you attach to the run when `serverNames` is provided.
 
+**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) — not only on `TestAgent` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
+
 ## CI Metadata
 
 Attach CI/CD context to your eval runs for traceability in the dashboard:

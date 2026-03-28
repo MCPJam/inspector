@@ -78,9 +78,10 @@ import {
 
 **Optional MCPJam upload**
 
-- `createEvalRunReporter({ suiteName, apiKey, strict: true, ... })`
+- `createEvalRunReporter({ suiteName, apiKey, strict: true, mcpClientManager: manager, serverNames: [SERVER_ID], ... })` — pass the **same** connected `**MCPClientManager**` as for `TestAgent` so uploads include **`serverReplayConfigs`** (HTTP MCP only; stdio connections do not produce replayable server config in the SDK). That is what sets **`hasServerReplayConfig`** in MCPJam and enables **Replay this run** / **server-side MCP replay** in the UI.
 - `await reporter.recordFromPrompt(result, { caseTitle, passed, expectedToolCalls?, isNegativeTest? })`
-- `await reporter.finalize()` in `afterAll` (with timeout). `**finalize()` can throw** (network, DNS, 401) even when all eval assertions passed. For best-effort upload: wrap in **try/catch**, log a warning, and continue; or gate uploads on something like `**MCPJAM_REPORTING=1`** so local/CI runs do not go red purely on reporting.
+- `await reporter.finalize()` in `afterAll` **before** `disconnectAllServers()` (with timeout). `finalize` calls `getServerReplayConfigs()` on the manager; disconnecting first clears client state and uploads **without** replay metadata. `**finalize()` can throw** (network, DNS, 401) even when all eval assertions passed. For best-effort upload: wrap in **try/catch**, log a warning, and continue; or gate uploads on something like `**MCPJAM_REPORTING=1`** so local/CI runs do not go red purely on reporting.
+- **UI replay still needs LLM keys in MCPJam Settings** for whatever `provider` the suite uses (e.g. OpenRouter); the app does not store provider API keys on the run.
 
 ---
 
@@ -219,13 +220,13 @@ const RUN_LLM_TESTS = Boolean(LLM_API_KEY && MCP_SERVER_URL);
         apiKey: MCPJAM_API_KEY,
         strict: true,
         serverNames: [SERVER_ID],
+        mcpClientManager: manager,
         expectedIterations: <count Explore cases with reporter records>,
       });
     }
   }, 120_000);
 
   afterAll(async () => {
-    await manager?.disconnectAllServers();
     if (reporter?.getAddedCount()) {
       try {
         await reporter.finalize();
@@ -233,6 +234,7 @@ const RUN_LLM_TESTS = Boolean(LLM_API_KEY && MCP_SERVER_URL);
         console.warn("MCPJam reporter finalize failed (non-fatal):", e);
       }
     }
+    await manager?.disconnectAllServers();
   }, 120_000);
 
   // one it() per Explore case — §4
@@ -259,7 +261,9 @@ Optionally: **fail loudly** in dev when vars are missing (`throw` or `describe` 
 
 - **Default `it(..., 90_000)`** per test. Use `**120_000`–`180_000**` and a matching `**agent.prompt(..., { timeoutMs: ... })**` when the brief implies **streaming, animation, slow MCP, or long multi-tool** runs (wall-clock often exceeds 90s end-to-end). Raise `**beforeAll` / `afterAll` hook timeouts** in Vitest if hooks approach default limits (`hookTimeout` in config or per-hook timeout argument).
 - `**await`** every `agent.prompt`, `reporter.record*`, `reporter.finalize`, `connectToServer`, `disconnectAllServers`.
-- **One reporter per file**; `**finalize()` in `afterAll`** with a generous timeout — and treat upload as **non-fatal** when agreed (§3, §5b).
+- **One reporter per file**; `**finalize()` in `afterAll`** with a generous timeout — call **`finalize()` before `disconnectAllServers()`** so replay config is still available from the manager (§3, §5b). Treat upload as **non-fatal** when agreed (§3, §5b).
+- **`mcpClientManager` on `createEvalRunReporter`:** pass the connected `manager` here **in addition to** `TestAgent` — uploads need this to attach **`serverReplayConfigs`** (`hasServerReplayConfig`); the agent’s field alone does not populate the report payload (§3).
+- **MCPJam UI replay** uses stored MCP replay plus **your Settings API keys** for the suite’s LLM providers; keys are not stored on the run.
 - `**maxSteps: 8`** on `TestAgent` unless the Explore case implies a longer tool chain.
 - `**mcpClientManager` on `TestAgent`:** pass the connected `manager` whenever results are reported to MCPJam so `**widgetSnapshots`** (MCP App HTML) are captured; without it, uploaded traces only have messages + spans.
 - Wrap LLM suites with `**(RUN_LLM_TESTS ? describe : describe.skip)**` and **nest lifecycle hooks inside that `describe`** (§5b) so skipped runs do not connect to the MCP.

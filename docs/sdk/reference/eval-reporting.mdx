@@ -222,10 +222,21 @@ Prefer passing `agent` or `mcpClientManager` directly. Use `serverReplayConfigs`
 
 If you also provide `serverNames`, inferred replay configs are filtered to those server IDs before upload. Explicit `serverReplayConfigs` are left unchanged.
 
+### Replay metadata for the MCPJam UI
+
+Uploaded runs can show **Replay this run** / server-side MCP replay when the ingest payload includes derived **`serverReplayConfigs`** (stored as **`hasServerReplayConfig`** on the run). In practice:
+
+- **HTTP MCP (`url`)** — Replay configs are built for typical streamable HTTP connections. **Stdio** transports **do not** produce entries from [`MCPClientManager.getServerReplayConfigs()`](/sdk/reference/mcp-client-manager); use HTTP when you need dashboard replay.
+- **`TestAgent` vs reporter** — Putting `mcpClientManager` on [`TestAgent`](/sdk/reference/test-agent) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
+- **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
+
+**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite’s models.
+
 ### Using with PromptResult
 
 ```typescript
-const reporter = createEvalRunReporter({ suiteName: "Prompt Tests" });
+// Pass `agent` or `mcpClientManager` when you need server replay metadata in MCPJam
+const reporter = createEvalRunReporter({ suiteName: "Prompt Tests", agent });
 
 const result = await agent.prompt("Add 2 and 3");
 reporter.addFromPrompt(result, {
