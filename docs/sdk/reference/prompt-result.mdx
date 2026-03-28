@@ -382,6 +382,38 @@ for (const msg of toolMsgs) {
 
 ---
 
+## MCP App widget snapshots
+
+### getWidgetSnapshots()
+
+Returns HTML snapshot payloads captured during tool execution for **MCP Apps** (one entry per relevant tool call when replay data was collected).
+
+```typescript
+getWidgetSnapshots(): EvalWidgetSnapshotInput[]
+```
+
+#### Returns
+
+`EvalWidgetSnapshotInput[]` — metadata plus inline HTML (before upload) or storage ids after reporting. Empty if no MCP App tools ran or if [`TestAgent`](/sdk/reference/test-agent) was created **without** [`mcpClientManager`](/sdk/reference/test-agent#parameters).
+
+#### Why the manager matters
+
+MCP App UIs reference HTML via **`ui.resourceUri`**. That HTML is fetched with MCP **`resources/read`**, which only the connected [`MCPClientManager`](/sdk/reference/mcp-client-manager) can perform. The model’s tool **result** is not a substitute for that document, so **`getWidgetSnapshots()` stays empty unless you pass the same `manager` into `new TestAgent({ …, mcpClientManager: manager })`**.
+
+When you report results to MCPJam (for example via [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) or [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result)), snapshots are uploaded and linked from the trace so the dashboard can **replay widgets offline**.
+
+#### Example
+
+```typescript
+const result = await agent.prompt("Open the chart widget");
+
+const snapshots = result.getWidgetSnapshots();
+console.log("Snapshots:", snapshots.length);
+// After reporting, snapshots are merged into each eval result's trace on MCPJam
+```
+
+---
+
 ## Using as Context
 
 Pass `PromptResult` as context for multi-turn conversations.

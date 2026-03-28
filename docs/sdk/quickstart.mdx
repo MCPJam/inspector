@@ -84,7 +84,7 @@ const agent = new TestAgent({
 });
 ```
 
-If `MCPJAM_API_KEY` is set, attaching the connected `MCPClientManager` also lets MCPJam securely persist replay credentials for authenticated HTTP MCP servers during eval reporting.
+If `MCPJAM_API_KEY` is set, attaching the connected `MCPClientManager` also lets MCPJam persist **replay credentials** for authenticated HTTP MCP servers and capture **MCP App widget HTML** (for offline replay in Eval traces — see [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots)).
 
 ## Step 4: Run Prompts
 

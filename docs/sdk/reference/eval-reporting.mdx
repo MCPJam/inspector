@@ -15,7 +15,7 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
-`MCPJAM_API_KEY` controls whether results are uploaded. Replay credential capture is separate and only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`.
+`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result’s trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`TestAgent`](/sdk/reference/test-agent) was constructed with [`mcpClientManager`](/sdk/reference/test-agent#parameters).
 
 ---
 
@@ -326,8 +326,8 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `framework` | `string` | No | Test framework name (e.g., `"jest"`, `"vitest"`) |
 | `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
 | `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
-| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting |
-| `mcpClientManager` | `MCPClientManager` | No | Replay source for manual reporting when no agent is provided |
+| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an agent created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result) |
+| `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
 
 ### MCPServerReplayConfig
 
@@ -374,6 +374,7 @@ Advanced replay override. Most users should not construct this manually.
 | `externalCaseId` | `string` | No | Custom case ID |
 | `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
+| `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `TestAgent` had no `mcpClientManager` |
 
 ### ReportEvalResultsOutput
 

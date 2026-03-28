@@ -20,7 +20,12 @@ export MCPJAM_API_KEY=mcpjam_...
 
 That's it — both `EvalTest` and `EvalSuite` will auto-save results when this key is available.
 
-`MCPJAM_API_KEY` enables result uploads. If your evals connect to an authenticated HTTP MCP server and you also want MCPJam to securely persist replay credentials for debugging and reruns, attach the connected `MCPClientManager` to your `TestAgent` or pass `agent` / `mcpClientManager` to the manual reporting APIs. The SDK will derive the replay config automatically; you do not need to build a second secret object yourself.
+`MCPJAM_API_KEY` enables result uploads.
+
+**Attach the connected `MCPClientManager` to [`TestAgent`](/sdk/reference/test-agent)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
+
+1. **MCP App / widget replay in Evals traces** — After each MCP App tool call, the agent uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch HTML from the tool’s `ui.resourceUri` and fills [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result). Without the manager, traces still upload (messages + spans) but **widgets will not replay** in the dashboard. The tool’s JSON result alone is not enough for offline iframe replay.
+2. **Replay credentials (authenticated HTTP MCP)** — The SDK can persist server connection details for debugging and reruns. You do not need to build a second secret object yourself; replay config is derived automatically when the agent or manager is attached.
 
 ## Auto-Save from EvalTest
 
