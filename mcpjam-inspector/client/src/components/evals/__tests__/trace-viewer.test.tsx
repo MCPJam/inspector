@@ -320,11 +320,11 @@ describe("TraceViewer", () => {
     expect(screen.getAllByText("Prompt 2").length).toBeGreaterThan(0);
     expect(screen.getByTestId("trace-detail-pane")).toBeInTheDocument();
 
-    expect(screen.getByText("read_docs")).toBeInTheDocument();
+    expect(screen.getByText(/Tool · read_docs/)).toBeInTheDocument();
     expect(screen.getAllByText("Model response").length).toBeGreaterThanOrEqual(2);
     expect(screen.getAllByText("Prompt 2 · Step 1").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByText("read_docs"));
+    fireEvent.click(screen.getByText(/Tool · read_docs/));
     expect(screen.getByRole("tab", { name: "Input" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Output" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
@@ -337,7 +337,7 @@ describe("TraceViewer", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "TOOL" }));
 
-    expect(screen.getByText("read_docs")).toBeInTheDocument();
+    expect(screen.getByText(/Tool · read_docs/)).toBeInTheDocument();
     expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
     expect(screen.getAllByText("Prompt 1").length).toBeGreaterThan(0);
   });
@@ -346,7 +346,7 @@ describe("TraceViewer", () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
 
-    await user.click(screen.getAllByText("read_docs")[0]!);
+    await user.click(screen.getAllByText(/Tool · read_docs/)[0]!);
     await user.click(screen.getByRole("tab", { name: "Transcript" }));
     await user.click(
       screen.getByRole("button", { name: "Reveal in transcript" }),

@@ -273,38 +273,32 @@ function getSpanRowTranscriptRange(row: SpanRow): TranscriptRange | undefined {
 }
 
 function getCategoryClasses(category: EvalTraceSpanCategory): {
-  badge: string;
   bar: string;
   rail: string;
 } {
   switch (category) {
     case "step":
       return {
-        badge: "border-slate-500/30 bg-slate-500/10 text-slate-700 dark:text-slate-200",
         bar: "bg-slate-500/85",
         rail: "bg-slate-500/10",
       };
     case "llm":
       return {
-        badge: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
         bar: "bg-blue-500/85",
         rail: "bg-blue-500/10",
       };
     case "tool":
       return {
-        badge: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
         bar: "bg-amber-500/85",
         rail: "bg-amber-500/10",
       };
     case "error":
       return {
-        badge: "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300",
         bar: "bg-red-500/85",
         rail: "bg-red-500/10",
       };
     default:
       return {
-        badge: "border-border bg-muted text-muted-foreground",
         bar: "bg-muted-foreground/60",
         rail: "bg-muted/40",
       };
@@ -408,6 +402,43 @@ function toPlainTranscriptMessage(message: TranscriptMessage): Record<string, un
   };
 }
 
+/**
+ * Messages the model sees before its assistant reply within this span's transcript range
+ * (user, system, tool results, …). If there is no assistant in-range, returns the full slice.
+ */
+function getLlmInputMessages(
+  messages: TranscriptMessage[],
+  startIndex?: number,
+  endIndex?: number,
+): TranscriptMessage[] {
+  const range = getTranscriptRange(startIndex, endIndex);
+  if (!range) return [];
+  const slice = messages.slice(range.startIndex, range.endIndex + 1);
+  if (slice.length === 0) return [];
+
+  let lastAssistant = -1;
+  for (let i = slice.length - 1; i >= 0; i -= 1) {
+    if (slice[i]!.role === "assistant") {
+      lastAssistant = i;
+      break;
+    }
+  }
+
+  if (lastAssistant < 0) return slice;
+  const inputSlice = slice.slice(0, lastAssistant);
+  if (
+    inputSlice.length === 0 &&
+    lastAssistant === 0 &&
+    range.startIndex > 0
+  ) {
+    const prev = messages[range.startIndex - 1];
+    if (prev?.role === "user" || prev?.role === "system") {
+      return [prev];
+    }
+  }
+  return inputSlice;
+}
+
 /** Split transcript slice into model input messages vs last assistant output (same range as LLM span). */
 function extractLlmTranscriptIo(
   messages: TranscriptMessage[],
@@ -438,7 +469,7 @@ function extractLlmTranscriptIo(
     };
   }
 
-  const inputSlice = slice.slice(0, lastAssistant);
+  const inputSlice = getLlmInputMessages(messages, startIndex, endIndex);
   const outMsg = slice[lastAssistant]!;
   return {
     input:
@@ -447,6 +478,81 @@ function extractLlmTranscriptIo(
         : null,
     output: toPlainTranscriptMessage(outMsg),
   };
+}
+
+const ROW_SUBTITLE_MAX = 96;
+
+function truncateRowSubtitle(text: string, max = ROW_SUBTITLE_MAX): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  return `${t.slice(0, max - 1)}…`;
+}
+
+function flattenTextFromMessage(message: TranscriptMessage): string {
+  if (typeof message.content === "string") {
+    return message.content.trim();
+  }
+  const parts = getMessageParts(message);
+  return parts
+    .map((p) => {
+      if (p.type === "text" && typeof p.text === "string") {
+        return (p.text as string).trim();
+      }
+      return "";
+    })
+    .filter(Boolean)
+    .join(" ");
+}
+
+/** Best-effort one-line preview of the prompt / context for an LLM or step span. */
+function promptPreviewForLlmSpan(
+  messages: TranscriptMessage[],
+  span: EvalTraceSpan,
+): string | undefined {
+  if (!messages.length) return undefined;
+  const inputMsgs = getLlmInputMessages(
+    messages,
+    span.messageStartIndex,
+    span.messageEndIndex,
+  );
+  if (inputMsgs.length === 0) return undefined;
+
+  for (let i = inputMsgs.length - 1; i >= 0; i--) {
+    const m = inputMsgs[i]!;
+    if (m.role === "user") {
+      const t = flattenTextFromMessage(m);
+      if (t) return truncateRowSubtitle(t);
+    }
+  }
+  for (const m of inputMsgs) {
+    if (m.role === "system") {
+      const t = flattenTextFromMessage(m);
+      if (t) return truncateRowSubtitle(t);
+    }
+  }
+  for (let i = inputMsgs.length - 1; i >= 0; i--) {
+    const m = inputMsgs[i]!;
+    if (m.role === "tool") {
+      const s = formatMessageSummary(m);
+      if (s && s !== "No content") return truncateRowSubtitle(s);
+    }
+  }
+  return undefined;
+}
+
+function toolSubtitleFromTranscript(
+  messages: TranscriptMessage[],
+  span: EvalTraceSpan,
+): string | undefined {
+  const data = extractToolData(
+    messages,
+    span.toolCallId,
+    span.toolName ?? span.name,
+  );
+  if (data.input == null) return undefined;
+  const s = summarizeValue(data.input);
+  if (!s || s === "None") return undefined;
+  return truncateRowSubtitle(s);
 }
 
 function CategoryGlyph({
@@ -486,39 +592,67 @@ function formatInlineTokenHint(span: EvalTraceSpan): string | null {
   return null;
 }
 
-function deriveSpanLabel(row: SpanRow): {
+function deriveSpanLabel(
+  row: SpanRow,
+  transcriptMessages: TranscriptMessage[],
+): {
   title: string;
   subtitle?: string;
 } {
   const { span, promptIndex } = row;
+  const modelHint = span.modelId?.trim()
+    ? truncateRowSubtitle(span.modelId.trim(), 56)
+    : undefined;
+
   if (span.category === "step") {
     const stepNumber =
       typeof span.stepIndex === "number" ? span.stepIndex + 1 : span.name;
-    return {
-      title:
-        typeof stepNumber === "number"
-          ? `Step ${stepNumber}`
-          : String(span.name),
-      subtitle: `Prompt ${promptIndex + 1}${
-        span.modelId ? ` · ${span.modelId}` : ""
-      }`,
-    };
+    const title =
+      typeof stepNumber === "number"
+        ? `Step ${stepNumber}`
+        : String(span.name);
+    const preview = promptPreviewForLlmSpan(transcriptMessages, span);
+    if (preview) {
+      return { title, subtitle: preview };
+    }
+    if (modelHint) {
+      return { title, subtitle: modelHint };
+    }
+    return { title, subtitle: `Prompt ${promptIndex + 1}` };
   }
 
   if (span.category === "llm") {
+    const preview = promptPreviewForLlmSpan(transcriptMessages, span);
+    if (preview) {
+      return {
+        title: "Model response",
+        subtitle: modelHint ? `${preview} · ${modelHint}` : preview,
+      };
+    }
     return {
       title: "Model response",
-      subtitle: span.modelId ?? `Prompt ${promptIndex + 1}`,
+      subtitle: modelHint ?? `Prompt ${promptIndex + 1}`,
     };
   }
 
   if (span.category === "tool") {
+    const name = (span.toolName ?? span.name).trim() || "tool";
+    const title = `Tool · ${name}`;
+    const toolSub = toolSubtitleFromTranscript(transcriptMessages, span);
+    if (toolSub) {
+      return { title, subtitle: toolSub };
+    }
+    if (typeof span.stepIndex === "number") {
+      return {
+        title,
+        subtitle: modelHint
+          ? `${modelHint} · step ${span.stepIndex + 1}`
+          : `Step ${span.stepIndex + 1}`,
+      };
+    }
     return {
-      title: span.toolName ?? span.name,
-      subtitle:
-        typeof span.stepIndex === "number"
-          ? `Prompt ${promptIndex + 1} · Step ${span.stepIndex + 1}`
-          : `Prompt ${promptIndex + 1}`,
+      title,
+      subtitle: modelHint ?? `Prompt ${promptIndex + 1}`,
     };
   }
 
@@ -621,9 +755,11 @@ function TimelineDetailPane({
   const promptIndex = row.kind === "prompt" ? row.promptIndex : row.promptIndex;
   const { startMs, endMs, durationMs } = getRowTiming(row);
   const label =
-    row.kind === "prompt" ? row.label : deriveSpanLabel(row).title;
+    row.kind === "prompt" ? row.label : deriveSpanLabel(row, transcriptMessages).title;
   const subtitle =
-    row.kind === "prompt" ? formatOffset(row.startMs) : deriveSpanLabel(row).subtitle;
+    row.kind === "prompt"
+      ? formatOffset(row.startMs)
+      : deriveSpanLabel(row, transcriptMessages).subtitle;
   const status =
     row.kind === "prompt"
       ? row.counts.error > 0
@@ -685,21 +821,12 @@ function TimelineDetailPane({
           ) : (
             <CategoryGlyph category={row.span.category} />
           )}
-          <Badge variant="outline" className="text-[10px]">
-            {row.kind === "prompt" ? "Prompt" : row.span.category.toUpperCase()}
-          </Badge>
-          {status ? (
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px]",
-                status === "error"
-                  ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-                  : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-              )}
-            >
-              {status === "error" ? "Error" : "OK"}
-            </Badge>
+          {status === "error" ? (
+            <span
+              className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+              title="Error"
+              aria-label="Error"
+            />
           ) : null}
         </div>
         <div>
@@ -1240,18 +1367,18 @@ export function TraceTimeline({
               const categoryClasses =
                 row.kind === "prompt"
                   ? {
-                      badge:
-                        "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
                       bar: "bg-violet-500/70",
                       rail: "bg-violet-500/10",
                     }
                   : getCategoryClasses(row.span.category);
               const label =
-                row.kind === "prompt" ? row.label : deriveSpanLabel(row).title;
+                row.kind === "prompt"
+                  ? row.label
+                  : deriveSpanLabel(row, transcriptMessages).title;
               const subtitle =
                 row.kind === "prompt"
                   ? `${formatOffset(row.startMs)} · ${row.counts.step} step${row.counts.step === 1 ? "" : "s"}`
-                  : deriveSpanLabel(row).subtitle;
+                  : deriveSpanLabel(row, transcriptMessages).subtitle;
               const canToggle =
                 row.kind === "prompt" ? true : row.hasChildren;
               const gridRow = rowIndex + 2;
@@ -1329,14 +1456,6 @@ export function TraceTimeline({
                         <span className="truncate text-sm font-medium text-foreground">
                           {label}
                         </span>
-                        <Badge
-                          variant="outline"
-                          className={cn("text-[10px]", categoryClasses.badge)}
-                        >
-                          {row.kind === "prompt"
-                            ? "Prompt"
-                            : row.span.category.toUpperCase()}
-                        </Badge>
                         {tokenHint ? (
                           <span
                             className="text-[10px] tabular-nums text-muted-foreground"
@@ -1345,18 +1464,20 @@ export function TraceTimeline({
                             {tokenHint}
                           </span>
                         ) : null}
-                        {row.kind === "span" && row.span.status ? (
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[10px]",
-                              row.span.status === "error"
-                                ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-                                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-                            )}
-                          >
-                            {row.span.status === "error" ? "Error" : "OK"}
-                          </Badge>
+                        {row.kind === "prompt" && row.counts.error > 0 ? (
+                          <span
+                            className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                            title="Contains errors"
+                            aria-label="Contains errors"
+                          />
+                        ) : null}
+                        {row.kind === "span" &&
+                        row.span.status === "error" ? (
+                          <span
+                            className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                            title="Error"
+                            aria-label="Error"
+                          />
                         ) : null}
                       </div>
                       {subtitle ? (

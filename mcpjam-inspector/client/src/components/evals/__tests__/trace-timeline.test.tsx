@@ -66,4 +66,45 @@ describe("TraceTimeline detail pane", () => {
       "README.md",
     );
   });
+
+  it("shows a transcript-derived preview on step rows instead of only Prompt n", () => {
+    const spans = [
+      {
+        id: "p0-step0",
+        name: "Step 1",
+        category: "step" as const,
+        startMs: 0,
+        endMs: 120,
+        promptIndex: 0,
+        stepIndex: 0,
+        messageStartIndex: 1,
+        messageEndIndex: 3,
+      },
+    ];
+    const transcriptMessages = [
+      { role: "user", content: "Need docs" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-docs",
+            toolName: "read_docs",
+            input: { topic: "telemetry" },
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
+    );
+
+    const stepRow = screen.getByText("Step 1").closest("[data-testid='trace-row']");
+    expect(stepRow?.textContent).toContain("Need docs");
+    expect(stepRow?.textContent).not.toContain("Prompt 1");
+  });
 });
