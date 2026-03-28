@@ -334,7 +334,9 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByText("Plans & Billing")).toBeInTheDocument();
+    expect(
+      screen.getByText("MCPJam plans and pricing"),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Current plan").length).toBeGreaterThan(0);
     expect(screen.getByText("active")).toBeInTheDocument();
     expect(screen.getByText(formattedPeriodEnd)).toBeInTheDocument();
@@ -402,10 +404,12 @@ describe("OrganizationsTab billing", () => {
         "Only organization owners can manage billing changes. Admins can review plan details here.",
       ),
     ).toBeInTheDocument();
-    for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
+    for (const button of screen.getAllByRole("button", {
+      name: /^(Get started|Start free trial)$/,
+    })) {
       expect(button).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: "Contact us" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Request a demo" })).toBeEnabled();
   });
 
   it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
@@ -425,7 +429,9 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Upgrade" })).toHaveLength(1);
+    expect(
+      screen.getAllByRole("button", { name: "Start free trial" }),
+    ).toHaveLength(1);
   });
 
   it("updates pricing when the billing interval toggle changes", () => {
@@ -437,9 +443,9 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByText(/\$59/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
     expect(screen.getByText(/\$49/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
+    expect(screen.getByText(/\$59/)).toBeInTheDocument();
   });
 
   it("starts checkout for Starter from the billing subview", async () => {
@@ -457,13 +463,13 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    fireEvent.click(screen.getAllByRole("button", { name: "Upgrade" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
 
     await waitFor(() => {
       expect(startCheckout).toHaveBeenCalledWith(
         expect.stringContaining("#organizations/org-1/billing"),
         "starter",
-        "monthly",
+        "annual",
       );
     });
     expect(openSpy).toHaveBeenCalledWith(
@@ -528,10 +534,12 @@ describe("OrganizationsTab billing", () => {
         "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
       ),
     ).toBeInTheDocument();
-    for (const button of screen.getAllByRole("button", { name: "Upgrade" })) {
+    for (const button of screen.getAllByRole("button", {
+      name: /^(Get started|Start free trial)$/,
+    })) {
       expect(button).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: "Contact us" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Request a demo" })).toBeEnabled();
   });
 
   it("locks audit log behind enterprise after enforcement becomes active", () => {

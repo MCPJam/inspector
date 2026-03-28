@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Check, CreditCard, Loader2, Minus } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
+import { Check, CreditCard, Loader2, Plus, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,16 +18,14 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type {
-  BillingFeatureName,
   BillingInterval,
   OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
-  PlanCatalogEntry,
 } from "@/hooks/useOrganizationBilling";
 import {
-  formatBillingFeatureName,
   formatPlanName,
+  getDisplayPriceCentsForPlan,
 } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
 
@@ -38,104 +36,168 @@ const PLAN_ORDER: OrganizationPlan[] = [
   "enterprise",
 ];
 
-const FEATURE_ROWS: BillingFeatureName[] = [
-  "evals",
-  "cicd",
-  "sandboxes",
-  "auditLog",
+/** Static compare matrix — mirrors mcpjam_pricing_page.html "Compare Plans" section. */
+type CompareCell = "check" | "x" | string;
+
+type CompareRowDef = { feature: string; cells: CompareCell[] };
+
+type CompareCategoryDef = { title: string; rows: CompareRowDef[] };
+
+const COMPARE_PLAN_CATEGORIES: CompareCategoryDef[] = [
+  {
+    title: "Testing & CI/CD",
+    rows: [
+      {
+        feature: "Evals CI/CD runs",
+        cells: ["5 / mo", "500 included", "5,000 included", "Custom volume"],
+      },
+      {
+        feature: "CI/CD overage",
+        cells: ["Hard cap", "$0.02 / run", "$0.015 / run", "$0.01 / run"],
+      },
+      {
+        feature: "Cloud test runners",
+        cells: ["check", "check", "check", "check"],
+      },
+      {
+        feature: "Sandbox environments",
+        cells: ["x", "1 environment", "5 environments", "Dedicated infra"],
+      },
+      {
+        feature: "Sandbox hours",
+        cells: ["x", "20 hrs included", "Unlimited", "Unlimited"],
+      },
+      {
+        feature: "Isolated test environments",
+        cells: ["x", "x", "check", "check"],
+      },
+    ],
+  },
+  {
+    title: "LLM Playground",
+    rows: [
+      {
+        feature: "Open models",
+        cells: ["Rate limited", "check", "check", "check"],
+      },
+      {
+        feature: "Frontier models",
+        cells: ["x", "x", "check", "check"],
+      },
+      {
+        feature: "Token budget / seat",
+        cells: ["x", "$10 / mo", "$25 / seat / mo", "Custom commit"],
+      },
+      {
+        feature: "Token overage",
+        cells: ["x", "Cost + 30%", "Cost + 20%", "Negotiated"],
+      },
+    ],
+  },
+  {
+    title: "Platform & Infrastructure",
+    rows: [
+      {
+        feature: "Users",
+        cells: ["1", "Up to 3", "Unlimited", "Unlimited"],
+      },
+      {
+        feature: "Internal server registry",
+        cells: ["x", "10 entries", "50 entries", "Unlimited"],
+      },
+      {
+        feature: "Analytics",
+        cells: ["x", "Basic", "Full", "Full + reporting"],
+      },
+      {
+        feature: "Team management",
+        cells: ["x", "x", "check", "check"],
+      },
+      {
+        feature: "API access",
+        cells: ["x", "x", "x", "check"],
+      },
+    ],
+  },
+  {
+    title: "Security & Compliance",
+    rows: [
+      {
+        feature: "SSO",
+        cells: ["x", "x", "check", "check"],
+      },
+      {
+        feature: "SCIM provisioning",
+        cells: ["x", "x", "x", "check"],
+      },
+      {
+        feature: "RBAC",
+        cells: ["x", "x", "Basic", "Advanced"],
+      },
+      {
+        feature: "Audit logs",
+        cells: ["x", "x", "x", "check"],
+      },
+      {
+        feature: "Data residency",
+        cells: ["x", "x", "x", "check"],
+      },
+      {
+        feature: "Dedicated support",
+        cells: ["x", "x", "x", "check"],
+      },
+    ],
+  },
 ];
 
-function formatMembersLimit(
-  plan: OrganizationPlan,
-  value: number | null,
-): string {
-  if (value === null) {
-    return "Unlimited";
-  }
-  if (plan === "free" && value === 1) {
-    return "1";
-  }
-  if (plan === "starter" && value === 3) {
-    return "Up to 3";
-  }
-  return value.toLocaleString();
-}
-
-/** Mirrors mcpjam_pricing_page.html "Internal server registry" row. */
-function formatRegistryLimit(value: number | null): string {
-  if (value === null) {
-    return "Unlimited";
-  }
-  if (value === 0) {
-    return "Not included";
-  }
-  return `${value.toLocaleString()} entries`;
-}
-
-/** Mirrors mcpjam_pricing_page.html "Sandbox environments" row. */
-function formatSandboxEnvironments(
-  plan: OrganizationPlan,
-  value: number | null,
-): string {
-  if (plan === "enterprise") {
-    return "Dedicated";
-  }
-  if (value === null) {
-    return "Unlimited";
-  }
-  if (value === 0) {
-    return "Not included";
-  }
-  return value.toLocaleString();
-}
-
-const PLAN_LIMIT_ROWS: Array<{
-  label: string;
-  format: (entry: PlanCatalogEntry, plan: OrganizationPlan) => string;
-}> = [
-  {
-    label: "Members",
-    format: (entry, plan) => formatMembersLimit(plan, entry.limits.maxMembers),
-  },
-  {
-    label: "Eval runs / month",
-    format: (entry) => formatLimitValue(entry.limits.maxEvalRunsPerMonth),
-  },
-  {
-    label: "Sandbox environments",
-    format: (entry, plan) =>
-      formatSandboxEnvironments(plan, entry.limits.maxSandboxesPerWorkspace),
-  },
-  {
-    label: "Internal server registry",
-    format: (entry) => formatRegistryLimit(entry.limits.maxServersPerWorkspace),
-  },
-  {
-    label: "Audit logs",
-    format: (entry) => entry.auditLogRetentionLabel ?? "—",
-  },
-];
+const PLAN_TIER_BADGE: Record<
+  OrganizationPlan,
+  { label: string; variant?: "secondary" | "outline" | "default" }
+> = {
+  free: { label: "Community", variant: "secondary" },
+  starter: { label: "Solo", variant: "secondary" },
+  team: { label: "Popular", variant: "default" },
+  enterprise: { label: "Enterprise", variant: "outline" },
+};
 
 const PLAN_HIGHLIGHTS: Record<OrganizationPlan, string[]> = {
   free: [
-    "Open source and core MCP testing tools",
+    "For builders getting started with MCP testing.",
+    "Open Source on GitHub",
+    "MCP Apps / ChatGPT Apps Builder",
+    "LLM playground with open models",
+    "Visual OAuth Debugger",
+    "Testing MCP Primitives",
+    "MCP Unit Tests and Evals UI",
+    "JSON-RPC Logger & SDK",
     "Limited CI/CD eval runs",
-    "Community support",
   ],
   starter: [
+    "For devs and small teams shipping MCP servers professionally.",
     "CI/CD runs with overage",
     "1 sandbox environment",
+    "LLM playground with limited token budget",
     "Up to 3 users",
+    "Internal server registry",
+    "Basic analytics",
   ],
   team: [
+    "For teams testing, evaluating, and shipping production MCP servers.",
     "Higher CI/CD run limits",
-    "5 sandbox environments",
+    "Multiple sandbox environments",
+    "Frontier models in LLM playground",
+    "Full analytics & registry",
+    "Unlimited users & team management",
     "SSO included",
   ],
   enterprise: [
+    "For organizations shipping production MCP at scale with full compliance.",
     "Committed CI/CD volume pricing",
+    "Dedicated sandbox infrastructure",
+    "All LLM models, custom token commit",
     "SSO, SCIM, RBAC & audit logs",
     "Data residency & compliance",
+    "Dedicated support channel",
   ],
 };
 
@@ -157,12 +219,21 @@ function formatCurrency(
 }
 
 function formatPrice(
+  plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
 ): string {
   if (amountInCents == null) {
-    return interval === "annual" ? "Custom annual" : "Custom pricing";
+    return "Custom";
+  }
+
+  if (plan === "starter") {
+    if (interval === "monthly") {
+      return `${formatCurrency(amountInCents / 100, currency, 0)}/mo`;
+    }
+    const monthlyEquivalent = amountInCents / 12 / 100;
+    return `${formatCurrency(monthlyEquivalent, currency, 2)}/mo`;
   }
 
   if (interval === "monthly") {
@@ -174,12 +245,24 @@ function formatPrice(
 }
 
 function formatPriceDetail(
+  plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
 ): string {
   if (amountInCents == null) {
-    return "Sales-led";
+    return plan === "enterprise" ? "Annual commitment" : "Sales-led";
+  }
+
+  if (plan === "free") {
+    return "No credit card required";
+  }
+
+  if (plan === "team") {
+    if (interval === "monthly") {
+      return "5 seat minimum · Billed monthly";
+    }
+    return "5 seat minimum · Billed annually";
   }
 
   if (interval === "monthly") {
@@ -189,15 +272,8 @@ function formatPriceDetail(
   return `${formatCurrency(amountInCents / 100, currency, 0)} billed annually`;
 }
 
-function formatLimitValue(value: number | null): string {
-  if (value === null) {
-    return "Unlimited";
-  }
-
-  return value.toLocaleString();
-}
-
 const PER_SEAT_MO_SUFFIX = "/seat/mo";
+const PER_MO_SUFFIX = "/mo";
 
 function PlanPriceDisplay({ label }: { label: string }) {
   if (label.endsWith(PER_SEAT_MO_SUFFIX)) {
@@ -214,6 +290,20 @@ function PlanPriceDisplay({ label }: { label: string }) {
     );
   }
 
+  if (label.endsWith(PER_MO_SUFFIX)) {
+    const amount = label.slice(0, -PER_MO_SUFFIX.length);
+    return (
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
+        <span className="text-3xl font-semibold tabular-nums tracking-tight">
+          {amount}
+        </span>
+        <span className="text-sm font-semibold text-muted-foreground">
+          {PER_MO_SUFFIX}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <p className="min-w-0 text-3xl font-semibold tabular-nums tracking-tight">
       {label}
@@ -221,37 +311,20 @@ function PlanPriceDisplay({ label }: { label: string }) {
   );
 }
 
-function getAnnualSavingsLabel(planCatalog: PlanCatalog | undefined): string {
-  if (!planCatalog) {
-    return "Save annually";
+function CompareMatrixCell({ value }: { value: CompareCell }) {
+  if (value === "check") {
+    return (
+      <Check
+        className="mx-auto size-4 text-emerald-600"
+        aria-label="Included"
+      />
+    );
   }
-
-  const starterPrices = planCatalog.plans.starter.prices;
-  if (
-    starterPrices.monthly == null ||
-    starterPrices.annual == null ||
-    starterPrices.monthly === 0
-  ) {
-    return "Save annually";
+  if (value === "x") {
+    return <X className="mx-auto size-4 text-muted-foreground/55" aria-label="Not included" />;
   }
-
-  const annualizedMonthly = starterPrices.monthly * 12;
-  const savings =
-    ((annualizedMonthly - starterPrices.annual) / annualizedMonthly) * 100;
-  return `Save ${Math.round(savings)}%`;
-}
-
-function FeatureAvailability({ included }: { included: boolean }) {
-  return included ? (
-    <span className="inline-flex items-center gap-1 text-sm font-medium text-foreground">
-      <Check className="size-4 text-emerald-600" />
-      Included
-    </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-      <Minus className="size-4" />
-      Not included
-    </span>
+  return (
+    <span className="text-center text-sm text-muted-foreground">{value}</span>
   );
 }
 
@@ -282,13 +355,12 @@ export function OrganizationBillingSection({
   onStartCheckout,
 }: OrganizationBillingSectionProps) {
   const [billingInterval, setBillingInterval] =
-    useState<BillingInterval>("monthly");
+    useState<BillingInterval>("annual");
 
   useEffect(() => {
-    if (billingStatus?.billingInterval === "annual") {
-      setBillingInterval((current) =>
-        current === "monthly" ? "annual" : current,
-      );
+    const interval = billingStatus?.billingInterval;
+    if (interval === "monthly" || interval === "annual") {
+      setBillingInterval(interval);
     }
   }, [billingStatus?.billingInterval]);
 
@@ -300,7 +372,6 @@ export function OrganizationBillingSection({
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;
-  const annualSavingsLabel = getAnnualSavingsLabel(planCatalog);
   const formattedPeriodEnd =
     billingStatus?.stripeCurrentPeriodEnd != null
       ? new Intl.DateTimeFormat(undefined, {
@@ -320,11 +391,12 @@ export function OrganizationBillingSection({
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2 text-xl">
               <CreditCard className="size-4 text-muted-foreground" />
-              Plans & Billing
+              MCPJam plans and pricing
             </CardTitle>
             <CardDescription>
-              Compare plans, review your current subscription, and start billing
-              changes for {organizationName}.
+              Start free, scale as you grow. Pick the plan that fits your
+              team&apos;s MCP testing workflow. Subscription details for{" "}
+              {organizationName}.
             </CardDescription>
           </div>
           {billingStatus && currentPlan !== "free" ? (
@@ -446,12 +518,29 @@ export function OrganizationBillingSection({
       <Card className="border-border/60">
         <CardHeader className="gap-4 md:flex-row md:items-center md:justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-lg">Choose an interval</CardTitle>
+            <CardTitle className="text-lg">Choose billing interval</CardTitle>
             <CardDescription>
-              Annual billing lowers the effective monthly seat price.
+              Annual billing lowers the effective monthly price. About 20% off
+              versus monthly for Starter and Team.
             </CardDescription>
           </div>
-          <div className="inline-flex rounded-lg border border-border/70 bg-muted/40 p-1">
+          <div className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-muted/40 p-1">
+            <button
+              type="button"
+              aria-label="Annual billing, save 20%"
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                billingInterval === "annual"
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground",
+              )}
+              onClick={() => setBillingInterval("annual")}
+            >
+              <span>Annual</span>
+              <span className="ml-2 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-700">
+                Save 20%
+              </span>
+            </button>
             <button
               type="button"
               className={cn(
@@ -463,21 +552,6 @@ export function OrganizationBillingSection({
               onClick={() => setBillingInterval("monthly")}
             >
               Monthly
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                billingInterval === "annual"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground",
-              )}
-              onClick={() => setBillingInterval("annual")}
-            >
-              Annual
-              <span className="ml-2 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-700">
-                {annualSavingsLabel}
-              </span>
             </button>
           </div>
         </CardHeader>
@@ -496,21 +570,28 @@ export function OrganizationBillingSection({
                 const isDowngrade =
                   getPlanRank(plan) < getPlanRank(currentPlan);
                 const isEnterprisePlan = plan === "enterprise";
+                const displayPriceCents = getDisplayPriceCentsForPlan(
+                  plan,
+                  billingInterval,
+                  entry,
+                );
                 const priceLabel = isEnterprisePlan
                   ? "Custom"
                   : plan === "free"
                     ? "$0"
                     : formatPrice(
-                        entry.prices[billingInterval],
+                        plan,
+                        displayPriceCents,
                         planCatalog.currency,
                         billingInterval,
                       );
                 const priceDetail = isEnterprisePlan
-                  ? "Contact us"
+                  ? "Annual commitment"
                   : plan === "free"
                     ? "No credit card required"
                     : formatPriceDetail(
-                        entry.prices[billingInterval],
+                        plan,
+                        displayPriceCents,
                         planCatalog.currency,
                         billingInterval,
                       );
@@ -523,17 +604,18 @@ export function OrganizationBillingSection({
                 if (isCurrentPlan) {
                   ctaLabel = "Current plan";
                 } else if (isEnterprisePlan) {
-                  ctaLabel = "Contact us";
+                  ctaLabel = "Request a demo";
                   ctaDisabled = false;
                   ctaVariant = "secondary";
                   ctaAction = () => {
                     window.location.href =
-                      "mailto:founders@mcpjam.com?subject=MCPJam%20Enterprise";
+                      "mailto:founders@mcpjam.com?subject=MCPJam%20Enterprise%20demo";
                   };
                 } else if (plan === "free" || isDowngrade) {
                   ctaLabel = "Downgrade unavailable";
                 } else if (isHigherTier && entry.isSelfServe) {
-                  ctaLabel = "Upgrade";
+                  ctaLabel =
+                    plan === "team" ? "Start free trial" : "Get started";
                   ctaDisabled = false;
                   ctaVariant = "default";
                   ctaAction = () => {
@@ -548,12 +630,18 @@ export function OrganizationBillingSection({
                   ctaDisabled = true;
                 }
 
+                const tierBadge = PLAN_TIER_BADGE[plan];
+                const highlights = PLAN_HIGHLIGHTS[plan];
+                const [tagline, ...bullets] = highlights;
+
                 return (
                   <Card
                     key={plan}
                     className={cn(
                       "relative h-full min-h-0 min-w-0 gap-4 border-border/60 py-5",
                       isCurrentPlan && "border-primary/50 shadow-md",
+                      plan === "team" &&
+                        "border-orange-500/45 shadow-sm ring-1 ring-orange-500/20",
                     )}
                   >
                     <CardHeader className="min-w-0 shrink-0 space-y-3">
@@ -562,13 +650,16 @@ export function OrganizationBillingSection({
                           <CardTitle className="min-w-0 break-words">
                             {entry.displayName}
                           </CardTitle>
+                          {plan !== "enterprise" ? (
+                            <Badge variant={tierBadge.variant}>
+                              {tierBadge.label}
+                            </Badge>
+                          ) : null}
                           {isCurrentPlan ? (
                             <Badge variant="outline">Current</Badge>
                           ) : null}
                         </div>
-                        <CardDescription>
-                          {PLAN_HIGHLIGHTS[plan][0]}
-                        </CardDescription>
+                        <CardDescription>{tagline}</CardDescription>
                       </div>
                       <div className="min-w-0 space-y-1">
                         <PlanPriceDisplay label={priceLabel} />
@@ -579,18 +670,33 @@ export function OrganizationBillingSection({
                     </CardHeader>
                     <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
                       <ul className="space-y-2 text-sm text-muted-foreground">
-                        {PLAN_HIGHLIGHTS[plan].slice(1).map((highlight) => (
-                          <li
-                            key={highlight}
-                            className="flex items-start gap-2"
-                          >
-                            <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-                            <span>{highlight}</span>
-                          </li>
-                        ))}
+                        {bullets.map((highlight) => {
+                          const Icon = plan === "free" ? Check : Plus;
+                          return (
+                            <li
+                              key={highlight}
+                              className="flex items-start gap-2"
+                            >
+                              <Icon
+                                className={cn(
+                                  "mt-0.5 size-4 shrink-0",
+                                  plan === "free"
+                                    ? "text-emerald-600"
+                                    : "text-orange-600",
+                                )}
+                              />
+                              <span>{highlight}</span>
+                            </li>
+                          );
+                        })}
                       </ul>
                       <Button
-                        className="mt-auto w-full"
+                        className={cn(
+                          "mt-auto w-full",
+                          plan === "team" &&
+                            !isCurrentPlan &&
+                            "bg-orange-600 hover:bg-orange-600/90",
+                        )}
                         variant={ctaVariant}
                         disabled={ctaDisabled || isBillingActionPending}
                         onClick={ctaAction}
@@ -616,54 +722,53 @@ export function OrganizationBillingSection({
       {!isLoadingPlanCatalog && planCatalog ? (
         <Card className="border-border/60">
           <CardHeader>
-            <CardTitle className="text-lg">Included by plan</CardTitle>
+            <p className="text-xs font-semibold uppercase tracking-wider text-orange-600">
+              Compare plans
+            </p>
+            <CardTitle className="text-lg">
+              Find the right plan for your team
+            </CardTitle>
             <CardDescription>
-              The first in-app billing page focuses on what is currently gated
-              in product and the limits that shape usage.
+              Same plan matrix as the MCPJam marketing pricing page — limits and
+              commercial packaging at a glance.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent className="overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Item</TableHead>
+                  <TableHead className="min-w-[10rem]">Feature</TableHead>
                   {PLAN_ORDER.map((plan) => (
-                    <TableHead key={plan} className="text-center">
+                    <TableHead key={plan} className="min-w-[6.5rem] text-center">
                       {planCatalog.plans[plan].displayName}
                     </TableHead>
                   ))}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {FEATURE_ROWS.map((feature) => (
-                  <TableRow key={feature}>
-                    <TableCell className="font-medium">
-                      {formatBillingFeatureName(feature)}
-                    </TableCell>
-                    {PLAN_ORDER.map((plan) => (
+                {COMPARE_PLAN_CATEGORIES.map((category) => (
+                  <Fragment key={category.title}>
+                    <TableRow className="bg-muted/40 hover:bg-muted/40">
                       <TableCell
-                        key={`${feature}-${plan}`}
-                        className="text-center"
+                        colSpan={5}
+                        className="py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
                       >
-                        <FeatureAvailability
-                          included={planCatalog.plans[plan].features[feature]}
-                        />
+                        {category.title}
                       </TableCell>
+                    </TableRow>
+                    {category.rows.map((row) => (
+                      <TableRow key={`${category.title}-${row.feature}`}>
+                        <TableCell className="font-medium">
+                          {row.feature}
+                        </TableCell>
+                        {row.cells.map((cell, i) => (
+                          <TableCell key={i} className="text-center">
+                            <CompareMatrixCell value={cell} />
+                          </TableCell>
+                        ))}
+                      </TableRow>
                     ))}
-                  </TableRow>
-                ))}
-                {PLAN_LIMIT_ROWS.map((row) => (
-                  <TableRow key={row.label}>
-                    <TableCell className="font-medium">{row.label}</TableCell>
-                    {PLAN_ORDER.map((plan) => (
-                      <TableCell
-                        key={`${row.label}-${plan}`}
-                        className="text-center"
-                      >
-                        {row.format(planCatalog.plans[plan], plan)}
-                      </TableCell>
-                    ))}
-                  </TableRow>
+                  </Fragment>
                 ))}
               </TableBody>
             </Table>

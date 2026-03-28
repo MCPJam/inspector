@@ -714,8 +714,9 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
                     Billing
                   </CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Review your current plan and open the billing subview for
-                    plan comparison and checkout flows.
+                    Start free, scale as you grow. Review your plan here or open
+                    the billing view for the full pricing matrix, checkout, and
+                    subscription management.
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-3 pt-0">

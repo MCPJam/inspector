@@ -1,10 +1,43 @@
 import { ConvexError } from "convex/values";
 import type {
   BillingFeatureName,
+  BillingInterval,
   OrganizationPlan,
+  PlanCatalogEntry,
   PremiumnessGateKey,
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
+
+/**
+ * Canonical USD cents for Starter/Team shown in-app (matches marketing pricing).
+ * `monthly` / `annual` are Stripe-style totals: monthly = per-month charge in cents;
+ * annual = full year billed in cents (display divides by 12 for effective monthly).
+ */
+export const MARKETING_PLAN_PRICE_CENTS_USD: Record<
+  "starter" | "team",
+  Record<BillingInterval, number>
+> = {
+  starter: {
+    monthly: 5900,
+    annual: 58800,
+  },
+  team: {
+    monthly: 7000,
+    annual: 70800,
+  },
+};
+
+/** Use marketing prices for self-serve tiers so UI matches the website even if catalog drifts. */
+export function getDisplayPriceCentsForPlan(
+  plan: OrganizationPlan,
+  interval: BillingInterval,
+  catalogEntry: PlanCatalogEntry,
+): number | null {
+  if (plan === "starter" || plan === "team") {
+    return MARKETING_PLAN_PRICE_CENTS_USD[plan][interval];
+  }
+  return catalogEntry.prices[interval];
+}
 
 export const BILLING_FEATURE_BY_TAB = {
   evals: "evals",

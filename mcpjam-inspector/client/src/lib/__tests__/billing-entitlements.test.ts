@@ -2,10 +2,25 @@ import { ConvexError } from "convex/values";
 import { describe, expect, it } from "vitest";
 import {
   getBillingErrorMessage,
+  getDisplayPriceCentsForPlan,
   isGateAccessDenied,
   isPremiumnessGateDeniedForShell,
+  MARKETING_PLAN_PRICE_CENTS_USD,
 } from "../billing-entitlements";
-import type { PremiumnessState } from "@/hooks/useOrganizationBilling";
+import type {
+  PlanCatalogEntry,
+  PremiumnessState,
+} from "@/hooks/useOrganizationBilling";
+
+const minimalCatalogEntry = (prices: PlanCatalogEntry["prices"]): PlanCatalogEntry =>
+  ({
+    plan: "starter",
+    displayName: "Starter",
+    isSelfServe: true,
+    prices,
+    features: {} as PlanCatalogEntry["features"],
+    limits: {} as PlanCatalogEntry["limits"],
+  }) as PlanCatalogEntry;
 
 function premiumness(
   overrides: Partial<PremiumnessState> & {
@@ -128,6 +143,26 @@ describe("isGateAccessDenied", () => {
         "evals",
       ),
     ).toBe(true);
+  });
+});
+
+describe("getDisplayPriceCentsForPlan", () => {
+  it("returns marketing cents for Starter and Team regardless of catalog drift", () => {
+    const drifted = minimalCatalogEntry({
+      monthly: 5900,
+      annual: 29000,
+    });
+    expect(getDisplayPriceCentsForPlan("starter", "annual", drifted)).toBe(
+      MARKETING_PLAN_PRICE_CENTS_USD.starter.annual,
+    );
+    expect(getDisplayPriceCentsForPlan("team", "monthly", drifted)).toBe(
+      MARKETING_PLAN_PRICE_CENTS_USD.team.monthly,
+    );
+  });
+
+  it("falls back to catalog for other plans", () => {
+    const entry = minimalCatalogEntry({ monthly: null, annual: null });
+    expect(getDisplayPriceCentsForPlan("free", "monthly", entry)).toBeNull();
   });
 });
 
