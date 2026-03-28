@@ -62,7 +62,10 @@ export interface TraceEnvelope {
 export interface AdaptedTraceResult {
   messages: UIMessage[];
   toolRenderOverrides: Record<string, ToolRenderOverride>;
-  uiMessageSourceRanges: Record<string, { startIndex: number; endIndex: number }>;
+  uiMessageSourceRanges: Record<
+    string,
+    { startIndex: number; endIndex: number }
+  >;
   sourceMessageIndexToUiMessageIds: Record<number, string[]>;
 }
 

@@ -209,10 +209,7 @@ describe("IterationDetails full layout (trace-first)", () => {
     await screen.findByTestId("mock-trace-viewer");
 
     const toolCallsRoot = screen.getByTestId("iteration-tool-calls-section");
-    expect(toolCallsRoot.parentElement).toHaveAttribute(
-      "data-state",
-      "closed",
-    );
+    expect(toolCallsRoot.parentElement).toHaveAttribute("data-state", "closed");
     expect(
       screen.getByText(/Expected: read_me · Actual: read_me/),
     ).toBeInTheDocument();

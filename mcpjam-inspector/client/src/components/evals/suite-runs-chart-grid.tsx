@@ -1,7 +1,4 @@
-import {
-  ChartContainer,
-  ChartTooltip,
-} from "@/components/ui/chart";
+import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 import { AccuracyChart } from "./accuracy-chart";
 
@@ -72,11 +69,7 @@ export function SuiteRunsChartGrid({
               config={modelChartConfig}
               className="aspect-auto h-32 w-full"
             >
-              <BarChart
-                data={modelStats}
-                width={undefined}
-                height={undefined}
-              >
+              <BarChart data={modelStats} width={undefined} height={undefined}>
                 <CartesianGrid
                   strokeDasharray="3 3"
                   vertical={false}

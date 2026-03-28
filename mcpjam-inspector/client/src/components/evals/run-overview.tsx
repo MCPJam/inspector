@@ -290,9 +290,7 @@ export function RunOverview({
 
   const fullGridTemplateColumns = useMemo(
     () =>
-      canDeleteRuns
-        ? `28px ${rowGridTemplateColumns}`
-        : rowGridTemplateColumns,
+      canDeleteRuns ? `28px ${rowGridTemplateColumns}` : rowGridTemplateColumns,
     [canDeleteRuns, rowGridTemplateColumns],
   );
 
@@ -398,10 +396,10 @@ export function RunOverview({
               }
               className="text-xs border rounded px-2 py-1 bg-background"
             >
-            <option value="runs">Runs</option>
-            <option value="test-cases">Cases</option>
-          </select>
-        </div>
+              <option value="runs">Runs</option>
+              <option value="test-cases">Cases</option>
+            </select>
+          </div>
         )}
 
         <div
@@ -540,9 +538,7 @@ export function RunOverview({
                       </span>
                       {hasTokenData && responsiveLayout.showTokens && (
                         <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
-                          {totalTokens > 0
-                            ? totalTokens.toLocaleString()
-                            : "—"}
+                          {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
                         </span>
                       )}
                       {responsiveLayout.showRunBy && (

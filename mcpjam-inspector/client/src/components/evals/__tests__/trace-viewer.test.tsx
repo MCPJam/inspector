@@ -265,32 +265,30 @@ describe("TraceViewer", () => {
     vi.clearAllMocks();
   });
 
-  it("defaults to Timeline tab", () => {
+  it("defaults to Timeline tab", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
-    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
 
-  it("timeline shows no data when no spans and zero estimated duration", () => {
-    render(
-      <TraceViewer trace={simpleTextTrace} estimatedDurationMs={0} />,
-    );
+  it("timeline shows no data when no spans and zero estimated duration", async () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={0} />);
     expect(
-      screen.getByText("No timing data recorded for this iteration."),
+      await screen.findByText("No timing data recorded for this iteration."),
     ).toBeInTheDocument();
   });
 
-  it("switching Timeline, Chat, and Raw works", () => {
+  it("switching Timeline, Chat, and Raw works", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
-    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     openChatTab();
     expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("json-editor")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Timeline"));
-    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
 
-  it("recorded spans show Recorded timing summary", () => {
+  it("recorded spans show Recorded timing summary", async () => {
     render(
       <TraceViewer
         trace={{
@@ -309,19 +307,21 @@ describe("TraceViewer", () => {
         estimatedDurationMs={99_999}
       />,
     );
-    expect(screen.getByText(/Recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/Recorded/)).toBeInTheDocument();
     expect(screen.queryByText("Estimated total only")).not.toBeInTheDocument();
   });
 
-  it("renders prompt-grouped waterfall rows with detail pane", () => {
+  it("renders prompt-grouped waterfall rows with detail pane", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
 
-    expect(screen.getAllByText("Prompt 1").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Prompt 1")).length).toBeGreaterThan(0);
     expect(screen.getAllByText("Prompt 2").length).toBeGreaterThan(0);
     expect(screen.getByTestId("trace-detail-pane")).toBeInTheDocument();
 
     expect(screen.getByText(/Tool · read_docs/)).toBeInTheDocument();
-    expect(screen.getAllByText("Model response").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Model response").length).toBeGreaterThanOrEqual(
+      2,
+    );
     expect(screen.getAllByText("Prompt 2 · Step 1").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByText(/Tool · read_docs/));
@@ -330,10 +330,10 @@ describe("TraceViewer", () => {
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
   });
 
-  it("filters the waterfall to tool rows while preserving step context", () => {
+  it("filters the waterfall to tool rows while preserving step context", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
 
-    expect(screen.getByText("Generation error")).toBeInTheDocument();
+    expect(await screen.findByText("Generation error")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "TOOL" }));
 
@@ -346,6 +346,7 @@ describe("TraceViewer", () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
 
+    await screen.findAllByText(/Tool · read_docs/);
     await user.click(screen.getAllByText(/Tool · read_docs/)[0]!);
     await user.click(screen.getByRole("tab", { name: "Transcript" }));
     await user.click(
@@ -357,11 +358,11 @@ describe("TraceViewer", () => {
     expect(focusedMessage?.className).toContain("bg-primary/5");
   });
 
-  it("legacy trace without spans shows Estimated total only", () => {
+  it("legacy trace without spans shows Estimated total only", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={250} />);
-    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     expect(
-      screen.getByText("Per-step timing was not recorded for this run."),
+      await screen.findByText("Per-step timing was not recorded for this run."),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Conversation detail is in the Chat tab/i),
@@ -369,14 +370,14 @@ describe("TraceViewer", () => {
     expect(screen.getByText(/confirm whether a/i)).toBeInTheDocument();
   });
 
-  it("legacy estimated timeline omits transcript hint when there are no messages", () => {
+  it("legacy estimated timeline omits transcript hint when there are no messages", async () => {
     render(
       <TraceViewer
         trace={{ traceVersion: 1 as const, messages: [] }}
         estimatedDurationMs={40}
       />,
     );
-    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     expect(
       screen.queryByText(/Conversation detail is in the Chat tab/i),
     ).not.toBeInTheDocument();
@@ -390,7 +391,7 @@ describe("TraceViewer", () => {
     expect(raw).not.toContain('"spans"');
   });
 
-  it("timeline with spans but no messages still renders; Chat is empty", () => {
+  it("timeline with spans but no messages still renders; Chat is empty", async () => {
     render(
       <TraceViewer
         trace={{
@@ -408,7 +409,7 @@ describe("TraceViewer", () => {
         }}
       />,
     );
-    expect(screen.getByText(/Recorded/)).toBeInTheDocument();
+    expect(await screen.findByText(/Recorded/)).toBeInTheDocument();
     openChatTab();
     expect(screen.getByText("No messages in trace")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));

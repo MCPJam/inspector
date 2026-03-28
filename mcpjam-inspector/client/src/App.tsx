@@ -436,8 +436,7 @@ export default function App() {
       const firstVisitServer = newlyConnectedServers.find((serverName) => {
         try {
           return (
-            localStorage.getItem(`testing-auto-opened:${serverName}`) !==
-            "true"
+            localStorage.getItem(`testing-auto-opened:${serverName}`) !== "true"
           );
         } catch {
           return true;
@@ -446,7 +445,10 @@ export default function App() {
 
       if (firstVisitServer) {
         try {
-          localStorage.setItem(`testing-auto-opened:${firstVisitServer}`, "true");
+          localStorage.setItem(
+            `testing-auto-opened:${firstVisitServer}`,
+            "true",
+          );
         } catch {
           // Ignore localStorage failures and still navigate.
         }

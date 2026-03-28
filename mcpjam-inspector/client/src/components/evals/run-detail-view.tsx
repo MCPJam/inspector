@@ -4,11 +4,7 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
-import {
-  PieChart,
-  Pie,
-  Label,
-} from "recharts";
+import { PieChart, Pie, Label } from "recharts";
 import { cn } from "@/lib/utils";
 import { IterationDetails } from "./iteration-details";
 import {
@@ -81,9 +77,7 @@ function IterationListItem({
     <div
       className={cn(
         "relative border-l-2",
-        evalStatusLeftBorderClasses(
-          isPending ? "running" : computedResult,
-        ),
+        evalStatusLeftBorderClasses(isPending ? "running" : computedResult),
         isPending && "opacity-60",
       )}
     >

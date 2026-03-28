@@ -50,7 +50,7 @@ describe("generateAgentBrief", () => {
     expect(out.indexOf("---")).toBeGreaterThan(
       out.indexOf("## Explore-generated test cases"),
     );
-    expect(out).toContain("name: explore-to-sdk-evals");
+    expect(out).toContain("name: playground-to-sdk-evals");
     expect(out).not.toContain("name: create-mcp-eval");
   });
 
@@ -58,12 +58,12 @@ describe("generateAgentBrief", () => {
     const without = generateAgentBrief(minimalPayload);
     expect(without).not.toContain("## Explore-generated test cases");
     expect(without).toContain("name: create-mcp-eval");
-    expect(without).not.toContain("name: explore-to-sdk-evals");
+    expect(without).not.toContain("name: playground-to-sdk-evals");
 
     const empty = generateAgentBrief(minimalPayload, { exploreTestCases: [] });
     expect(empty).not.toContain("## Explore-generated test cases");
     expect(empty).toContain("name: create-mcp-eval");
-    expect(empty).not.toContain("name: explore-to-sdk-evals");
+    expect(empty).not.toContain("name: playground-to-sdk-evals");
   });
 
   it("mapEvalCasesToAgentBriefExploreCases maps Eval-shaped rows for the explore skill tail", () => {
@@ -94,7 +94,9 @@ describe("generateAgentBrief", () => {
       isNegativeTest: false,
       scenario: "User wants a diagram",
       expectedOutput: "A rendered chart",
-      expectedToolCalls: [{ toolName: "draw", arguments: { format: "mermaid" } }],
+      expectedToolCalls: [
+        { toolName: "draw", arguments: { format: "mermaid" } },
+      ],
     });
     expect(mapped[1].expectedToolCalls).toBeUndefined();
 
@@ -103,6 +105,6 @@ describe("generateAgentBrief", () => {
       exploreTestCases: mapped,
     });
     expect(out).toContain("## Explore-generated test cases");
-    expect(out).toContain("name: explore-to-sdk-evals");
+    expect(out).toContain("name: playground-to-sdk-evals");
   });
 });

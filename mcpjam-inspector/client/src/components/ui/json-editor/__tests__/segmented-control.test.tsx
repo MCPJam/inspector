@@ -10,11 +10,7 @@ describe("SegmentedControl", () => {
 
   it("uses compact padding by default (sm)", () => {
     const { container } = render(
-      <SegmentedControl
-        value="a"
-        onChange={vi.fn()}
-        options={[...options]}
-      />,
+      <SegmentedControl value="a" onChange={vi.fn()} options={[...options]} />,
     );
     const root = container.firstChild as HTMLElement;
     expect(root.className).toContain("p-0.5");

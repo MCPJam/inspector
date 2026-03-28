@@ -30,7 +30,12 @@ export type AiSdkEvalTraceContext = {
   recordedSpans: EvalTraceSpan[];
   openSteps: Map<
     number,
-    { spanId: string; startAt: number; firstToolStartAt?: number; modelId?: string }
+    {
+      spanId: string;
+      startAt: number;
+      firstToolStartAt?: number;
+      modelId?: string;
+    }
   >;
   openTools: Map<
     string,
@@ -216,7 +221,11 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
             toolName: name,
             serverId,
             status: success ? "ok" : "error",
-            ...createOffsetInterval(ctx.runStartedAt, toolStartedAt, toolFinishedAt),
+            ...createOffsetInterval(
+              ctx.runStartedAt,
+              toolStartedAt,
+              toolFinishedAt,
+            ),
           });
           if (!success) {
             ctx.recordedSpans.push({
@@ -326,9 +335,7 @@ export function patchAiSdkRecordedSpansMessageRangesFromSteps(
   spans: EvalTraceSpan[],
   baseMessagesLength: number,
   steps:
-    | ReadonlyArray<
-        { response?: { messages?: ModelMessage[] } } | undefined
-      >
+    | ReadonlyArray<{ response?: { messages?: ModelMessage[] } } | undefined>
     | undefined,
 ): void {
   if (!steps || steps.length === 0) {
@@ -529,11 +536,7 @@ export function pushBackendStepSuccessSpans(
       promptIndex: 0,
       stepIndex,
       status: meta?.status ?? "ok",
-      ...createOffsetInterval(
-        runStartedAt,
-        tools.startAbs,
-        tools.endAbs,
-      ),
+      ...createOffsetInterval(runStartedAt, tools.startAbs, tools.endAbs),
     });
   }
 }
@@ -676,7 +679,8 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
       ) => {
         const startedAt = Date.now();
         const toolCallId =
-          typeof options?.toolCallId === "string" && options.toolCallId.length > 0
+          typeof options?.toolCallId === "string" &&
+          options.toolCallId.length > 0
             ? options.toolCallId
             : `backend-tool-${params.stepIndex}-${startedAt}`;
         let success = true;
@@ -702,11 +706,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             toolName: name,
             serverId: raw._serverId,
             status: success ? "ok" : "error",
-            ...createOffsetInterval(
-              params.runStartedAt,
-              startedAt,
-              finishedAt,
-            ),
+            ...createOffsetInterval(params.runStartedAt, startedAt, finishedAt),
           });
           if (!success) {
             params.spans.push({

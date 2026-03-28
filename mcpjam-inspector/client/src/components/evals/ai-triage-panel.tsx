@@ -1,4 +1,10 @@
-import { Loader2, Sparkles, AlertCircle, RotateCw, ChevronDown } from "lucide-react";
+import {
+  Loader2,
+  Sparkles,
+  AlertCircle,
+  RotateCw,
+  ChevronDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -74,71 +80,71 @@ export function AiTriagePanel({
         </div>
 
         <CollapsibleContent>
-        <div className="px-4 py-3 space-y-4">
-          {/* Summary */}
-          <p className="text-sm leading-relaxed">{triageSummary.summary}</p>
+          <div className="px-4 py-3 space-y-4">
+            {/* Summary */}
+            <p className="text-sm leading-relaxed">{triageSummary.summary}</p>
 
-          {/* Failure categories */}
-          {triageSummary.failureCategories.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                Failure Categories
-              </h4>
+            {/* Failure categories */}
+            {triageSummary.failureCategories.length > 0 && (
               <div className="space-y-2">
-                {triageSummary.failureCategories.map((cat) => (
-                  <div
-                    key={cat.category}
-                    className="rounded-md border bg-muted/20 px-3 py-2"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium">
-                        {cat.category}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground font-mono">
-                        {cat.count} failure{cat.count !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-1.5">
-                      {cat.recommendation}
-                    </p>
-                    {cat.testCaseTitles.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {cat.testCaseTitles.map((title) => (
-                          <span
-                            key={title}
-                            className="text-[10px] bg-muted px-1.5 py-0.5 rounded"
-                          >
-                            {title}
-                          </span>
-                        ))}
+                <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                  Failure Categories
+                </h4>
+                <div className="space-y-2">
+                  {triageSummary.failureCategories.map((cat) => (
+                    <div
+                      key={cat.category}
+                      className="rounded-md border bg-muted/20 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">
+                          {cat.category}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {cat.count} failure{cat.count !== 1 ? "s" : ""}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <p className="text-xs text-muted-foreground mb-1.5">
+                        {cat.recommendation}
+                      </p>
+                      {cat.testCaseTitles.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {cat.testCaseTitles.map((title) => (
+                            <span
+                              key={title}
+                              className="text-[10px] bg-muted px-1.5 py-0.5 rounded"
+                            >
+                              {title}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Top recommendations */}
-          {triageSummary.topRecommendations.length > 0 && (
-            <div className="rounded-md border border-orange-500/30 bg-orange-500/5 px-3 py-3 space-y-2">
-              <h4 className="text-xs font-semibold text-orange-500 uppercase tracking-wide flex items-center gap-1.5">
-                <Sparkles className="h-3 w-3" />
-                Top Recommendations
-              </h4>
-              <ol className="space-y-1.5">
-                {triageSummary.topRecommendations.map((rec, i) => (
-                  <li key={i} className="text-xs leading-relaxed flex gap-2">
-                    <span className="font-mono text-orange-500/70 shrink-0">
-                      {i + 1}.
-                    </span>
-                    <span>{rec}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </div>
+            {/* Top recommendations */}
+            {triageSummary.topRecommendations.length > 0 && (
+              <div className="rounded-md border border-orange-500/30 bg-orange-500/5 px-3 py-3 space-y-2">
+                <h4 className="text-xs font-semibold text-orange-500 uppercase tracking-wide flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3" />
+                  Top Recommendations
+                </h4>
+                <ol className="space-y-1.5">
+                  {triageSummary.topRecommendations.map((rec, i) => (
+                    <li key={i} className="text-xs leading-relaxed flex gap-2">
+                      <span className="font-mono text-orange-500/70 shrink-0">
+                        {i + 1}.
+                      </span>
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
         </CollapsibleContent>
       </Collapsible>
     );

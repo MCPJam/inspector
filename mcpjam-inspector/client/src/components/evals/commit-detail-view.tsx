@@ -345,8 +345,7 @@ export function CommitDetailView({
                     className={cn(
                       "w-full border-l-2 py-2.5 pl-[11px] pr-3 text-left transition-colors hover:bg-muted/50",
                       runAccent,
-                      isSelected &&
-                        "border-r-2 border-r-primary bg-primary/10",
+                      isSelected && "border-r-2 border-r-primary bg-primary/10",
                     )}
                   >
                     <span className="block truncate text-xs font-medium">

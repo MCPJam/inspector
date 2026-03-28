@@ -1,5 +1,13 @@
-import { startTransition, useEffect, useMemo, useRef, useState } from "react";
-import { AlignLeft, Code2, MessageSquare } from "lucide-react";
+import {
+  lazy,
+  startTransition,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { AlignLeft, Code2, Loader2, MessageSquare } from "lucide-react";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
@@ -10,7 +18,10 @@ import {
   type TraceEnvelope,
   type TraceMessage,
 } from "./trace-viewer-adapter";
-import { TraceTimeline } from "./trace-timeline";
+
+const TraceTimelineLazy = lazy(() =>
+  import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
+);
 
 const NOOP = (..._args: unknown[]) => {};
 
@@ -123,8 +134,14 @@ export function TraceViewer({
 
   function handleRevealInTranscript(range: TranscriptRange) {
     const highlightedIds = new Set<string>();
-    for (let sourceIndex = range.startIndex; sourceIndex <= range.endIndex; sourceIndex += 1) {
-      for (const messageId of adaptedTrace.sourceMessageIndexToUiMessageIds[sourceIndex] ?? []) {
+    for (
+      let sourceIndex = range.startIndex;
+      sourceIndex <= range.endIndex;
+      sourceIndex += 1
+    ) {
+      for (const messageId of adaptedTrace.sourceMessageIndexToUiMessageIds[
+        sourceIndex
+      ] ?? []) {
         highlightedIds.add(messageId);
       }
     }
@@ -206,17 +223,25 @@ export function TraceViewer({
       )}
 
       {viewMode === "timeline" && (
-        <TraceTimeline
-          recordedSpans={recordedSpans}
-          estimatedDurationMs={
-            recordedSpans?.length ? undefined : estimatedDurationMs
+        <Suspense
+          fallback={
+            <div className="flex justify-center py-8">
+              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+            </div>
           }
-          transcriptMessageCount={
-            recordedSpans?.length ? 0 : traceMessages.length
-          }
-          transcriptMessages={traceMessages}
-          onRevealInTranscript={handleRevealInTranscript}
-        />
+        >
+          <TraceTimelineLazy
+            recordedSpans={recordedSpans}
+            estimatedDurationMs={
+              recordedSpans?.length ? undefined : estimatedDurationMs
+            }
+            transcriptMessageCount={
+              recordedSpans?.length ? 0 : traceMessages.length
+            }
+            transcriptMessages={traceMessages}
+            onRevealInTranscript={handleRevealInTranscript}
+          />
+        </Suspense>
       )}
 
       {viewMode === "chat" &&

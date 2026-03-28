@@ -80,15 +80,15 @@ describe("RunDetailView", () => {
       name: /Duration and token charts/i,
     });
     const collapsibleRoot = section.closest('[data-slot="collapsible"]');
-    expect(collapsibleRoot?.querySelectorAll('[data-slot="chart"]').length).toBe(
-      0,
-    );
+    expect(
+      collapsibleRoot?.querySelectorAll('[data-slot="chart"]').length,
+    ).toBe(0);
 
     fireEvent.click(section);
 
-    expect(collapsibleRoot?.querySelectorAll('[data-slot="chart"]').length).toBe(
-      2,
-    );
+    expect(
+      collapsibleRoot?.querySelectorAll('[data-slot="chart"]').length,
+    ).toBe(2);
     expect(
       screen.getByRole("heading", { name: "Avg duration by test" }),
     ).toBeVisible();

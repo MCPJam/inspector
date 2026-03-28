@@ -127,7 +127,9 @@ function partToolName(part: Record<string, unknown>): string | undefined {
   return typeof toolName === "string" && toolName.trim() ? toolName : undefined;
 }
 
-function getMessageParts(message: TranscriptMessage): Record<string, unknown>[] {
+function getMessageParts(
+  message: TranscriptMessage,
+): Record<string, unknown>[] {
   if (!Array.isArray(message.content)) {
     return typeof message.content === "string"
       ? [{ type: "text", text: message.content }]
@@ -202,7 +204,9 @@ function toolResultDisplayValue(part: Record<string, unknown>): unknown {
 }
 
 /** Mirrors trace-viewer-adapter `getToolErrorText` for raw transcript parts. */
-function toolResultPartErrorText(part: Record<string, unknown>): string | undefined {
+function toolResultPartErrorText(
+  part: Record<string, unknown>,
+): string | undefined {
   const displayValue = toolResultDisplayValue(part);
 
   if (typeof part.error === "string" && part.error.trim()) {
@@ -297,11 +301,8 @@ function spanIndicatesTranscriptFailure(
   if (span.status === "error") return true;
   if (span.category === "tool") {
     return Boolean(
-      extractToolData(
-        messages,
-        span.toolCallId,
-        span.toolName ?? span.name,
-      ).errorText,
+      extractToolData(messages, span.toolCallId, span.toolName ?? span.name)
+        .errorText,
     );
   }
   return false;
@@ -323,7 +324,9 @@ function getTranscriptRange(
   };
 }
 
-function getPromptRowTranscriptRange(row: PromptRow): TranscriptRange | undefined {
+function getPromptRowTranscriptRange(
+  row: PromptRow,
+): TranscriptRange | undefined {
   return getTranscriptRange(row.messageStartIndex, row.messageEndIndex);
 }
 
@@ -370,7 +373,8 @@ function getCategoryClasses(category: EvalTraceSpanCategory): {
 function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
   const spansByPrompt = new Map<number, EvalTraceSpan[]>();
   for (const span of spans) {
-    const promptIndex = typeof span.promptIndex === "number" ? span.promptIndex : 0;
+    const promptIndex =
+      typeof span.promptIndex === "number" ? span.promptIndex : 0;
     spansByPrompt.set(promptIndex, [
       ...(spansByPrompt.get(promptIndex) ?? []),
       span,
@@ -392,7 +396,9 @@ function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
       promptSpans.forEach((span) => {
         const node = nodesById.get(span.id)!;
         const parent =
-          typeof span.parentId === "string" ? nodesById.get(span.parentId) : undefined;
+          typeof span.parentId === "string"
+            ? nodesById.get(span.parentId)
+            : undefined;
         if (parent) {
           parent.children.push(node);
           return;
@@ -457,7 +463,9 @@ function collectStepSpanIdsWithChildren(groups: PromptGroup[]): Set<string> {
   return ids;
 }
 
-function toPlainTranscriptMessage(message: TranscriptMessage): Record<string, unknown> {
+function toPlainTranscriptMessage(
+  message: TranscriptMessage,
+): Record<string, unknown> {
   return {
     role: message.role,
     content: message.content,
@@ -488,11 +496,7 @@ function getLlmInputMessages(
 
   if (lastAssistant < 0) return slice;
   const inputSlice = slice.slice(0, lastAssistant);
-  if (
-    inputSlice.length === 0 &&
-    lastAssistant === 0 &&
-    range.startIndex > 0
-  ) {
+  if (inputSlice.length === 0 && lastAssistant === 0 && range.startIndex > 0) {
     const prev = messages[range.startIndex - 1];
     if (prev?.role === "user" || prev?.role === "system") {
       return [prev];
@@ -535,9 +539,7 @@ function extractLlmTranscriptIo(
   const outMsg = slice[lastAssistant]!;
   return {
     input:
-      inputSlice.length > 0
-        ? inputSlice.map(toPlainTranscriptMessage)
-        : null,
+      inputSlice.length > 0 ? inputSlice.map(toPlainTranscriptMessage) : null,
     output: toPlainTranscriptMessage(outMsg),
   };
 }
@@ -670,9 +672,7 @@ function deriveSpanLabel(
     const stepNumber =
       typeof span.stepIndex === "number" ? span.stepIndex + 1 : span.name;
     const title =
-      typeof stepNumber === "number"
-        ? `Step ${stepNumber}`
-        : String(span.name);
+      typeof stepNumber === "number" ? `Step ${stepNumber}` : String(span.name);
     const preview = promptPreviewForLlmSpan(transcriptMessages, span);
     if (preview) {
       return { title, subtitle: preview };
@@ -783,7 +783,8 @@ function TimelineDetailPane({
   if (!row) {
     return (
       <div className="rounded-lg border border-border/50 bg-muted/10 p-4 text-xs text-muted-foreground">
-        Select a prompt, step, or child row to inspect timing and transcript context.
+        Select a prompt, step, or child row to inspect timing and transcript
+        context.
       </div>
     );
   }
@@ -813,7 +814,9 @@ function TimelineDetailPane({
   const promptIndex = row.kind === "prompt" ? row.promptIndex : row.promptIndex;
   const { startMs, endMs, durationMs } = getRowTiming(row);
   const label =
-    row.kind === "prompt" ? row.label : deriveSpanLabel(row, transcriptMessages).title;
+    row.kind === "prompt"
+      ? row.label
+      : deriveSpanLabel(row, transcriptMessages).title;
   const subtitle =
     row.kind === "prompt"
       ? formatOffset(row.startMs)
@@ -958,9 +961,10 @@ function TimelineDetailPane({
 
       {row.kind === "prompt" ? (
         <div className="rounded-md border border-border/50 bg-muted/10 p-3 text-xs text-muted-foreground">
-          {row.counts.step} step{row.counts.step === 1 ? "" : "s"} · {row.counts.llm}{" "}
-          LLM · {row.counts.tool} tool{row.counts.tool === 1 ? "" : "s"} ·{" "}
-          {row.counts.error} error{row.counts.error === 1 ? "" : "s"}
+          {row.counts.step} step{row.counts.step === 1 ? "" : "s"} ·{" "}
+          {row.counts.llm} LLM · {row.counts.tool} tool
+          {row.counts.tool === 1 ? "" : "s"} · {row.counts.error} error
+          {row.counts.error === 1 ? "" : "s"}
         </div>
       ) : null}
 
@@ -1124,11 +1128,12 @@ export function TraceTimeline({
   transcriptMessages = [],
   onRevealInTranscript,
 }: TraceTimelineProps) {
-  const mode = recordedSpans && recordedSpans.length > 0
-    ? "recorded"
-    : (estimatedDurationMs ?? 0) > 0
-      ? "estimated"
-      : "none";
+  const mode =
+    recordedSpans && recordedSpans.length > 0
+      ? "recorded"
+      : (estimatedDurationMs ?? 0) > 0
+        ? "estimated"
+        : "none";
   const groups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
     [recordedSpans],
@@ -1138,14 +1143,19 @@ export function TraceTimeline({
     : Math.max(estimatedDurationMs ?? 0, 1);
   const traceIdentity = useMemo(
     () =>
-      recordedSpans?.map((span) => `${span.id}:${span.startMs}:${span.endMs}`).join("|") ??
-      mode,
+      recordedSpans
+        ?.map((span) => `${span.id}:${span.startMs}:${span.endMs}`)
+        .join("|") ?? mode,
     [mode, recordedSpans],
   );
 
   const [filter, setFilter] = useState<TimelineFilter>("all");
-  const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(new Set());
-  const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(new Set());
+  const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1169,7 +1179,11 @@ export function TraceTimeline({
       return span.category === filter;
     }
 
-    function collectNodeRows(node: TraceNode, promptIndex: number, depth: number): {
+    function collectNodeRows(
+      node: TraceNode,
+      promptIndex: number,
+      depth: number,
+    ): {
       hasVisibleContent: boolean;
       rows: TimelineRow[];
     } {
@@ -1177,9 +1191,12 @@ export function TraceTimeline({
         collectNodeRows(child, promptIndex, depth + 1),
       );
       const visibleChildRows = childResults.flatMap((result) => result.rows);
-      const hasVisibleChildren = childResults.some((result) => result.hasVisibleContent);
+      const hasVisibleChildren = childResults.some(
+        (result) => result.hasVisibleContent,
+      );
       const isStep = node.span.category === "step";
-      const showSelf = rowSelfVisible(node.span) || hasVisibleChildren || isStep;
+      const showSelf =
+        rowSelfVisible(node.span) || hasVisibleChildren || isStep;
 
       if (!showSelf) {
         return {
@@ -1213,8 +1230,7 @@ export function TraceTimeline({
       );
       const childRows = rootResults.flatMap((result) => result.rows);
       const hasVisibleContent =
-        childRows.length > 0 ||
-        (filter === "all" && group.spans.length > 0);
+        childRows.length > 0 || (filter === "all" && group.spans.length > 0);
 
       if (!hasVisibleContent) {
         continue;
@@ -1328,7 +1344,10 @@ export function TraceTimeline({
           <span className="mx-1.5 text-muted-foreground/50">·</span>
           {formatDuration(maxEndMs)}
         </span>
-        <span className="bg-border hidden h-3 w-px shrink-0 sm:block" aria-hidden />
+        <span
+          className="bg-border hidden h-3 w-px shrink-0 sm:block"
+          aria-hidden
+        />
         <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border/50 bg-background p-0.5">
           {FILTERS.map((entry) => (
             <button
@@ -1346,7 +1365,10 @@ export function TraceTimeline({
             </button>
           ))}
         </div>
-        <span className="bg-border hidden h-3 w-px shrink-0 md:block" aria-hidden />
+        <span
+          className="bg-border hidden h-3 w-px shrink-0 md:block"
+          aria-hidden
+        />
         <Button
           type="button"
           variant="outline"
@@ -1468,8 +1490,7 @@ export function TraceTimeline({
                 row.kind === "prompt"
                   ? `${formatOffset(row.startMs)} · ${row.counts.step} step${row.counts.step === 1 ? "" : "s"}`
                   : deriveSpanLabel(row, transcriptMessages).subtitle;
-              const canToggle =
-                row.kind === "prompt" ? true : row.hasChildren;
+              const canToggle = row.kind === "prompt" ? true : row.hasChildren;
               const gridRow = rowIndex + 2;
               const tokenHint =
                 row.kind === "span" ? formatInlineTokenHint(row.span) : null;
@@ -1489,8 +1510,7 @@ export function TraceTimeline({
                     <div
                       className="flex shrink-0 items-center"
                       style={{
-                        paddingLeft:
-                          row.kind === "prompt" ? 0 : row.depth * 16,
+                        paddingLeft: row.kind === "prompt" ? 0 : row.depth * 16,
                       }}
                     >
                       {canToggle ? (
@@ -1626,4 +1646,3 @@ export function TraceTimeline({
     </div>
   );
 }
-

@@ -132,7 +132,11 @@ describe("sortExploreCasesBySignal", () => {
         result: "pending",
       }),
     ];
-    const sorted = sortExploreCasesBySignal([pend, pass], aggregate, iterations);
+    const sorted = sortExploreCasesBySignal(
+      [pend, pass],
+      aggregate,
+      iterations,
+    );
     expect(sorted.map((c) => c._id)).toEqual(["w", "p"]);
   });
 });

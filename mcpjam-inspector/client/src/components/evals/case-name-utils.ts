@@ -39,9 +39,9 @@ export function formatCaseTitleForSidebar(title: string): {
   return { line1: fullTitle, line2: null, fullTitle };
 }
 
-export function groupEvalCasesForSidebar<T extends { title?: string; _id: string }>(
-  cases: T[],
-): { groupKey: string; cases: T[] }[] {
+export function groupEvalCasesForSidebar<
+  T extends { title?: string; _id: string },
+>(cases: T[]): { groupKey: string; cases: T[] }[] {
   const map = new Map<string, T[]>();
   for (const c of cases) {
     const k = getEvalCaseSidebarGroupKey(c.title || "");

@@ -81,8 +81,7 @@ export function CiSuiteDetail({
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("result");
-  const effectiveRunDetailSortBy =
-    runDetailSortByOverride ?? runDetailSortBy;
+  const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
 

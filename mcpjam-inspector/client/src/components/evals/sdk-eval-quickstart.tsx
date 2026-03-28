@@ -55,7 +55,9 @@ function escapeDoubleQuotes(value: string): string {
 }
 
 /** Build shell export block; pass plaintext after Generate/Regenerate to embed the real key. */
-export function buildShellEnvSnippet(mcpjamApiKeyPlaintext: string | null): string {
+export function buildShellEnvSnippet(
+  mcpjamApiKeyPlaintext: string | null,
+): string {
   const line = mcpjamApiKeyPlaintext
     ? `export MCPJAM_API_KEY="${escapeDoubleQuotes(mcpjamApiKeyPlaintext)}"`
     : "export MCPJAM_API_KEY=<workspace-api-key>";
@@ -63,7 +65,9 @@ export function buildShellEnvSnippet(mcpjamApiKeyPlaintext: string | null): stri
 }
 
 /** Build .env file block; pass plaintext after Generate/Regenerate to embed the real key. */
-export function buildDotEnvSnippet(mcpjamApiKeyPlaintext: string | null): string {
+export function buildDotEnvSnippet(
+  mcpjamApiKeyPlaintext: string | null,
+): string {
   const line = mcpjamApiKeyPlaintext
     ? `MCPJAM_API_KEY="${escapeDoubleQuotes(mcpjamApiKeyPlaintext)}"`
     : "MCPJAM_API_KEY=<workspace-api-key>";
@@ -71,8 +75,7 @@ export function buildDotEnvSnippet(mcpjamApiKeyPlaintext: string | null): string
 }
 
 /** Snippet strings exported for tests and consistency with copy targets. */
-export const SDK_EVAL_QUICKSTART_INSTALL =
-  "npm install @mcpjam/sdk vitest";
+export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk vitest";
 
 /** Placeholder shell env (no workspace key injected). */
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
@@ -314,7 +317,9 @@ export function SdkEvalQuickstart({
       return true;
     } catch (err) {
       console.error("Failed to generate key", err);
-      toast.error("Could not create API key. Try again or use workspace settings.");
+      toast.error(
+        "Could not create API key. Try again or use workspace settings.",
+      );
       return false;
     } finally {
       setIsGenerating(false);
@@ -445,10 +450,7 @@ export function SdkEvalQuickstart({
               disabled={isGenerating}
             >
               <RefreshCw
-                className={cn(
-                  "h-3.5 w-3.5",
-                  isGenerating && "animate-spin",
-                )}
+                className={cn("h-3.5 w-3.5", isGenerating && "animate-spin")}
               />
               {isGenerating ? "Regenerating…" : "Regenerate"}
             </Button>
@@ -462,7 +464,9 @@ export function SdkEvalQuickstart({
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel disabled={isGenerating}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={isGenerating}>
+                Cancel
+              </AlertDialogCancel>
               <AlertDialogAction
                 disabled={isGenerating}
                 onClick={async (e) => {
@@ -505,14 +509,16 @@ export function SdkEvalQuickstart({
             MCPJam learning server
           </span>{" "}
           ({LEARN_MCP_URL}); override{" "}
-          <code className="rounded bg-muted px-1 font-mono">MCP_SERVER_URL</code>{" "}
+          <code className="rounded bg-muted px-1 font-mono">
+            MCP_SERVER_URL
+          </code>{" "}
           for your own MCP.{" "}
           <span className="font-medium text-foreground">
             Eval LLM (TestAgent)
           </span>
           : use{" "}
-          <code className="rounded bg-muted px-1 font-mono">EVAL_MODEL</code>{" "}
-          in the form{" "}
+          <code className="rounded bg-muted px-1 font-mono">EVAL_MODEL</code> in
+          the form{" "}
           <code className="rounded bg-muted px-1 font-mono">
             provider/model-id
           </code>{" "}

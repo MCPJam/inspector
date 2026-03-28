@@ -24,7 +24,8 @@ export function SuiteInsightsCollapsible({
   title = "Suite insights",
 }: SuiteInsightsCollapsibleProps) {
   const runsWithFailedCases = useMemo(
-    () => runs.filter((r) => r.isActive !== false && (r.summary?.failed ?? 0) > 0),
+    () =>
+      runs.filter((r) => r.isActive !== false && (r.summary?.failed ?? 0) > 0),
     [runs],
   );
 

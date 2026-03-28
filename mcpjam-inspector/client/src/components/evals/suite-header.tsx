@@ -15,7 +15,14 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GitBranch, Loader2, RotateCw, Settings2, Trash2, X } from "lucide-react";
+import {
+  GitBranch,
+  Loader2,
+  RotateCw,
+  Settings2,
+  Trash2,
+  X,
+} from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -692,7 +699,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                 Delete suite
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Remove this suite and its evaluation history</TooltipContent>
+            <TooltipContent>
+              Remove this suite and its evaluation history
+            </TooltipContent>
           </Tooltip>
         )}
       </div>

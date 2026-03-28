@@ -78,10 +78,7 @@ export function useAiTriage(
   }, [runKey]);
 
   useEffect(() => {
-    if (
-      run?.triageStatus === "completed" ||
-      run?.triageStatus === "failed"
-    ) {
+    if (run?.triageStatus === "completed" || run?.triageStatus === "failed") {
       setRequested(false);
     }
   }, [run?.triageStatus, run?._id]);

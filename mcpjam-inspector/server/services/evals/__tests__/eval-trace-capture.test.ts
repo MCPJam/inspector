@@ -23,13 +23,10 @@ describe("eval-trace-capture", () => {
 
   it("backend success: one step, LLM only — parent wraps LLM child", () => {
     const spans: EvalTraceSpan[] = [];
-    pushBackendStepSuccessSpans(
-      spans,
-      runAt,
-      0,
-      runAt + 0,
-      { startAbs: runAt + 0, endAbs: runAt + 50 },
-    );
+    pushBackendStepSuccessSpans(spans, runAt, 0, runAt + 0, {
+      startAbs: runAt + 0,
+      endAbs: runAt + 50,
+    });
     const parent = spans.find((s) => s.id === "eval-backend-step-0");
     const llm = spans.find((s) => s.id === "eval-backend-step-0-llm");
     expect(parent?.category).toBe("step");
@@ -71,14 +68,7 @@ describe("eval-trace-capture", () => {
 
   it("backend LLM failure — error child under step", () => {
     const spans: EvalTraceSpan[] = [];
-    pushBackendStepLlmFailureSpans(
-      spans,
-      runAt,
-      0,
-      runAt,
-      runAt,
-      runAt + 5,
-    );
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, runAt, runAt, runAt + 5);
     expect(spans.some((s) => s.category === "error")).toBe(true);
   });
 

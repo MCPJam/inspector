@@ -103,7 +103,9 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    const stepRow = screen.getByText("Step 1").closest("[data-testid='trace-row']");
+    const stepRow = screen
+      .getByText("Step 1")
+      .closest("[data-testid='trace-row']");
     expect(stepRow?.textContent).toContain("Need docs");
     expect(stepRow?.textContent).not.toContain("Prompt 1");
   });
@@ -172,7 +174,9 @@ describe("TraceTimeline detail pane", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes("create_view"));
     expect(toolRow).toBeTruthy();
-    fireEvent.click(within(toolRow!).getByRole("button", { name: /Tool · create_view/i }));
+    fireEvent.click(
+      within(toolRow!).getByRole("button", { name: /Tool · create_view/i }),
+    );
 
     const errorBar = screen.getByTestId("trace-row-bar-error");
     expect(errorBar.className).toContain("bg-red-500");

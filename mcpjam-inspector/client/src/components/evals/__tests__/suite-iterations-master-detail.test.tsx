@@ -72,7 +72,11 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         deletingSuiteId={null}
         deletingRunId={null}
         availableModels={[]}
-        route={{ type: "suite-overview", suiteId: "suite-1", view: "test-cases" }}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
         caseListInSidebar
       />,
     );
@@ -105,7 +109,11 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         deletingSuiteId={null}
         deletingRunId={null}
         availableModels={[]}
-        route={{ type: "suite-overview", suiteId: "suite-1", view: "test-cases" }}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
       />,
     );
 

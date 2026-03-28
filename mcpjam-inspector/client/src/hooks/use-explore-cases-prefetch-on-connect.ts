@@ -1,24 +1,17 @@
 import { useEffect, useRef } from "react";
-import {
-  useConvex,
-  useConvexAuth,
-  useMutation,
-  useQuery,
-} from "convex/react";
+import { useConvex, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { toast } from "sonner";
 import posthog from "posthog-js";
 import type { ServerWithName } from "@/hooks/use-app-state";
-import type { EvalSuite, EvalSuiteOverviewEntry } from "@/components/evals/types";
+import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-
-const EXPLORE_TAG = "explore";
-
-function isExploreSuite(suite: EvalSuite): boolean {
-  return suite.tags?.includes(EXPLORE_TAG) === true;
-}
+import {
+  EXPLORE_SUITE_TAG,
+  isExploreSuite,
+} from "@/components/evals/constants";
 
 function findExploreSuiteEntry(
   overview: EvalSuiteOverviewEntry[] | undefined,
@@ -59,9 +52,7 @@ export function useExploreCasesPrefetchOnConnect(
 
   const suiteOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    isAuthenticated && user && workspaceId
-      ? ({ workspaceId } as any)
-      : "skip",
+    isAuthenticated && user && workspaceId ? ({ workspaceId } as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
 
   const prevStatusRef = useRef(server.connectionStatus);
@@ -124,7 +115,7 @@ export function useExploreCasesPrefetchOnConnect(
           if (createdSuite?._id) {
             await updateTestSuiteMutation({
               suiteId: createdSuite._id,
-              tags: [EXPLORE_TAG],
+              tags: [EXPLORE_SUITE_TAG],
             });
             suiteId = createdSuite._id;
           }

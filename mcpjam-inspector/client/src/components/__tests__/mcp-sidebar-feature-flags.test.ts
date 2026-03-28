@@ -113,9 +113,7 @@ describe("filterByBillingEntitlements", () => {
       false,
     );
 
-    expect(result[0].items.map((item) => item.title)).toContain(
-      "Testing",
-    );
+    expect(result[0].items.map((item) => item.title)).toContain("Testing");
   });
 
   it("hides billed items when enforcement is active and the org lacks access", () => {

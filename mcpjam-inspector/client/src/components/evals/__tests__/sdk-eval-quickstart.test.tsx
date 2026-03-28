@@ -119,9 +119,7 @@ describe("SdkEvalQuickstart", () => {
       screen.getByRole("button", { name: "Copy environment variables" }),
     );
 
-    expect(copyToClipboard).toHaveBeenCalledWith(
-      buildShellEnvSnippet(null),
-    );
+    expect(copyToClipboard).toHaveBeenCalledWith(buildShellEnvSnippet(null));
   });
 
   it("embeds revealed API key in shell snippet after Generate API key", async () => {
@@ -156,5 +154,4 @@ describe("SdkEvalQuickstart", () => {
       'export MCPJAM_API_KEY="mcpjam_inline_secret_xyz"',
     );
   });
-
 });

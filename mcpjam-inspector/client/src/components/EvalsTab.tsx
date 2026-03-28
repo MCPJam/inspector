@@ -34,19 +34,15 @@ import {
 } from "@/lib/generate-agent-brief";
 import { getServerUrl } from "@/components/connection/server-card-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
-import type { EvalCase, EvalSuite } from "./evals/types";
+import type { EvalCase } from "./evals/types";
+import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
 
 interface EvalsTabProps {
   selectedServer?: string;
   workspaceId?: string | null;
 }
 
-const EXPLORE_TAG = "explore";
 const EMPTY_CASES: EvalCase[] = [];
-
-function isExploreSuite(suite: EvalSuite): boolean {
-  return suite.tags?.includes(EXPLORE_TAG) === true;
-}
 
 export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
@@ -241,7 +237,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         if (createdSuite?._id) {
           await updateSuiteMutation({
             suiteId: createdSuite._id,
-            tags: [EXPLORE_TAG],
+            tags: [EXPLORE_SUITE_TAG],
           });
         }
       } catch (error) {
@@ -402,10 +398,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                 }
                 onDeleteTestCase={handlers.handleDeleteTestCase}
                 onDuplicateTestCase={(testCaseId) =>
-                  handlers.handleDuplicateTestCase(
-                    testCaseId,
-                    exploreSuite._id,
-                  )
+                  handlers.handleDuplicateTestCase(testCaseId, exploreSuite._id)
                 }
                 onGenerateTests={() => void handleGenerateMore()}
                 onCopySdkEvalBrief={() => void handleCopyExploreSdkEvalBrief()}

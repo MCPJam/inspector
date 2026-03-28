@@ -139,8 +139,7 @@ export function SuiteIterationsView({
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("model");
-  const effectiveRunDetailSortBy =
-    runDetailSortByOverride ?? runDetailSortBy;
+  const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
   const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
@@ -299,13 +298,10 @@ export function SuiteIterationsView({
     () =>
       replayingRunId != null &&
       runs.some(
-        (run) =>
-          run._id === replayingRunId && run.hasServerReplayConfig,
+        (run) => run._id === replayingRunId && run.hasServerReplayConfig,
       ) &&
       runs
-        .filter(
-          (run) => run.isActive !== false && run.hasServerReplayConfig,
-        )
+        .filter((run) => run.isActive !== false && run.hasServerReplayConfig)
         .sort((a, b) => {
           const aTime = a.completedAt ?? a.createdAt ?? 0;
           const bTime = b.completedAt ?? b.createdAt ?? 0;

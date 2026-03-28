@@ -356,8 +356,7 @@ const runIterationWithAiSdk = async ({
           responseMessages as ModelMessage[],
         );
         const appendedMessageCount =
-          partialResponseMessages.length -
-          responseMessageCountBeforeAppend;
+          partialResponseMessages.length - responseMessageCountBeforeAppend;
         const messageEndIndex =
           messageStartIndex != null && appendedMessageCount > 0
             ? messageStartIndex + appendedMessageCount - 1
@@ -805,9 +804,12 @@ const runIterationViaBackend = async ({
           spans: capturedSpans,
         });
         try {
-          const newToolMessages = await executeToolCallsFromMessages(messageHistory, {
-            tools: tracedBackendTools as any,
-          });
+          const newToolMessages = await executeToolCallsFromMessages(
+            messageHistory,
+            {
+              tools: tracedBackendTools as any,
+            },
+          );
           const toolsEndAbs = Date.now();
           const toolMessageIndexByCallId = new Map<string, number>();
           for (let index = 0; index < messageHistory.length; index++) {
@@ -816,7 +818,10 @@ const runIterationViaBackend = async ({
               continue;
             }
             for (const part of msg.content) {
-              if (part?.type === "tool-result" && typeof part.toolCallId === "string") {
+              if (
+                part?.type === "tool-result" &&
+                typeof part.toolCallId === "string"
+              ) {
                 toolMessageIndexByCallId.set(part.toolCallId, index);
               }
             }
@@ -829,7 +834,9 @@ const runIterationViaBackend = async ({
             ) {
               continue;
             }
-            const toolMessageIndex = toolMessageIndexByCallId.get(span.toolCallId);
+            const toolMessageIndex = toolMessageIndexByCallId.get(
+              span.toolCallId,
+            );
             if (typeof toolMessageIndex === "number") {
               span.messageStartIndex = toolMessageIndex;
               span.messageEndIndex = toolMessageIndex;

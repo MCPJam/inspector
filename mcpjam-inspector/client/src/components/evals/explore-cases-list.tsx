@@ -231,9 +231,7 @@ export function ExploreCasesList({
                 </p>
               </div>
               <div className="w-[88px] shrink-0 text-right text-xs text-muted-foreground">
-                {latest?.updatedAt
-                  ? formatRelativeTime(latest.updatedAt)
-                  : "—"}
+                {latest?.updatedAt ? formatRelativeTime(latest.updatedAt) : "—"}
               </div>
             </button>
           );

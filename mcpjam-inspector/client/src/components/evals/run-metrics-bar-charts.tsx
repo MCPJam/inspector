@@ -5,13 +5,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import {
-  BarChart,
-  Bar,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-} from "recharts";
+import { BarChart, Bar, CartesianGrid, XAxis, YAxis } from "recharts";
 import { formatDuration } from "./helpers";
 
 export type DurationDatum = {
@@ -42,10 +36,7 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
       }}
       className="aspect-auto h-[min(400px,50vh)] w-full"
     >
-      <BarChart
-        data={data}
-        margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
-      >
+      <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
         <CartesianGrid
           strokeDasharray="3 3"
           vertical={false}
@@ -113,10 +104,7 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
       }}
       className="aspect-auto h-[min(400px,50vh)] w-full"
     >
-      <BarChart
-        data={data}
-        margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
-      >
+      <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 8 }}>
         <CartesianGrid
           strokeDasharray="3 3"
           vertical={false}

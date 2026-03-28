@@ -202,7 +202,13 @@ describe("executeToolCallsFromMessages", () => {
         tools,
       });
 
-      expect(mockExecute).toHaveBeenCalledWith({ param: "value" });
+      expect(mockExecute).toHaveBeenCalledWith(
+        { param: "value" },
+        expect.objectContaining({
+          toolCallId: "call-123",
+          messages,
+        }),
+      );
       expect(messages).toHaveLength(2);
       expect(messages[1].role).toBe("tool");
       expect((messages[1] as any).content[0].type).toBe("tool-result");
@@ -331,7 +337,13 @@ describe("executeToolCallsFromMessages", () => {
 
       await executeToolCallsFromMessages(messages, { tools });
 
-      expect(mockExecute).toHaveBeenCalledWith({ path: "/file.txt" });
+      expect(mockExecute).toHaveBeenCalledWith(
+        { path: "/file.txt" },
+        expect.objectContaining({
+          toolCallId: "call-prefixed",
+          messages,
+        }),
+      );
     });
   });
 

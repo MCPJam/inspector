@@ -163,9 +163,7 @@ export function RunAccordionView({
               "relative border-l-2",
               runAccent,
               index === 0 && "rounded-tl-xl",
-              index === sortedRuns.length - 1 &&
-                !isExpanded &&
-                "rounded-bl-xl",
+              index === sortedRuns.length - 1 && !isExpanded && "rounded-bl-xl",
             )}
           >
             {/* Run header */}
@@ -231,9 +229,7 @@ export function RunAccordionView({
                         {failed > 0 && (
                           <>
                             <span className="text-muted-foreground"> / </span>
-                            <span className="text-destructive">
-                              {failed}
-                            </span>
+                            <span className="text-destructive">{failed}</span>
                           </>
                         )}
                       </span>

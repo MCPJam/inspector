@@ -106,9 +106,7 @@ export function CiSuiteListSidebar({
           <span className="text-xs text-muted-foreground">Group By</span>
           <select
             value={sidebarMode}
-            onChange={(e) =>
-              onSidebarModeChange(e.target.value as SidebarMode)
-            }
+            onChange={(e) => onSidebarModeChange(e.target.value as SidebarMode)}
             className="text-xs border rounded px-2 py-1 bg-background"
             aria-label="Group sidebar list by"
           >
@@ -136,9 +134,7 @@ export function CiSuiteListSidebar({
               <p>No suites found.</p>
               <p>
                 Use the{" "}
-                <span className="font-medium text-foreground">
-                  @mcpjam/sdk
-                </span>{" "}
+                <span className="font-medium text-foreground">@mcpjam/sdk</span>{" "}
                 quickstart in the main panel to create your first suite.
               </p>
             </div>

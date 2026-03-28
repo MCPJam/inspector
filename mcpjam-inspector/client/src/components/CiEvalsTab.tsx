@@ -18,14 +18,15 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { useSharedAppState } from "@/state/app-state-context";
-import {
-  useCiEvalsRoute,
-  navigateToCiEvalsRoute,
-} from "@/lib/ci-evals-router";
+import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { buildEvalsHash } from "@/lib/evals-router";
 import { withTestingSurface } from "@/lib/testing-surface";
 import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
-import { aggregateSuite, formatRunId, groupRunsByCommit } from "./evals/helpers";
+import {
+  aggregateSuite,
+  formatRunId,
+  groupRunsByCommit,
+} from "./evals/helpers";
 import { useRunDetailData } from "./evals/use-suite-data";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
@@ -219,11 +220,11 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     () =>
       Boolean(
         selectedSuiteId &&
-          selectedSuite &&
-          route.type !== "list" &&
-          route.type !== "create" &&
-          route.type !== "commit-detail" &&
-          hasVisibleSuites,
+        selectedSuite &&
+        route.type !== "list" &&
+        route.type !== "create" &&
+        route.type !== "commit-detail" &&
+        hasVisibleSuites,
       ),
     [selectedSuiteId, selectedSuite, route.type, hasVisibleSuites],
   );
@@ -598,9 +599,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               deletingRunId={deletingRunId}
               userMap={userMap}
               runDetailSortByOverride={
-                route.type === "run-detail"
-                  ? runDetailSidebarSortBy
-                  : undefined
+                route.type === "run-detail" ? runDetailSidebarSortBy : undefined
               }
               onRunDetailSortByChange={
                 route.type === "run-detail"

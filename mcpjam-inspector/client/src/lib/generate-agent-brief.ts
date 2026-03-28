@@ -290,14 +290,18 @@ export function generateAgentBrief(
         lines.push("");
       }
       if (c.expectedOutput?.trim()) {
-        lines.push(`**Expected output / experience:** ${escapeCell(c.expectedOutput.trim())}`);
+        lines.push(
+          `**Expected output / experience:** ${escapeCell(c.expectedOutput.trim())}`,
+        );
         lines.push("");
       }
       if (c.expectedToolCalls && c.expectedToolCalls.length > 0) {
         lines.push("**Expected tool calls (shape):**");
         lines.push("");
         for (const call of c.expectedToolCalls) {
-          lines.push(`- \`${formatCompactToolCall(call.toolName, call.arguments)}\``);
+          lines.push(
+            `- \`${formatCompactToolCall(call.toolName, call.arguments)}\``,
+          );
         }
         lines.push("");
       }
@@ -328,7 +332,9 @@ function formatCompactArgValue(value: unknown): string {
     return String(value);
   }
   if (typeof value === "string") {
-    const q = JSON.stringify(value.length > 48 ? `${value.slice(0, 45)}...` : value);
+    const q = JSON.stringify(
+      value.length > 48 ? `${value.slice(0, 45)}...` : value,
+    );
     return q;
   }
   if (typeof value === "number" || typeof value === "boolean") {

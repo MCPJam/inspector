@@ -192,8 +192,8 @@ export function IterationDetails({
   const [toolsWithSchema, setToolsWithSchema] = useState<
     Record<string, { name: string; inputSchema?: any }>
   >({});
-  const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(
-    () => (layoutMode === "full" ? iteration.result !== "passed" : true),
+  const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
+    layoutMode === "full" ? iteration.result !== "passed" : true,
   );
 
   useEffect(() => {

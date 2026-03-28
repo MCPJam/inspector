@@ -1,3 +1,10 @@
+/** Tag on manually-created suites that represent MCPJam Explore flows for a server */
+export const EXPLORE_SUITE_TAG = "explore";
+
+export function isExploreSuite(suite: { tags?: string[] | null }): boolean {
+  return suite.tags?.includes(EXPLORE_SUITE_TAG) === true;
+}
+
 // Run filters
 export const RUN_FILTER_ALL = "all";
 export const RUN_FILTER_LEGACY = "legacy";

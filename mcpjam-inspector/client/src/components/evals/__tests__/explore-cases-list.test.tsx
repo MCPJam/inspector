@@ -82,6 +82,8 @@ describe("ExploreCasesList", () => {
     expect(
       container.querySelector("button.border-l-destructive\\/50"),
     ).toBeNull();
-    expect(screen.getByRole("button", { name: /Example case/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Example case/i }),
+    ).toBeInTheDocument();
   });
 });

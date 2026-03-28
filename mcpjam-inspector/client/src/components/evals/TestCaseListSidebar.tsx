@@ -230,10 +230,7 @@ export function TestCaseListSidebar({
                     size="sm"
                     aria-label="Copy SDK eval agent brief"
                     onClick={() => onCopySdkEvalBrief()}
-                    disabled={
-                      testCases.length === 0 ||
-                      isCopyingSdkEvalBrief
-                    }
+                    disabled={testCases.length === 0 || isCopyingSdkEvalBrief}
                     className="h-7 w-7 p-0"
                   >
                     {isCopyingSdkEvalBrief ? (

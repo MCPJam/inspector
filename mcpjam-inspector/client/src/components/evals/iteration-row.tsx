@@ -44,9 +44,7 @@ export function CompactIterationRow({
     <div
       className={cn(
         "relative overflow-hidden border-l-2",
-        evalStatusLeftBorderClasses(
-          isPending ? "running" : iteration.result,
-        ),
+        evalStatusLeftBorderClasses(isPending ? "running" : iteration.result),
         isPending && "opacity-60",
       )}
     >

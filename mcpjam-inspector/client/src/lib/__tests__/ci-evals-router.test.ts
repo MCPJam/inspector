@@ -97,9 +97,7 @@ describe("ci-evals-router", () => {
       suiteId: "s_abc",
       view: "test-cases",
     });
-    expect(window.location.hash).toBe(
-      "#/ci-evals/suite/s_abc?view=test-cases",
-    );
+    expect(window.location.hash).toBe("#/ci-evals/suite/s_abc?view=test-cases");
   });
 
   it("navigates to run detail route with iteration", () => {

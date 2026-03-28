@@ -17,9 +17,10 @@ describe("eval-trace helpers", () => {
 
   it("createOffsetInterval uses runner-relative offsets", () => {
     const runStartedAt = 1000;
-    expect(
-      createOffsetInterval(runStartedAt, 1000, 1050),
-    ).toEqual({ startMs: 0, endMs: 50 });
+    expect(createOffsetInterval(runStartedAt, 1000, 1050)).toEqual({
+      startMs: 0,
+      endMs: 50,
+    });
   });
 
   it("appendDedupedModelMessages dedupes by id and by json", () => {
