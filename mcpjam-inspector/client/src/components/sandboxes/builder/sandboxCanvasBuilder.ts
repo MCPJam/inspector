@@ -1,6 +1,8 @@
 import type { Edge, Node } from "@xyflow/react";
+import type { SandboxSettings } from "@/hooks/useSandboxes";
 import type {
   SandboxBuilderContext,
+  SandboxDraftConfig,
   SandboxBuilderNodeData,
   SandboxBuilderViewModel,
   SandboxFlowNode,
@@ -13,6 +15,17 @@ const SECTION_Y = {
   host: 0,
   servers: 220,
 } as const;
+
+/**
+ * Single source of truth for builder canvas vs Setup rail: prefer the in-memory draft
+ * when present so nodes match MCP server selection before save. `sandbox` is only
+ * used when there is no draft (e.g. hypothetical read-only callers).
+ */
+function getCanvasSource(
+  context: SandboxBuilderContext,
+): SandboxSettings | SandboxDraftConfig | null {
+  return context.draft ?? context.sandbox;
+}
 
 function createNode(
   id: string,
@@ -38,7 +51,7 @@ function chip(
 function resolveHostState(
   context: SandboxBuilderContext,
 ): SandboxBuilderNodeData {
-  const source = context.sandbox ?? context.draft;
+  const source = getCanvasSource(context);
   const modelName = source
     ? (getModelById(source.modelId)?.name ?? source.modelId)
     : "Model";
@@ -63,7 +76,7 @@ function resolveServerState(
   serverId: string,
   context: SandboxBuilderContext,
 ): SandboxBuilderNodeData {
-  const source = context.sandbox ?? context.draft;
+  const source = getCanvasSource(context);
   const selected = source
     ? "servers" in source
       ? source.servers.map((server) => server.serverId)
@@ -103,7 +116,7 @@ function centerRow(rowCount: number, totalWidth: number): number {
 export function buildSandboxCanvas(
   context: SandboxBuilderContext,
 ): SandboxBuilderViewModel {
-  const sandboxOrDraft = context.sandbox ?? context.draft;
+  const sandboxOrDraft = getCanvasSource(context);
   const selectedServerIds = sandboxOrDraft
     ? "servers" in sandboxOrDraft
       ? sandboxOrDraft.servers.map((server) => server.serverId)
