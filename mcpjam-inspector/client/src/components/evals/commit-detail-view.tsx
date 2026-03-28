@@ -21,7 +21,12 @@ import type {
   EvalIteration,
   SuiteDetailsQueryResponse,
 } from "./types";
-import { evalStatusLeftBorderClasses, formatDuration } from "./helpers";
+import {
+  evalStatusLeftBorderClasses,
+  formatDuration,
+  formatRunId,
+} from "./helpers";
+import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { useCommitTriage } from "./use-ai-triage";
@@ -444,19 +449,33 @@ function CommitSuiteRunDetail({
     );
   }
 
+  const metricLabel = run.source === "sdk" ? "Pass Rate" : "Accuracy";
+
   return (
-    <RunDetailView
-      selectedRunDetails={run}
-      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-      source={run.source as "ui" | "sdk" | undefined}
-      selectedRunChartData={selectedRunChartData}
-      runDetailSortBy={runDetailSortBy}
-      onSortChange={onSortChange}
-      serverNames={run.configSnapshot?.environment?.servers ?? []}
-      selectedIterationId={selectedIterationId}
-      onSelectIteration={onSelectIteration}
-      hideCiMetadata
-    />
+    <>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 pt-4">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Run {formatRunId(run._id)}
+        </h2>
+        <PassCriteriaBadge
+          run={run}
+          variant="compact"
+          metricLabel={metricLabel}
+        />
+      </div>
+      <RunDetailView
+        selectedRunDetails={run}
+        caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+        source={run.source as "ui" | "sdk" | undefined}
+        selectedRunChartData={selectedRunChartData}
+        runDetailSortBy={runDetailSortBy}
+        onSortChange={onSortChange}
+        serverNames={run.configSnapshot?.environment?.servers ?? []}
+        selectedIterationId={selectedIterationId}
+        onSelectIteration={onSelectIteration}
+        hideCiMetadata
+      />
+    </>
   );
 }
 

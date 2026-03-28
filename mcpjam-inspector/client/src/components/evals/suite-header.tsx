@@ -31,6 +31,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 
@@ -322,10 +323,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
           <h2 className="text-lg font-semibold tracking-tight">
             Run {formatRunId(selectedRunDetails._id)}
           </h2>
+          <PassCriteriaBadge
+            run={selectedRunDetails}
+            variant="compact"
+            metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+          />
           {selectedRunDetails.replayedFromRunId ? (
             <span
               className="text-xs text-muted-foreground"

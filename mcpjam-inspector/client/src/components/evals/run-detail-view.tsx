@@ -10,7 +10,6 @@ import {
   Label,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { IterationDetails } from "./iteration-details";
 import {
   evalStatusLeftBorderClasses,
@@ -343,42 +342,42 @@ export function RunDetailView({
 
         {/* Run Metrics and Chart */}
         <div className="rounded-lg border bg-background/80 px-3 py-2">
-          <div className="flex items-center gap-6">
-            {/* Metrics */}
-            <div className="flex gap-6 flex-1 min-w-0">
-              <div className="space-y-0.5">
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 lg:gap-6">
+            {/* Metrics — wrap into multiple lines instead of colliding with the chart row */}
+            <div className="flex min-w-0 flex-1 flex-wrap gap-x-4 gap-y-2 sm:gap-x-6">
+              <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">
                   {metricLabel}
                 </div>
-                <div className="text-sm font-semibold">
+                <div className="text-sm font-semibold tabular-nums">
                   {computedStats.total > 0
                     ? `${Math.round(computedStats.passRate * 100)}%`
                     : "—"}
                 </div>
               </div>
-              <div className="space-y-0.5">
+              <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">Passed</div>
-                <div className="text-sm font-semibold">
+                <div className="text-sm font-semibold tabular-nums">
                   {computedStats.passed.toLocaleString()}
                 </div>
               </div>
-              <div className="space-y-0.5">
+              <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">Failed</div>
-                <div className="text-sm font-semibold">
+                <div className="text-sm font-semibold tabular-nums">
                   {computedStats.failed.toLocaleString()}
                 </div>
               </div>
-              <div className="space-y-0.5">
+              <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">Total</div>
-                <div className="text-sm font-semibold">
+                <div className="text-sm font-semibold tabular-nums">
                   {expected && isRunning
                     ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
                     : computedStats.total.toLocaleString()}
                 </div>
               </div>
-              <div className="space-y-0.5">
+              <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">Duration</div>
-                <div className="text-sm font-semibold">
+                <div className="text-sm font-semibold tabular-nums break-words">
                   {selectedRunDetails.completedAt &&
                   selectedRunDetails.createdAt
                     ? formatDuration(
@@ -390,91 +389,88 @@ export function RunDetailView({
               </div>
             </div>
 
-            {/* Test Results Chart */}
-            {selectedRunChartData.donutData.length > 0 && (
-              <div className="flex items-center gap-2 shrink-0">
-                <ChartContainer
-                  config={{
-                    passed: {
-                      label: "Passed",
-                      color: "hsl(142.1 76.2% 36.3%)",
-                    },
-                    failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                    pending: {
-                      label: "Pending",
-                      color: "hsl(45.4 93.4% 47.5%)",
-                    },
-                    cancelled: {
-                      label: "Cancelled",
-                      color: "hsl(240 3.7% 15.9%)",
-                    },
-                    remaining: {
-                      label: "Remaining",
-                      color: "hsl(240 3.7% 15.9% / 0.3)",
-                    },
-                  }}
-                  className="h-12 w-12"
-                >
-                  <PieChart>
-                    <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                    <Pie
-                      data={progressDonutData}
-                      dataKey="value"
-                      nameKey="name"
-                      innerRadius={15}
-                      outerRadius={22}
-                      strokeWidth={1}
-                    >
-                      <Label
-                        content={({ viewBox }) => {
-                          if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                            return (
-                              <text
-                                x={viewBox.cx}
-                                y={viewBox.cy}
-                                textAnchor="middle"
-                                dominantBaseline="middle"
-                              >
-                                <tspan
+            {/* Chart + run status — own row on narrow viewports */}
+            <div className="flex min-w-0 w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:gap-3">
+              {selectedRunChartData.donutData.length > 0 && (
+                <div className="flex shrink-0 items-center gap-2">
+                  <ChartContainer
+                    config={{
+                      passed: {
+                        label: "Passed",
+                        color: "hsl(142.1 76.2% 36.3%)",
+                      },
+                      failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
+                      pending: {
+                        label: "Pending",
+                        color: "hsl(45.4 93.4% 47.5%)",
+                      },
+                      cancelled: {
+                        label: "Cancelled",
+                        color: "hsl(240 3.7% 15.9%)",
+                      },
+                      remaining: {
+                        label: "Remaining",
+                        color: "hsl(240 3.7% 15.9% / 0.3)",
+                      },
+                    }}
+                    className="h-11 w-11 shrink-0 sm:h-12 sm:w-12"
+                  >
+                    <PieChart>
+                      <ChartTooltip
+                        content={<ChartTooltipContent hideLabel />}
+                      />
+                      <Pie
+                        data={progressDonutData}
+                        dataKey="value"
+                        nameKey="name"
+                        innerRadius={14}
+                        outerRadius={20}
+                        strokeWidth={1}
+                      >
+                        <Label
+                          content={({ viewBox }) => {
+                            if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                              const cy = viewBox.cy ?? 0;
+                              return (
+                                <text
                                   x={viewBox.cx}
                                   y={viewBox.cy}
-                                  className="fill-foreground text-xs font-bold"
+                                  textAnchor="middle"
+                                  dominantBaseline="middle"
                                 >
-                                  {expected && isRunning
-                                    ? `${donutTotal}/${expected}`
-                                    : donutTotal}
-                                </tspan>
-                                <tspan
-                                  x={viewBox.cx}
-                                  y={(viewBox.cy || 0) + 8}
-                                  className="fill-muted-foreground text-[8px]"
-                                >
-                                  Total
-                                </tspan>
-                              </text>
-                            );
-                          }
-                        }}
-                      />
-                    </Pie>
-                  </PieChart>
-                </ChartContainer>
-              </div>
-            )}
+                                  <tspan
+                                    x={viewBox.cx}
+                                    y={cy}
+                                    className="fill-foreground text-[11px] font-bold sm:text-xs"
+                                  >
+                                    {expected && isRunning
+                                      ? `${donutTotal}/${expected}`
+                                      : donutTotal}
+                                  </tspan>
+                                  <tspan
+                                    x={viewBox.cx}
+                                    y={cy + 10}
+                                    className="hidden fill-muted-foreground text-[8px] sm:inline"
+                                  >
+                                    Total
+                                  </tspan>
+                                </text>
+                              );
+                            }
+                          }}
+                        />
+                      </Pie>
+                    </PieChart>
+                  </ChartContainer>
+                </div>
+              )}
 
-            {/* Status */}
-            <span className="text-xs font-medium text-foreground capitalize shrink-0">
-              {isRunning && progressPercent !== null
-                ? `Running (${progressPercent}%)`
-                : selectedRunDetails.status}
-            </span>
-
-            {/* Pass/Fail Badge */}
-            <PassCriteriaBadge
-              run={selectedRunDetails}
-              variant="compact"
-              metricLabel={metricLabel}
-            />
+              <span className="text-xs font-medium capitalize text-foreground sm:shrink-0">
+                {isRunning && progressPercent !== null
+                  ? `Running (${progressPercent}%)`
+                  : selectedRunDetails.status}
+              </span>
+            </div>
           </div>
 
           {/* Inline model performance (only when ≥2 models) */}
