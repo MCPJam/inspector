@@ -45,13 +45,13 @@ import {
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { updateThemeMode } from "@/lib/theme-utils";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import {
   extractHostDeviceCapabilities,
   extractHostLocale,
-  extractHostTheme,
   extractHostTimeZone,
 } from "@/lib/client-config";
 
@@ -145,6 +145,10 @@ export interface DisplayContextHeaderProps {
   protocol: UIType | null;
   /** Optional: show theme toggle (default: false) */
   showThemeToggle?: boolean;
+  /** Optional: local theme mode override for surfaces that should not touch global app theme */
+  themeModeOverride?: "light" | "dark";
+  /** Optional: local theme toggle handler paired with themeModeOverride */
+  onThemeToggleOverride?: () => void;
   /** Optional: custom class name */
   className?: string;
 }
@@ -152,6 +156,8 @@ export interface DisplayContextHeaderProps {
 export function DisplayContextHeader({
   protocol,
   showThemeToggle = false,
+  themeModeOverride,
+  onThemeToggleOverride,
   className,
 }: DisplayContextHeaderProps) {
   // Popover states
@@ -205,13 +211,24 @@ export function DisplayContextHeader({
   const fallbackLocale = navigator.language || "en-US";
   const fallbackTimeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const themePreference = usePreferencesStore((s) => s.themeMode);
-  const theme = extractHostTheme(hostContext) ?? themePreference;
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+  const usesThemeOverride =
+    themeModeOverride !== undefined && onThemeToggleOverride !== undefined;
+  const effectiveThemeMode = usesThemeOverride ? themeModeOverride : themeMode;
 
+  // App Builder can scope theme changes to the emulated thread/composer surface.
+  // Other consumers still fall back to the global MCPJam preference theme.
   const handleThemeChange = useCallback(() => {
-    const newTheme = theme === "dark" ? "light" : "dark";
-    patchHostContext({ theme: newTheme });
-  }, [theme, patchHostContext]);
+    if (usesThemeOverride && onThemeToggleOverride) {
+      onThemeToggleOverride();
+      return;
+    }
+
+    const newTheme = themeMode === "dark" ? "light" : "dark";
+    updateThemeMode(newTheme);
+    setThemeMode(newTheme);
+  }, [onThemeToggleOverride, setThemeMode, themeMode, usesThemeOverride]);
 
   // Device config - use custom dimensions from store for custom type
   const deviceConfig = useMemo(() => {
@@ -926,9 +943,10 @@ export function DisplayContextHeader({
                 variant="ghost"
                 size="icon"
                 onClick={handleThemeChange}
+                data-testid="display-context-theme-toggle"
                 className="h-7 w-7 border bg-background shadow-xs"
               >
-                {theme === "dark" ? (
+                {effectiveThemeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
                 ) : (
                   <Moon className="h-3.5 w-3.5" />
@@ -936,7 +954,7 @@ export function DisplayContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {theme === "dark" ? "Light mode" : "Dark mode"}
+              {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
         )}

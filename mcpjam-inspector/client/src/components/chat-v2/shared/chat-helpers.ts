@@ -89,35 +89,48 @@ export const getProviderLogoFromModel = (
 };
 
 export const getProviderColor = (provider: string) => {
+  return getProviderColorForTheme(provider);
+};
+
+export const getProviderColorForTheme = (
+  provider: string,
+  themeMode?: "light" | "dark" | "system",
+) => {
+  const resolveThemeClasses = (lightClasses: string, darkClasses: string) => {
+    if (themeMode === "light") return lightClasses;
+    if (themeMode === "dark") return darkClasses;
+    return `${lightClasses} dark:${darkClasses}`;
+  };
+
   switch (provider) {
     case "anthropic":
-      return "text-orange-600 dark:text-orange-400";
+      return resolveThemeClasses("text-orange-600", "text-orange-400");
     case "openai":
-      return "text-green-600 dark:text-green-400";
+      return resolveThemeClasses("text-green-600", "text-green-400");
     case "deepseek":
-      return "text-blue-600 dark:text-blue-400";
+      return resolveThemeClasses("text-blue-600", "text-blue-400");
     case "google":
-      return "text-red-600 dark:text-red-400";
+      return resolveThemeClasses("text-red-600", "text-red-400");
     case "mistral":
-      return "text-orange-500 dark:text-orange-400";
+      return resolveThemeClasses("text-orange-500", "text-orange-400");
     case "ollama":
-      return "text-gray-600 dark:text-gray-400";
+      return resolveThemeClasses("text-gray-600", "text-gray-400");
     case "xai":
-      return "text-purple-600 dark:text-purple-400";
+      return resolveThemeClasses("text-purple-600", "text-purple-400");
     case "azure":
-      return "text-purple-600 dark:text-purple-400";
+      return resolveThemeClasses("text-purple-600", "text-purple-400");
     case "custom":
       return "bg-gradient-to-br from-teal-500 to-cyan-600";
     case "moonshotai":
-      return "text-cyan-600 dark:text-cyan-400";
+      return resolveThemeClasses("text-cyan-600", "text-cyan-400");
     case "z-ai":
-      return "text-indigo-600 dark:text-indigo-400";
+      return resolveThemeClasses("text-indigo-600", "text-indigo-400");
     case "minimax":
-      return "text-pink-600 dark:text-pink-400";
+      return resolveThemeClasses("text-pink-600", "text-pink-400");
     case "meta":
-      return "text-blue-500 dark:text-blue-400";
+      return resolveThemeClasses("text-blue-500", "text-blue-400");
     default:
-      return "text-blue-600 dark:text-blue-400";
+      return resolveThemeClasses("text-blue-600", "text-blue-400");
   }
 };
 

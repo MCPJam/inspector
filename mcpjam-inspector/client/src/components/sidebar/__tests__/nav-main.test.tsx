@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 
 vi.mock("@/components/ui/sidebar", () => ({
+  useSidebar: () => ({ open: true }),
   SidebarGroup: ({ children }: any) => <div>{children}</div>,
   SidebarGroupContent: ({ children }: any) => <div>{children}</div>,
   SidebarMenu: ({ children }: any) => <div>{children}</div>,
