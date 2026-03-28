@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import { Check, CreditCard, Loader2, Plus, X } from "lucide-react";
+import { Check, CreditCard, Loader2, Minus } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,14 +18,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type {
+  BillingFeatureName,
   BillingInterval,
+  BillingLimitName,
   OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import {
+  formatBillingFeatureName,
   formatPlanName,
-  getDisplayPriceCentsForPlan,
 } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
 
@@ -36,173 +38,122 @@ const PLAN_ORDER: OrganizationPlan[] = [
   "enterprise",
 ];
 
-/** Static compare matrix — mirrors mcpjam_pricing_page.html "Compare Plans" section. */
-type CompareCell = "check" | "x" | string;
+const FEATURE_ROWS: BillingFeatureName[] = [
+  "evals",
+  "cicd",
+  "sandboxes",
+  "auditLog",
+];
 
-type CompareRowDef = { feature: string; cells: CompareCell[] };
+const LIMIT_ROWS: Array<{ key: BillingLimitName; label: string }> = [
+  { key: "maxMembers", label: "Members" },
+  { key: "maxSandboxesPerWorkspace", label: "Sandboxes / workspace" },
+  { key: "maxEvalRunsPerMonth", label: "Eval runs / month" },
+];
 
-type CompareCategoryDef = { title: string; rows: CompareRowDef[] };
+/** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
+const POPULAR_PLAN: OrganizationPlan = "team";
 
-const COMPARE_PLAN_CATEGORIES: CompareCategoryDef[] = [
+const COMPARE_SECTIONS: Array<{
+  title: string;
+  rows: Array<
+    | { type: "feature"; key: BillingFeatureName }
+    | { type: "limit"; key: BillingLimitName; label: string }
+  >;
+}> = [
   {
-    title: "Testing & CI/CD",
-    rows: [
-      {
-        feature: "Evals CI/CD runs",
-        cells: ["5 / mo", "500 included", "5,000 included", "Custom volume"],
-      },
-      {
-        feature: "CI/CD overage",
-        cells: ["Hard cap", "$0.02 / run", "$0.015 / run", "$0.01 / run"],
-      },
-      {
-        feature: "Cloud test runners",
-        cells: ["check", "check", "check", "check"],
-      },
-      {
-        feature: "Sandbox environments",
-        cells: ["x", "1 environment", "5 environments", "Dedicated infra"],
-      },
-      {
-        feature: "Sandbox hours",
-        cells: ["x", "20 hrs included", "Unlimited", "Unlimited"],
-      },
-      {
-        feature: "Isolated test environments",
-        cells: ["x", "x", "check", "check"],
-      },
-    ],
+    title: "Product access",
+    rows: FEATURE_ROWS.map((key) => ({ type: "feature" as const, key })),
   },
   {
-    title: "LLM Playground",
-    rows: [
-      {
-        feature: "Open models",
-        cells: ["Rate limited", "check", "check", "check"],
-      },
-      {
-        feature: "Frontier models",
-        cells: ["x", "x", "check", "check"],
-      },
-      {
-        feature: "Token budget / seat",
-        cells: ["x", "$10 / mo", "$25 / seat / mo", "Custom commit"],
-      },
-      {
-        feature: "Token overage",
-        cells: ["x", "Cost + 30%", "Cost + 20%", "Negotiated"],
-      },
-    ],
-  },
-  {
-    title: "Platform & Infrastructure",
-    rows: [
-      {
-        feature: "Users",
-        cells: ["1", "Up to 3", "Unlimited", "Unlimited"],
-      },
-      {
-        feature: "Internal server registry",
-        cells: ["x", "10 entries", "50 entries", "Unlimited"],
-      },
-      {
-        feature: "Analytics",
-        cells: ["x", "Basic", "Full", "Full + reporting"],
-      },
-      {
-        feature: "Team management",
-        cells: ["x", "x", "check", "check"],
-      },
-      {
-        feature: "API access",
-        cells: ["x", "x", "x", "check"],
-      },
-    ],
-  },
-  {
-    title: "Security & Compliance",
-    rows: [
-      {
-        feature: "SSO",
-        cells: ["x", "x", "check", "check"],
-      },
-      {
-        feature: "SCIM provisioning",
-        cells: ["x", "x", "x", "check"],
-      },
-      {
-        feature: "RBAC",
-        cells: ["x", "x", "Basic", "Advanced"],
-      },
-      {
-        feature: "Audit logs",
-        cells: ["x", "x", "x", "check"],
-      },
-      {
-        feature: "Data residency",
-        cells: ["x", "x", "x", "check"],
-      },
-      {
-        feature: "Dedicated support",
-        cells: ["x", "x", "x", "check"],
-      },
-    ],
+    title: "Usage limits",
+    rows: LIMIT_ROWS.map(({ key, label }) => ({
+      type: "limit" as const,
+      key,
+      label,
+    })),
   },
 ];
 
-const PLAN_TIER_BADGE: Record<
-  OrganizationPlan,
-  { label: string; variant?: "secondary" | "outline" | "default" }
-> = {
-  free: { label: "Community", variant: "secondary" },
-  starter: { label: "Solo", variant: "secondary" },
-  team: { label: "Popular", variant: "default" },
-  enterprise: { label: "Enterprise", variant: "outline" },
-};
-
-const PLAN_HIGHLIGHTS: Record<OrganizationPlan, string[]> = {
-  free: [
-    "For builders getting started with MCP testing.",
-    "Open Source on GitHub",
-    "MCP Apps / ChatGPT Apps Builder",
-    "LLM playground with open models",
-    "Visual OAuth Debugger",
-    "Testing MCP Primitives",
-    "MCP Unit Tests and Evals UI",
-    "JSON-RPC Logger & SDK",
-    "Limited CI/CD eval runs",
-  ],
-  starter: [
-    "For devs and small teams shipping MCP servers professionally.",
-    "CI/CD runs with overage",
-    "1 sandbox environment",
-    "LLM playground with limited token budget",
-    "Up to 3 users",
-    "Internal server registry",
-    "Basic analytics",
-  ],
-  team: [
-    "For teams testing, evaluating, and shipping production MCP servers.",
-    "Higher CI/CD run limits",
-    "Multiple sandbox environments",
-    "Frontier models in LLM playground",
-    "Full analytics & registry",
-    "Unlimited users & team management",
-    "SSO included",
-  ],
-  enterprise: [
-    "For organizations shipping production MCP at scale with full compliance.",
-    "Committed CI/CD volume pricing",
-    "Dedicated sandbox infrastructure",
-    "All LLM models, custom token commit",
-    "SSO, SCIM, RBAC & audit logs",
-    "Data residency & compliance",
-    "Dedicated support channel",
-  ],
-};
-
 function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
+}
+
+function getPlanColumnCta(params: {
+  plan: OrganizationPlan;
+  currentPlan: OrganizationPlan;
+  entry: PlanCatalog["plans"][OrganizationPlan];
+  billingConfigured: boolean;
+  canManageBilling: boolean;
+  isBillingActionPending: boolean;
+  onManageBilling: () => Promise<void>;
+  onStartCheckout: (
+    plan: "starter" | "team",
+    billingInterval: BillingInterval,
+  ) => Promise<void>;
+  billingInterval: BillingInterval;
+}): {
+  label: string;
+  disabled: boolean;
+  variant: "default" | "outline" | "secondary";
+  onClick?: () => void;
+} {
+  const {
+    plan,
+    currentPlan,
+    entry,
+    billingConfigured,
+    canManageBilling,
+    isBillingActionPending,
+    onManageBilling,
+    onStartCheckout,
+    billingInterval,
+  } = params;
+
+  const isCurrentPlan = currentPlan === plan;
+  const isHigherTier = getPlanRank(plan) > getPlanRank(currentPlan);
+  const isDowngrade = getPlanRank(plan) < getPlanRank(currentPlan);
+  const isEnterprisePlan = plan === "enterprise";
+
+  if (isCurrentPlan) {
+    return { label: "Current plan", disabled: true, variant: "outline" };
+  }
+
+  if (isEnterprisePlan) {
+    return {
+      label: "Talk to sales",
+      disabled: false,
+      variant: "outline",
+      onClick: () => {
+        window.location.href =
+          "mailto:founders@mcpjam.com?subject=MCPJam%20Enterprise";
+      },
+    };
+  }
+
+  if (isDowngrade) {
+    return {
+      label: "Downgrade",
+      disabled:
+        !canManageBilling || !billingConfigured || isBillingActionPending,
+      variant: "outline",
+      onClick: () => void onManageBilling(),
+    };
+  }
+
+  if (isHigherTier && entry.isSelfServe) {
+    return {
+      label: "Upgrade",
+      disabled:
+        !billingConfigured ||
+        !canManageBilling ||
+        isBillingActionPending,
+      variant: "default",
+      onClick: () => void onStartCheckout(plan, billingInterval),
+    };
+  }
+
+  return { label: "Unavailable", disabled: true, variant: "outline" };
 }
 
 function formatCurrency(
@@ -219,21 +170,12 @@ function formatCurrency(
 }
 
 function formatPrice(
-  plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
 ): string {
   if (amountInCents == null) {
-    return "Custom";
-  }
-
-  if (plan === "starter") {
-    if (interval === "monthly") {
-      return `${formatCurrency(amountInCents / 100, currency, 0)}/mo`;
-    }
-    const monthlyEquivalent = amountInCents / 12 / 100;
-    return `${formatCurrency(monthlyEquivalent, currency, 2)}/mo`;
+    return interval === "annual" ? "Custom annual" : "Custom pricing";
   }
 
   if (interval === "monthly") {
@@ -245,24 +187,12 @@ function formatPrice(
 }
 
 function formatPriceDetail(
-  plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
 ): string {
   if (amountInCents == null) {
-    return plan === "enterprise" ? "Annual commitment" : "Sales-led";
-  }
-
-  if (plan === "free") {
-    return "No credit card required";
-  }
-
-  if (plan === "team") {
-    if (interval === "monthly") {
-      return "5 seat minimum · Billed monthly";
-    }
-    return "5 seat minimum · Billed annually";
+    return "Sales-led";
   }
 
   if (interval === "monthly") {
@@ -272,8 +202,30 @@ function formatPriceDetail(
   return `${formatCurrency(amountInCents / 100, currency, 0)} billed annually`;
 }
 
+function formatPerSeatCadence(
+  plan: OrganizationPlan,
+  interval: BillingInterval,
+): string {
+  if (plan === "free") {
+    return "Per seat, billed monthly";
+  }
+  if (plan === "enterprise") {
+    return "Annual commitment";
+  }
+  return interval === "annual"
+    ? "Per seat, billed annually"
+    : "Per seat, billed monthly";
+}
+
+function formatLimitValue(value: number | null): string {
+  if (value === null) {
+    return "Unlimited";
+  }
+
+  return value.toLocaleString();
+}
+
 const PER_SEAT_MO_SUFFIX = "/seat/mo";
-const PER_MO_SUFFIX = "/mo";
 
 function PlanPriceDisplay({ label }: { label: string }) {
   if (label.endsWith(PER_SEAT_MO_SUFFIX)) {
@@ -290,20 +242,6 @@ function PlanPriceDisplay({ label }: { label: string }) {
     );
   }
 
-  if (label.endsWith(PER_MO_SUFFIX)) {
-    const amount = label.slice(0, -PER_MO_SUFFIX.length);
-    return (
-      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
-        <span className="text-3xl font-semibold tabular-nums tracking-tight">
-          {amount}
-        </span>
-        <span className="text-sm font-semibold text-muted-foreground">
-          {PER_MO_SUFFIX}
-        </span>
-      </div>
-    );
-  }
-
   return (
     <p className="min-w-0 text-3xl font-semibold tabular-nums tracking-tight">
       {label}
@@ -311,20 +249,35 @@ function PlanPriceDisplay({ label }: { label: string }) {
   );
 }
 
-function CompareMatrixCell({ value }: { value: CompareCell }) {
-  if (value === "check") {
-    return (
-      <Check
-        className="mx-auto size-4 text-emerald-600"
-        aria-label="Included"
-      />
-    );
+function getAnnualDiscountPercent(planCatalog: PlanCatalog | undefined): number | null {
+  if (!planCatalog) {
+    return null;
   }
-  if (value === "x") {
-    return <X className="mx-auto size-4 text-muted-foreground/55" aria-label="Not included" />;
+  const starterPrices = planCatalog.plans.starter.prices;
+  if (
+    starterPrices.monthly == null ||
+    starterPrices.annual == null ||
+    starterPrices.monthly === 0
+  ) {
+    return null;
   }
-  return (
-    <span className="text-center text-sm text-muted-foreground">{value}</span>
+  const annualizedMonthly = starterPrices.monthly * 12;
+  return Math.round(
+    ((annualizedMonthly - starterPrices.annual) / annualizedMonthly) * 100,
+  );
+}
+
+function FeatureAvailability({ included }: { included: boolean }) {
+  return included ? (
+    <span className="inline-flex items-center gap-1 text-sm font-medium text-foreground">
+      <Check className="size-4 text-emerald-600" />
+      Included
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
+      <Minus className="size-4" />
+      Not included
+    </span>
   );
 }
 
@@ -355,23 +308,21 @@ export function OrganizationBillingSection({
   onStartCheckout,
 }: OrganizationBillingSectionProps) {
   const [billingInterval, setBillingInterval] =
-    useState<BillingInterval>("annual");
+    useState<BillingInterval>("monthly");
 
   useEffect(() => {
-    const interval = billingStatus?.billingInterval;
-    if (interval === "monthly" || interval === "annual") {
-      setBillingInterval(interval);
+    if (billingStatus?.billingInterval === "annual") {
+      setBillingInterval((current) =>
+        current === "monthly" ? "annual" : current,
+      );
     }
   }, [billingStatus?.billingInterval]);
 
-  const persistedPlan = billingStatus?.plan ?? "free";
-  const effectivePlan = billingStatus?.effectivePlan ?? persistedPlan;
-  const currentPlan = effectivePlan;
-  const planMismatch =
-    billingStatus && billingStatus.effectivePlan !== billingStatus.plan;
+  const currentPlan = billingStatus?.plan ?? "free";
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;
+  const annualDiscountPct = getAnnualDiscountPercent(planCatalog);
   const formattedPeriodEnd =
     billingStatus?.stripeCurrentPeriodEnd != null
       ? new Intl.DateTimeFormat(undefined, {
@@ -391,12 +342,11 @@ export function OrganizationBillingSection({
           <div className="space-y-1.5">
             <CardTitle className="flex items-center gap-2 text-xl">
               <CreditCard className="size-4 text-muted-foreground" />
-              MCPJam plans and pricing
+              Plans & Billing
             </CardTitle>
             <CardDescription>
-              Start free, scale as you grow. Pick the plan that fits your
-              team&apos;s MCP testing workflow. Subscription details for{" "}
-              {organizationName}.
+              Compare plans, review your current subscription, and start billing
+              changes for {organizationName}.
             </CardDescription>
           </div>
           {billingStatus && currentPlan !== "free" ? (
@@ -425,27 +375,13 @@ export function OrganizationBillingSection({
             </div>
           ) : billingStatus ? (
             <>
-              <div className="grid gap-3 rounded-md border border-border/70 p-4 sm:grid-cols-2 xl:grid-cols-5">
+              <div className="grid gap-3 rounded-md border border-border/70 p-4 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="space-y-1">
                   <p className="text-xs uppercase tracking-wide text-muted-foreground">
                     Current plan
                   </p>
                   <p className="text-sm font-medium">
                     {formatPlanName(currentPlan)}
-                  </p>
-                  {planMismatch ? (
-                    <p className="text-xs text-muted-foreground">
-                      Subscription is {formatPlanName(persistedPlan)}; effective
-                      access follows {formatPlanName(effectivePlan)}.
-                    </p>
-                  ) : null}
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Source
-                  </p>
-                  <p className="text-sm font-medium capitalize">
-                    {billingStatus.source.replace(/_/g, " ")}
                   </p>
                 </div>
                 <div className="space-y-1">
@@ -471,33 +407,6 @@ export function OrganizationBillingSection({
                   <p className="text-sm font-medium">{formattedPeriodEnd}</p>
                 </div>
               </div>
-              {billingStatus.trialStatus?.toLowerCase() === "active" &&
-              typeof billingStatus.trialDaysRemaining === "number" ? (
-                <div className="rounded-md border border-border/70 bg-muted/30 p-3 text-sm">
-                  <span className="font-medium">Trial active</span>
-                  {billingStatus.trialPlan ? (
-                    <span className="text-muted-foreground">
-                      {" "}
-                      ({formatPlanName(billingStatus.trialPlan)})
-                    </span>
-                  ) : null}
-                  : {billingStatus.trialDaysRemaining} day
-                  {billingStatus.trialDaysRemaining === 1 ? "" : "s"} remaining
-                  {billingStatus.trialEndsAt
-                    ? ` · ends ${new Intl.DateTimeFormat(undefined, {
-                        month: "short",
-                        day: "numeric",
-                        year: "numeric",
-                      }).format(new Date(billingStatus.trialEndsAt))}`
-                    : null}
-                </div>
-              ) : null}
-              {billingStatus.trialStatus?.toLowerCase() === "expired" ? (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-                  Trial ended. Upgrade or choose the Free plan from the billing
-                  prompt if required.
-                </div>
-              ) : null}
               {!billingConfigured ? (
                 <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
                   Billing is not configured in this environment. Plans are
@@ -515,31 +424,37 @@ export function OrganizationBillingSection({
         </CardContent>
       </Card>
 
-      <Card className="border-border/60">
-        <CardHeader className="gap-4 md:flex-row md:items-center md:justify-between">
+      <Card className="border-border/60 py-6 shadow-sm">
+        <CardHeader className="gap-4 border-b border-border/60 px-4 pb-6 sm:px-6 md:flex-row md:items-start md:justify-between">
           <div className="space-y-1">
-            <CardTitle className="text-lg">Choose billing interval</CardTitle>
+            <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+              Compare plans
+            </p>
+            <CardTitle className="text-xl">
+              Find the right plan for your team
+            </CardTitle>
             <CardDescription>
-              Annual billing lowers the effective monthly price. About 20% off
-              versus monthly for Starter and Team.
+              Same matrix as the MCPJam marketing pricing page — limits and
+              commercial packaging at a glance.
             </CardDescription>
           </div>
           <div className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-muted/40 p-1">
             <button
               type="button"
-              aria-label="Annual billing, save 20%"
               className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                "inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
                 billingInterval === "annual"
                   ? "bg-background text-foreground shadow-sm"
                   : "text-muted-foreground",
               )}
               onClick={() => setBillingInterval("annual")}
             >
-              <span>Annual</span>
-              <span className="ml-2 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs text-emerald-700">
-                Save 20%
-              </span>
+              Annual
+              {annualDiscountPct != null ? (
+                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                  -{annualDiscountPct}%
+                </span>
+              ) : null}
             </button>
             <button
               type="button"
@@ -555,226 +470,162 @@ export function OrganizationBillingSection({
             </button>
           </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-0 pb-0 pt-0">
           {isLoadingPlanCatalog || !planCatalog ? (
-            <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-              Loading plan catalog...
+            <div className="px-4 py-6 sm:px-6">
+              <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+                Loading plan catalog...
+              </div>
             </div>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-4">
-              {PLAN_ORDER.map((plan) => {
-                const entry = planCatalog.plans[plan];
-                const isCurrentPlan = currentPlan === plan;
-                const isHigherTier =
-                  getPlanRank(plan) > getPlanRank(currentPlan);
-                const isDowngrade =
-                  getPlanRank(plan) < getPlanRank(currentPlan);
-                const isEnterprisePlan = plan === "enterprise";
-                const displayPriceCents = getDisplayPriceCentsForPlan(
-                  plan,
-                  billingInterval,
-                  entry,
-                );
-                const priceLabel = isEnterprisePlan
-                  ? "Custom"
-                  : plan === "free"
-                    ? "$0"
-                    : formatPrice(
-                        plan,
-                        displayPriceCents,
-                        planCatalog.currency,
-                        billingInterval,
-                      );
-                const priceDetail = isEnterprisePlan
-                  ? "Annual commitment"
-                  : plan === "free"
-                    ? "No credit card required"
-                    : formatPriceDetail(
-                        plan,
-                        displayPriceCents,
-                        planCatalog.currency,
-                        billingInterval,
-                      );
-
-                let ctaLabel = "Current plan";
-                let ctaDisabled = true;
-                let ctaVariant: "default" | "outline" | "secondary" = "outline";
-                let ctaAction: (() => void) | undefined;
-
-                if (isCurrentPlan) {
-                  ctaLabel = "Current plan";
-                } else if (isEnterprisePlan) {
-                  ctaLabel = "Request a demo";
-                  ctaDisabled = false;
-                  ctaVariant = "secondary";
-                  ctaAction = () => {
-                    window.location.href =
-                      "mailto:founders@mcpjam.com?subject=MCPJam%20Enterprise%20demo";
-                  };
-                } else if (plan === "free" || isDowngrade) {
-                  ctaLabel = "Downgrade unavailable";
-                } else if (isHigherTier && entry.isSelfServe) {
-                  ctaLabel =
-                    plan === "team" ? "Start free trial" : "Get started";
-                  ctaDisabled = false;
-                  ctaVariant = "default";
-                  ctaAction = () => {
-                    void onStartCheckout(plan, billingInterval);
-                  };
-                }
-
-                if (
-                  !isEnterprisePlan &&
-                  (!billingConfigured || !canManageBilling)
-                ) {
-                  ctaDisabled = true;
-                }
-
-                const tierBadge = PLAN_TIER_BADGE[plan];
-                const highlights = PLAN_HIGHLIGHTS[plan];
-                const [tagline, ...bullets] = highlights;
-
-                return (
-                  <Card
-                    key={plan}
-                    className={cn(
-                      "relative h-full min-h-0 min-w-0 gap-4 border-border/60 py-5",
-                      isCurrentPlan && "border-primary/50 shadow-md",
-                      plan === "team" &&
-                        "border-orange-500/45 shadow-sm ring-1 ring-orange-500/20",
-                    )}
-                  >
-                    <CardHeader className="min-w-0 shrink-0 space-y-3">
-                      <div className="min-w-0 space-y-1">
-                        <div className="flex min-w-0 flex-wrap items-center gap-2">
-                          <CardTitle className="min-w-0 break-words">
-                            {entry.displayName}
-                          </CardTitle>
-                          {plan !== "enterprise" ? (
-                            <Badge variant={tierBadge.variant}>
-                              {tierBadge.label}
-                            </Badge>
-                          ) : null}
-                          {isCurrentPlan ? (
-                            <Badge variant="outline">Current</Badge>
-                          ) : null}
-                        </div>
-                        <CardDescription>{tagline}</CardDescription>
-                      </div>
-                      <div className="min-w-0 space-y-1">
-                        <PlanPriceDisplay label={priceLabel} />
-                        <p className="text-sm text-muted-foreground">
-                          {priceDetail}
-                        </p>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="flex min-h-0 flex-1 flex-col gap-4">
-                      <ul className="space-y-2 text-sm text-muted-foreground">
-                        {bullets.map((highlight) => {
-                          const Icon = plan === "free" ? Check : Plus;
-                          return (
-                            <li
-                              key={highlight}
-                              className="flex items-start gap-2"
-                            >
-                              <Icon
-                                className={cn(
-                                  "mt-0.5 size-4 shrink-0",
-                                  plan === "free"
-                                    ? "text-emerald-600"
-                                    : "text-orange-600",
+            <div className="relative w-full overflow-x-auto">
+              <div className="min-w-[56rem] px-4 pb-6 sm:px-6">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-b hover:bg-transparent">
+                      <TableHead className="sticky left-0 z-20 w-[26%] min-w-[11rem] bg-card align-top shadow-[1px_0_0_0_hsl(var(--border))]">
+                        <span className="sr-only">Features</span>
+                      </TableHead>
+                      {PLAN_ORDER.map((plan) => {
+                        const entry = planCatalog.plans[plan];
+                        const isEnterprisePlan = plan === "enterprise";
+                        const priceLabel = isEnterprisePlan
+                          ? "Custom"
+                          : plan === "free"
+                            ? "$0"
+                            : formatPrice(
+                                entry.prices[billingInterval],
+                                planCatalog.currency,
+                                billingInterval,
+                              );
+                        const priceSubtext = isEnterprisePlan
+                          ? formatPerSeatCadence(plan, billingInterval)
+                          : plan === "free"
+                            ? "No credit card required"
+                            : formatPerSeatCadence(plan, billingInterval);
+                        const cta = getPlanColumnCta({
+                          plan,
+                          currentPlan,
+                          entry,
+                          billingConfigured,
+                          canManageBilling,
+                          isBillingActionPending,
+                          onManageBilling,
+                          onStartCheckout,
+                          billingInterval,
+                        });
+                        const isPopular = plan === POPULAR_PLAN;
+                        return (
+                          <TableHead
+                            key={plan}
+                            className={cn(
+                              "align-top px-3 pb-4 pt-5 text-center",
+                              isPopular &&
+                                "border-x border-primary/35 bg-primary/[0.06]",
+                            )}
+                          >
+                            <div className="mx-auto flex max-w-[13rem] flex-col items-center gap-3">
+                              <div className="flex flex-wrap items-center justify-center gap-2">
+                                <span className="text-base font-semibold">
+                                  {entry.displayName}
+                                </span>
+                                {isPopular ? (
+                                  <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
+                                    Popular
+                                  </Badge>
+                                ) : null}
+                              </div>
+                              <div className="w-full space-y-1">
+                                <PlanPriceDisplay label={priceLabel} />
+                                <p className="text-xs leading-snug text-muted-foreground">
+                                  {priceSubtext}
+                                </p>
+                              </div>
+                              <Button
+                                className="w-full rounded-lg"
+                                size="sm"
+                                variant={cta.variant}
+                                disabled={cta.disabled}
+                                onClick={cta.onClick}
+                              >
+                                {isBillingActionPending && cta.onClick ? (
+                                  <>
+                                    <Loader2 className="size-4 animate-spin" />
+                                    Loading...
+                                  </>
+                                ) : (
+                                  cta.label
                                 )}
-                              />
-                              <span>{highlight}</span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                      <Button
-                        className={cn(
-                          "mt-auto w-full",
-                          plan === "team" &&
-                            !isCurrentPlan &&
-                            "bg-orange-600 hover:bg-orange-600/90",
-                        )}
-                        variant={ctaVariant}
-                        disabled={ctaDisabled || isBillingActionPending}
-                        onClick={ctaAction}
-                      >
-                        {isBillingActionPending && ctaAction ? (
-                          <>
-                            <Loader2 className="size-4 animate-spin" />
-                            Loading...
-                          </>
-                        ) : (
-                          ctaLabel
-                        )}
-                      </Button>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+                              </Button>
+                            </div>
+                          </TableHead>
+                        );
+                      })}
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {COMPARE_SECTIONS.map((section) => (
+                      <Fragment key={section.title}>
+                        <TableRow className="border-b hover:bg-transparent">
+                          <TableCell
+                            className="bg-muted/40 py-2.5 pl-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                            colSpan={PLAN_ORDER.length + 1}
+                          >
+                            {section.title}
+                          </TableCell>
+                        </TableRow>
+                        {section.rows.map((row) => (
+                          <TableRow
+                            key={
+                              row.type === "feature"
+                                ? row.key
+                                : `${row.key}-${row.label}`
+                            }
+                            className="border-b"
+                          >
+                            <TableCell className="sticky left-0 z-10 bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))]">
+                              {row.type === "feature"
+                                ? formatBillingFeatureName(row.key)
+                                : row.label}
+                            </TableCell>
+                            {PLAN_ORDER.map((plan) => {
+                              const isPopular = plan === POPULAR_PLAN;
+                              return (
+                                <TableCell
+                                  key={plan}
+                                  className={cn(
+                                    "px-3 py-3 text-center text-sm",
+                                    isPopular &&
+                                      "border-x border-primary/35 bg-primary/[0.06]",
+                                  )}
+                                >
+                                  {row.type === "feature" ? (
+                                    <FeatureAvailability
+                                      included={
+                                        planCatalog.plans[plan].features[
+                                          row.key
+                                        ]
+                                      }
+                                    />
+                                  ) : (
+                                    formatLimitValue(
+                                      planCatalog.plans[plan].limits[row.key],
+                                    )
+                                  )}
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
+                        ))}
+                      </Fragment>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           )}
         </CardContent>
       </Card>
-
-      {!isLoadingPlanCatalog && planCatalog ? (
-        <Card className="border-border/60">
-          <CardHeader>
-            <p className="text-xs font-semibold uppercase tracking-wider text-orange-600">
-              Compare plans
-            </p>
-            <CardTitle className="text-lg">
-              Find the right plan for your team
-            </CardTitle>
-            <CardDescription>
-              Same plan matrix as the MCPJam marketing pricing page — limits and
-              commercial packaging at a glance.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="overflow-x-auto">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead className="min-w-[10rem]">Feature</TableHead>
-                  {PLAN_ORDER.map((plan) => (
-                    <TableHead key={plan} className="min-w-[6.5rem] text-center">
-                      {planCatalog.plans[plan].displayName}
-                    </TableHead>
-                  ))}
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {COMPARE_PLAN_CATEGORIES.map((category) => (
-                  <Fragment key={category.title}>
-                    <TableRow className="bg-muted/40 hover:bg-muted/40">
-                      <TableCell
-                        colSpan={5}
-                        className="py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground"
-                      >
-                        {category.title}
-                      </TableCell>
-                    </TableRow>
-                    {category.rows.map((row) => (
-                      <TableRow key={`${category.title}-${row.feature}`}>
-                        <TableCell className="font-medium">
-                          {row.feature}
-                        </TableCell>
-                        {row.cells.map((cell, i) => (
-                          <TableCell key={i} className="text-center">
-                            <CompareMatrixCell value={cell} />
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    ))}
-                  </Fragment>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      ) : null}
     </div>
   );
 }
