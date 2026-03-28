@@ -88,9 +88,34 @@ describe("SandboxBuilderView", () => {
       />,
     );
 
+    const cta = screen.getByRole("button", { name: "Save and open preview" });
+    expect(cta).toBeInTheDocument();
+    expect(cta).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Save$/i })).toBeDisabled();
+  });
+
+  it("enables the setup bottom CTA when no setup sections need attention", () => {
+    const base = SANDBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
+      "openai/gpt-5-mini",
+    );
+    const draft = {
+      ...base,
+      selectedServerIds: [httpsServer._id],
+    };
+    render(
+      <SandboxBuilderView
+        workspaceId="ws-1"
+        workspaceServers={[httpsServer]}
+        draft={draft}
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
     expect(
       screen.getByRole("button", { name: "Save and open preview" }),
-    ).toBeInTheDocument();
+    ).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Save$/i })).not.toBeDisabled();
   });
 
   it("disables Preview and Usage until the sandbox is saved", () => {

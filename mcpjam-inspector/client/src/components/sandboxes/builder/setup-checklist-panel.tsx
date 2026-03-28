@@ -37,6 +37,7 @@ import {
   type SandboxHostStyle,
 } from "@/lib/sandbox-host-style";
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
+import { cn } from "@/lib/utils";
 import type { SandboxDraftConfig } from "./types";
 
 export type SetupSectionId =
@@ -95,6 +96,32 @@ function SectionStatusBadge({ kind }: { kind: SectionStatusKind }) {
     default:
       return null;
   }
+}
+
+function SetupSectionStepIndex({
+  step,
+  kind,
+}: {
+  step: number;
+  kind: SectionStatusKind;
+}) {
+  return (
+    <span
+      className={cn(
+        "flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold tabular-nums transition-colors",
+        kind === "complete" &&
+          "border-emerald-600/55 bg-emerald-500/[0.14] text-emerald-900 dark:border-emerald-400/45 dark:bg-emerald-950/50 dark:text-emerald-200",
+        kind === "attention" &&
+          "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300",
+        (kind === "optional" ||
+          kind === "default_on" ||
+          kind === "collapsed") &&
+          "border-border/70 bg-muted/40 text-muted-foreground",
+      )}
+    >
+      {step}
+    </span>
+  );
 }
 
 function isInsecureUrl(url: string | undefined): boolean {
@@ -273,7 +300,7 @@ export function ServerSelectionEditor({
   );
 }
 
-function computeSectionStatuses(
+export function computeSectionStatuses(
   draft: SandboxDraftConfig,
   workspaceServers: RemoteServer[],
 ): Record<SetupSectionId, SectionStatusKind> {
@@ -413,10 +440,8 @@ export function SetupChecklistPanel({
               onOpenChange={(o) => setSectionOpen("basics", o)}
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    [1]
-                  </span>
+                <div className="flex items-center gap-2.5">
+                  <SetupSectionStepIndex step={1} kind={statuses.basics} />
                   <span className="text-sm font-semibold">Basics</span>
                 </div>
                 <SectionStatusBadge kind={statuses.basics} />
@@ -543,10 +568,8 @@ export function SetupChecklistPanel({
               onOpenChange={(o) => setSectionOpen("servers", o)}
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    [2]
-                  </span>
+                <div className="flex items-center gap-2.5">
+                  <SetupSectionStepIndex step={2} kind={statuses.servers} />
                   <span className="text-sm font-semibold">Servers</span>
                 </div>
                 <SectionStatusBadge kind={statuses.servers} />
@@ -575,10 +598,8 @@ export function SetupChecklistPanel({
               onOpenChange={(o) => setSectionOpen("access", o)}
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    [3]
-                  </span>
+                <div className="flex items-center gap-2.5">
+                  <SetupSectionStepIndex step={3} kind={statuses.access} />
                   <span className="text-sm font-semibold">Access</span>
                 </div>
                 <SectionStatusBadge kind={statuses.access} />
@@ -698,10 +719,8 @@ export function SetupChecklistPanel({
               onOpenChange={(o) => setSectionOpen("welcome", o)}
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    [4]
-                  </span>
+                <div className="flex items-center gap-2.5">
+                  <SetupSectionStepIndex step={4} kind={statuses.welcome} />
                   <span className="text-sm font-semibold">Welcome dialog</span>
                 </div>
                 <SectionStatusBadge kind={statuses.welcome} />
@@ -769,10 +788,8 @@ export function SetupChecklistPanel({
               onOpenChange={(o) => setSectionOpen("feedback", o)}
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    [5]
-                  </span>
+                <div className="flex items-center gap-2.5">
+                  <SetupSectionStepIndex step={5} kind={statuses.feedback} />
                   <span className="text-sm font-semibold">Feedback</span>
                 </div>
                 <SectionStatusBadge kind={statuses.feedback} />
@@ -857,10 +874,8 @@ export function SetupChecklistPanel({
               onOpenChange={(o) => setSectionOpen("advanced", o)}
             >
               <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    [6]
-                  </span>
+                <div className="flex items-center gap-2.5">
+                  <SetupSectionStepIndex step={6} kind={statuses.advanced} />
                   <span className="text-sm font-semibold">Advanced</span>
                 </div>
                 <SectionStatusBadge kind="collapsed" />

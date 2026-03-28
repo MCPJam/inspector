@@ -65,6 +65,7 @@ import { buildSandboxCanvas } from "./sandboxCanvasBuilder";
 import { SandboxCanvas } from "./SandboxCanvas";
 import { DEFAULT_SYSTEM_PROMPT, toDraftConfig } from "./drafts";
 import {
+  computeSectionStatuses,
   SetupChecklistPanel,
   isInsecureUrl,
   updateSelectedServerIds,
@@ -115,6 +116,7 @@ function SandboxBuilderChrome({
   isDirty,
   isSaving,
   hasSavedSandbox,
+  setupHasBlockingSections,
   viewMode,
   onBack,
   onSave,
@@ -130,6 +132,8 @@ function SandboxBuilderChrome({
   isDirty: boolean;
   isSaving: boolean;
   hasSavedSandbox: boolean;
+  /** True when any Setup section is marked Attention (same gate as bottom “Save and open preview”). */
+  setupHasBlockingSections: boolean;
   viewMode: ViewMode;
   onBack: () => void;
   onSave: () => void;
@@ -139,7 +143,10 @@ function SandboxBuilderChrome({
   onEditSetup: () => void;
   onModeChange: (mode: ViewMode) => void;
 }) {
-  const saveDisabled = isSaving || (!isDirty && hasSavedSandbox);
+  const saveDisabled =
+    isSaving ||
+    (!isDirty && hasSavedSandbox) ||
+    setupHasBlockingSections;
   const showCopyLink = hasSavedSandbox;
 
   return (
@@ -218,6 +225,11 @@ function SandboxBuilderChrome({
           <Button
             onClick={onSave}
             disabled={saveDisabled}
+            title={
+              setupHasBlockingSections
+                ? "Resolve every section marked Attention in Setup before saving."
+                : undefined
+            }
             variant={hasSavedSandbox && !isDirty ? "ghost" : "default"}
             className="rounded-xl"
           >
@@ -396,6 +408,14 @@ export function SandboxBuilderView({
       }),
     [draftSandboxConfig],
   );
+
+  const setupHasBlockingSections = useMemo(() => {
+    const statuses = computeSectionStatuses(
+      draftSandboxConfig,
+      workspaceServers,
+    );
+    return Object.values(statuses).some((kind) => kind === "attention");
+  }, [draftSandboxConfig, workspaceServers]);
 
   // Debounced auto-restart on behavior-affecting changes
   useEffect(() => {
@@ -882,6 +902,7 @@ export function SandboxBuilderView({
         isDirty={isDirty}
         isSaving={isSaving}
         hasSavedSandbox={hasSavedSandbox}
+        setupHasBlockingSections={setupHasBlockingSections}
         viewMode={viewMode}
         onBack={onBack}
         onSave={() => void saveSandbox()}
@@ -1170,7 +1191,12 @@ export function SandboxBuilderView({
                   size="lg"
                   className="h-12 rounded-full px-8 text-base font-semibold shadow-md"
                   onClick={() => void saveAndOpenPreview()}
-                  disabled={isSaving}
+                  disabled={isSaving || setupHasBlockingSections}
+                  title={
+                    setupHasBlockingSections
+                      ? "Resolve every section marked Attention in Setup before previewing."
+                      : undefined
+                  }
                 >
                   Save and open preview
                 </Button>
