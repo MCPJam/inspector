@@ -75,7 +75,7 @@ export function NavMain({
     );
 
   const shouldShowHoverCard = (item: NavMainItem): boolean => {
-    if (!learnMore || !sidebarOpen) return false;
+    if (!learnMore) return false;
     if (shouldShowBubble(item)) return false;
     const tabId = item.url.replace("#", "");
     const entry = learnMoreContent[tabId];
@@ -86,7 +86,12 @@ export function NavMain({
     if (!shouldShowHoverCard(item) || !learnMore) return child;
     const tabId = item.url.replace("#", "");
     return (
-      <LearnMoreHoverCard tabId={tabId} onExpand={learnMore.onExpand}>
+      <LearnMoreHoverCard
+        tabId={tabId}
+        onExpand={learnMore.onExpand}
+        triggerTooltip={!sidebarOpen ? item.title : undefined}
+        triggerTooltipDelayMs={!sidebarOpen ? 1000 : undefined}
+      >
         {child}
       </LearnMoreHoverCard>
     );
@@ -99,7 +104,12 @@ export function NavMain({
           {items.map((item) => {
             const button = (
               <SidebarMenuButton
-                tooltip={!item.disabled ? item.title : undefined}
+                tooltip={
+                  !item.disabled &&
+                  (!shouldShowHoverCard(item) || sidebarOpen)
+                    ? item.title
+                    : undefined
+                }
                 isActive={!item.disabled && isItemActive(item)}
                 onClick={
                   item.disabled ? undefined : () => handleClick(item.url)

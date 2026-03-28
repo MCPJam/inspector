@@ -5,6 +5,11 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from "@/components/ui/hover-card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { learnMoreContent } from "@/lib/learn-more-content";
 
 // Preload all preview videos into blob URLs so they play instantly on hover
@@ -32,17 +37,30 @@ interface LearnMoreHoverCardProps {
   tabId: string;
   children: React.ReactNode;
   onExpand: (tabId: string, sourceRect: DOMRect | null) => void;
+  triggerTooltip?: string;
+  triggerTooltipDelayMs?: number;
 }
 
 export function LearnMoreHoverCard({
   tabId,
   children,
   onExpand,
+  triggerTooltip,
+  triggerTooltipDelayMs,
 }: LearnMoreHoverCardProps) {
   const entry = learnMoreContent[tabId];
   const wrapperRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [open, setOpen] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const handoffTimerRef = useRef<number | null>(null);
+
+  const clearHandoffTimer = () => {
+    if (handoffTimerRef.current !== null) {
+      window.clearTimeout(handoffTimerRef.current);
+      handoffTimerRef.current = null;
+    }
+  };
 
   useEffect(() => {
     if (open && videoRef.current) {
@@ -51,11 +69,46 @@ export function LearnMoreHoverCard({
     }
   }, [open]);
 
+  useEffect(() => {
+    return () => {
+      clearHandoffTimer();
+    };
+  }, []);
+
   if (!entry) return <>{children}</>;
+
+  const shouldShowTooltipFirst =
+    !!triggerTooltip && triggerTooltipDelayMs !== undefined;
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    clearHandoffTimer();
+
+    if (!shouldShowTooltipFirst) {
+      setOpen(nextOpen);
+      setTooltipOpen(false);
+      return;
+    }
+
+    if (!nextOpen) {
+      setTooltipOpen(false);
+      setOpen(false);
+      return;
+    }
+
+    setTooltipOpen(true);
+    setOpen(false);
+    handoffTimerRef.current = window.setTimeout(() => {
+      setTooltipOpen(false);
+      setOpen(true);
+      handoffTimerRef.current = null;
+    }, triggerTooltipDelayMs);
+  };
 
   const handleExpand = () => {
     const rect = wrapperRef.current?.getBoundingClientRect() ?? null;
     setOpen(false);
+    setTooltipOpen(false);
+    clearHandoffTimer();
     requestAnimationFrame(() => {
       onExpand(tabId, rect);
     });
@@ -70,12 +123,23 @@ export function LearnMoreHoverCard({
 
   return (
     <HoverCard
-      openDelay={400}
+      openDelay={shouldShowTooltipFirst ? 0 : 400}
       closeDelay={200}
       open={open}
-      onOpenChange={setOpen}
+      onOpenChange={handleOpenChange}
     >
-      <HoverCardTrigger asChild>{children}</HoverCardTrigger>
+      {shouldShowTooltipFirst ? (
+        <Tooltip open={tooltipOpen}>
+          <TooltipTrigger asChild>
+            <HoverCardTrigger asChild>{children}</HoverCardTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="right" align="center">
+            {triggerTooltip}
+          </TooltipContent>
+        </Tooltip>
+      ) : (
+        <HoverCardTrigger asChild>{children}</HoverCardTrigger>
+      )}
       <HoverCardContent side="right" sideOffset={8} className="w-72">
         <div ref={wrapperRef}>
           <div className="relative mb-3 overflow-hidden rounded-md bg-muted group">
