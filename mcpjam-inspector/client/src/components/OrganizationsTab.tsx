@@ -32,7 +32,6 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Organization,
   OrganizationMember,
@@ -48,6 +47,7 @@ import {
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import { cn } from "@/lib/utils";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
@@ -515,8 +515,8 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-5 p-4 md:p-5">
-        <Card className="border-border/60">
+      <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-5">
+        <Card className="overflow-hidden border-border/60">
           <CardContent className="space-y-5 p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-center">
               <div className="relative shrink-0">
@@ -555,7 +555,7 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
                 ) : null}
               </div>
 
-              <div className="flex-1">
+              <div className="flex-1 space-y-1">
                 {canEdit ? (
                   <EditableText
                     value={organization.name}
@@ -568,24 +568,50 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
                     {organization.name}
                   </h1>
                 )}
+                {billingUiEnabled ? (
+                  <p className="text-sm text-muted-foreground">
+                    Organization settings
+                  </p>
+                ) : null}
               </div>
             </div>
           </CardContent>
+          {billingUiEnabled ? (
+            <nav
+              className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
+              aria-label="Organization settings sections"
+            >
+              <button
+                type="button"
+                onClick={() => navigateToSection("overview")}
+                aria-current={
+                  activeSection === "overview" ? "page" : undefined
+                }
+                className={cn(
+                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                  activeSection === "overview"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                General
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateToSection("billing")}
+                aria-current={activeSection === "billing" ? "page" : undefined}
+                className={cn(
+                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                  activeSection === "billing"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Plans & billing
+              </button>
+            </nav>
+          ) : null}
         </Card>
-
-        {billingUiEnabled ? (
-          <Tabs
-            value={activeSection}
-            onValueChange={(value) =>
-              navigateToSection(value as OrganizationRouteSection)
-            }
-          >
-            <TabsList>
-              <TabsTrigger value="overview">General</TabsTrigger>
-              <TabsTrigger value="billing">Billing</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        ) : null}
 
         {activeSection === "billing" ? (
           <>
