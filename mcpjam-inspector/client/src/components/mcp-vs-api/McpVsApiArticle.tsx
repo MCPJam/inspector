@@ -64,7 +64,9 @@ export function McpVsApiArticle() {
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>The API still does the real backend work.</li>
           <li>The MCP server translates that work into tools and resources.</li>
-          <li>The host gets one consistent interface instead of many custom ones.</li>
+          <li>
+            The host gets one consistent interface instead of many custom ones.
+          </li>
         </ul>
       </Section>
 
@@ -78,7 +80,9 @@ export function McpVsApiArticle() {
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>The host does not need a new custom flow for every service.</li>
           <li>The model can discover tools at runtime.</li>
-          <li>Context can carry across multiple tool calls in one conversation.</li>
+          <li>
+            Context can carry across multiple tool calls in one conversation.
+          </li>
         </ul>
       </Section>
 
@@ -89,7 +93,9 @@ export function McpVsApiArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Use raw APIs when you are integrating one known service directly.</li>
+          <li>
+            Use raw APIs when you are integrating one known service directly.
+          </li>
           <li>Use MCP when AI needs a shared protocol for many tools.</li>
           <li>You often want both: APIs underneath, MCP on top.</li>
         </ul>

@@ -181,8 +181,8 @@ export function AppsSdkGuide({
             <span className="font-medium text-foreground/80">
               window.openai
             </span>
-            , extra tool metadata, and dual-protocol support. Scroll to sync
-            the diagram, or use{" "}
+            , extra tool metadata, and dual-protocol support. Scroll to sync the
+            diagram, or use{" "}
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to advance.
           </p>

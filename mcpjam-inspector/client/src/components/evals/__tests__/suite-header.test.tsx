@@ -56,8 +56,6 @@ describe("SuiteHeader", () => {
     cancellingRunId: null,
     deletingSuiteId: null,
     deletingRunId: null,
-    showRunSummarySidebar: false,
-    setShowRunSummarySidebar: vi.fn(),
     runs: [baseRun],
     allIterations: [],
     aggregate: null,
@@ -68,7 +66,22 @@ describe("SuiteHeader", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsHostedMode.mockReturnValue(true);
+    mockIsHostedMode.mockReturnValue(false);
+  });
+
+  it("shows replay lineage under the run title when replayedFromRunId is set", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          replayedFromRunId: "n573zfck8sdhjg7by2s31ex2yx83m6sh",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Replay of")).toBeTruthy();
+    expect(screen.getByText("Run n573zfck")).toBeTruthy();
   });
 
   it("shows a replay action for replayable CI runs in read-only run detail", async () => {
@@ -88,7 +101,7 @@ describe("SuiteHeader", () => {
     expect(baseProps.onRerun).not.toHaveBeenCalled();
   });
 
-  it("shows replay latest run in overview for hosted CI suites", () => {
+  it("shows replay latest run in overview without hosted-mode gating", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
@@ -100,5 +113,25 @@ describe("SuiteHeader", () => {
     expect(
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
+  });
+
+  it("shows Delete suite in overview when editable and calls onDelete", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        readOnlyConfig={false}
+        onDelete={onDelete}
+        onEditSuite={() => {}}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete suite" }));
+
+    expect(onDelete).toHaveBeenCalledWith(baseSuite);
   });
 });

@@ -1,15 +1,9 @@
 import { useMemo } from "react";
 import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
-import {
   navigateToCiEvalsRoute,
   type CiEvalsRoute,
 } from "@/lib/ci-evals-router";
 import { SuiteIterationsView } from "./suite-iterations-view";
-import { TestCaseListSidebar } from "./TestCaseListSidebar";
 import type {
   EvalCase,
   EvalIteration,
@@ -35,19 +29,16 @@ interface HostedCiSuiteWorkspaceDetailProps {
   onDelete: (suite: EvalSuite) => void;
   onDeleteRun: (runId: string) => void;
   onDirectDeleteRun: (runId: string) => Promise<void>;
-  onCreateTestCase: () => void;
-  onDeleteTestCase: (testCaseId: string, title: string) => void;
-  onDuplicateTestCase: (testCaseId: string) => void;
-  onGenerateTests: () => void;
   rerunningSuiteId: string | null;
   replayingRunId: string | null;
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
-  deletingTestCaseId: string | null;
-  duplicatingTestCaseId: string | null;
-  isGeneratingTests: boolean;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  runDetailSortByOverride?: "model" | "test" | "result";
+  onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
+  omitRunIterationList?: boolean;
+  canDeleteRuns?: boolean;
 }
 
 export function HostedCiSuiteWorkspaceDetail({
@@ -67,28 +58,17 @@ export function HostedCiSuiteWorkspaceDetail({
   onDelete,
   onDeleteRun,
   onDirectDeleteRun,
-  onCreateTestCase,
-  onDeleteTestCase,
-  onDuplicateTestCase,
-  onGenerateTests,
   rerunningSuiteId,
   replayingRunId,
   cancellingRunId,
   deletingSuiteId,
   deletingRunId,
-  deletingTestCaseId,
-  duplicatingTestCaseId,
-  isGeneratingTests,
   userMap,
+  runDetailSortByOverride,
+  onRunDetailSortByChange,
+  omitRunIterationList = false,
+  canDeleteRuns = true,
 }: HostedCiSuiteWorkspaceDetailProps) {
-  const selectedTestId =
-    route.type === "test-detail" || route.type === "test-edit"
-      ? route.testId
-      : null;
-  const selectedTestIdForSidebar =
-    route.type === "test-detail" || route.type === "test-edit"
-      ? route.testId
-      : null;
   const navigation = useMemo(
     () => ({
       toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") =>
@@ -120,77 +100,39 @@ export function HostedCiSuiteWorkspaceDetail({
   );
 
   return (
-    <ResizablePanelGroup direction="horizontal" className="flex h-full">
-      <ResizablePanel
-        defaultSize={26}
-        minSize={18}
-        maxSize={36}
-        className="border-r bg-muted/30 flex flex-col"
-      >
-        <TestCaseListSidebar
-          testCases={cases}
-          suiteId={suite._id}
-          selectedTestId={selectedTestIdForSidebar}
-          isLoading={runsLoading && cases.length === 0}
-          onCreateTestCase={onCreateTestCase}
-          onDeleteTestCase={onDeleteTestCase}
-          onDuplicateTestCase={onDuplicateTestCase}
-          onGenerateTests={onGenerateTests}
-          deletingTestCaseId={deletingTestCaseId}
-          duplicatingTestCaseId={duplicatingTestCaseId}
-          isGeneratingTests={isGeneratingTests}
-          showingOverview={!selectedTestId}
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
+        <SuiteIterationsView
           suite={suite}
+          cases={cases}
+          iterations={iterations}
+          allIterations={allIterations}
+          runs={runs}
+          runsLoading={runsLoading}
+          aggregate={aggregate}
+          caseListInSidebar
+          runDetailSortByOverride={runDetailSortByOverride}
+          onRunDetailSortByChange={onRunDetailSortByChange}
+          omitRunIterationList={omitRunIterationList}
           onRerun={onRerun}
-          rerunningSuiteId={rerunningSuiteId}
+          onReplayRun={onReplayRun}
+          onCancelRun={onCancelRun}
+          onDelete={onDelete}
+          onDeleteRun={onDeleteRun}
+          onDirectDeleteRun={onDirectDeleteRun}
           connectedServerNames={connectedServerNames}
-          onNavigateToOverview={(suiteId) =>
-            navigateToCiEvalsRoute({
-              type: "suite-overview",
-              suiteId,
-              view: "test-cases",
-            })
-          }
-          onSelectTestCase={(suiteId, testId) =>
-            navigateToCiEvalsRoute({ type: "test-edit", suiteId, testId })
-          }
+          rerunningSuiteId={rerunningSuiteId}
+          replayingRunId={replayingRunId}
+          cancellingRunId={cancellingRunId}
+          deletingSuiteId={deletingSuiteId}
+          deletingRunId={deletingRunId}
+          availableModels={availableModels}
+          route={route}
+          userMap={userMap}
+          navigation={navigation}
+          canDeleteRuns={canDeleteRuns}
         />
-      </ResizablePanel>
-
-      <ResizableHandle withHandle />
-
-      <ResizablePanel
-        defaultSize={74}
-        className="flex min-h-0 flex-col overflow-hidden"
-      >
-        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-6">
-          <SuiteIterationsView
-            suite={suite}
-            cases={cases}
-            iterations={iterations}
-            allIterations={allIterations}
-            runs={runs}
-            runsLoading={runsLoading}
-            aggregate={aggregate}
-            onRerun={onRerun}
-            onReplayRun={onReplayRun}
-            onCancelRun={onCancelRun}
-            onDelete={onDelete}
-            onDeleteRun={onDeleteRun}
-            onDirectDeleteRun={onDirectDeleteRun}
-            connectedServerNames={connectedServerNames}
-            rerunningSuiteId={rerunningSuiteId}
-            replayingRunId={replayingRunId}
-            cancellingRunId={cancellingRunId}
-            deletingSuiteId={deletingSuiteId}
-            deletingRunId={deletingRunId}
-            availableModels={availableModels}
-            route={route}
-            userMap={userMap}
-            navigation={navigation}
-          />
-        </div>
-      </ResizablePanel>
-    </ResizablePanelGroup>
+      </div>
+    </div>
   );
 }

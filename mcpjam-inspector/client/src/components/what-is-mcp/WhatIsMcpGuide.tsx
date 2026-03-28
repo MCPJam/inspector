@@ -189,8 +189,8 @@ export function WhatIsMcpGuide({
             What is MCP?
           </h1>
           <p className="text-base text-muted-foreground leading-relaxed max-w-prose">
-            Learn the main parts of MCP and how they help AI use tools and
-            data. Scroll to move through the guide and sync the diagram, or use{" "}
+            Learn the main parts of MCP and how they help AI use tools and data.
+            Scroll to move through the guide and sync the diagram, or use{" "}
             <span className="font-medium text-foreground/80">Continue</span> in
             the header to jump to the next step.
           </p>

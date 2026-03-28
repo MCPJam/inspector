@@ -2,8 +2,9 @@ import { useMemo, useState } from "react";
 import { X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
-import { getIterationBorderColor, formatRunId } from "./helpers";
+import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { IterationDetails } from "./iteration-details";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
 
@@ -278,7 +279,12 @@ export function TestCaseDetailView({
                   ? Math.max(completedAt - startedAt, 0)
                   : null;
               const actualToolCalls = iteration.actualToolCalls || [];
+              const computedResult = computeIterationResult(iteration);
               const isPending = iteration.result === "pending";
+              const isLive =
+                iteration.status === "pending" ||
+                iteration.status === "running" ||
+                computedResult === "pending";
               const isOpen = openIterationId === iteration._id;
 
               const formatDuration = (ms: number) => {
@@ -293,12 +299,16 @@ export function TestCaseDetailView({
               return (
                 <div
                   key={iteration._id}
-                  className={`relative ${isPending ? "opacity-60" : ""}`}
+                  className={cn(
+                    "relative border-l-2",
+                    evalStatusLeftBorderClasses(
+                      isLive ? "running" : computedResult,
+                    ),
+                    isPending && "opacity-60",
+                  )}
                 >
-                  <div
-                    className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(iteration.result)}`}
-                  />
                   <button
+                    title={`Iteration ${computedResult}`}
                     onClick={() =>
                       setOpenIterationId(isOpen ? null : iteration._id)
                     }
@@ -313,8 +323,8 @@ export function TestCaseDetailView({
                         )}
                       </div>
                       <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="text-xs font-medium capitalize">
-                          {iteration.result}
+                        <span className="text-xs font-medium truncate">
+                          {snapshot?.title ?? "Iteration"}
                         </span>
                       </div>
                     </div>

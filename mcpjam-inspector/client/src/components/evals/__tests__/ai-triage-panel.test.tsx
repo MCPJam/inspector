@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { EvalSuiteRun } from "../types";
 
 // ---------------------------------------------------------------------------
@@ -82,7 +82,9 @@ describe("AiTriagePanel", () => {
       const run = makeRun({
         summary: { total: 5, passed: 5, failed: 0, passRate: 1 },
       });
-      render(<AiTriagePanel run={run} failedCount={1} />);
+      render(
+        <AiTriagePanel run={run} failedCount={1} autoRequestTriage={false} />,
+      );
       expect(
         screen.getByRole("button", { name: /triage failures/i }),
       ).toBeTruthy();
@@ -91,7 +93,7 @@ describe("AiTriagePanel", () => {
     it("shows triage button for completed run with failures and no prior triage", async () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun();
-      render(<AiTriagePanel run={run} />);
+      render(<AiTriagePanel run={run} autoRequestTriage={false} />);
       expect(
         screen.getByRole("button", { name: /triage failures/i }),
       ).toBeTruthy();
@@ -120,6 +122,21 @@ describe("AiTriagePanel", () => {
       expect(
         screen.queryByRole("button", { name: /triage failures/i }),
       ).toBeNull();
+    });
+  });
+
+  describe("auto triage", () => {
+    it("requests triage on mount when run has failures and no triage status", async () => {
+      const AiTriagePanel = await getPanel();
+      const run = makeRun();
+      render(<AiTriagePanel run={run} />);
+      await waitFor(() => {
+        expect(mockMutate).toHaveBeenCalledTimes(1);
+      });
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: false,
+      });
     });
   });
 
@@ -221,7 +238,7 @@ describe("AiTriagePanel", () => {
     it("calls mutation on click", async () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun();
-      render(<AiTriagePanel run={run} />);
+      render(<AiTriagePanel run={run} autoRequestTriage={false} />);
       fireEvent.click(screen.getByRole("button", { name: /triage failures/i }));
       expect(mockMutate).toHaveBeenCalledWith({
         suiteRunId: "run-1",
@@ -232,7 +249,7 @@ describe("AiTriagePanel", () => {
     it("disables button after first click", async () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun();
-      render(<AiTriagePanel run={run} />);
+      render(<AiTriagePanel run={run} autoRequestTriage={false} />);
       const btn = screen.getByRole("button", { name: /triage failures/i });
       fireEvent.click(btn);
       expect(btn).toBeDisabled();
@@ -241,7 +258,7 @@ describe("AiTriagePanel", () => {
     it("does not call mutation again on repeated clicks", async () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun();
-      render(<AiTriagePanel run={run} />);
+      render(<AiTriagePanel run={run} autoRequestTriage={false} />);
       const btn = screen.getByRole("button", { name: /triage failures/i });
       fireEvent.click(btn);
       fireEvent.click(btn);
@@ -256,7 +273,9 @@ describe("AiTriagePanel", () => {
       );
       const AiTriagePanel = await getPanel();
       const run = makeRun();
-      const { container } = render(<AiTriagePanel run={run} />);
+      const { container } = render(
+        <AiTriagePanel run={run} autoRequestTriage={false} />,
+      );
 
       fireEvent.click(screen.getByRole("button", { name: /triage failures/i }));
 

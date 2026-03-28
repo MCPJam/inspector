@@ -104,12 +104,12 @@ export function TestCasesOverview({
 
   return (
     <>
-      {/* Test Cases List */}
+      {/* Cases List */}
       <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
         <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
           <div>
             <p className="text-xs text-muted-foreground">
-              Click on a test case to view its run history and performance.
+              Click on a case to view its run history and performance.
             </p>
           </div>
           <select
@@ -120,14 +120,14 @@ export function TestCasesOverview({
             className="text-xs border rounded px-2 py-1 bg-background"
           >
             <option value="runs">Runs</option>
-            <option value="test-cases">Test Cases</option>
+            <option value="test-cases">Cases</option>
           </select>
         </div>
 
         {/* Column Headers */}
         {testCaseStats.length > 0 && (
           <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            <div className="flex-1 min-w-[200px]">Test Case Name</div>
+            <div className="flex-1 min-w-[200px]">Case Name</div>
             <div className="min-w-[100px] text-right">Iterations</div>
             <div className="min-w-[100px] text-right">
               {suite.source === "sdk" ? "Avg Pass Rate" : "Avg Accuracy"}
@@ -139,7 +139,7 @@ export function TestCasesOverview({
         <div className="divide-y overflow-y-auto">
           {testCaseStats.length === 0 ? (
             <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-              No test cases found.
+              No cases found.
             </div>
           ) : (
             testCaseStats.map(

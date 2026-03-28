@@ -15,16 +15,16 @@ import {
   type CiEvalsRoute,
 } from "@/lib/ci-evals-router";
 import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   buildEvalConvexAuthPayload,
-  generateEvalTests,
   getEvalApiEndpoints,
   runEvals,
 } from "@/lib/apis/evals-api";
-import { isHostedMode } from "@/lib/apis/mode-client";
+import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -32,6 +32,8 @@ interface UseEvalHandlersProps {
   selectedSuiteId: string | null;
   selectedTestId: string | null;
   workspaceId?: string | null;
+  connectedServerNames?: Set<string>;
+  latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
    * When `ci-evals`, navigation after test-case mutations stays on CI evals
    * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
@@ -48,6 +50,8 @@ export function useEvalHandlers({
   selectedSuiteId,
   selectedTestId,
   workspaceId = null,
+  connectedServerNames,
+  latestRunBySuiteId,
   evalsNavigationContext = "evals",
 }: UseEvalHandlersProps) {
   const convex = useConvex();
@@ -192,7 +196,7 @@ export function useEvalHandlers({
 
       if (!run.hasServerReplayConfig) {
         toast.error(
-          "This CI run can't be replayed because it doesn't have stored credentials.",
+          "This CI run can't be replayed because it doesn't have stored replay config.",
         );
         return;
       }
@@ -290,15 +294,36 @@ export function useEvalHandlers({
     async (suite: EvalSuite) => {
       if (rerunningSuiteId) return;
 
-      const latestRun = selectedSuiteEntry?.latestRun;
+      const latestRun =
+        latestRunBySuiteId?.get(suite._id) ??
+        (selectedSuiteEntry?.suite._id === suite._id
+          ? selectedSuiteEntry.latestRun
+          : null);
+      const rerunEligibility = getSuiteReplayEligibility({
+        suiteServers: suite.environment?.servers,
+        connectedServerNames,
+        latestRun,
+      });
+
       if (
-        isHostedMode() &&
-        suite.source === "sdk" &&
-        latestRun?._id &&
-        latestRun.hasServerReplayConfig
+        rerunEligibility.canReplayFallback &&
+        rerunEligibility.replayableLatestRun?._id
       ) {
-        await handleReplayRun(suite, latestRun);
+        await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
         return;
+      }
+
+      if (!rerunEligibility.canRunLive) {
+        if (!rerunEligibility.hasServersConfigured) {
+          toast.error("No MCP servers are configured for this suite.");
+          return;
+        }
+        if (rerunEligibility.missingServers.length > 0) {
+          toast.error(
+            `Connect ${rerunEligibility.missingServers.join(", ")} to run this suite.`,
+          );
+          return;
+        }
       }
 
       const executionContext = await getSuiteExecutionContext(suite);
@@ -372,6 +397,8 @@ export function useEvalHandlers({
     [
       rerunningSuiteId,
       selectedSuiteEntry,
+      latestRunBySuiteId,
+      connectedServerNames,
       getAccessToken,
       workspaceId,
       getSuiteExecutionContext,
@@ -727,98 +754,32 @@ export function useEvalHandlers({
       setIsGeneratingTests(true);
 
       try {
-        const accessToken = await getAccessToken();
-        const endpoints = getEvalApiEndpoints();
-
-        // Get existing test cases to extract models
-        const existingTestCases = await convex.query(
-          "testSuites:listTestCases" as any,
-          { suiteId },
-        );
-
-        // Extract unique models from existing test cases
-        let modelsToUse: Array<{ model: string; provider: string }> = [];
-        if (
-          existingTestCases &&
-          Array.isArray(existingTestCases) &&
-          existingTestCases.length > 0
-        ) {
-          const uniqueModels = new Map<
-            string,
-            { model: string; provider: string }
-          >();
-
-          for (const testCase of existingTestCases) {
-            if (testCase.models && Array.isArray(testCase.models)) {
-              for (const modelConfig of testCase.models) {
-                if (modelConfig.model && modelConfig.provider) {
-                  const key = `${modelConfig.provider}:${modelConfig.model}`;
-                  if (!uniqueModels.has(key)) {
-                    uniqueModels.set(key, {
-                      model: modelConfig.model,
-                      provider: modelConfig.provider,
-                    });
-                  }
-                }
-              }
-            }
-          }
-
-          modelsToUse = Array.from(uniqueModels.values());
-        }
-
-        // Default to Haiku 4.5 if no models configured
-        if (modelsToUse.length === 0) {
-          modelsToUse = [
-            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
-          ];
-        }
-
-        // Call generate tests API
-        const result = await generateEvalTests({
+        const outcome = await generateAndPersistEvalTests({
+          convex,
+          getAccessToken,
           workspaceId,
+          suiteId,
           serverIds,
-          convexAuthToken: accessToken,
+          createTestCase: mutations.createTestCaseMutation,
+          skipIfExistingCases: false,
         });
 
-        if (!result.tests || result.tests.length === 0) {
+        if (outcome.apiReturnedTests === 0) {
           toast.info("No test cases were generated");
           return;
         }
 
-        // Create test cases for each generated test
-        let createdCount = 0;
-        for (const test of result.tests) {
-          try {
-            await mutations.createTestCaseMutation({
-              suiteId,
-              title: test.title || "Generated test",
-              query: test.query || "",
-              models: modelsToUse,
-              expectedToolCalls: test.expectedToolCalls || [],
-              runs: test.runs || 1,
-              isNegativeTest: test.isNegativeTest || false,
-              scenario: test.scenario,
-              expectedOutput: test.expectedOutput,
-            });
-            createdCount++;
-          } catch (err) {
-            console.error("Failed to create test case:", err);
-          }
-        }
-
-        if (createdCount > 0) {
+        if (outcome.createdCount > 0) {
           toast.success(
-            `Generated ${createdCount} test case${createdCount > 1 ? "s" : ""}`,
+            `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}`,
           );
 
-          // Track generation
           posthog.capture("eval_tests_generated_from_sidebar", {
             location: "test_case_list_sidebar",
             platform: detectPlatform(),
             environment: detectEnvironment(),
             suite_id: suiteId,
-            generated_count: createdCount,
+            generated_count: outcome.createdCount,
           });
         }
       } catch (error) {

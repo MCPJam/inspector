@@ -36,9 +36,7 @@ export const APPS_SDK_GUIDE_METADATA: Record<AppsSdkStep, AppsSdkStepGuide> = {
       "ChatGPT passes theme, locale, and other context to the widget.",
       "The same MCP server can often still work in other hosts.",
     ],
-    tips: [
-      "Debug both the MCP session and the iframe messages.",
-    ],
+    tips: ["Debug both the MCP session and the iframe messages."],
   },
 
   tool_definition: {
@@ -50,9 +48,7 @@ export const APPS_SDK_GUIDE_METADATA: Record<AppsSdkStep, AppsSdkStepGuide> = {
       "Other hosts ignore the openai/* fields and keep using the standard MCP fields.",
       "Those extra fields help ChatGPT show better status text and safer UI.",
     ],
-    tips: [
-      "Keep the standard MCP linkage so the tool stays portable.",
-    ],
+    tips: ["Keep the standard MCP linkage so the tool stays portable."],
     examples: [
       '"openai/toolInvocation/invoking": "Analyzing your dataset..."',
       '"openai/fileParams": ["file"]',

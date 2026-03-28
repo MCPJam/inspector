@@ -9,7 +9,10 @@ import type {
   AssistantModelMessage,
   ToolModelMessage,
 } from "ai";
-import type { EvalWidgetSnapshotInput } from "./eval-reporting-types.js";
+import type {
+  EvalWidgetSnapshotInput,
+  EvalTraceSpanInput,
+} from "./eval-reporting-types.js";
 
 export type {
   ModelMessage,
@@ -124,4 +127,6 @@ export interface PromptResultData {
   model?: string;
   /** Persisted widget snapshots captured during MCP App tool execution */
   widgetSnapshots?: EvalWidgetSnapshotInput[];
+  /** Timeline spans for eval trace visualization (relative to prompt start) */
+  spans?: EvalTraceSpanInput[];
 }

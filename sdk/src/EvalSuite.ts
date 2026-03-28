@@ -178,7 +178,7 @@ export class EvalSuite {
       return;
     }
 
-    const results = this.buildEvalResultInputs(testResults);
+    const results = this.buildEvalResultInputs(testResults, config);
     if (results.length === 0) {
       return;
     }
@@ -205,7 +205,8 @@ export class EvalSuite {
   }
 
   private buildEvalResultInputs(
-    testResults: Map<string, EvalRunResult>
+    testResults: Map<string, EvalRunResult>,
+    reporting?: MCPJamReportingConfig
   ): EvalResultInput[] {
     const expectedToolCallsByTest: Record<string, EvalExpectedToolCall[]> = {};
     for (const [name, test] of this.tests) {
@@ -218,7 +219,8 @@ export class EvalSuite {
       testResults,
       Object.keys(expectedToolCallsByTest).length > 0
         ? expectedToolCallsByTest
-        : undefined
+        : undefined,
+      reporting?.failOnToolError
     );
   }
 

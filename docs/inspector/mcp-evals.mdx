@@ -47,4 +47,10 @@ E2E testing simulates real user workflows by testing complete chains of interact
 
 An LLM judge can analyze the agent's trace to determine if the test passed.
 
-If you run authenticated HTTP MCP evals through the SDK, MCPJam can also securely persist replay credentials for reruns and debugging. The recommended setup is to attach the connected `MCPClientManager` to your `TestAgent`, or pass `agent` / `mcpClientManager` to the manual reporting APIs.
+If you run evals through the SDK, pass the connected `MCPClientManager` into [`TestAgent`](/sdk/reference/test-agent) **and** into manual reporting (`reportEvalResults` / [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter)) when you use both — so MCPJam can **persist server replay credentials** for typical HTTP MCP connections **and** capture **MCP App widget HTML** (via `readResource` on `ui.resourceUri`) for **offline widget replay** in Eval traces. **Finalize uploads before disconnecting** the manager in test teardown; see [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui). **Replay this run** in the UI still uses **your Settings API keys** for each LLM provider in the suite; provider keys are not stored on the run.
+
+### Pass/fail and tool errors
+
+Suite runs in the Inspector combine **expected vs. actual tool matching** with **tool execution outcome**: if a tool returns an MCP error (`isError`) or the trace records a failed tool step, the iteration is marked **failed** by default, even when the right tools were invoked. That matches the behavior documented for the SDK in [Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed).
+
+To only score structural matching for a test case, set **`failOnToolError: false`** on that case’s **advanced config** (extra fields are accepted on the run payload). SDK uploads use the same flag on [`MCPJamReportingConfig.failOnToolError`](/sdk/reference/eval-reporting#mcpjamreportingconfig).

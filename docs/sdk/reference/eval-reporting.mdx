@@ -15,7 +15,24 @@ The SDK provides APIs to save eval results to MCPJam for visualization in the CI
 
 Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, such as internal development against a non-production backend.
 
-`MCPJAM_API_KEY` controls whether results are uploaded. Replay credential capture is separate and only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`.
+`MCPJAM_API_KEY` controls whether results are uploaded. **Replay credential** capture only happens when you provide `serverReplayConfigs`, `agent`, or `mcpClientManager`. **MCP App widget snapshots** in each result’s trace (for iframe replay in MCPJam) come from [`PromptResult.getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots), which is only populated when [`TestAgent`](/sdk/reference/test-agent) was constructed with [`mcpClientManager`](/sdk/reference/test-agent#parameters).
+
+---
+
+## Tool execution and `passed`
+
+Uploaded iterations have a single boolean `passed` that drives pass rate on the dashboard. The SDK distinguishes:
+
+1. **Structural pass** — Your test returned `true`, or expected tool calls were satisfied (Inspector/UI flows use shared matching logic).
+2. **Tool execution** — The trace shows a real tool failure: MCP results with `isError: true`, timeline spans where a tool step ended in `error`, tool-result parts the UI would treat as errors, or a runner-level `iterationError` after a thrown tool step.
+
+**Default behavior:** When the SDK **derives** `passed` from a trace (for example `EvalTest` / `EvalSuite` auto-save, [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result#toevalresult), `createEvalRunReporter` helpers, or Inspector suite runs), structural success is **not enough** if tool execution failed — the iteration is recorded as **failed** unless you opt out.
+
+**Opt out:** set `failOnToolError: false` on [`MCPJamReportingConfig`](#mcpjamreportingconfig) (global for that reporter or auto-save), or pass it on specific helper options (`addFromPrompt` / `recordFromRun` / `RunToEvalResultsOptions`, etc.). Use this when you only care that the model *invoked* the right tools with the right arguments, not that every MCP call returned a success payload.
+
+**Manual `reportEvalResults`:** If you build `results[]` yourself and set `passed` explicitly, MCPJam stores your values as-is. The execution gate applies to code paths that **compute** `passed` from prompts, traces, and iterations.
+
+**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, and `traceMessagePartIndicatesToolFailure` for custom ingestion pipelines.
 
 ---
 
@@ -205,10 +222,21 @@ Prefer passing `agent` or `mcpClientManager` directly. Use `serverReplayConfigs`
 
 If you also provide `serverNames`, inferred replay configs are filtered to those server IDs before upload. Explicit `serverReplayConfigs` are left unchanged.
 
+### Replay metadata for the MCPJam UI
+
+Uploaded runs can show **Replay this run** / server-side MCP replay when the ingest payload includes derived **`serverReplayConfigs`** (stored as **`hasServerReplayConfig`** on the run). In practice:
+
+- **HTTP MCP (`url`)** — Replay configs are built for typical streamable HTTP connections. **Stdio** transports **do not** produce entries from [`MCPClientManager.getServerReplayConfigs()`](/sdk/reference/mcp-client-manager); use HTTP when you need dashboard replay.
+- **`TestAgent` vs reporter** — Putting `mcpClientManager` on [`TestAgent`](/sdk/reference/test-agent) fills **MCP App widget snapshots** on [`PromptResult`](/sdk/reference/prompt-result). The **reporter** (and one-shot `report*`) resolves **server replay** from its **own** `agent` / `mcpClientManager` fields. Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](#createevalrunreporter) as well; **agent-only** wiring can still upload traces and widgets but **omit** `hasServerReplayConfig`.
+- **Teardown order** — `finalize()` / one-shot reporting calls `getServerReplayConfigs()` against **connected** registrations. In `afterAll`, run **`await reporter.finalize()`** (or `reportEvalResults`) **before** **`await manager.disconnectAllServers()`**. Disconnecting first clears manager state and uploads **without** replay metadata.
+
+**LLM API keys** are **not** stored on the run. Replaying in the MCPJam UI still requires provider keys (e.g. OpenRouter) in **Settings** for your suite’s models.
+
 ### Using with PromptResult
 
 ```typescript
-const reporter = createEvalRunReporter({ suiteName: "Prompt Tests" });
+// Pass `agent` or `mcpClientManager` when you need server replay metadata in MCPJam
+const reporter = createEvalRunReporter({ suiteName: "Prompt Tests", agent });
 
 const result = await agent.prompt("Add 2 and 3");
 reporter.addFromPrompt(result, {
@@ -321,13 +349,14 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
 | `notes` | `string` | No | Free-form notes |
 | `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
+| `failOnToolError` | `boolean` | No | When not `false`, results derived from traces treat tool execution failures as failed iterations (default: strict). See [Tool execution and `passed`](#tool-execution-and-passed) |
 | `strict` | `boolean` | No | Throw on upload errors (`false` = warn only) |
 | `externalRunId` | `string` | No | Custom run ID (auto-generated if omitted) |
 | `framework` | `string` | No | Test framework name (e.g., `"jest"`, `"vitest"`) |
 | `ci` | `EvalCiMetadata` | No | CI/CD pipeline context |
 | `expectedIterations` | `number` | No | Expected total iterations for progress tracking |
-| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting |
-| `mcpClientManager` | `MCPClientManager` | No | Replay source for manual reporting when no agent is provided |
+| `agent` | `{ getServerReplayConfigs?: () => MCPServerReplayConfig[] \| undefined }` | No | Preferred replay source for manual reporting; use an agent created with `mcpClientManager` so results can include [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) from [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result) |
+| `mcpClientManager` | `MCPClientManager` | No | Replay source when no `agent` is provided; does not populate `widgetSnapshots` unless your `results[].widgetSnapshots` or trace payloads already include them |
 
 ### MCPServerReplayConfig
 
@@ -374,6 +403,7 @@ Advanced replay override. Most users should not construct this manually.
 | `externalCaseId` | `string` | No | Custom case ID |
 | `metadata` | `Record<string, string \| number \| boolean>` | No | Custom metadata |
 | `isNegativeTest` | `boolean` | No | Whether this is a negative test |
+| `widgetSnapshots` | `EvalWidgetSnapshotInput[]` | No | MCP App HTML replay payloads (typically from [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result)). Omitted when not using MCP Apps or when `TestAgent` had no `mcpClientManager` |
 
 ### ReportEvalResultsOutput
 

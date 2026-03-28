@@ -56,6 +56,17 @@ export const getServerCommandDisplay = (config: MCPServerConfig): string => {
   return [command, ...args].filter(Boolean).join(" ").trim();
 };
 
+/** HTTP/SSE URL or joined stdio command string, for agent briefs / export metadata. */
+export const getServerUrl = (config: MCPServerConfig): string | undefined => {
+  if (config.url) {
+    return config.url.toString();
+  }
+  const command = config.command ?? "";
+  const args = config.args ?? [];
+  const joined = [command, ...args].filter(Boolean).join(" ").trim();
+  return joined.length > 0 ? joined : undefined;
+};
+
 export const getServerTransportLabel = (config: MCPServerConfig): string => {
   return config.url ? "HTTP/SSE" : "STDIO";
 };

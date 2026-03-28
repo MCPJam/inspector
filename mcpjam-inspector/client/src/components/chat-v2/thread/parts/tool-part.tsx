@@ -562,9 +562,7 @@ export function ToolPart({
             </span>
           </span>
           {needsApproval && approvalVisualState === "pending" && (
-            <span className={pendingApprovalClasses}>
-              Approve tool call?
-            </span>
+            <span className={pendingApprovalClasses}>Approve tool call?</span>
           )}
           {needsApproval && approvalVisualState === "approved" && (
             <span className={approvedToolClasses}>

@@ -19,6 +19,7 @@ value: tangerine
   --accent: oklch(0.91 0.02 243.82);
   --accent-foreground: oklch(0.38 0.14 265.52);
   --destructive: oklch(0.64 0.21 25.33);
+  --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.9 0.01 247.88);
   --input: oklch(0.97 0 264.54);
   --ring: oklch(0.64 0.17 36.44);
@@ -56,6 +57,7 @@ value: tangerine
   --accent: oklch(0.34 0.06 267.59);
   --accent-foreground: oklch(0.88 0.06 254.13);
   --destructive: oklch(0.64 0.21 25.33);
+  --destructive-foreground: oklch(1 0 0);
   --border: oklch(0.38 0.03 269.73);
   --input: oklch(0.38 0.03 269.73);
   --ring: oklch(0.64 0.17 36.44);

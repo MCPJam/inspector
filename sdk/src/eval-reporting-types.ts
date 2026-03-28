@@ -14,11 +14,36 @@ export type EvalCiMetadata = {
   commitSha?: string;
 };
 
+export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanStatus = "ok" | "error";
+
+export type EvalTraceSpanInput = {
+  id: string;
+  parentId?: string;
+  name: string;
+  category: EvalTraceSpanCategory;
+  startMs: number;
+  endMs: number;
+  promptIndex?: number;
+  stepIndex?: number;
+  status?: EvalTraceSpanStatus;
+  toolCallId?: string;
+  toolName?: string;
+  serverId?: string;
+  modelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  messageStartIndex?: number;
+  messageEndIndex?: number;
+};
+
 export type EvalTraceInput =
   | string
   | Array<{ role: string; content: unknown }>
   | {
       messages?: Array<{ role: string; content: unknown }>;
+      spans?: EvalTraceSpanInput[];
       prompts?: unknown[];
       raw?: unknown;
     };
@@ -96,6 +121,11 @@ export type MCPJamReportingConfig = {
     minimumPassRate: number;
   };
   strict?: boolean;
+  /**
+   * When not `false`, auto-reported results fail if the trace shows tool
+   * execution errors. Default: strict tool outcomes (equivalent to `true`).
+   */
+  failOnToolError?: boolean;
   externalRunId?: string;
   framework?: string;
   ci?: EvalCiMetadata;
