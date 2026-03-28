@@ -1,9 +1,19 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight, MessageSquareQuote } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  AlertCircle,
+  Brain,
+  ChevronDown,
+  ChevronRight,
+  Layers,
+  ListTree,
+  MessageSquareQuote,
+  Wrench,
+} from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/ui/json-editor";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 
 const LABEL_W = 320;
@@ -375,6 +385,107 @@ function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
     });
 }
 
+function collectStepSpanIdsWithChildren(groups: PromptGroup[]): Set<string> {
+  const ids = new Set<string>();
+  function walk(nodes: TraceNode[]) {
+    for (const node of nodes) {
+      if (node.span.category === "step" && node.children.length > 0) {
+        ids.add(node.span.id);
+      }
+      walk(node.children);
+    }
+  }
+  for (const group of groups) {
+    walk(group.roots);
+  }
+  return ids;
+}
+
+function toPlainTranscriptMessage(message: TranscriptMessage): Record<string, unknown> {
+  return {
+    role: message.role,
+    content: message.content,
+  };
+}
+
+/** Split transcript slice into model input messages vs last assistant output (same range as LLM span). */
+function extractLlmTranscriptIo(
+  messages: TranscriptMessage[],
+  startIndex?: number,
+  endIndex?: number,
+): { input: unknown; output: unknown } {
+  const range = getTranscriptRange(startIndex, endIndex);
+  if (!range) {
+    return { input: null, output: null };
+  }
+  const slice = messages.slice(range.startIndex, range.endIndex + 1);
+  if (slice.length === 0) {
+    return { input: [], output: null };
+  }
+
+  let lastAssistant = -1;
+  for (let i = slice.length - 1; i >= 0; i -= 1) {
+    if (slice[i]!.role === "assistant") {
+      lastAssistant = i;
+      break;
+    }
+  }
+
+  if (lastAssistant < 0) {
+    return {
+      input: slice.map(toPlainTranscriptMessage),
+      output: null,
+    };
+  }
+
+  const inputSlice = slice.slice(0, lastAssistant);
+  const outMsg = slice[lastAssistant]!;
+  return {
+    input:
+      inputSlice.length > 0
+        ? inputSlice.map(toPlainTranscriptMessage)
+        : null,
+    output: toPlainTranscriptMessage(outMsg),
+  };
+}
+
+function CategoryGlyph({
+  category,
+}: {
+  category: EvalTraceSpanCategory | "prompt";
+}) {
+  const iconClass = "h-3.5 w-3.5 shrink-0 text-muted-foreground";
+  switch (category) {
+    case "prompt":
+      return <Layers className={iconClass} aria-hidden />;
+    case "llm":
+      return <Brain className={iconClass} aria-hidden />;
+    case "tool":
+      return <Wrench className={iconClass} aria-hidden />;
+    case "error":
+      return <AlertCircle className={iconClass} aria-hidden />;
+    case "step":
+    default:
+      return <ListTree className={iconClass} aria-hidden />;
+  }
+}
+
+function formatInlineTokenHint(span: EvalTraceSpan): string | null {
+  if (span.category !== "llm") return null;
+  if (typeof span.totalTokens === "number") {
+    return `${span.totalTokens} tok`;
+  }
+  if (
+    typeof span.inputTokens === "number" ||
+    typeof span.outputTokens === "number"
+  ) {
+    const a = typeof span.inputTokens === "number" ? span.inputTokens : "—";
+    const b = typeof span.outputTokens === "number" ? span.outputTokens : "—";
+    return `${a}→${b} tok`;
+  }
+  return null;
+}
+
 function deriveSpanLabel(row: SpanRow): {
   title: string;
   subtitle?: string;
@@ -386,19 +497,18 @@ function deriveSpanLabel(row: SpanRow): {
     return {
       title:
         typeof stepNumber === "number"
-          ? `Prompt ${promptIndex + 1} · Step ${stepNumber}`
-          : `Prompt ${promptIndex + 1} · ${span.name}`,
-      subtitle: span.modelId ? `Model ${span.modelId}` : span.name,
+          ? `Step ${stepNumber}`
+          : String(span.name),
+      subtitle: `Prompt ${promptIndex + 1}${
+        span.modelId ? ` · ${span.modelId}` : ""
+      }`,
     };
   }
 
   if (span.category === "llm") {
     return {
-      title: span.modelId ?? span.name,
-      subtitle:
-        typeof span.stepIndex === "number"
-          ? `Prompt ${promptIndex + 1} · Step ${span.stepIndex + 1}`
-          : `Prompt ${promptIndex + 1}`,
+      title: "Model response",
+      subtitle: span.modelId ?? `Prompt ${promptIndex + 1}`,
     };
   }
 
@@ -521,6 +631,48 @@ function TimelineDetailPane({
         : "ok"
       : row.span.status;
 
+  const llmIo =
+    row.kind === "span" &&
+    (row.span.category === "llm" || row.span.category === "step")
+      ? extractLlmTranscriptIo(
+          transcriptMessages,
+          row.span.messageStartIndex,
+          row.span.messageEndIndex,
+        )
+      : { input: null as unknown, output: null as unknown };
+
+  const isToolIoSpan =
+    row.kind === "span" &&
+    row.span.category === "tool" &&
+    (Boolean(row.span.toolCallId) ||
+      Boolean(row.span.toolName?.trim() || row.span.name?.trim()));
+
+  const tabInputValue =
+    row.kind === "prompt"
+      ? null
+      : isToolIoSpan
+        ? toolData.input
+        : row.kind === "span" &&
+            (row.span.category === "llm" || row.span.category === "step")
+          ? llmIo.input
+          : row.kind === "span" && row.span.category === "error"
+            ? null
+            : null;
+
+  const tabOutputValue =
+    row.kind === "prompt"
+      ? null
+      : isToolIoSpan
+        ? toolData.output
+        : row.kind === "span" &&
+            (row.span.category === "llm" || row.span.category === "step")
+          ? llmIo.output
+          : row.kind === "span" && row.span.category === "error"
+            ? row.span.name
+            : null;
+
+  const showIoTabs = row.kind === "span";
+
   return (
     <div
       data-testid="trace-detail-pane"
@@ -528,6 +680,11 @@ function TimelineDetailPane({
     >
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
+          {row.kind === "prompt" ? (
+            <CategoryGlyph category="prompt" />
+          ) : (
+            <CategoryGlyph category={row.span.category} />
+          )}
           <Badge variant="outline" className="text-[10px]">
             {row.kind === "prompt" ? "Prompt" : row.span.category.toUpperCase()}
           </Badge>
@@ -567,7 +724,7 @@ function TimelineDetailPane({
         </div>
         <div className="rounded-md border border-border/50 bg-muted/10 p-3">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Transcript
+            Transcript indices
           </div>
           <div className="mt-1 font-medium text-foreground">
             {transcriptRange
@@ -637,66 +794,108 @@ function TimelineDetailPane({
         </div>
       ) : null}
 
-      {transcriptRange && onRevealInTranscript ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="w-full justify-center"
-          onClick={() => onRevealInTranscript(transcriptRange)}
-        >
-          <MessageSquareQuote className="h-3.5 w-3.5" />
-          Reveal in transcript
-        </Button>
-      ) : null}
-
-      {transcriptPreview.length > 0 ? (
-        <div className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Transcript Preview
-          </div>
-          <div className="space-y-2">
-            {transcriptPreview.map((entry) => (
-              <div
-                key={`${entry.index}-${entry.role}`}
-                className="rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs"
+      {showIoTabs ? (
+        <Tabs defaultValue="input" className="w-full">
+          <TabsList className="h-8 w-full justify-start gap-1">
+            <TabsTrigger value="input" className="text-xs">
+              Input
+            </TabsTrigger>
+            <TabsTrigger value="output" className="text-xs">
+              Output
+            </TabsTrigger>
+            <TabsTrigger value="transcript" className="text-xs">
+              Transcript
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent value="input" className="mt-3 space-y-2">
+            <PayloadPreview value={tabInputValue ?? undefined} height="220px" />
+          </TabsContent>
+          <TabsContent value="output" className="mt-3 space-y-2">
+            <PayloadPreview
+              value={tabOutputValue ?? undefined}
+              height="220px"
+            />
+          </TabsContent>
+          <TabsContent value="transcript" className="mt-3 space-y-3">
+            {transcriptRange && onRevealInTranscript ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="w-full justify-center"
+                onClick={() => onRevealInTranscript(transcriptRange)}
               >
-                <div className="font-medium text-foreground">
-                  #{entry.index} · {entry.role}
-                </div>
-                <div className="mt-1 text-muted-foreground">{entry.summary}</div>
+                <MessageSquareQuote className="h-3.5 w-3.5" />
+                Reveal in transcript
+              </Button>
+            ) : null}
+            {transcriptPreview.length > 0 ? (
+              <div className="space-y-2">
+                {transcriptPreview.map((entry) => (
+                  <div
+                    key={`${entry.index}-${entry.role}`}
+                    className="rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs"
+                  >
+                    <div className="font-medium text-foreground">
+                      #{entry.index} · {entry.role}
+                    </div>
+                    <div className="mt-1 text-muted-foreground">
+                      {entry.summary}
+                    </div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
-
-      {row.kind === "span" && row.span.toolCallId ? (
-        <div className="space-y-3">
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Tool Input
+            ) : (
+              <div className="text-xs text-muted-foreground">
+                No transcript excerpts for this range.
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
+      ) : (
+        <>
+          {transcriptRange && onRevealInTranscript ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="w-full justify-center"
+              onClick={() => onRevealInTranscript(transcriptRange)}
+            >
+              <MessageSquareQuote className="h-3.5 w-3.5" />
+              Reveal in transcript
+            </Button>
+          ) : null}
+          {transcriptPreview.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Transcript preview
+              </div>
+              <div className="space-y-2">
+                {transcriptPreview.map((entry) => (
+                  <div
+                    key={`${entry.index}-${entry.role}`}
+                    className="rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs"
+                  >
+                    <div className="font-medium text-foreground">
+                      #{entry.index} · {entry.role}
+                    </div>
+                    <div className="mt-1 text-muted-foreground">
+                      {entry.summary}
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="mt-2">
-              <PayloadPreview value={toolData.input} />
-            </div>
-          </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Tool Output
-            </div>
-            <div className="mt-2">
-              <PayloadPreview value={toolData.output} />
-            </div>
-          </div>
-        </div>
-      ) : null}
+          ) : null}
+        </>
+      )}
 
       {row.kind === "span" &&
       (row.span.category === "error" || toolData.errorText) ? (
         <div className="space-y-2">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Error Excerpt
+            Error excerpt
           </div>
           <pre className="max-h-40 overflow-auto rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs whitespace-pre-wrap break-words text-red-900 dark:text-red-100">
             {toolData.errorText ?? row.span.name}
@@ -750,7 +949,7 @@ export function TraceTimeline({
 
   useEffect(() => {
     setExpandedPromptIds(new Set(groups.map((group) => group.key)));
-    setExpandedStepIds(new Set());
+    setExpandedStepIds(collectStepSpanIdsWithChildren(groups));
     setSelectedRowKey(null);
   }, [traceIdentity, groups]);
 
@@ -976,9 +1175,13 @@ export function TraceTimeline({
             className="grid min-w-[1100px]"
             style={{
               gridTemplateColumns: `${LABEL_W}px ${TIMELINE_W}px`,
+              gridTemplateRows: `auto repeat(${rows.length}, minmax(56px, auto))`,
             }}
           >
-            <div className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur">
+            <div
+              className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur"
+              style={{ gridColumn: 1, gridRow: 1 }}
+            >
               <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
                 Waterfall
               </div>
@@ -986,7 +1189,10 @@ export function TraceTimeline({
                 Prompt, step, and child spans in execution order
               </div>
             </div>
-            <div className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur">
+            <div
+              className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur"
+              style={{ gridColumn: 2, gridRow: 1 }}
+            >
               <div className="relative h-8">
                 {TICKS.map((tick) => {
                   const left = `${tick}%`;
@@ -996,7 +1202,6 @@ export function TraceTimeline({
                       className="absolute inset-y-0"
                       style={{ left }}
                     >
-                      <div className="absolute inset-y-0 w-px bg-border/50" />
                       <div className="absolute -translate-x-1/2 text-[10px] text-muted-foreground">
                         {formatAxisLabel((maxEndMs * tick) / 100)}
                       </div>
@@ -1006,7 +1211,25 @@ export function TraceTimeline({
               </div>
             </div>
 
-            {rows.map((row) => {
+            {rows.length > 0 ? (
+              <div
+                className="pointer-events-none relative z-0 bg-transparent"
+                style={{
+                  gridColumn: 2,
+                  gridRow: `2 / ${rows.length + 2}`,
+                }}
+              >
+                {TICKS.map((tick) => (
+                  <div
+                    key={tick}
+                    className="absolute top-0 bottom-0 w-px bg-border/40"
+                    style={{ left: `${tick}%` }}
+                  />
+                ))}
+              </div>
+            ) : null}
+
+            {rows.map((row, rowIndex) => {
               const isSelected = row.key === selectedRowKey;
               const { startMs, endMs, durationMs } = getRowTiming(row);
               const leftPercent = (startMs / maxEndMs) * 100;
@@ -1031,139 +1254,145 @@ export function TraceTimeline({
                   : deriveSpanLabel(row).subtitle;
               const canToggle =
                 row.kind === "prompt" ? true : row.hasChildren;
+              const gridRow = rowIndex + 2;
+              const tokenHint =
+                row.kind === "span" ? formatInlineTokenHint(row.span) : null;
 
               return (
-                <FragmentRow
-                  key={row.key}
-                  left={
+                <Fragment key={row.key}>
+                  <div
+                    data-testid="trace-row"
+                    style={{ gridColumn: 1, gridRow }}
+                    className={cn(
+                      "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-colors",
+                      isSelected
+                        ? "bg-primary/5"
+                        : "bg-background hover:bg-muted/20",
+                    )}
+                  >
                     <div
-                      data-testid="trace-row"
-                      className={cn(
-                        "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-colors",
-                        isSelected
-                          ? "bg-primary/5"
-                          : "bg-background hover:bg-muted/20",
-                      )}
+                      className="flex shrink-0 items-center"
+                      style={{
+                        paddingLeft:
+                          row.kind === "prompt" ? 0 : row.depth * 16,
+                      }}
                     >
-                      <div
-                        className="flex shrink-0 items-center"
-                        style={{
-                          paddingLeft:
-                            row.kind === "prompt" ? 0 : row.depth * 16,
-                        }}
-                      >
-                        {canToggle ? (
-                          <button
-                            type="button"
-                            className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/30 hover:text-foreground"
-                            onClick={(event) => {
-                              event.stopPropagation();
-                              if (row.kind === "prompt") {
-                                setExpandedPromptIds((current) => {
-                                  const next = new Set(current);
-                                  if (next.has(row.key)) next.delete(row.key);
-                                  else next.add(row.key);
-                                  return next;
-                                });
-                                return;
-                              }
-                              setExpandedStepIds((current) => {
+                      {canToggle ? (
+                        <button
+                          type="button"
+                          className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (row.kind === "prompt") {
+                              setExpandedPromptIds((current) => {
                                 const next = new Set(current);
                                 if (next.has(row.key)) next.delete(row.key);
                                 else next.add(row.key);
                                 return next;
                               });
-                            }}
-                            aria-label={
-                              row.kind === "prompt"
-                                ? `${row.isExpanded ? "Collapse" : "Expand"} ${row.label}`
-                                : `${row.isExpanded ? "Collapse" : "Expand"} ${label}`
+                              return;
                             }
-                          >
-                            {row.isExpanded ? (
-                              <ChevronDown className="h-3.5 w-3.5" />
-                            ) : (
-                              <ChevronRight className="h-3.5 w-3.5" />
-                            )}
-                          </button>
-                        ) : (
-                          <span className="mr-1 h-5 w-5" />
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 text-left"
-                        onClick={() => setSelectedRowKey(row.key)}
-                      >
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-sm font-medium text-foreground">
-                            {label}
-                          </span>
-                          <Badge
-                            variant="outline"
-                            className={cn("text-[10px]", categoryClasses.badge)}
-                          >
-                            {row.kind === "prompt"
-                              ? "Prompt"
-                              : row.span.category.toUpperCase()}
-                          </Badge>
-                          {row.kind === "span" && row.span.status ? (
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                "text-[10px]",
-                                row.span.status === "error"
-                                  ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
-                                  : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-                              )}
-                            >
-                              {row.span.status === "error" ? "Error" : "OK"}
-                            </Badge>
-                          ) : null}
-                        </div>
-                        {subtitle ? (
-                          <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                            {subtitle}
-                          </div>
-                        ) : null}
-                      </button>
+                            setExpandedStepIds((current) => {
+                              const next = new Set(current);
+                              if (next.has(row.key)) next.delete(row.key);
+                              else next.add(row.key);
+                              return next;
+                            });
+                          }}
+                          aria-label={
+                            row.kind === "prompt"
+                              ? `${row.isExpanded ? "Collapse" : "Expand"} ${row.label}`
+                              : `${row.isExpanded ? "Collapse" : "Expand"} ${label}`
+                          }
+                        >
+                          {row.isExpanded ? (
+                            <ChevronDown className="h-3.5 w-3.5" />
+                          ) : (
+                            <ChevronRight className="h-3.5 w-3.5" />
+                          )}
+                        </button>
+                      ) : (
+                        <span className="mr-1 h-5 w-5" />
+                      )}
                     </div>
-                  }
-                  right={
                     <button
                       type="button"
-                      className={cn(
-                        "relative h-full min-h-[56px] w-full border-b border-border/40 px-4 py-2 text-left transition-colors",
-                        isSelected
-                          ? "bg-primary/5"
-                          : "bg-background hover:bg-muted/20",
-                      )}
+                      className="min-w-0 flex-1 text-left"
                       onClick={() => setSelectedRowKey(row.key)}
-                      title={`${label} · ${formatDuration(durationMs)}`}
                     >
-                      {TICKS.map((tick) => (
-                        <div
-                          key={tick}
-                          className="absolute inset-y-0 w-px bg-border/40"
-                          style={{ left: `${tick}%` }}
-                        />
-                      ))}
-                      <div
-                        className={cn(
-                          "absolute top-1/2 h-6 -translate-y-1/2 rounded-sm shadow-sm",
-                          categoryClasses.bar,
+                      <div className="flex flex-wrap items-center gap-2">
+                        {row.kind === "prompt" ? (
+                          <CategoryGlyph category="prompt" />
+                        ) : (
+                          <CategoryGlyph category={row.span.category} />
                         )}
-                        style={{
-                          left: `${leftPercent}%`,
-                          width: `max(${widthPercent}%, 3px)`,
-                        }}
-                      />
-                      <div className="absolute inset-y-0 left-4 flex items-center text-[11px] text-muted-foreground">
-                        {formatDuration(durationMs)}
+                        <span className="truncate text-sm font-medium text-foreground">
+                          {label}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={cn("text-[10px]", categoryClasses.badge)}
+                        >
+                          {row.kind === "prompt"
+                            ? "Prompt"
+                            : row.span.category.toUpperCase()}
+                        </Badge>
+                        {tokenHint ? (
+                          <span
+                            className="text-[10px] tabular-nums text-muted-foreground"
+                            title="Tokens"
+                          >
+                            {tokenHint}
+                          </span>
+                        ) : null}
+                        {row.kind === "span" && row.span.status ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(
+                              "text-[10px]",
+                              row.span.status === "error"
+                                ? "border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300"
+                                : "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+                            )}
+                          >
+                            {row.span.status === "error" ? "Error" : "OK"}
+                          </Badge>
+                        ) : null}
                       </div>
+                      {subtitle ? (
+                        <div className="mt-1 truncate text-[11px] text-muted-foreground">
+                          {subtitle}
+                        </div>
+                      ) : null}
                     </button>
-                  }
-                />
+                  </div>
+                  <button
+                    type="button"
+                    style={{ gridColumn: 2, gridRow }}
+                    className={cn(
+                      "relative z-[1] h-full min-h-[56px] w-full border-b border-border/40 px-4 py-2 text-left transition-colors",
+                      isSelected
+                        ? "bg-primary/5"
+                        : "bg-background hover:bg-muted/20",
+                    )}
+                    onClick={() => setSelectedRowKey(row.key)}
+                    title={`${label} · ${formatDuration(durationMs)}`}
+                  >
+                    <div
+                      className={cn(
+                        "absolute top-1/2 z-[1] h-6 -translate-y-1/2 rounded-sm shadow-sm",
+                        categoryClasses.bar,
+                      )}
+                      style={{
+                        left: `${leftPercent}%`,
+                        width: `max(${widthPercent}%, 3px)`,
+                      }}
+                    />
+                    <div className="relative z-[1] flex h-full items-center pl-4 text-[11px] text-muted-foreground">
+                      {formatDuration(durationMs)}
+                    </div>
+                  </button>
+                </Fragment>
               );
             })}
           </div>
@@ -1179,17 +1408,3 @@ export function TraceTimeline({
   );
 }
 
-function FragmentRow({
-  left,
-  right,
-}: {
-  left: ReactNode;
-  right: ReactNode;
-}) {
-  return (
-    <>
-      {left}
-      {right}
-    </>
-  );
-}

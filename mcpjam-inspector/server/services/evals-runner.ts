@@ -37,6 +37,7 @@ import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
   finalizeAiSdkTraceOnFailure,
+  patchAiSdkRecordedSpansMessageRangesFromSteps,
   registerAiSdkPrepareStep,
   wrapToolSetForEvalTrace,
 } from "./evals/eval-trace-capture";
@@ -384,6 +385,14 @@ const runIterationWithAiSdk = async ({
         ? finalMessagesRaw
         : partialResponseMessages;
     const finalMessages = [...baseMessages, ...finalResponseMessages];
+
+    if (traceCtx.recordedSpans.length > 0) {
+      patchAiSdkRecordedSpansMessageRangesFromSteps(
+        traceCtx.recordedSpans,
+        baseMessages.length,
+        result.steps,
+      );
+    }
 
     // Extract all tool calls from all steps in the conversation
     const toolsCalled: Array<{

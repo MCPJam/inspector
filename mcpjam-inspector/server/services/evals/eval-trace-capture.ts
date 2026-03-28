@@ -1,5 +1,9 @@
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
-import { createOffsetInterval } from "@/shared/eval-trace";
+import {
+  appendDedupedModelMessages,
+  createOffsetInterval,
+} from "@/shared/eval-trace";
+import type { ModelMessage } from "ai";
 
 type StepSpanMeta = {
   modelId?: string;
@@ -42,6 +46,12 @@ type BackendStepToolPhase = {
   endAbs: number;
   pushAggregateSpan?: boolean;
 };
+
+/** Human-readable stored name for LLM spans (Raw JSON / exporters). */
+function formatRecordedLlmSpanName(modelId?: string): string {
+  const id = typeof modelId === "string" ? modelId.trim() : "";
+  return id.length > 0 ? `${id} · response` : "LLM";
+}
 
 function applyStepMeta(span: EvalTraceSpan, meta?: StepSpanMeta): void {
   if (!meta) {
@@ -243,11 +253,12 @@ export function emitAiSdkOnStepFinish(
   const stepSpanId = stepMeta.spanId;
   const firstTool = stepMeta.firstToolStartAt;
   const llmEnd = firstTool ?? stepFinishedAt;
+  const resolvedModelId = spanMeta?.modelId ?? stepMeta.modelId;
 
   const llmSpan: EvalTraceSpan = {
     id: `${stepSpanId}-llm`,
     parentId: stepSpanId,
-    name: "LLM",
+    name: formatRecordedLlmSpanName(resolvedModelId),
     category: "llm",
     promptIndex: 0,
     stepIndex: sn,
@@ -298,6 +309,69 @@ export function emitAiSdkOnStepFinish(
 
   ctx.openSteps.delete(sn);
   ctx.lastStepClosedEndAt = stepFinishedAt;
+}
+
+/**
+ * After `generateText` resolves: fill missing `messageStartIndex` / `messageEndIndex` on spans when
+ * `onStepFinish` saw an empty `step.response.messages` array but `result.steps` still carries the
+ * assistant messages. Replays the same dedupe rules as the eval runner's `onStepFinish` handler so
+ * indices line up with `[...baseMessages, ...finalResponseMessages]`.
+ */
+export function patchAiSdkRecordedSpansMessageRangesFromSteps(
+  spans: EvalTraceSpan[],
+  baseMessagesLength: number,
+  steps:
+    | ReadonlyArray<
+        { response?: { messages?: ModelMessage[] } } | undefined
+      >
+    | undefined,
+): void {
+  if (!steps || steps.length === 0) {
+    return;
+  }
+
+  const acc: ModelMessage[] = [];
+  for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+    const responseMessages = steps[stepIndex]?.response?.messages ?? [];
+    const beforeLen = acc.length;
+    appendDedupedModelMessages(acc, responseMessages);
+    const afterLen = acc.length;
+    if (afterLen === beforeLen) {
+      continue;
+    }
+
+    const start = baseMessagesLength + beforeLen;
+    const end = baseMessagesLength + afterLen - 1;
+    const stepSpanId = `step-${stepIndex}`;
+
+    for (const span of spans) {
+      if (span.stepIndex !== stepIndex) {
+        continue;
+      }
+      if (
+        typeof span.messageStartIndex === "number" &&
+        typeof span.messageEndIndex === "number"
+      ) {
+        continue;
+      }
+      span.messageStartIndex = start;
+      span.messageEndIndex = end;
+    }
+
+    for (const span of spans) {
+      if (span.parentId !== stepSpanId) {
+        continue;
+      }
+      if (
+        typeof span.messageStartIndex === "number" &&
+        typeof span.messageEndIndex === "number"
+      ) {
+        continue;
+      }
+      span.messageStartIndex = start;
+      span.messageEndIndex = end;
+    }
+  }
 }
 
 /**
@@ -357,28 +431,29 @@ export function finalizeAiSdkTraceOnFailure(
   for (const [sn, meta] of [...openSteps.entries()]) {
     const stepSpanId = meta.spanId;
     const firstTool = meta.firstToolStartAt;
+    const failModelId = meta.modelId ?? options.modelId;
     if (firstTool == null) {
       recordedSpans.push({
         id: `${stepSpanId}-llm`,
         parentId: stepSpanId,
-        name: "LLM",
+        name: formatRecordedLlmSpanName(failModelId),
         category: "llm",
         promptIndex: 0,
         stepIndex: sn,
         status: "error",
-        modelId: meta.modelId ?? options.modelId,
+        modelId: failModelId,
         ...createOffsetInterval(runStartedAt, meta.startAt, failAt),
       });
     } else {
       recordedSpans.push({
         id: `${stepSpanId}-llm`,
         parentId: stepSpanId,
-        name: "LLM",
+        name: formatRecordedLlmSpanName(failModelId),
         category: "llm",
         promptIndex: 0,
         stepIndex: sn,
         status: "ok",
-        modelId: meta.modelId ?? options.modelId,
+        modelId: failModelId,
         ...createOffsetInterval(runStartedAt, meta.startAt, firstTool),
       });
     }
@@ -430,7 +505,7 @@ export function pushBackendStepSuccessSpans(
   const llmSpan: EvalTraceSpan = {
     id: `${stepParentId}-llm`,
     parentId: stepParentId,
-    name: "LLM",
+    name: formatRecordedLlmSpanName(meta?.modelId),
     category: "llm",
     promptIndex: 0,
     stepIndex,
@@ -519,7 +594,7 @@ export function pushBackendStepToolFailureSpans(
   const llmSpan: EvalTraceSpan = {
     id: `${stepParentId}-llm`,
     parentId: stepParentId,
-    name: "LLM",
+    name: formatRecordedLlmSpanName(meta?.modelId),
     category: "llm",
     promptIndex: 0,
     stepIndex,

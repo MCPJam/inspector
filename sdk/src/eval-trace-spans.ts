@@ -1,3 +1,4 @@
+import type { ModelMessage } from "ai";
 import type { EvalTraceSpanInput } from "./eval-reporting-types.js";
 
 type MutableSpan = EvalTraceSpanInput;
@@ -34,6 +35,84 @@ export function bumpEndMs(startMs: number, endMs: number): number {
 export function normalizeEvalTraceSpans(spans: MutableSpan[]): void {
   for (const s of spans) {
     s.endMs = bumpEndMs(s.startMs, s.endMs);
+  }
+}
+
+function messageDedupeKey(message: ModelMessage): string {
+  const id = (message as { id?: string }).id;
+  if (typeof id === "string" && id) return `id:${id}`;
+  try {
+    return `json:${JSON.stringify(message)}`;
+  } catch {
+    return `fallthrough:${String((message as { role?: string }).role)}`;
+  }
+}
+
+/**
+ * Append messages skipping duplicates (by stable `id` or JSON identity),
+ * matching PromptResult / TestAgent transcript semantics.
+ */
+export function appendDedupedModelMessages(
+  acc: ModelMessage[],
+  incoming: ModelMessage[],
+): void {
+  const seen = new Set(acc.map(messageDedupeKey));
+  for (const m of incoming) {
+    const key = messageDedupeKey(m);
+    if (!seen.has(key)) {
+      seen.add(key);
+      acc.push(m);
+    }
+  }
+}
+
+/**
+ * When `onStepFinish` runs with empty `step.response.messages` but `generateText` still
+ * reports messages on `result.steps`, fill missing `messageStartIndex` / `messageEndIndex`
+ * so timeline rows and transcript slices align with stored trace messages.
+ *
+ * `baseMessagesLength` is the count of messages before the first step's response messages
+ * in the stored trace (TestAgent uses `[userMessage, ...result.response.messages]` → 1).
+ */
+export function patchEvalSpansMessageRangesFromSteps(
+  spans: EvalTraceSpanInput[],
+  baseMessagesLength: number,
+  steps:
+    | ReadonlyArray<
+        { response?: { messages?: ModelMessage[] } } | undefined
+      >
+    | undefined,
+): void {
+  if (!steps || steps.length === 0) {
+    return;
+  }
+
+  const acc: ModelMessage[] = [];
+  for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
+    const responseMessages = steps[stepIndex]?.response?.messages ?? [];
+    const beforeLen = acc.length;
+    appendDedupedModelMessages(acc, responseMessages);
+    const afterLen = acc.length;
+    if (afterLen === beforeLen) {
+      continue;
+    }
+
+    const start = baseMessagesLength + beforeLen;
+    const end = baseMessagesLength + afterLen - 1;
+
+    for (const span of spans) {
+      if (span.stepIndex !== stepIndex) {
+        continue;
+      }
+      if (
+        typeof span.messageStartIndex === "number" &&
+        typeof span.messageEndIndex === "number"
+      ) {
+        continue;
+      }
+      span.messageStartIndex = start;
+      span.messageEndIndex = end;
+    }
   }
 }
 

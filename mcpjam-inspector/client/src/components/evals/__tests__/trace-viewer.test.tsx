@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
 
 const { mockMessageView } = vi.hoisted(() => ({
@@ -319,15 +320,19 @@ describe("TraceViewer", () => {
     expect(screen.getAllByText("Prompt 2").length).toBeGreaterThan(0);
     expect(screen.getByTestId("trace-detail-pane")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByText("Expand all"));
-    expect(screen.getAllByText("Prompt 2 · Step 1").length).toBeGreaterThan(0);
     expect(screen.getByText("read_docs")).toBeInTheDocument();
+    expect(screen.getAllByText("Model response").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("Prompt 2 · Step 1").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByText("read_docs"));
+    expect(screen.getByRole("tab", { name: "Input" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Output" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
   });
 
   it("filters the waterfall to tool rows while preserving step context", () => {
     render(<TraceViewer trace={waterfallTrace} />);
 
-    fireEvent.click(screen.getByText("Expand all"));
     expect(screen.getByText("Generation error")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "TOOL" }));
@@ -337,12 +342,15 @@ describe("TraceViewer", () => {
     expect(screen.getAllByText("Prompt 1").length).toBeGreaterThan(0);
   });
 
-  it("reveals a selected timeline row in chat view", () => {
+  it("reveals a selected timeline row in chat view", async () => {
+    const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
 
-    fireEvent.click(screen.getByText("Expand all"));
-    fireEvent.click(screen.getByText("read_docs"));
-    fireEvent.click(screen.getByText("Reveal in transcript"));
+    await user.click(screen.getAllByText("read_docs")[0]!);
+    await user.click(screen.getByRole("tab", { name: "Transcript" }));
+    await user.click(
+      screen.getByRole("button", { name: "Reveal in transcript" }),
+    );
 
     expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
     const focusedMessage = document.querySelector('[data-source-range="1-2"]');

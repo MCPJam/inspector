@@ -1,8 +1,10 @@
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
   finalizeAiSdkTraceOnFailure,
+  patchAiSdkRecordedSpansMessageRangesFromSteps,
   pushAiSdkTrailingErrorSpan,
   pushBackendStepLlmFailureSpans,
   pushBackendStepSuccessSpans,
@@ -35,6 +37,21 @@ describe("eval-trace-capture", () => {
     expect(parent!.startMs).toBeLessThan(parent!.endMs);
     expect(llm!.startMs).toBeGreaterThanOrEqual(parent!.startMs);
     expect(llm!.endMs).toBeLessThanOrEqual(parent!.endMs);
+  });
+
+  it("backend success: LLM span name includes modelId when meta provides it", () => {
+    const spans: EvalTraceSpan[] = [];
+    pushBackendStepSuccessSpans(
+      spans,
+      runAt,
+      0,
+      runAt + 0,
+      { startAbs: runAt + 0, endAbs: runAt + 50 },
+      undefined,
+      { modelId: "claude-3-opus" },
+    );
+    const llm = spans.find((s) => s.id === "eval-backend-step-0-llm");
+    expect(llm?.name).toBe("claude-3-opus · response");
   });
 
   it("backend success: LLM + tools — children within parent", () => {
@@ -95,6 +112,7 @@ describe("eval-trace-capture", () => {
     const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
     expect(step?.category).toBe("step");
     expect(llm?.category).toBe("llm");
+    expect(llm?.name).toBe("gpt-4o · response");
     expect(llm?.parentId).toBe("step-0");
     expect(ctx.recordedSpans.filter((s) => s.category === "tool")).toHaveLength(
       0,
@@ -213,6 +231,90 @@ describe("eval-trace-capture", () => {
     const genErr = ctx.recordedSpans.find((s) => s.name === "Generation error");
     expect(genErr?.startMs).toBe(20);
     expect(genErr?.endMs).toBe(25);
+  });
+
+  it("patchAiSdkRecordedSpansMessageRangesFromSteps fills indices when onStepFinish omitted them", () => {
+    vi.spyOn(Date, "now").mockReturnValue(runAt);
+    const ctx = createAiSdkEvalTraceContext(runAt);
+    registerAiSdkPrepareStep(ctx, 0, { modelId: "gpt-4o" });
+    emitAiSdkOnStepFinish(ctx, runAt + 40, {
+      modelId: "gpt-4o",
+      status: "ok",
+    });
+    const baseLen = 2;
+    patchAiSdkRecordedSpansMessageRangesFromSteps(ctx.recordedSpans, baseLen, [
+      {
+        response: {
+          messages: [{ role: "assistant", content: "hello" }],
+        },
+      },
+    ]);
+    const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
+    const step = ctx.recordedSpans.find((s) => s.id === "step-0");
+    expect(llm?.messageStartIndex).toBe(2);
+    expect(llm?.messageEndIndex).toBe(2);
+    expect(step?.messageStartIndex).toBe(2);
+    expect(step?.messageEndIndex).toBe(2);
+  });
+
+  it("patchAiSdkRecordedSpansMessageRangesFromSteps does not overwrite existing message indices", () => {
+    vi.spyOn(Date, "now").mockReturnValue(runAt);
+    const ctx = createAiSdkEvalTraceContext(runAt);
+    registerAiSdkPrepareStep(ctx, 0);
+    emitAiSdkOnStepFinish(ctx, runAt + 40, {
+      messageStartIndex: 5,
+      messageEndIndex: 6,
+      status: "ok",
+    });
+    patchAiSdkRecordedSpansMessageRangesFromSteps(ctx.recordedSpans, 0, [
+      {
+        response: {
+          messages: [{ role: "assistant", content: "other" }],
+        },
+      },
+    ]);
+    const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
+    expect(llm?.messageStartIndex).toBe(5);
+    expect(llm?.messageEndIndex).toBe(6);
+  });
+
+  it("patchAiSdkRecordedSpansMessageRangesFromSteps applies step range to tool children missing indices", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const ctx = createAiSdkEvalTraceContext(runAt);
+    registerAiSdkPrepareStep(ctx, 0);
+    wall = runAt + 30;
+    const tools = wrapToolSetForEvalTrace(
+      {
+        search: {
+          description: "x",
+          inputSchema: {},
+          execute: async () => "ok",
+        },
+      },
+      ctx,
+    );
+    wall = runAt + 50;
+    await tools.search.execute({}, { toolCallId: "tc-patch", messages: [] });
+    wall = runAt + 120;
+    emitAiSdkOnStepFinish(ctx, wall, { status: "ok" });
+
+    const toolBefore = ctx.recordedSpans.find((s) => s.id === "tool-tc-patch");
+    expect(toolBefore?.messageStartIndex).toBeUndefined();
+
+    patchAiSdkRecordedSpansMessageRangesFromSteps(ctx.recordedSpans, 1, [
+      {
+        response: {
+          messages: [
+            { role: "assistant", content: [{ type: "text", text: "hi" }] },
+          ],
+        },
+      },
+    ]);
+    const toolAfter = ctx.recordedSpans.find((s) => s.id === "tool-tc-patch");
+    expect(toolAfter?.messageStartIndex).toBe(1);
+    expect(toolAfter?.messageEndIndex).toBe(1);
   });
 
   it("AI SDK: two steps — separate step ids and stable numbering", () => {

@@ -32,7 +32,10 @@ import type {
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
-import { createEvalSpanSink } from "./eval-trace-spans.js";
+import {
+  createEvalSpanSink,
+  patchEvalSpansMessageRangesFromSteps,
+} from "./eval-trace-spans.js";
 
 /**
  * Configuration for creating a TestAgent
@@ -602,11 +605,16 @@ export class TestAgent implements EvalAgent {
           const stepMessages = stepResult.response?.messages
             ? [...stepResult.response.messages]
             : [];
+          // AI SDK gives cumulative response.messages per step (grows across the loop).
+          // Indices must cover only the new slice vs the previous step.
+          const cumulativeLen = stepMessages.length;
           const messageStartIndex =
-            stepMessages.length > 0 ? 1 + emittedMessageCount : undefined;
+            cumulativeLen > emittedMessageCount
+              ? 1 + emittedMessageCount
+              : undefined;
           const messageEndIndex =
-            stepMessages.length > 0
-              ? messageStartIndex! + stepMessages.length - 1
+            cumulativeLen > emittedMessageCount
+              ? 1 + cumulativeLen - 1
               : undefined;
 
           spanSink.onStepFinish(stepResult.stepNumber, stepStartMs, {
@@ -623,7 +631,7 @@ export class TestAgent implements EvalAgent {
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
           lastCompletedStepMessages = stepMessages;
-          emittedMessageCount += stepMessages.length;
+          emittedMessageCount = cumulativeLen;
           completedToolCalls.push(
             ...stepResult.toolCalls.map((toolCall) => ({
               toolName: toolCall.toolName,
@@ -631,31 +639,6 @@ export class TestAgent implements EvalAgent {
             }))
           );
           pendingStepToolCalls.length = 0;
-        },
-        onFinish: (finalStep: EvalAwareStepResult) => {
-          if (!finalStep) {
-            return;
-          }
-
-          const stepMessages = finalStep.response?.messages
-            ? [...finalStep.response.messages]
-            : [];
-          const messageStartIndex =
-            stepMessages.length > 0 ? 1 + emittedMessageCount : undefined;
-          const messageEndIndex =
-            stepMessages.length > 0
-              ? messageStartIndex! + stepMessages.length - 1
-              : undefined;
-
-          spanSink.onStepFinish(finalStep.stepNumber, getCurrentStepStartMs(), {
-            modelId: finalStep.response?.modelId ?? this._parsedModel,
-            inputTokens: finalStep.usage?.inputTokens,
-            outputTokens: finalStep.usage?.outputTokens,
-            totalTokens: finalStep.usage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-            status: "ok",
-          });
         },
       };
 
@@ -675,6 +658,15 @@ export class TestAgent implements EvalAgent {
         messages.push(...result.response.messages);
       }
 
+      const recordedSpans = spanSink.getSpans();
+      patchEvalSpansMessageRangesFromSteps(
+        recordedSpans,
+        1,
+        result.steps as ReadonlyArray<
+          { response?: { messages?: ModelMessage[] } } | undefined
+        >,
+      );
+
       this.lastResult = PromptResult.from({
         prompt: message,
         messages,
@@ -689,7 +681,7 @@ export class TestAgent implements EvalAgent {
         provider: this._parsedProvider,
         model: this._parsedModel,
         widgetSnapshots: Array.from(widgetSnapshots.values()),
-        spans: spanSink.getSpans(),
+        spans: recordedSpans,
       });
 
       this.promptHistory.push(this.lastResult);
