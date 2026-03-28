@@ -132,8 +132,15 @@ export function CiSuiteListSidebar({
               Loading suites...
             </div>
           ) : suites.length === 0 ? (
-            <div className="p-4 text-center text-xs text-muted-foreground">
-              No suites found.
+            <div className="space-y-2 p-4 text-center text-xs text-muted-foreground">
+              <p>No suites found.</p>
+              <p>
+                Use the{" "}
+                <span className="font-medium text-foreground">
+                  @mcpjam/sdk
+                </span>{" "}
+                quickstart in the main panel to create your first suite.
+              </p>
             </div>
           ) : (
             <div>

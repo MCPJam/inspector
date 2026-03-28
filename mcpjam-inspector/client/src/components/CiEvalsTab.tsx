@@ -40,6 +40,7 @@ import { CommitDetailView } from "./evals/commit-detail-view";
 import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-detail";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
+import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
 import { HOSTED_MODE } from "@/lib/config";
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
@@ -521,15 +522,26 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           ) : route.type === "commit-detail" && selectedCommitGroup ? (
             <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
           ) : !hasVisibleSuites ? (
-            <div className="flex flex-1 items-center justify-center">
-              <div className="mx-auto max-w-md p-6 text-center">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                  <GitBranch className="h-7 w-7 text-muted-foreground" />
+            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+              <div className="mx-auto w-full max-w-3xl px-6 py-8 pb-12">
+                <div className="mb-8 text-center">
+                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                    <GitBranch className="h-7 w-7 text-muted-foreground" />
+                  </div>
+                  <h2 className="mb-2 text-lg font-semibold text-foreground">
+                    No runs yet
+                  </h2>
+                  <p className="text-sm text-muted-foreground">
+                    Run the quickstart below with{" "}
+                    <span className="font-medium text-foreground">
+                      @mcpjam/sdk
+                    </span>{" "}
+                    to upload your first suite and run. Or use Explore to build
+                    cases in the app first.
+                  </p>
                 </div>
-                <h2 className="mb-2 text-lg font-semibold text-foreground">
-                  No runs yet
-                </h2>
-                <p className="text-sm text-muted-foreground">
+                <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
+                <p className="mt-10 text-center text-sm text-muted-foreground">
                   Switch to{" "}
                   <span className="font-medium text-foreground">Explore</span>{" "}
                   in the Testing header to create and save suites. Re-run a
