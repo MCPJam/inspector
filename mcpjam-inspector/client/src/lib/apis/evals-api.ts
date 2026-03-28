@@ -131,7 +131,11 @@ async function postEvalRequest<TResponse>(
 
   if (!response.ok) {
     const errorBody = body as
-      | { message?: unknown; error?: unknown }
+      | {
+          message?: unknown;
+          error?: unknown;
+          code?: unknown;
+        }
       | null
       | undefined;
     const message =

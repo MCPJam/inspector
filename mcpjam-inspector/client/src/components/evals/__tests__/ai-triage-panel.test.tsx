@@ -6,10 +6,31 @@ import type { EvalSuiteRun } from "../types";
 // Mocks
 // ---------------------------------------------------------------------------
 
-const mockMutate = vi.fn();
+const mocks = vi.hoisted(() => ({
+  mockMutate: vi.fn(),
+  mockCreateTestCaseMutate: vi.fn(),
+  mockUpdateTestCaseMutate: vi.fn(),
+  mockCancelTriageMutate: vi.fn(),
+  mockUseQuery: vi.fn(),
+}));
+
+const navigateToEvalsRouteMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/evals-router", () => ({
+  navigateToEvalsRoute: (...args: unknown[]) =>
+    navigateToEvalsRouteMock(...args),
+}));
 
 vi.mock("convex/react", () => ({
-  useMutation: () => mockMutate,
+  useMutation: (name: unknown) => {
+    if (name === "testSuites:createTestCase")
+      return mocks.mockCreateTestCaseMutate;
+    if (name === "testSuites:updateTestCase")
+      return mocks.mockUpdateTestCaseMutate;
+    if (name === "triage:cancelTriage") return mocks.mockCancelTriageMutate;
+    return mocks.mockMutate;
+  },
+  useQuery: (...args: unknown[]) => mocks.mockUseQuery(...args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -42,6 +63,7 @@ const triageSummary = {
     },
   ],
   topRecommendations: ["Fix the name argument in lookup_user tool calls."],
+  generatedAt: Date.now(),
   modelUsed: "claude-opus-4-6",
 };
 
@@ -52,7 +74,15 @@ const triageSummary = {
 describe("AiTriagePanel", () => {
   beforeEach(() => {
     vi.resetAllMocks();
-    mockMutate.mockResolvedValue(undefined);
+    mocks.mockMutate.mockResolvedValue(undefined);
+    mocks.mockCreateTestCaseMutate.mockResolvedValue("new-case-id");
+    mocks.mockUpdateTestCaseMutate.mockResolvedValue({});
+    mocks.mockCancelTriageMutate.mockResolvedValue(undefined);
+    navigateToEvalsRouteMock.mockClear();
+    mocks.mockUseQuery.mockImplementation((_name: string, args: unknown) => {
+      if (args === "skip") return undefined;
+      return [];
+    });
   });
 
   async function getPanel() {
@@ -112,7 +142,7 @@ describe("AiTriagePanel", () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun({ triageStatus: "pending" });
       render(<AiTriagePanel run={run} />);
-      expect(screen.getByText(/ai is analyzing failures/i)).toBeTruthy();
+      expect(screen.getByText(/analyzing failures/i)).toBeTruthy();
     });
 
     it("does not show triage button when pending", async () => {
@@ -131,9 +161,9 @@ describe("AiTriagePanel", () => {
       const run = makeRun();
       render(<AiTriagePanel run={run} />);
       await waitFor(() => {
-        expect(mockMutate).toHaveBeenCalledTimes(1);
+        expect(mocks.mockMutate).toHaveBeenCalledTimes(1);
       });
-      expect(mockMutate).toHaveBeenCalledWith({
+      expect(mocks.mockMutate).toHaveBeenCalledWith({
         suiteRunId: "run-1",
         force: false,
       });
@@ -172,6 +202,38 @@ describe("AiTriagePanel", () => {
       ).toBeTruthy();
     });
 
+    it("navigates to test edit when a failure chip matches failedTestTitleToCaseId", async () => {
+      const AiTriagePanel = await getPanel();
+      const run = makeRun({
+        triageStatus: "completed",
+        triageSummary: {
+          ...triageSummary,
+          failureCategories: [
+            {
+              category: "Routing",
+              count: 1,
+              testCaseTitles: ["Lookup user by name"],
+              recommendation: "Fix tools.",
+            },
+          ],
+        },
+      });
+      render(
+        <AiTriagePanel
+          run={run}
+          failedTestTitleToCaseId={{ "Lookup user by name": "case-99" }}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: /Lookup user by name/i }),
+      );
+      expect(navigateToEvalsRouteMock).toHaveBeenCalledWith({
+        type: "test-edit",
+        suiteId: "suite-1",
+        testId: "case-99",
+      });
+    });
+
     it("renders model name in header", async () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun({ triageStatus: "completed", triageSummary });
@@ -200,7 +262,7 @@ describe("AiTriagePanel", () => {
       const run = makeRun({ triageStatus: "completed", triageSummary });
       render(<AiTriagePanel run={run} />);
       fireEvent.click(screen.getByRole("button", { name: /re-triage/i }));
-      expect(mockMutate).toHaveBeenCalledWith({
+      expect(mocks.mockMutate).toHaveBeenCalledWith({
         suiteRunId: "run-1",
         force: true,
       });
@@ -212,7 +274,7 @@ describe("AiTriagePanel", () => {
       const AiTriagePanel = await getPanel();
       const run = makeRun({ triageStatus: "failed" });
       render(<AiTriagePanel run={run} />);
-      expect(screen.getByText(/ai triage failed/i)).toBeTruthy();
+      expect(screen.getByText(/couldn.?t complete analysis/i)).toBeTruthy();
     });
 
     it("shows retry button", async () => {
@@ -227,7 +289,7 @@ describe("AiTriagePanel", () => {
       const run = makeRun({ triageStatus: "failed" });
       render(<AiTriagePanel run={run} />);
       fireEvent.click(screen.getByRole("button", { name: /retry/i }));
-      expect(mockMutate).toHaveBeenCalledWith({
+      expect(mocks.mockMutate).toHaveBeenCalledWith({
         suiteRunId: "run-1",
         force: true,
       });
@@ -240,7 +302,7 @@ describe("AiTriagePanel", () => {
       const run = makeRun();
       render(<AiTriagePanel run={run} autoRequestTriage={false} />);
       fireEvent.click(screen.getByRole("button", { name: /triage failures/i }));
-      expect(mockMutate).toHaveBeenCalledWith({
+      expect(mocks.mockMutate).toHaveBeenCalledWith({
         suiteRunId: "run-1",
         force: false,
       });
@@ -262,13 +324,269 @@ describe("AiTriagePanel", () => {
       const btn = screen.getByRole("button", { name: /triage failures/i });
       fireEvent.click(btn);
       fireEvent.click(btn);
-      expect(mockMutate).toHaveBeenCalledTimes(1);
+      expect(mocks.mockMutate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("suggested follow-ups", () => {
+    it("renders suggested cases for UI runs", async () => {
+      const AiTriagePanel = await getPanel();
+      const run = makeRun({
+        triageStatus: "completed",
+        triageSummary: {
+          ...triageSummary,
+          suggestedTestCases: [
+            {
+              title: "Follow-up A",
+              query: "Do the thing",
+              expectedToolCalls: [
+                { toolName: "t", arguments: { x: 1 } },
+              ],
+              rationale: "Covers edge case",
+            },
+          ],
+        },
+      });
+      mocks.mockUseQuery.mockImplementation((_name, args) => {
+        if (args === "skip") return undefined;
+        return [
+          {
+            _id: "c1",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Existing",
+            query: "",
+            models: [
+              { model: "model-a", provider: "openai" },
+              { model: "model-b", provider: "anthropic" },
+            ],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ];
+      });
+      render(<AiTriagePanel run={run} />);
+      expect(screen.getByText("Suggested tests")).toBeTruthy();
+      expect(screen.getByText("Follow-up A")).toBeTruthy();
+    });
+
+    it("hides suggested cases for SDK runs", async () => {
+      const AiTriagePanel = await getPanel();
+      const run = makeRun({
+        source: "sdk",
+        triageStatus: "completed",
+        triageSummary: {
+          ...triageSummary,
+          suggestedTestCases: [
+            {
+              title: "Follow-up A",
+              query: "Do the thing",
+              expectedToolCalls: [],
+            },
+          ],
+        },
+      });
+      render(<AiTriagePanel run={run} />);
+      expect(screen.queryByText("Suggested tests")).toBeNull();
+    });
+
+    it("Add to suite sends createTestCase with suite-wide models", async () => {
+      const AiTriagePanel = await getPanel();
+      const run = makeRun({
+        triageStatus: "completed",
+        triageSummary: {
+          ...triageSummary,
+          suggestedTestCases: [
+            {
+              title: "Follow-up A",
+              query: "Do the thing",
+              expectedToolCalls: [{ toolName: "t", arguments: {} }],
+              rationale: "r",
+            },
+          ],
+        },
+      });
+      mocks.mockUseQuery.mockImplementation((_name, args) => {
+        if (args === "skip") return undefined;
+        return [
+          {
+            _id: "c1",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Existing",
+            query: "",
+            models: [
+              { model: "model-a", provider: "openai" },
+              { model: "model-b", provider: "anthropic" },
+            ],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ];
+      });
+      render(<AiTriagePanel run={run} />);
+      fireEvent.click(screen.getByRole("button", { name: /add to suite/i }));
+      await waitFor(() => {
+        expect(mocks.mockCreateTestCaseMutate).toHaveBeenCalled();
+      });
+      expect(mocks.mockCreateTestCaseMutate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          suiteId: "suite-1",
+          title: "Follow-up A",
+          query: "Do the thing",
+          runs: 1,
+          models: [
+            { model: "model-a", provider: "openai" },
+            { model: "model-b", provider: "anthropic" },
+          ],
+          expectedToolCalls: [{ toolName: "t", arguments: {} }],
+        }),
+      );
+    });
+
+    it("removes the suggestion row after a successful Add to suite", async () => {
+      const AiTriagePanel = await getPanel();
+      const run = makeRun({
+        triageStatus: "completed",
+        triageSummary: {
+          ...triageSummary,
+          suggestedTestCases: [
+            {
+              title: "Follow-up A",
+              query: "Do the thing",
+              expectedToolCalls: [],
+            },
+          ],
+        },
+      });
+      mocks.mockUseQuery.mockImplementation((_name, args) => {
+        if (args === "skip") return undefined;
+        return [
+          {
+            _id: "c1",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Existing",
+            query: "",
+            models: [{ model: "m", provider: "openai" }],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ];
+      });
+      render(<AiTriagePanel run={run} />);
+      const addBtn = screen.getByRole("button", { name: /add to suite/i });
+      fireEvent.click(addBtn);
+      await waitFor(() => {
+        expect(mocks.mockCreateTestCaseMutate).toHaveBeenCalled();
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Follow-up A")).toBeNull();
+      });
+      expect(screen.queryByRole("button", { name: /add to suite/i })).toBeNull();
+    });
+
+    it("Apply to test opens dialog, calls updateTestCase, and removes the row", async () => {
+      const AiTriagePanel = await getPanel();
+      const run = makeRun({
+        triageStatus: "completed",
+        triageSummary: {
+          ...triageSummary,
+          suggestedTestCases: [
+            {
+              title: "Follow-up A",
+              query: "New query text",
+              expectedToolCalls: [{ toolName: "t", arguments: {} }],
+            },
+          ],
+        },
+      });
+      mocks.mockUseQuery.mockImplementation((_name, args) => {
+        if (args === "skip") return undefined;
+        return [
+          {
+            _id: "c-existing",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Existing case",
+            query: "old query",
+            models: [{ model: "m", provider: "openai" }],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ];
+      });
+      render(<AiTriagePanel run={run} />);
+      fireEvent.click(
+        screen.getByRole("button", { name: /apply to test…/i }),
+      );
+      expect(
+        await screen.findByText(/Apply suggestion to a test/i),
+      ).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: /^Apply to test$/i }));
+      await waitFor(() => {
+        expect(mocks.mockUpdateTestCaseMutate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            testCaseId: "c-existing",
+            query: "New query text",
+            expectedToolCalls: [{ toolName: "t", arguments: {} }],
+          }),
+        );
+      });
+      await waitFor(() => {
+        expect(
+          screen.queryByText(/Apply suggestion to a test/i),
+        ).toBeNull();
+      });
+      await waitFor(() => {
+        expect(screen.queryByText("Follow-up A")).toBeNull();
+      });
+    });
+
+    it("shows error feedback and leaves Add to suite enabled when create fails", async () => {
+      mocks.mockCreateTestCaseMutate.mockRejectedValueOnce(new Error("nope"));
+      const AiTriagePanel = await getPanel();
+      const run = makeRun({
+        triageStatus: "completed",
+        triageSummary: {
+          ...triageSummary,
+          suggestedTestCases: [
+            {
+              title: "Follow-up A",
+              query: "Do the thing",
+              expectedToolCalls: [],
+            },
+          ],
+        },
+      });
+      mocks.mockUseQuery.mockImplementation((_name, args) => {
+        if (args === "skip") return undefined;
+        return [
+          {
+            _id: "c1",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Existing",
+            query: "",
+            models: [{ model: "m", provider: "openai" }],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ];
+      });
+      render(<AiTriagePanel run={run} />);
+      const addBtn = screen.getByRole("button", { name: /add to suite/i });
+      fireEvent.click(addBtn);
+      await waitFor(() => {
+        expect(screen.getByText(/could not add test case/i)).toBeTruthy();
+      });
+      expect(addBtn).not.toBeDisabled();
     });
   });
 
   describe("unavailable backend", () => {
     it("renders nothing when mutation returns a not-found error", async () => {
-      mockMutate.mockRejectedValue(
+      mocks.mockMutate.mockRejectedValue(
         new Error("Could not find function triage:requestTriage"),
       );
       const AiTriagePanel = await getPanel();

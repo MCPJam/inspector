@@ -492,8 +492,6 @@ export function RunOverview({
                         ? formatDuration(Date.now() - run.createdAt)
                         : "—";
 
-                  const isInactive = run.isActive === false;
-
                   const runResult =
                     run.result ||
                     (run.status === "completed" && passRate !== null
@@ -629,24 +627,9 @@ export function RunOverview({
                   return (
                     <div
                       key={run._id}
-                      className={cn(
-                        "relative border-l-2",
-                        runAccent,
-                        isInactive && "opacity-50",
-                      )}
+                      className={cn("relative border-l-2", runAccent)}
                     >
-                      {isInactive ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>{runButton}</TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">
-                              Run is inactive since test cases were updated
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        runButton
-                      )}
+                      {runButton}
                     </div>
                   );
                 })

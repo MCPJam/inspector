@@ -108,14 +108,14 @@ describe("ServerConnectionCard", () => {
           {...defaultProps}
         />,
       );
-      expect(prefetch).toHaveBeenCalledWith("ws_abc", server);
+      expect(prefetch).toHaveBeenCalledWith("ws_abc", server, undefined);
     });
 
     it("calls explore prefetch hook with null workspace when prop omitted", () => {
       const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
       const server = createServer();
       render(<ServerConnectionCard server={server} {...defaultProps} />);
-      expect(prefetch).toHaveBeenCalledWith(null, server);
+      expect(prefetch).toHaveBeenCalledWith(null, server, undefined);
     });
 
     it("renders server name", () => {

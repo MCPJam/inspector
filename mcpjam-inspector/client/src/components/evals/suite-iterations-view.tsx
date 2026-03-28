@@ -301,7 +301,7 @@ export function SuiteIterationsView({
         (run) => run._id === replayingRunId && run.hasServerReplayConfig,
       ) &&
       runs
-        .filter((run) => run.isActive !== false && run.hasServerReplayConfig)
+        .filter((run) => run.hasServerReplayConfig)
         .sort((a, b) => {
           const aTime = a.completedAt ?? a.createdAt ?? 0;
           const bTime = b.completedAt ?? b.createdAt ?? 0;
@@ -369,7 +369,6 @@ export function SuiteIterationsView({
                   <TestCaseDetailView
                     testCase={selectedCase}
                     iterations={caseIterations}
-                    runs={runs}
                     serverNames={(suite.environment?.servers || []).filter(
                       (name) => connectedServerNames.has(name),
                     )}
@@ -455,7 +454,6 @@ export function SuiteIterationsView({
                     suite={suite}
                     cases={cases}
                     allIterations={allIterations}
-                    runs={runs}
                     runsViewMode={runsViewMode}
                     onViewModeChange={(value) =>
                       navigation.toSuiteOverview(suite._id, value)

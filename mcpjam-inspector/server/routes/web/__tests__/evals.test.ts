@@ -109,7 +109,13 @@ function createEvalsTestApp(options?: { bearerToken?: string }) {
   app.route("/api/web/evals", evalsRoutes);
   app.onError((error, c) => {
     const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details,
+    );
   });
 
   const token = options?.bearerToken ?? "test-token-123";

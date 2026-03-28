@@ -2,6 +2,9 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { useMutation } from "convex/react";
 import type { EvalSuiteRun } from "./types";
 
+/** After this long in `triageStatus: pending`, the run detail UI offers cancel. */
+export const TRIAGE_PENDING_STALE_MS = 120_000;
+
 // ---------------------------------------------------------------------------
 // Shared error classification for triage mutations
 // ---------------------------------------------------------------------------
@@ -46,6 +49,7 @@ export function useAiTriage(
   const runIdRef = useRef<string | null>(null);
 
   const requestTriageMutation = useMutation("triage:requestTriage" as any);
+  const cancelTriageMutation = useMutation("triage:cancelTriage" as any);
 
   const failed = failedCount ?? run?.summary?.failed ?? 0;
 
@@ -78,6 +82,11 @@ export function useAiTriage(
       },
     );
   }, [run, requested, unavailable, requestTriageMutation]);
+
+  const cancelTriage = useCallback(async () => {
+    if (!run || unavailable) return;
+    await cancelTriageMutation({ suiteRunId: run._id } as any);
+  }, [run, unavailable, cancelTriageMutation]);
 
   const runKey = run?._id ?? "";
   useEffect(() => {
@@ -135,7 +144,7 @@ export function useAiTriage(
     autoRequest,
   ]);
 
-  return { canTriage, error, unavailable, requested, requestTriage };
+  return { canTriage, error, unavailable, requested, requestTriage, cancelTriage };
 }
 
 // ---------------------------------------------------------------------------

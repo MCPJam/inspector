@@ -153,7 +153,8 @@ export type EvalSuiteRun = {
   notes?: string;
   createdAt: number;
   completedAt?: number;
-  isActive?: boolean; // Mark runs as inactive when suite is edited
+  /** Legacy field from Convex; no longer used for UI gating or trends. */
+  isActive?: boolean;
   expectedIterations?: number;
   _creationTime?: number;
   triageStatus?: "pending" | "completed" | "failed";
@@ -166,6 +167,20 @@ export type EvalSuiteRun = {
       recommendation: string;
     }>;
     topRecommendations: string[];
+    suggestedTestCases?: Array<{
+      title: string;
+      query: string;
+      /** Present only on older persisted runs; UI always uses `runs: 1` on create. */
+      runs?: number;
+      expectedToolCalls: Array<{
+        toolName: string;
+        arguments: Record<string, any>;
+      }>;
+      isNegativeTest?: boolean;
+      scenario?: string;
+      expectedOutput?: string;
+      rationale?: string;
+    }>;
     generatedAt: number;
     modelUsed: string;
   };

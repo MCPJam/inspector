@@ -6,12 +6,11 @@ import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { IterationDetails } from "./iteration-details";
-import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration } from "./types";
 
 interface TestCaseDetailViewProps {
   testCase: EvalCase;
   iterations: EvalIteration[];
-  runs: EvalSuiteRun[];
   onBack: () => void;
   onViewRun?: (runId: string) => void;
   serverNames?: string[];
@@ -22,7 +21,6 @@ interface TestCaseDetailViewProps {
 export function TestCaseDetailView({
   testCase,
   iterations,
-  runs,
   onBack,
   onViewRun,
   serverNames = [],
@@ -31,15 +29,7 @@ export function TestCaseDetailView({
 }: TestCaseDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
-  // Filter out iterations from inactive runs
-  const activeIterations = useMemo(() => {
-    const inactiveRunIds = new Set(
-      runs.filter((run) => run.isActive === false).map((run) => run._id),
-    );
-    return iterations.filter(
-      (iter) => !iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId),
-    );
-  }, [iterations, runs]);
+  const activeIterations = useMemo(() => iterations, [iterations]);
 
   // Model breakdown
   const modelBreakdown = useMemo(() => {

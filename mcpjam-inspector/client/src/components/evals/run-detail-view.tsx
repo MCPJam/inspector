@@ -20,6 +20,8 @@ import {
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { AiTriagePanel } from "./ai-triage-panel";
+import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { ExternalLink } from "lucide-react";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -60,10 +62,13 @@ function IterationListItem({
   iteration,
   isSelected,
   onSelect,
+  onEditTestCase,
 }: {
   iteration: EvalIteration;
   isSelected: boolean;
   onSelect: () => void;
+  /** When set, failed iterations with a testCaseId show an editor link. */
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   const isPending =
     iteration.status === "pending" || iteration.status === "running";
@@ -72,6 +77,9 @@ function IterationListItem({
   const modelName = testInfo?.model || "—";
 
   const computedResult = computeIterationResult(iteration);
+  const canEditInPlayground =
+    Boolean(onEditTestCase && iteration.testCaseId) &&
+    computedResult === "failed";
 
   return (
     <div
@@ -107,6 +115,21 @@ function IterationListItem({
           {modelName}
         </span>
       </button>
+      {canEditInPlayground && iteration.testCaseId ? (
+        <div className="px-3 pb-2 -mt-0.5">
+          <button
+            type="button"
+            className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditTestCase!(iteration.testCaseId!);
+            }}
+          >
+            Edit in Playground
+            <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-80" />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -116,11 +139,13 @@ function IterationListWithSections({
   sortBy,
   selectedIterationId,
   onSelectIteration,
+  onEditTestCase,
 }: {
   iterations: EvalIteration[];
   sortBy: "model" | "test" | "result";
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   if (sortBy !== "result") {
     return (
@@ -131,6 +156,7 @@ function IterationListWithSections({
             iteration={iteration}
             isSelected={selectedIterationId === iteration._id}
             onSelect={() => onSelectIteration(iteration._id)}
+            onEditTestCase={onEditTestCase}
           />
         ))}
       </>
@@ -158,6 +184,7 @@ function IterationListWithSections({
           iteration={iteration}
           isSelected={selectedIterationId === iteration._id}
           onSelect={() => onSelectIteration(iteration._id)}
+          onEditTestCase={onEditTestCase}
         />
       ))}
     </>
@@ -171,12 +198,14 @@ export function RunIterationsSidebar({
   onSortChange,
   selectedIterationId,
   onSelectIteration,
+  onEditTestCase,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -207,6 +236,7 @@ export function RunIterationsSidebar({
               sortBy={runDetailSortBy}
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
+              onEditTestCase={onEditTestCase}
             />
           )}
         </div>
@@ -303,6 +333,17 @@ export function RunDetailView({
 
   const hasRunBarCharts =
     selectedRunChartData.durationData.length > 0 || hasTokenData;
+
+  const failedTestTitleToCaseId = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const iter of caseGroupsForSelectedRun) {
+      if (computeIterationPassed(iter)) continue;
+      const id = iter.testCaseId;
+      const title = iter.testCaseSnapshot?.title;
+      if (id && title) m[title] = id;
+    }
+    return m;
+  }, [caseGroupsForSelectedRun]);
 
   return (
     <div
@@ -512,6 +553,7 @@ export function RunDetailView({
       <AiTriagePanel
         run={selectedRunDetails}
         failedCount={computedStats.failed}
+        failedTestTitleToCaseId={failedTestTitleToCaseId}
       />
 
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
@@ -533,6 +575,13 @@ export function RunDetailView({
               onSortChange={onSortChange}
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
+              onEditTestCase={(testCaseId) =>
+                navigateToEvalsRoute({
+                  type: "test-edit",
+                  suiteId: selectedRunDetails.suiteId,
+                  testId: testCaseId,
+                })
+              }
             />
           </div>
         ) : null}

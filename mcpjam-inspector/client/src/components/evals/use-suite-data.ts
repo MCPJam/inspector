@@ -25,12 +25,8 @@ export function useSuiteData(
   runs: EvalSuiteRun[],
   aggregate: SuiteAggregate | null,
 ) {
-  // Calculate active run IDs once (memoized separately for better performance)
   const activeRunIds = useMemo(
-    () =>
-      new Set(
-        runs.filter((run) => run.isActive !== false).map((run) => run._id),
-      ),
+    () => new Set(runs.map((run) => run._id)),
     [runs],
   );
 
@@ -62,11 +58,8 @@ export function useSuiteData(
     };
   }, [aggregate]);
 
-  // Run trend data for accuracy chart
   const runTrendData = useMemo(() => {
-    const activeRuns = runs.filter((run) => run.isActive !== false);
-
-    const data = activeRuns
+    const data = [...runs]
       .slice()
       .reverse()
       .map((run) => {
@@ -113,7 +106,6 @@ export function useSuiteData(
     return data;
   }, [runs, allIterations]);
 
-  // Calculate per-model statistics (only from active runs)
   const modelStats = useMemo(() => {
     const activeIterations = allIterations.filter(
       (iteration) =>

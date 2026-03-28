@@ -46,9 +46,7 @@ export function RunAccordionView({
   // Sort runs by time (latest first)
   const sortedRuns = useMemo(
     () =>
-      [...runs]
-        .filter((r) => r.isActive !== false)
-        .sort((a, b) => {
+      [...runs].sort((a, b) => {
           const aTime = a.completedAt ?? a.createdAt ?? 0;
           const bTime = b.completedAt ?? b.createdAt ?? 0;
           return bTime - aTime;

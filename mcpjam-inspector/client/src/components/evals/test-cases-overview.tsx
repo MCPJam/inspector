@@ -1,12 +1,11 @@
 import { useMemo } from "react";
 import { computeIterationResult } from "./pass-criteria";
-import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
+import type { EvalCase, EvalIteration } from "./types";
 
 interface TestCasesOverviewProps {
   suite: { _id: string; name: string; source?: "ui" | "sdk" };
   cases: EvalCase[];
   allIterations: EvalIteration[];
-  runs: EvalSuiteRun[];
   runsViewMode: "runs" | "test-cases";
   onViewModeChange: (value: "runs" | "test-cases") => void;
   onTestCaseClick: (testCaseId: string) => void;
@@ -31,7 +30,6 @@ export function TestCasesOverview({
   suite,
   cases,
   allIterations,
-  runs,
   runsViewMode,
   onViewModeChange,
   onTestCaseClick,
@@ -42,17 +40,9 @@ export function TestCasesOverview({
 }: TestCasesOverviewProps) {
   // Calculate stats for each test case
   const testCaseStats = useMemo(() => {
-    // Create a set of inactive run IDs for fast lookup
-    const inactiveRunIds = new Set(
-      runs.filter((run) => run.isActive === false).map((run) => run._id),
-    );
-
     return cases.map((testCase) => {
-      // Filter out iterations from inactive runs
       const caseIterations = allIterations.filter(
-        (iter) =>
-          iter.testCaseId === testCase._id &&
-          (!iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId)),
+        (iter) => iter.testCaseId === testCase._id,
       );
 
       // Only count completed iterations - exclude pending/cancelled
@@ -85,7 +75,7 @@ export function TestCasesOverview({
         avgDuration,
       };
     });
-  }, [cases, allIterations, runs]);
+  }, [cases, allIterations]);
 
   const formatDuration = (durationMs: number) => {
     if (durationMs < 1000) {

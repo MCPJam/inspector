@@ -1,6 +1,9 @@
 import { ExploreCasesList } from "./explore-cases-list";
 import { RunIterationsSidebar } from "./run-detail-view";
-import type { CiEvalsRoute } from "@/lib/ci-evals-router";
+import {
+  navigateToCiEvalsRoute,
+  type CiEvalsRoute,
+} from "@/lib/ci-evals-router";
 import type { EvalCase, EvalIteration, SuiteAggregate } from "./types";
 
 interface CiEvalsSuiteDrilldownSidebarProps {
@@ -43,6 +46,13 @@ export function CiEvalsSuiteDrilldownSidebar({
           onSortChange={onRunDetailSortChange}
           selectedIterationId={selectedIterationId}
           onSelectIteration={onSelectIteration}
+          onEditTestCase={(testCaseId) =>
+            navigateToCiEvalsRoute({
+              type: "test-edit",
+              suiteId: route.suiteId,
+              testId: testCaseId,
+            })
+          }
         />
       ) : (
         <ExploreCasesList

@@ -25,6 +25,7 @@ import {
   runEvals,
 } from "@/lib/apis/evals-api";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
+import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -561,39 +562,7 @@ export function useEvalHandlers({
           { suiteId },
         );
 
-        // Extract unique models from existing test cases
-        let modelsToUse: any[] = [];
-        if (testCases && Array.isArray(testCases) && testCases.length > 0) {
-          const uniqueModels = new Map<
-            string,
-            { model: string; provider: string }
-          >();
-
-          for (const testCase of testCases) {
-            if (testCase.models && Array.isArray(testCase.models)) {
-              for (const modelConfig of testCase.models) {
-                if (modelConfig.model && modelConfig.provider) {
-                  const key = `${modelConfig.provider}:${modelConfig.model}`;
-                  if (!uniqueModels.has(key)) {
-                    uniqueModels.set(key, {
-                      model: modelConfig.model,
-                      provider: modelConfig.provider,
-                    });
-                  }
-                }
-              }
-            }
-          }
-
-          modelsToUse = Array.from(uniqueModels.values());
-        }
-
-        // Default to Haiku 4.5 if no models configured
-        if (modelsToUse.length === 0) {
-          modelsToUse = [
-            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
-          ];
-        }
+        const modelsToUse = collectUniqueModelsFromTestCases(testCases);
 
         const testCaseId = await mutations.createTestCaseMutation({
           suiteId: suiteId,
