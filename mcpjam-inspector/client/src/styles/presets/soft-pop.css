@@ -3,7 +3,8 @@ label: Soft Pop
 value: soft-pop 
 */
 
-:root[data-theme-preset="soft-pop"] {
+:root[data-theme-preset="soft-pop"],
+.app-theme-scope[data-theme-preset="soft-pop"] {
   --radius: 1rem;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0 0 0);
@@ -39,7 +40,8 @@ value: soft-pop
   --foreground: oklch(0 0 0);
 }
 
-.dark:root[data-theme-preset="soft-pop"] {
+.dark:root[data-theme-preset="soft-pop"],
+.app-theme-scope.dark[data-theme-preset="soft-pop"] {
   --background: oklch(0 0 0);
   --foreground: oklch(1 0 0);
   --card: oklch(0.2455 0.0217 257.2823);

@@ -3,7 +3,8 @@ label: Brutalist
 value: brutalist 
 */
 
-:root[data-theme-preset="brutalist"] {
+:root[data-theme-preset="brutalist"],
+.app-theme-scope[data-theme-preset="brutalist"] {
   --radius: 0px;
   --card: oklch(1 0 0);
   --card-foreground: oklch(0 0 0);
@@ -39,7 +40,8 @@ value: brutalist
   --foreground: oklch(0 0 0);
 }
 
-.dark:root[data-theme-preset="brutalist"] {
+.dark:root[data-theme-preset="brutalist"],
+.app-theme-scope.dark[data-theme-preset="brutalist"] {
   --background: oklch(0 0 0);
   --foreground: oklch(1 0 0);
   --card: oklch(0.3211 0 0);

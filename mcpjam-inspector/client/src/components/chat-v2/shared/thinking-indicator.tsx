@@ -2,15 +2,19 @@ import { MessageCircle } from "lucide-react";
 
 import { ModelDefinition } from "@/shared/types";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import {
+  useSandboxHostStyle,
+  useSandboxHostTheme,
+} from "@/contexts/sandbox-host-style-context";
 import { getAssistantAvatarDescriptor } from "./assistant-avatar";
 
 export function ThinkingIndicator({ model }: { model: ModelDefinition }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
+  const sandboxHostTheme = useSandboxHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode,
+    themeMode: sandboxHostTheme ?? themeMode,
     sandboxHostStyle,
   });
 
