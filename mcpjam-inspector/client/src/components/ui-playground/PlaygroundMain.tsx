@@ -315,9 +315,8 @@ export function PlaygroundMain({
     (s) => s.themeMode,
   ) as ThreadThemeMode;
   const themePreset = usePreferencesStore((s) => s.themePreset);
-  const [threadThemeOverride, setThreadThemeOverride] = useState<
-    ThreadThemeMode | null
-  >(null);
+  const [threadThemeOverride, setThreadThemeOverride] =
+    useState<ThreadThemeMode | null>(null);
   const effectiveThreadTheme = threadThemeOverride ?? globalThemeMode;
   const chatBg =
     hostStyle === "chatgpt"
