@@ -26,6 +26,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
@@ -178,8 +179,9 @@ export function ServerSelectionEditor({
         <div>
           <h3 className="text-sm font-semibold">MCP servers</h3>
           <p className="text-xs text-muted-foreground">
-            Attach HTTPS MCP servers. Mark servers as optional if testers should
-            turn them on only when needed.
+            Attach HTTPS MCP servers. For each server, choose whether it connects
+            when the sandbox opens or stays off until the tester adds it from{" "}
+            <span className="whitespace-nowrap">Add server</span> in the chat bar.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={onOpenAdd}>
@@ -281,7 +283,7 @@ export function ServerSelectionEditor({
             return (
               <Card key={server._id} className="rounded-2xl p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div>
+                  <div className="min-w-0">
                     <p className="font-medium">{server.name}</p>
                     <p className="mt-1 font-mono text-xs text-muted-foreground">
                       {server.url ?? "Workspace server"}
@@ -297,55 +299,58 @@ export function ServerSelectionEditor({
                       >
                         {isInsecureUrl(server.url) ? "Requires HTTPS" : "HTTPS"}
                       </Badge>
-                      {isOptional ? (
-                        <Badge variant="secondary" className="text-[10px]">
-                          Optional
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px]">
-                          Required
-                        </Badge>
-                      )}
                     </div>
                   </div>
                   <Button
                     variant="ghost"
                     size="sm"
-                    className="text-destructive hover:text-destructive"
+                    className="shrink-0 text-destructive hover:text-destructive"
                     onClick={() => onToggleSelection(server._id, false)}
                   >
                     Remove
                   </Button>
                 </div>
-                <div className="mt-4 flex items-start justify-between gap-3 border-t border-border/50 pt-4">
-                  <div className="min-w-0">
-                    <p className="text-xs font-medium">Default for testers</p>
-                    <p className="text-[11px] text-muted-foreground">
-                      Required servers connect and authorize first. Optional
-                      servers stay off until the tester adds them from Add server
-                      in the chat bar.
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    <Label
-                      htmlFor={`optional-${server._id}`}
-                      className="sr-only"
-                    >
-                      Optional server (off by default)
-                    </Label>
-                    <Switch
-                      id={`optional-${server._id}`}
-                      checked={isOptional}
-                      disabled={cannotMarkOptional}
-                      onCheckedChange={(checked) =>
-                        onOptionalChange(server._id, checked === true)
+                <div className="mt-4 space-y-2">
+                  <p
+                    className="text-xs font-medium text-muted-foreground"
+                    id={`server-startup-${server._id}`}
+                  >
+                    When sandbox opens
+                  </p>
+                  <ToggleGroup
+                    type="single"
+                    variant="outline"
+                    size="sm"
+                    className="w-full sm:w-auto"
+                    value={isOptional ? "optional" : "required"}
+                    onValueChange={(value) => {
+                      if (value === "required" || value === "optional") {
+                        onOptionalChange(server._id, value === "optional");
                       }
-                      aria-label="Optional server, off by default for testers"
-                    />
-                    <span className="text-[10px] text-muted-foreground">
+                    }}
+                    aria-labelledby={`server-startup-${server._id}`}
+                  >
+                    <ToggleGroupItem
+                      value="required"
+                      className="flex-1 px-3 text-xs"
+                      aria-label="Required: connect when sandbox opens"
+                    >
+                      Required
+                    </ToggleGroupItem>
+                    <ToggleGroupItem
+                      value="optional"
+                      className="flex-1 px-3 text-xs"
+                      disabled={cannotMarkOptional}
+                      title={
+                        cannotMarkOptional
+                          ? "At least one server must connect when the sandbox opens"
+                          : undefined
+                      }
+                      aria-label="Optional: off until tester adds from chat"
+                    >
                       Optional
-                    </span>
-                  </div>
+                    </ToggleGroupItem>
+                  </ToggleGroup>
                 </div>
               </Card>
             );
