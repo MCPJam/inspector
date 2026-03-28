@@ -1,16 +1,33 @@
-import { Loader2, Sparkles, AlertCircle, RotateCw } from "lucide-react";
+import {
+  Loader2,
+  Sparkles,
+  AlertCircle,
+  RotateCw,
+  ChevronDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import type { EvalSuiteRun } from "./types";
 import { useAiTriage } from "./use-ai-triage";
 
 interface AiTriagePanelProps {
   run: EvalSuiteRun;
   failedCount?: number;
+  /** When false, triage starts only when the user clicks (default: true). */
+  autoRequestTriage?: boolean;
 }
 
-export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
+export function AiTriagePanel({
+  run,
+  failedCount,
+  autoRequestTriage = true,
+}: AiTriagePanelProps) {
   const { canTriage, error, unavailable, requested, requestTriage } =
-    useAiTriage(run, failedCount);
+    useAiTriage(run, failedCount, { autoRequest: autoRequestTriage });
 
   // Don't render anything if the backend isn't available
   if (unavailable) return null;
@@ -34,23 +51,26 @@ export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
     );
   }
 
-  // Completed — render results
+  // Completed — render results (collapsible; expanded by default)
   if (triageStatus === "completed" && triageSummary) {
     return (
-      <div className="rounded-lg border bg-card text-card-foreground border-l-2 border-l-orange-500">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-2.5 border-b">
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
+      <Collapsible
+        defaultOpen
+        className="group/collapse rounded-lg border bg-card text-card-foreground border-l-2 border-l-orange-500"
+      >
+        <div className="flex items-center justify-between gap-2 px-4 py-2.5 border-b">
+          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 rounded-sm py-0.5 text-left -my-0.5 outline-none hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring">
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/collapse:-rotate-90 group-data-[state=open]/collapse:rotate-0" />
+            <Sparkles className="h-4 w-4 shrink-0 text-primary" />
             <span className="text-xs font-semibold">AI Triage</span>
-            <span className="text-[10px] text-muted-foreground">
+            <span className="text-[10px] text-muted-foreground truncate">
               {triageSummary.modelUsed}
             </span>
-          </div>
+          </CollapsibleTrigger>
           <Button
             variant="ghost"
             size="sm"
-            className="h-6 gap-1.5 text-[10px] text-muted-foreground"
+            className="h-6 shrink-0 gap-1.5 text-[10px] text-muted-foreground"
             onClick={requestTriage}
             disabled={requested}
           >
@@ -59,72 +79,74 @@ export function AiTriagePanel({ run, failedCount }: AiTriagePanelProps) {
           </Button>
         </div>
 
-        <div className="px-4 py-3 space-y-4">
-          {/* Summary */}
-          <p className="text-sm leading-relaxed">{triageSummary.summary}</p>
+        <CollapsibleContent>
+          <div className="px-4 py-3 space-y-4">
+            {/* Summary */}
+            <p className="text-sm leading-relaxed">{triageSummary.summary}</p>
 
-          {/* Failure categories */}
-          {triageSummary.failureCategories.length > 0 && (
-            <div className="space-y-2">
-              <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                Failure Categories
-              </h4>
+            {/* Failure categories */}
+            {triageSummary.failureCategories.length > 0 && (
               <div className="space-y-2">
-                {triageSummary.failureCategories.map((cat) => (
-                  <div
-                    key={cat.category}
-                    className="rounded-md border bg-muted/20 px-3 py-2"
-                  >
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs font-medium">
-                        {cat.category}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground font-mono">
-                        {cat.count} failure{cat.count !== 1 ? "s" : ""}
-                      </span>
-                    </div>
-                    <p className="text-xs text-muted-foreground mb-1.5">
-                      {cat.recommendation}
-                    </p>
-                    {cat.testCaseTitles.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {cat.testCaseTitles.map((title) => (
-                          <span
-                            key={title}
-                            className="text-[10px] bg-muted px-1.5 py-0.5 rounded"
-                          >
-                            {title}
-                          </span>
-                        ))}
+                <h4 className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                  Failure Categories
+                </h4>
+                <div className="space-y-2">
+                  {triageSummary.failureCategories.map((cat) => (
+                    <div
+                      key={cat.category}
+                      className="rounded-md border bg-muted/20 px-3 py-2"
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">
+                          {cat.category}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {cat.count} failure{cat.count !== 1 ? "s" : ""}
+                        </span>
                       </div>
-                    )}
-                  </div>
-                ))}
+                      <p className="text-xs text-muted-foreground mb-1.5">
+                        {cat.recommendation}
+                      </p>
+                      {cat.testCaseTitles.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {cat.testCaseTitles.map((title) => (
+                            <span
+                              key={title}
+                              className="text-[10px] bg-muted px-1.5 py-0.5 rounded"
+                            >
+                              {title}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Top recommendations */}
-          {triageSummary.topRecommendations.length > 0 && (
-            <div className="rounded-md border border-orange-500/30 bg-orange-500/5 px-3 py-3 space-y-2">
-              <h4 className="text-xs font-semibold text-orange-500 uppercase tracking-wide flex items-center gap-1.5">
-                <Sparkles className="h-3 w-3" />
-                Top Recommendations
-              </h4>
-              <ol className="space-y-1.5">
-                {triageSummary.topRecommendations.map((rec, i) => (
-                  <li key={i} className="text-xs leading-relaxed flex gap-2">
-                    <span className="font-mono text-orange-500/70 shrink-0">
-                      {i + 1}.
-                    </span>
-                    <span>{rec}</span>
-                  </li>
-                ))}
-              </ol>
-            </div>
-          )}
-        </div>
-      </div>
+            {/* Top recommendations */}
+            {triageSummary.topRecommendations.length > 0 && (
+              <div className="rounded-md border border-orange-500/30 bg-orange-500/5 px-3 py-3 space-y-2">
+                <h4 className="text-xs font-semibold text-orange-500 uppercase tracking-wide flex items-center gap-1.5">
+                  <Sparkles className="h-3 w-3" />
+                  Top Recommendations
+                </h4>
+                <ol className="space-y-1.5">
+                  {triageSummary.topRecommendations.map((rec, i) => (
+                    <li key={i} className="text-xs leading-relaxed flex gap-2">
+                      <span className="font-mono text-orange-500/70 shrink-0">
+                        {i + 1}.
+                      </span>
+                      <span>{rec}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            )}
+          </div>
+        </CollapsibleContent>
+      </Collapsible>
     );
   }
 

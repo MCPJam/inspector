@@ -1265,10 +1265,7 @@ export class MCPClientManager {
     }
     if (
       config.requestInit &&
-      !this.hasReplayableRequestInit(
-        config.requestInit,
-        Boolean(config.accessToken?.trim())
-      )
+      !this.hasReplayableRequestInit(config.requestInit, true)
     ) {
       return undefined;
     }
@@ -1308,11 +1305,10 @@ export class MCPClientManager {
     }
 
     const accessToken = this.extractReplayAccessToken(config);
-    if (!accessToken) {
-      return undefined;
+    if (accessToken) {
+      replayConfig.accessToken = accessToken;
     }
 
-    replayConfig.accessToken = accessToken;
     return replayConfig;
   }
 

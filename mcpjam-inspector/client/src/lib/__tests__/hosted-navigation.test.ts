@@ -43,6 +43,13 @@ describe("hosted-navigation", () => {
     expect(resolved.normalizedSection).toBe("registry");
   });
 
+  it("preserves eval surface query params during canonical hash checks", () => {
+    const resolved = resolveHostedNavigation("#/evals?surface=suites", true);
+    expect(resolved.rawSection).toBe("evals");
+    expect(resolved.normalizedSection).toBe("evals");
+    expect(resolved.normalizedTab).toBe("evals");
+  });
+
   it("normalizes organization billing subroutes", () => {
     const billingResolved = resolveHostedNavigation(
       "#organizations/org_123/billing",

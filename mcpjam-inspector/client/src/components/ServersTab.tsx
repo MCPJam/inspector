@@ -315,6 +315,7 @@ function SortableServerCard({
   hostedServerId,
   onOpenDetailModal,
   footerActions,
+  workspaceId,
 }: {
   id: string;
   dndDisabled: boolean;
@@ -332,6 +333,7 @@ function SortableServerCard({
     defaultTab: ServerDetailTab,
   ) => void;
   footerActions?: React.ReactNode;
+  workspaceId: string;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
@@ -358,6 +360,7 @@ function SortableServerCard({
         hostedServerId={hostedServerId}
         onOpenDetailModal={onOpenDetailModal}
         footerActions={footerActions}
+        workspaceId={workspaceId}
       />
     </div>
   );
@@ -1216,6 +1219,7 @@ export function ServersTab({
                       hostedServerId={sharedWorkspaceServersRecord[name]?._id}
                       onOpenDetailModal={handleOpenDetailModal}
                       footerActions={renderEvalActions(name)}
+                      workspaceId={activeWorkspaceId}
                     />
                   );
                 })}
@@ -1242,6 +1246,7 @@ export function ServersTab({
                       sharedWorkspaceServersRecord[activeId!]?._id
                     }
                     footerActions={renderEvalActions(activeServer.name)}
+                    workspaceId={activeWorkspaceId}
                   />
                 </div>
               ) : null}

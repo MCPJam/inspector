@@ -15,7 +15,9 @@ import type {
 import type {
   EvalResultInput,
   EvalWidgetSnapshotInput,
+  EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
+import { finalizePassedForEval } from "./eval-tool-execution.js";
 
 /**
  * Represents the result of a TestAgent prompt.
@@ -52,6 +54,9 @@ export class PromptResult {
   /** LLM model name (e.g., "gpt-4o", "claude-3-5-sonnet-20241022") */
   private readonly _model?: string;
 
+  /** Timeline spans (times relative to prompt run start) */
+  private readonly _spans: EvalTraceSpanInput[];
+
   /**
    * Create a new PromptResult
    * @param data - The raw prompt result data
@@ -67,6 +72,7 @@ export class PromptResult {
     this._error = data.error;
     this._provider = data.provider;
     this._model = data.model;
+    this._spans = data.spans ?? [];
   }
 
   /**
@@ -247,6 +253,13 @@ export class PromptResult {
   }
 
   /**
+   * Timeline spans for this prompt (e.g. step / llm / tool / error), if captured.
+   */
+  getSpans(): EvalTraceSpanInput[] {
+    return [...this._spans];
+  }
+
+  /**
    * Check if this prompt resulted in an error.
    *
    * @returns true if there was an error
@@ -305,7 +318,11 @@ export class PromptResult {
     error: string,
     latency: LatencyBreakdown | number = 0,
     prompt: string = "",
-    metadata?: { provider?: string; model?: string }
+    metadata?: {
+      provider?: string;
+      model?: string;
+      spans?: EvalTraceSpanInput[];
+    }
   ): PromptResult {
     const latencyBreakdown: LatencyBreakdown =
       typeof latency === "number"
@@ -322,6 +339,7 @@ export class PromptResult {
       error,
       provider: metadata?.provider,
       model: metadata?.model,
+      spans: metadata?.spans,
     });
   }
 
@@ -341,14 +359,26 @@ export class PromptResult {
   toEvalResult(
     options?: Partial<
       Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
-    >
+    > & { failOnToolError?: boolean }
   ): EvalResultInput {
     const caseTitle =
       options?.caseTitle ??
       (this.prompt.trim().length > 0 ? this.prompt : "PromptResult");
-    const passed =
-      typeof options?.passed === "boolean" ? options.passed : !this.hasError();
     const usage = this.getUsage();
+    const trace: EvalResultInput["trace"] = {
+      messages: this.getMessages() as any[],
+      ...(this._spans.length > 0 ? { spans: this.getSpans() } : {}),
+    };
+
+    const matchPassed =
+      typeof options?.passed === "boolean" ? options.passed : !this.hasError();
+
+    const passed = finalizePassedForEval({
+      matchPassed,
+      trace,
+      iterationError: options?.error ?? this.getError(),
+      failOnToolError: options?.failOnToolError,
+    });
 
     return {
       caseTitle,
@@ -369,7 +399,7 @@ export class PromptResult {
       },
       error: options?.error ?? this.getError(),
       errorDetails: options?.errorDetails,
-      trace: { messages: this.getMessages() as any[] },
+      trace,
       externalIterationId: options?.externalIterationId,
       externalCaseId: options?.externalCaseId,
       metadata: options?.metadata,

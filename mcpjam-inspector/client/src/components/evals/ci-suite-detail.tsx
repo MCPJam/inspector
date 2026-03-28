@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
+import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
+import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { RunAccordionView } from "./run-accordion-view";
 import { RunDetailView } from "./run-detail-view";
 import { TestCaseDetailView } from "./test-case-detail-view";
@@ -37,6 +39,9 @@ interface CiSuiteDetailProps {
   deletingRunId: string | null;
   route: CiEvalsRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  runDetailSortByOverride?: "model" | "test" | "result";
+  onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
+  omitRunIterationList?: boolean;
 }
 
 export function CiSuiteDetail({
@@ -61,6 +66,9 @@ export function CiSuiteDetail({
   deletingRunId,
   route,
   userMap,
+  runDetailSortByOverride,
+  onRunDetailSortByChange,
+  omitRunIterationList = false,
 }: CiSuiteDetailProps) {
   const selectedTestId = route.type === "test-detail" ? route.testId : null;
   const selectedRunId = route.type === "run-detail" ? route.runId : null;
@@ -70,10 +78,12 @@ export function CiSuiteDetail({
       : route.type === "test-detail"
         ? "test-detail"
         : "overview";
-  const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
   const [runDetailSortBy, setRunDetailSortBy] = useState<
     "model" | "test" | "result"
   >("result");
+  const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
+  const effectiveRunDetailSortChange =
+    onRunDetailSortByChange ?? setRunDetailSortBy;
 
   const { runTrendData, modelStats } = useSuiteData(
     suite,
@@ -87,7 +97,7 @@ export function CiSuiteDetail({
   const { caseGroupsForSelectedRun, selectedRunChartData } = useRunDetailData(
     selectedRunId,
     allIterations,
-    runDetailSortBy,
+    effectiveRunDetailSortBy,
   );
 
   const selectedRunDetails = useMemo(() => {
@@ -153,7 +163,6 @@ export function CiSuiteDetail({
   };
 
   const handleBackToOverview = () => {
-    setShowRunSummarySidebar(false);
     navigateToCiEvalsRoute({
       type: "suite-overview",
       suiteId: suite._id,
@@ -184,8 +193,6 @@ export function CiSuiteDetail({
           cancellingRunId={cancellingRunId}
           deletingSuiteId={deletingSuiteId}
           deletingRunId={deletingRunId}
-          showRunSummarySidebar={showRunSummarySidebar}
-          setShowRunSummarySidebar={setShowRunSummarySidebar}
           runsViewMode={"test-cases"}
           runs={runs}
           allIterations={allIterations}
@@ -269,6 +276,16 @@ export function CiSuiteDetail({
                   })[0]?._id === replayingRunId
               }
             />
+            {runs.filter((r) => r.isActive !== false).length > 0 && (
+              <SuiteRunsChartGrid
+                suiteSource={suite.source}
+                runTrendData={runTrendData}
+                modelStats={modelStats}
+                runsLoading={runsLoading}
+                onRunClick={handleRunClick}
+              />
+            )}
+            <SuiteInsightsCollapsible runs={runs} />
             <RunAccordionView
               suite={suite}
               runs={runs}
@@ -294,13 +311,13 @@ export function CiSuiteDetail({
             caseGroupsForSelectedRun={caseGroupsForSelectedRun}
             source={suite.source}
             selectedRunChartData={selectedRunChartData}
-            runDetailSortBy={runDetailSortBy}
-            onSortChange={setRunDetailSortBy}
-            showRunSummarySidebar={showRunSummarySidebar}
-            setShowRunSummarySidebar={setShowRunSummarySidebar}
+            runDetailSortBy={effectiveRunDetailSortBy}
+            onSortChange={effectiveRunDetailSortChange}
             serverNames={connectedSuiteServers}
             selectedIterationId={selectedIterationId}
             onSelectIteration={handleSelectIteration}
+            hideReplayLineage
+            omitIterationList={omitRunIterationList}
           />
         ) : null}
       </div>

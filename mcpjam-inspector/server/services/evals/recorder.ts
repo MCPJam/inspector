@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 
@@ -35,6 +36,7 @@ export type SuiteRunRecorder = {
     }>;
     usage: UsageTotals;
     messages: ModelMessage[];
+    spans?: EvalTraceSpan[];
     status?: IterationStatus;
     startedAt?: number;
     error?: string;
@@ -157,6 +159,7 @@ export const createSuiteRunRecorder = ({
       toolsCalled,
       usage,
       messages,
+      spans,
       status,
       startedAt,
       error,
@@ -196,6 +199,7 @@ export const createSuiteRunRecorder = ({
           actualToolCalls: toolsCalled,
           tokensUsed: usage.totalTokens ?? 0,
           messages,
+          ...(spans?.length ? { spans } : {}),
           error,
           errorDetails,
         });

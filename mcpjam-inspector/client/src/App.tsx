@@ -1,5 +1,5 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -84,6 +84,7 @@ import {
   isBillingFeatureLocked,
   isBillingGracePeriodActive,
 } from "./lib/billing-entitlements";
+import { getNewlyConnectedServers } from "./lib/connected-server-auto-open";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
@@ -139,7 +140,6 @@ export default function App() {
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
@@ -363,6 +363,7 @@ export default function App() {
     handleUpdateWorkspace,
     handleUpdateClientConfig,
     handleDeleteWorkspace,
+    handleLeaveWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -418,6 +419,53 @@ export default function App() {
     workspaceServers,
     handleConnect,
   ]);
+
+  const previousConnectedServersRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const connectedServers = new Set(
+      Object.entries(appState.servers)
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name),
+    );
+
+    const previousConnectedServers = previousConnectedServersRef.current;
+    const newlyConnectedServers = getNewlyConnectedServers(
+      previousConnectedServers,
+      connectedServers,
+    );
+
+    if (activeTab === "servers") {
+      const firstVisitServer = newlyConnectedServers.find((serverName) => {
+        try {
+          return (
+            localStorage.getItem(`testing-auto-opened:${serverName}`) !== "true"
+          );
+        } catch {
+          return true;
+        }
+      });
+
+      if (firstVisitServer) {
+        try {
+          localStorage.setItem(
+            `testing-auto-opened:${firstVisitServer}`,
+            "true",
+          );
+        } catch {
+          // Ignore localStorage failures and still navigate.
+        }
+        setSelectedServer(firstVisitServer);
+        if (
+          window.location.hash !== "#ci-evals" &&
+          window.location.hash !== "#/ci-evals"
+        ) {
+          window.location.hash = "#/ci-evals";
+        }
+      }
+    }
+
+    previousConnectedServersRef.current = connectedServers;
+  }, [activeTab, appState.servers, setSelectedServer]);
 
   // Create effective app state that uses the correct workspaces (Convex when authenticated)
   const effectiveAppState = useMemo(
@@ -641,12 +689,8 @@ export default function App() {
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
 
-  // Redirect away from tabs hidden by the ci-evals feature flag.
-  // Use strict equality to avoid redirecting while the flag is still loading (undefined).
   useEffect(() => {
-    if (ciEvalsEnabled === false && activeTab === "ci-evals") {
-      applyNavigation("servers", { updateHash: true });
-    } else if (activeTabBillingLocked && activeTabBillingFeature) {
+    if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
           billingEntitlements?.plan,
@@ -667,7 +711,6 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     }
   }, [
-    ciEvalsEnabled,
     clientConfigEnabled,
     registryEnabled,
     activeTabBillingFeature,

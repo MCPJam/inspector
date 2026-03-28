@@ -15,7 +15,14 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Loader2, RotateCw, Settings2, X } from "lucide-react";
+import {
+  GitBranch,
+  Loader2,
+  RotateCw,
+  Settings2,
+  Trash2,
+  X,
+} from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -31,9 +38,9 @@ import type { ModelDefinition } from "@/shared/types";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { TagEditor, TagBadges } from "./tag-editor";
+import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { isHostedMode } from "@/lib/apis/mode-client";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 
 interface ModelInfo {
   model: string;
@@ -58,8 +65,6 @@ interface SuiteHeaderProps {
   cancellingRunId: string | null;
   deletingSuiteId: string | null;
   deletingRunId: string | null;
-  showRunSummarySidebar: boolean;
-  setShowRunSummarySidebar: (show: boolean) => void;
   runsViewMode?: "runs" | "test-cases";
   runs?: EvalSuiteRun[];
   allIterations?: EvalIteration[];
@@ -69,6 +74,7 @@ interface SuiteHeaderProps {
   onUpdateModels?: (models: ModelInfo[]) => Promise<void>;
   readOnlyConfig?: boolean;
   onEditSuite?: () => void;
+  onSetupCi?: () => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -79,18 +85,21 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     isEditMode,
     onRerun,
     onReplayRun,
+    onDelete,
     onCancelRun,
     onViewModeChange,
     connectedServerNames,
     rerunningSuiteId,
     replayingRunId = null,
     cancellingRunId,
+    deletingSuiteId,
     runs = [],
     testCases = [],
     availableModels = [],
     onUpdateModels,
     readOnlyConfig = false,
     onEditSuite,
+    onSetupCi,
   } = props;
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -237,17 +246,15 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
   // Calculate suite server status
   const suiteServers = suite.environment?.servers || [];
-  const missingServers = suiteServers.filter(
-    (server) => !connectedServerNames.has(server),
-  );
-  const hasServersConfigured = suiteServers.length > 0;
-  const canRerun = hasServersConfigured && missingServers.length === 0;
+  const replayEligibility = getSuiteReplayEligibility({
+    suiteServers,
+    connectedServerNames,
+    latestRun: latestRunForMetadata,
+  });
+  const { hasServersConfigured, missingServers } = replayEligibility;
+  const canRerun = replayEligibility.canRunNow;
   const isRerunning = rerunningSuiteId === suite._id;
-  const isHosted = isHostedMode();
-  const replayableLatestRun =
-    isHosted && latestRunForMetadata?.hasServerReplayConfig
-      ? latestRunForMetadata
-      : null;
+  const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
 
@@ -298,10 +305,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
       isRunInProgress ||
       rerunningSuiteId === suite._id ||
       replayingRunId === selectedRunDetails._id;
-    const replayableSelectedRun =
-      isHosted && selectedRunDetails.hasServerReplayConfig
-        ? selectedRunDetails
-        : null;
+    const replayableSelectedRun = selectedRunDetails.hasServerReplayConfig
+      ? selectedRunDetails
+      : null;
     const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
     const isReplayAction = Boolean(replayableSelectedRun);
     const runActionDisabled = isReplayAction
@@ -320,24 +326,30 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         ? "No connected MCP servers are configured for this suite"
         : !canRerun
           ? `Connect the following servers: ${missingServers.join(", ")}`
-          : "Run all tests";
+          : "Run all cases";
 
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
-        <div>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
-            <button
-              onClick={() => onViewModeChange("overview")}
-              className="hover:text-foreground hover:underline transition-colors cursor-pointer"
-            >
-              {suite.name}
-            </button>
-            <span className="text-muted-foreground/50">/</span>
-            <span className="text-primary font-medium">Run</span>
-          </div>
-          <h2 className="text-lg font-semibold">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+          <h2 className="text-lg font-semibold tracking-tight">
             Run {formatRunId(selectedRunDetails._id)}
           </h2>
+          <PassCriteriaBadge
+            run={selectedRunDetails}
+            variant="compact"
+            metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+          />
+          {selectedRunDetails.replayedFromRunId ? (
+            <span
+              className="text-xs text-muted-foreground"
+              title={selectedRunDetails.replayedFromRunId}
+            >
+              Replay of{" "}
+              <span className="font-mono text-foreground/80">
+                Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+              </span>
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {!readOnlyConfig &&
@@ -441,33 +453,18 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             compact={true}
           />
         )}
-        {!readOnlyConfig && (
-          <TagEditor
-            tags={suite.tags ?? []}
-            onTagsChange={async (newTags) => {
-              try {
-                await updateSuite({
-                  suiteId: suite._id,
-                  tags: newTags,
-                });
-              } catch (error) {
-                toast.error(
-                  getBillingErrorMessage(error, "Failed to update tags"),
-                );
-                console.error("Failed to update tags:", error);
-              }
-            }}
-          />
-        )}
-        {readOnlyConfig && suite.tags && suite.tags.length > 0 && (
-          <TagBadges tags={suite.tags} />
-        )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
         {onEditSuite && !readOnlyConfig && (
           <Button size="sm" variant="outline" onClick={onEditSuite}>
             <Settings2 className="h-4 w-4 mr-2" />
             Settings
+          </Button>
+        )}
+        {onSetupCi && !readOnlyConfig && (
+          <Button size="sm" variant="outline" onClick={onSetupCi}>
+            <GitBranch className="h-4 w-4 mr-2" />
+            Setup CI
           </Button>
         )}
         {/* Models picker - compact dropdown */}
@@ -680,7 +677,30 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   ? "No connected MCP servers are configured for this suite"
                   : !canRerun
                     ? `Connect the following servers: ${missingServers.join(", ")}`
-                    : "Run all tests"}
+                    : "Run all cases"}
+            </TooltipContent>
+          </Tooltip>
+        )}
+        {!readOnlyConfig && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onDelete(suite)}
+                disabled={deletingSuiteId === suite._id}
+                className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10"
+              >
+                {deletingSuiteId === suite._id ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                Delete suite
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              Remove this suite and its evaluation history
             </TooltipContent>
           </Tooltip>
         )}

@@ -242,9 +242,7 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
         <details className="group">
           <summary
             className={`flex items-center gap-1.5 cursor-pointer list-none ${
-              resolvedThemeMode === "dark"
-                ? "text-amber-400"
-                : "text-amber-600"
+              resolvedThemeMode === "dark" ? "text-amber-400" : "text-amber-600"
             }`}
           >
             <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />

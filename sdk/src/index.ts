@@ -150,6 +150,8 @@ export type {
   EvalExpectedToolCall,
   EvalCiMetadata,
   EvalTraceInput,
+  EvalTraceSpanCategory,
+  EvalTraceSpanInput,
   EvalWidgetCsp,
   EvalWidgetPermissions,
   EvalWidgetSnapshotInput,
@@ -159,6 +161,14 @@ export type {
   ReportEvalResultsInput,
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
+
+export {
+  finalizePassedForEval,
+  isCallToolResultError,
+  traceIndicatesToolExecutionFailure,
+  traceMessagePartIndicatesToolFailure,
+} from "./eval-tool-execution.js";
+export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
 
 // Eval result mapping utilities
 export type {
@@ -202,4 +212,4 @@ export type {
 export { injectOpenAICompat } from "./widget-helpers.js";
 
 // Skill reference (SKILL.md content for agent brief generation)
-export { SKILL_MD } from "./skill-reference.js";
+export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";

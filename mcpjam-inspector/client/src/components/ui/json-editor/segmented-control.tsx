@@ -7,11 +7,14 @@ interface SegmentedControlOption<T extends string> {
   icon?: React.ReactNode;
 }
 
+type SegmentedControlSize = "sm" | "default";
+
 interface SegmentedControlProps<T extends string> {
   options: SegmentedControlOption<T>[];
   value: T;
   onChange: (value: T) => void;
   className?: string;
+  size?: SegmentedControlSize;
 }
 
 export function SegmentedControl<T extends string>({
@@ -19,6 +22,7 @@ export function SegmentedControl<T extends string>({
   value,
   onChange,
   className,
+  size = "sm",
 }: SegmentedControlProps<T>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [indicatorStyle, setIndicatorStyle] = useState<React.CSSProperties>({});
@@ -37,22 +41,25 @@ export function SegmentedControl<T extends string>({
         transform: `translateX(${selectedButton.offsetLeft}px)`,
       });
     }
-  }, [value, options]);
+  }, [value, options, size]);
 
   return (
     <div
       ref={containerRef}
       className={cn(
-        "relative inline-flex items-center rounded-md bg-muted/50 p-0.5",
+        "relative inline-flex items-center rounded-md bg-muted/50",
+        size === "default" ? "p-1" : "p-0.5",
         className,
       )}
     >
       {/* Sliding indicator */}
       <div
         className={cn(
-          "absolute top-0.5 left-0 h-[calc(100%-4px)] rounded-md",
-          "bg-background shadow-sm",
+          "absolute left-0 rounded-md bg-background shadow-sm",
           "transition-all duration-200 ease-out",
+          size === "default"
+            ? "top-1 h-[calc(100%-8px)]"
+            : "top-0.5 h-[calc(100%-4px)]",
         )}
         style={indicatorStyle}
       />
@@ -64,9 +71,10 @@ export function SegmentedControl<T extends string>({
           type="button"
           onClick={() => onChange(option.value)}
           className={cn(
-            "relative z-10 flex items-center gap-1.5 px-2.5 py-1",
-            "text-xs font-medium rounded-md",
-            "transition-colors duration-200",
+            "relative z-10 flex items-center rounded-md font-medium transition-colors duration-200",
+            size === "default"
+              ? "gap-2 px-3.5 py-1.5 text-sm"
+              : "gap-1.5 px-2.5 py-1 text-xs",
             value === option.value
               ? "text-foreground"
               : "text-muted-foreground hover:text-foreground/80",

@@ -16,6 +16,9 @@ vi.mock("convex/react", () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
+/** Disable auto triage so tests control when the mutation runs */
+const noAuto = { autoRequest: false } as const;
+
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
   return {
     _id: "run-1",
@@ -51,20 +54,20 @@ describe("useAiTriage", () => {
     it("is true for a completed run with failures", async () => {
       const useAiTriage = await getHook();
       const run = makeRun();
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
       expect(result.current.canTriage).toBe(true);
     });
 
     it("is false when run is null", async () => {
       const useAiTriage = await getHook();
-      const { result } = renderHook(() => useAiTriage(null));
+      const { result } = renderHook(() => useAiTriage(null, undefined, noAuto));
       expect(result.current.canTriage).toBe(false);
     });
 
     it("is false when run is still running", async () => {
       const useAiTriage = await getHook();
       const run = makeRun({ status: "running" });
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
       expect(result.current.canTriage).toBe(false);
     });
 
@@ -73,14 +76,14 @@ describe("useAiTriage", () => {
       const run = makeRun({
         summary: { total: 5, passed: 5, failed: 0, passRate: 1 },
       });
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
       expect(result.current.canTriage).toBe(false);
     });
 
     it("is false when triage is already pending", async () => {
       const useAiTriage = await getHook();
       const run = makeRun({ triageStatus: "pending" });
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
       expect(result.current.canTriage).toBe(false);
     });
 
@@ -90,14 +93,14 @@ describe("useAiTriage", () => {
       const run = makeRun({
         summary: { total: 5, passed: 5, failed: 0, passRate: 1 },
       });
-      const { result } = renderHook(() => useAiTriage(run, 1));
+      const { result } = renderHook(() => useAiTriage(run, 1, noAuto));
       expect(result.current.canTriage).toBe(true);
     });
 
     it("is false when failedCount is 0 even if summary.failed > 0", async () => {
       const useAiTriage = await getHook();
       const run = makeRun(); // summary.failed = 1
-      const { result } = renderHook(() => useAiTriage(run, 0));
+      const { result } = renderHook(() => useAiTriage(run, 0, noAuto));
       expect(result.current.canTriage).toBe(false);
     });
   });
@@ -106,7 +109,7 @@ describe("useAiTriage", () => {
     it("calls the mutation with suiteRunId and force=false for untriaged run", async () => {
       const useAiTriage = await getHook();
       const run = makeRun();
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -121,7 +124,7 @@ describe("useAiTriage", () => {
     it("calls mutation with force=true when re-triaging a completed triage", async () => {
       const useAiTriage = await getHook();
       const run = makeRun({ triageStatus: "completed" });
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -136,7 +139,7 @@ describe("useAiTriage", () => {
     it("calls mutation with force=true when retrying a failed triage", async () => {
       const useAiTriage = await getHook();
       const run = makeRun({ triageStatus: "failed" });
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -151,7 +154,7 @@ describe("useAiTriage", () => {
     it("sets requested=true after first call", async () => {
       const useAiTriage = await getHook();
       const run = makeRun();
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       expect(result.current.requested).toBe(false);
 
@@ -165,7 +168,7 @@ describe("useAiTriage", () => {
     it("does not call mutation a second time if already requested", async () => {
       const useAiTriage = await getHook();
       const run = makeRun();
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -182,7 +185,7 @@ describe("useAiTriage", () => {
 
     it("does nothing when run is null", async () => {
       const useAiTriage = await getHook();
-      const { result } = renderHook(() => useAiTriage(null));
+      const { result } = renderHook(() => useAiTriage(null, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -199,7 +202,7 @@ describe("useAiTriage", () => {
       );
       const useAiTriage = await getHook();
       const run = makeRun();
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -213,7 +216,7 @@ describe("useAiTriage", () => {
       mockMutate.mockRejectedValue(new Error("Server Error: internal"));
       const useAiTriage = await getHook();
       const run = makeRun();
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -226,7 +229,7 @@ describe("useAiTriage", () => {
       mockMutate.mockRejectedValue(new Error("Rate limit exceeded"));
       const useAiTriage = await getHook();
       const run = makeRun();
-      const { result } = renderHook(() => useAiTriage(run));
+      const { result } = renderHook(() => useAiTriage(run, undefined, noAuto));
 
       await act(async () => {
         result.current.requestTriage();
@@ -234,6 +237,81 @@ describe("useAiTriage", () => {
 
       expect(result.current.error).toBe("Rate limit exceeded");
       expect(result.current.unavailable).toBe(false);
+    });
+  });
+
+  describe("autoRequest", () => {
+    it("calls mutation once on mount when run has failures and triage not started", async () => {
+      const useAiTriage = await getHook();
+      const run = makeRun();
+      await act(async () => {
+        renderHook(() => useAiTriage(run));
+      });
+
+      expect(mockMutate).toHaveBeenCalledTimes(1);
+      expect(mockMutate).toHaveBeenCalledWith({
+        suiteRunId: "run-1",
+        force: false,
+      });
+    });
+
+    it("does not auto-request when triage is completed", async () => {
+      const useAiTriage = await getHook();
+      const run = makeRun({
+        triageStatus: "completed",
+        triageSummary: {
+          summary: "ok",
+          failureCategories: [],
+          topRecommendations: [],
+          generatedAt: Date.now(),
+          modelUsed: "test-model",
+        },
+      });
+      await act(async () => {
+        renderHook(() => useAiTriage(run));
+      });
+      expect(mockMutate).not.toHaveBeenCalled();
+    });
+
+    it("does not auto-request when triage is pending", async () => {
+      const useAiTriage = await getHook();
+      const run = makeRun({ triageStatus: "pending" });
+      await act(async () => {
+        renderHook(() => useAiTriage(run));
+      });
+      expect(mockMutate).not.toHaveBeenCalled();
+    });
+
+    it("does not auto-request when triage failed", async () => {
+      const useAiTriage = await getHook();
+      const run = makeRun({ triageStatus: "failed" });
+      await act(async () => {
+        renderHook(() => useAiTriage(run));
+      });
+      expect(mockMutate).not.toHaveBeenCalled();
+    });
+
+    it("auto-requests again after selecting a different run", async () => {
+      const useAiTriage = await getHook();
+      const runA = makeRun({ _id: "run-a" });
+      const runB = makeRun({ _id: "run-b" });
+      const { rerender } = renderHook(
+        ({ r }: { r: EvalSuiteRun }) => useAiTriage(r),
+        { initialProps: { r: runA } },
+      );
+      await act(async () => {});
+      expect(mockMutate).toHaveBeenCalledTimes(1);
+      expect(mockMutate).toHaveBeenLastCalledWith({
+        suiteRunId: "run-a",
+        force: false,
+      });
+      rerender({ r: runB });
+      await act(async () => {});
+      expect(mockMutate).toHaveBeenCalledTimes(2);
+      expect(mockMutate).toHaveBeenLastCalledWith({
+        suiteRunId: "run-b",
+        force: false,
+      });
     });
   });
 });

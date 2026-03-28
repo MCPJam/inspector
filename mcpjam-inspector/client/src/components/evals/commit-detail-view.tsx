@@ -2,13 +2,16 @@ import { useState, useMemo, useEffect } from "react";
 import {
   GitBranch,
   GitCommit,
-  XCircle,
-  CheckCircle2,
-  MinusCircle,
   Clock,
   Sparkles,
   Loader2,
+  ChevronDown,
 } from "lucide-react";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { useQuery } from "convex/react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -18,7 +21,12 @@ import type {
   EvalIteration,
   SuiteDetailsQueryResponse,
 } from "./types";
-import { formatDuration } from "./helpers";
+import {
+  evalStatusLeftBorderClasses,
+  formatDuration,
+  formatRunId,
+} from "./helpers";
+import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { useCommitTriage } from "./use-ai-triage";
@@ -144,15 +152,11 @@ export function CommitDetailView({
     () => commitGroup.runs.filter((r) => (r.summary?.failed ?? 0) > 0),
     [commitGroup.runs],
   );
-  const failedRunIds = useMemo(
-    () => runsWithFailedCases.map((r) => r._id),
-    [runsWithFailedCases],
-  );
-  const aiTriage = useCommitTriage(failedRunIds);
+  const aiTriage = useCommitTriage(runsWithFailedCases);
 
   useEffect(() => {
     if (
-      failedRunIds.length > 0 &&
+      runsWithFailedCases.length > 0 &&
       !aiTriage.summary &&
       !aiTriage.loading &&
       !aiTriage.unavailable
@@ -160,7 +164,7 @@ export function CommitDetailView({
       aiTriage.requestTriage();
     }
   }, [
-    failedRunIds.length,
+    runsWithFailedCases.length,
     aiTriage.summary,
     aiTriage.loading,
     aiTriage.unavailable,
@@ -263,27 +267,42 @@ export function CommitDetailView({
           {commitGroup.runs.length !== 1 ? "s" : ""}
         </div>
 
-        {/* AI triage inline */}
+        {/* AI triage inline — collapsible, expanded by default */}
         {totalCases.failed > 0 &&
           !aiTriage.unavailable &&
           (aiTriage.summary || aiTriage.loading) && (
-            <div className="mt-3 flex items-start gap-2 rounded-md border border-orange-200/60 bg-orange-50/30 px-3 py-2 dark:border-orange-900/40 dark:bg-orange-950/10">
-              <Badge
-                variant="outline"
-                className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider shrink-0 dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
-              >
-                <Sparkles className="mr-1 h-3 w-3" />
-                AI
-              </Badge>
-              {aiTriage.summary ? (
-                <p className="text-xs leading-relaxed">{aiTriage.summary}</p>
-              ) : (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  analyzing...
+            <Collapsible
+              defaultOpen
+              className="group/commit-insights mt-3 rounded-md border border-orange-200/60 bg-orange-50/30 dark:border-orange-900/40 dark:bg-orange-950/10"
+            >
+              <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left outline-none hover:bg-orange-100/40 dark:hover:bg-orange-950/20 focus-visible:ring-2 focus-visible:ring-ring">
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/commit-insights:-rotate-90 group-data-[state=open]/commit-insights:rotate-0" />
+                <Badge
+                  variant="outline"
+                  className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider shrink-0 dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
+                >
+                  <Sparkles className="mr-1 h-3 w-3" />
+                  AI
+                </Badge>
+                <span className="text-xs font-medium text-foreground">
+                  Commit insights
                 </span>
-              )}
-            </div>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <div className="px-3 pb-2 pt-0 border-t border-orange-200/40 dark:border-orange-900/40">
+                  {aiTriage.summary ? (
+                    <p className="text-xs leading-relaxed pl-6">
+                      {aiTriage.summary}
+                    </p>
+                  ) : (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1 pl-6">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      analyzing...
+                    </span>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
           )}
       </div>
 
@@ -302,36 +321,38 @@ export function CommitDetailView({
                 const suiteName =
                   commitGroup.suiteMap.get(run.suiteId) || "Unknown";
                 const isSelected = run.suiteId === selectedSuiteId;
-                const isFailed = run.result === "failed";
                 const isRunning =
                   run.status === "running" || run.status === "pending";
-                const isPassed = run.result === "passed";
+                const runAccent = evalStatusLeftBorderClasses(
+                  isRunning ? "running" : (run.result ?? "pending"),
+                );
+                const outcomeTitle = isRunning
+                  ? "Run in progress"
+                  : run.result === "passed"
+                    ? "Last run passed"
+                    : run.result === "failed"
+                      ? "Last run failed"
+                      : run.status === "cancelled"
+                        ? "Run cancelled"
+                        : "Run status";
 
                 return (
                   <button
                     key={run._id}
+                    type="button"
+                    title={outcomeTitle}
                     onClick={() => handleSelectSuite(run.suiteId)}
                     className={cn(
-                      "w-full text-left px-3 py-2.5 transition-colors hover:bg-muted/50",
-                      isSelected && "bg-primary/5 border-l-2 border-l-primary",
+                      "w-full border-l-2 py-2.5 pl-[11px] pr-3 text-left transition-colors hover:bg-muted/50",
+                      runAccent,
+                      isSelected && "border-r-2 border-r-primary bg-primary/10",
                     )}
                   >
-                    <div className="flex items-center gap-2">
-                      {isFailed ? (
-                        <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
-                      ) : isRunning ? (
-                        <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500 animate-pulse" />
-                      ) : isPassed ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                      ) : (
-                        <MinusCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="text-xs font-medium truncate flex-1">
-                        {suiteName}
-                      </span>
-                    </div>
+                    <span className="block truncate text-xs font-medium">
+                      {suiteName}
+                    </span>
                     {isRunning && (
-                      <div className="mt-1 ml-5.5 text-[10px] text-amber-500">
+                      <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
                         in progress
                       </div>
                     )}
@@ -386,8 +407,6 @@ function CommitSuiteRunDetail({
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
 }) {
-  const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
-
   // Load iterations for this suite
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
@@ -429,21 +448,33 @@ function CommitSuiteRunDetail({
     );
   }
 
+  const metricLabel = run.source === "sdk" ? "Pass Rate" : "Accuracy";
+
   return (
-    <RunDetailView
-      selectedRunDetails={run}
-      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-      source={run.source as "ui" | "sdk" | undefined}
-      selectedRunChartData={selectedRunChartData}
-      runDetailSortBy={runDetailSortBy}
-      onSortChange={onSortChange}
-      showRunSummarySidebar={showRunSummarySidebar}
-      setShowRunSummarySidebar={setShowRunSummarySidebar}
-      serverNames={run.configSnapshot?.environment?.servers ?? []}
-      selectedIterationId={selectedIterationId}
-      onSelectIteration={onSelectIteration}
-      hideCiMetadata
-    />
+    <>
+      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 pt-4">
+        <h2 className="text-lg font-semibold tracking-tight">
+          Run {formatRunId(run._id)}
+        </h2>
+        <PassCriteriaBadge
+          run={run}
+          variant="compact"
+          metricLabel={metricLabel}
+        />
+      </div>
+      <RunDetailView
+        selectedRunDetails={run}
+        caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+        source={run.source as "ui" | "sdk" | undefined}
+        selectedRunChartData={selectedRunChartData}
+        runDetailSortBy={runDetailSortBy}
+        onSortChange={onSortChange}
+        serverNames={run.configSnapshot?.environment?.servers ?? []}
+        selectedIterationId={selectedIterationId}
+        onSelectIteration={onSelectIteration}
+        hideCiMetadata
+      />
+    </>
   );
 }
 
@@ -466,7 +497,7 @@ function StatusBadge({
   }
   if (status === "failed") {
     return (
-      <Badge className="gap-1.5 bg-red-50 text-destructive border-red-200 hover:bg-red-100 dark:bg-red-950/50 dark:text-red-400">
+      <Badge className="gap-1.5 bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20 dark:bg-destructive/20 dark:border-destructive/40">
         <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
         {failCount} Failed
       </Badge>

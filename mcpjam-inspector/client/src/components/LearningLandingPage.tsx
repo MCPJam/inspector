@@ -129,9 +129,7 @@ function GroupSection({
             <h3 className="text-sm font-semibold text-foreground">
               {group.title}
             </h3>
-            <p className="text-xs text-muted-foreground">
-              {group.subtitle}
-            </p>
+            <p className="text-xs text-muted-foreground">{group.subtitle}</p>
           </div>
         </div>
         <span

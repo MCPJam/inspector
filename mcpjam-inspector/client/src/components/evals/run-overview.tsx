@@ -17,10 +17,12 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { formatRunId, getIterationBorderColor } from "./helpers";
+import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
+import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { toast } from "sonner";
 
 interface RunOverviewProps {
@@ -46,6 +48,8 @@ interface RunOverviewProps {
   runsViewMode: "runs" | "test-cases";
   onViewModeChange: (value: "runs" | "test-cases") => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
+  /** When false, hides run selection and batch delete (workspace members without admin). */
+  canDeleteRuns?: boolean;
 }
 
 type CiMetadataCompactMode = "full" | "chip";
@@ -64,6 +68,8 @@ type RunsTableWidthInput = {
   showTokens: boolean;
   showRunBy: boolean;
   metadataMode: CiMetadataCompactMode;
+  /** When false, width excludes the leading checkbox column. Default true. */
+  includeSelectionColumn?: boolean;
 };
 
 const TABLE_SELECTION_COL_PX = 28;
@@ -86,7 +92,7 @@ const BASE_COL_WIDTHS_PX = {
 } as const;
 
 function getTableColumnCount(input: RunsTableWidthInput): number {
-  let count = 1; // selection checkbox column
+  let count = input.includeSelectionColumn === false ? 0 : 1; // selection checkbox column
   count += 7; // required run columns
   if (input.hasTokenData && input.showTokens) {
     count += 1;
@@ -104,7 +110,7 @@ export function estimateRunsTableRequiredWidth(
   input: RunsTableWidthInput,
 ): number {
   let width =
-    TABLE_SELECTION_COL_PX +
+    (input.includeSelectionColumn === false ? 0 : TABLE_SELECTION_COL_PX) +
     BASE_COL_WIDTHS_PX.runId +
     BASE_COL_WIDTHS_PX.startTime +
     BASE_COL_WIDTHS_PX.duration +
@@ -135,6 +141,7 @@ export function resolveRunsTableLayout(input: {
   containerWidth: number;
   hasTokenData: boolean;
   hasCiMetadata: boolean;
+  includeSelectionColumn?: boolean;
 }): RunsTableLayout {
   const normalizedContainerWidth = Math.max(
     0,
@@ -149,6 +156,7 @@ export function resolveRunsTableLayout(input: {
     showTokens,
     showRunBy,
     metadataMode,
+    includeSelectionColumn: input.includeSelectionColumn,
   });
   const enableHorizontalScroll =
     requiredTableWidthPx > normalizedContainerWidth;
@@ -174,6 +182,7 @@ export function RunOverview({
   runsViewMode,
   onViewModeChange,
   userMap,
+  canDeleteRuns = true,
 }: RunOverviewProps) {
   const tableViewportRef = useRef<HTMLDivElement | null>(null);
   const [tableViewportWidth, setTableViewportWidth] = useState(0);
@@ -224,6 +233,17 @@ export function RunOverview({
     };
   }, []);
 
+  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
+  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!canDeleteRuns) {
+      setSelectedRunIds(new Set());
+      setShowBatchDeleteModal(false);
+    }
+  }, [canDeleteRuns]);
+
   const responsiveLayout = useMemo(
     () =>
       resolveRunsTableLayout({
@@ -233,8 +253,9 @@ export function RunOverview({
             : DEFAULT_TABLE_VIEWPORT_WIDTH_PX,
         hasTokenData,
         hasCiMetadata,
+        includeSelectionColumn: canDeleteRuns,
       }),
-    [tableViewportWidth, hasTokenData, hasCiMetadata],
+    [tableViewportWidth, hasTokenData, hasCiMetadata, canDeleteRuns],
   );
 
   const rowGridTemplateColumns = useMemo(() => {
@@ -268,13 +289,10 @@ export function RunOverview({
   }, [hasTokenData, hasCiMetadata, responsiveLayout]);
 
   const fullGridTemplateColumns = useMemo(
-    () => `28px ${rowGridTemplateColumns}`,
-    [rowGridTemplateColumns],
+    () =>
+      canDeleteRuns ? `28px ${rowGridTemplateColumns}` : rowGridTemplateColumns,
+    [canDeleteRuns, rowGridTemplateColumns],
   );
-
-  const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
-  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
-  const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
 
   const toggleRunSelection = useCallback((runId: string) => {
     setSelectedRunIds((prev) => {
@@ -320,10 +338,20 @@ export function RunOverview({
   }, [selectedRunIds, onDirectDeleteRun]);
 
   return (
-    <>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4">
+      {runs.length > 0 && (
+        <SuiteRunsChartGrid
+          suiteSource={suite.source}
+          runTrendData={runTrendData}
+          modelStats={modelStats}
+          runsLoading={runsLoading}
+          onRunClick={onRunClick}
+        />
+      )}
+      <SuiteInsightsCollapsible runs={runs} />
       {/* Runs List */}
-      <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
-        {selectedRunIds.size > 0 ? (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col rounded-xl border bg-card text-card-foreground">
+        {canDeleteRuns && selectedRunIds.size > 0 ? (
           <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Checkbox
@@ -358,7 +386,7 @@ export function RunOverview({
           <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
             <div>
               <p className="text-xs text-muted-foreground">
-                Click on a run to view its test breakdown and results.
+                Click on a run to view its case breakdown and results.
               </p>
             </div>
             <select
@@ -369,13 +397,17 @@ export function RunOverview({
               className="text-xs border rounded px-2 py-1 bg-background"
             >
               <option value="runs">Runs</option>
-              <option value="test-cases">Test Cases</option>
+              <option value="test-cases">Cases</option>
             </select>
           </div>
         )}
 
-        <div ref={tableViewportRef} className="overflow-x-auto">
+        <div
+          ref={tableViewportRef}
+          className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-auto"
+        >
           <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col"
             style={
               responsiveLayout.enableHorizontalScroll
                 ? { minWidth: `${responsiveLayout.requiredTableWidthPx}px` }
@@ -384,12 +416,12 @@ export function RunOverview({
           >
             {/* Column Headers */}
             {runs.length > 0 && (
-              <div className="px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
+              <div className="shrink-0 border-b bg-muted/30 px-4 py-1.5 text-xs font-medium text-muted-foreground">
                 <div
                   className="grid items-center gap-x-3"
                   style={{ gridTemplateColumns: fullGridTemplateColumns }}
                 >
-                  <div className="h-4 w-4" />
+                  {canDeleteRuns && <div className="h-4 w-4" />}
                   <div>Run ID</div>
                   <div>Start time</div>
                   <div>Duration</div>
@@ -408,7 +440,7 @@ export function RunOverview({
               </div>
             )}
 
-            <div className="divide-y overflow-y-auto">
+            <div className="min-h-0 flex-1 divide-y overflow-y-auto">
               {runs.length === 0 ? (
                 <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                   No runs found.
@@ -470,8 +502,10 @@ export function RunOverview({
                         : "failed"
                       : run.status === "cancelled"
                         ? "cancelled"
-                        : "pending");
-                  const runBorderColor = getIterationBorderColor(runResult);
+                        : run.status === "running"
+                          ? "running"
+                          : "pending");
+                  const runAccent = evalStatusLeftBorderClasses(runResult);
 
                   const isSelected = selectedRunIds.has(run._id);
                   const showCiMetadata =
@@ -479,7 +513,89 @@ export function RunOverview({
                     !!run.ciMetadata?.commitSha ||
                     !!run.ciMetadata?.runUrl;
 
-                  const runButton = (
+                  const runRowCells = (
+                    <>
+                      <span className="truncate py-0.5 text-xs font-medium">
+                        Run {formatRunId(run._id)}
+                      </span>
+                      <span className="truncate py-0.5 text-xs text-muted-foreground">
+                        {timestamp}
+                      </span>
+                      <span className="py-0.5 text-xs font-mono text-muted-foreground">
+                        {duration}
+                      </span>
+                      <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                        {passed}
+                      </span>
+                      <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                        {failed}
+                      </span>
+                      <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                        {total}
+                      </span>
+                      <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                        {passRate !== null ? `${passRate}%` : "—"}
+                      </span>
+                      {hasTokenData && responsiveLayout.showTokens && (
+                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
+                          {totalTokens > 0 ? totalTokens.toLocaleString() : "—"}
+                        </span>
+                      )}
+                      {responsiveLayout.showRunBy && (
+                        <span className="py-0.5">
+                          {(() => {
+                            const creator =
+                              run.createdBy && userMap?.get(run.createdBy);
+                            if (creator) {
+                              return (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Avatar className="size-6">
+                                      <AvatarImage
+                                        src={creator.imageUrl}
+                                        alt={creator.name}
+                                      />
+                                      <AvatarFallback className="text-[10px]">
+                                        {getInitials(creator.name)}
+                                      </AvatarFallback>
+                                    </Avatar>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="text-xs">{creator.name}</p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              );
+                            }
+                            return (
+                              <Avatar className="size-6">
+                                <AvatarFallback className="text-[10px]">
+                                  ?
+                                </AvatarFallback>
+                              </Avatar>
+                            );
+                          })()}
+                        </span>
+                      )}
+                      {hasCiMetadata && (
+                        <span className="min-w-0 py-0.5">
+                          {showCiMetadata ? (
+                            <CiMetadataDisplay
+                              ciMetadata={run.ciMetadata}
+                              compact={true}
+                              compactMode={responsiveLayout.metadataMode}
+                              interactive={false}
+                            />
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              —
+                            </span>
+                          )}
+                        </span>
+                      )}
+                    </>
+                  );
+
+                  const runButton = canDeleteRuns ? (
                     <div
                       className="grid items-center gap-x-3 px-4 py-2.5"
                       style={{ gridTemplateColumns: fullGridTemplateColumns }}
@@ -497,97 +613,28 @@ export function RunOverview({
                         className="col-[2/-1] grid w-full items-center gap-x-3 rounded-sm text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                         style={{ gridTemplateColumns: rowGridTemplateColumns }}
                       >
-                        <span className="truncate py-0.5 text-xs font-medium">
-                          Run {formatRunId(run._id)}
-                        </span>
-                        <span className="truncate py-0.5 text-xs text-muted-foreground">
-                          {timestamp}
-                        </span>
-                        <span className="py-0.5 text-xs font-mono text-muted-foreground">
-                          {duration}
-                        </span>
-                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
-                          {passed}
-                        </span>
-                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
-                          {failed}
-                        </span>
-                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
-                          {total}
-                        </span>
-                        <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
-                          {passRate !== null ? `${passRate}%` : "—"}
-                        </span>
-                        {hasTokenData && responsiveLayout.showTokens && (
-                          <span className="py-0.5 text-right text-xs font-mono text-muted-foreground">
-                            {totalTokens > 0
-                              ? totalTokens.toLocaleString()
-                              : "—"}
-                          </span>
-                        )}
-                        {responsiveLayout.showRunBy && (
-                          <span className="py-0.5">
-                            {(() => {
-                              const creator =
-                                run.createdBy && userMap?.get(run.createdBy);
-                              if (creator) {
-                                return (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Avatar className="size-6">
-                                        <AvatarImage
-                                          src={creator.imageUrl}
-                                          alt={creator.name}
-                                        />
-                                        <AvatarFallback className="text-[10px]">
-                                          {getInitials(creator.name)}
-                                        </AvatarFallback>
-                                      </Avatar>
-                                    </TooltipTrigger>
-                                    <TooltipContent>
-                                      <p className="text-xs">{creator.name}</p>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                );
-                              }
-                              return (
-                                <Avatar className="size-6">
-                                  <AvatarFallback className="text-[10px]">
-                                    ?
-                                  </AvatarFallback>
-                                </Avatar>
-                              );
-                            })()}
-                          </span>
-                        )}
-                        {hasCiMetadata && (
-                          <span className="min-w-0 py-0.5">
-                            {showCiMetadata ? (
-                              <CiMetadataDisplay
-                                ciMetadata={run.ciMetadata}
-                                compact={true}
-                                compactMode={responsiveLayout.metadataMode}
-                                interactive={false}
-                              />
-                            ) : (
-                              <span className="text-xs text-muted-foreground">
-                                —
-                              </span>
-                            )}
-                          </span>
-                        )}
+                        {runRowCells}
                       </button>
                     </div>
+                  ) : (
+                    <button
+                      onClick={() => onRunClick(run._id)}
+                      className="grid w-full items-center gap-x-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      style={{ gridTemplateColumns: rowGridTemplateColumns }}
+                    >
+                      {runRowCells}
+                    </button>
                   );
 
                   return (
                     <div
                       key={run._id}
-                      className={cn("relative", isInactive && "opacity-50")}
+                      className={cn(
+                        "relative border-l-2",
+                        runAccent,
+                        isInactive && "opacity-50",
+                      )}
                     >
-                      <div
-                        className={`absolute left-0 top-0 h-full w-1 ${runBorderColor}`}
-                      />
                       {isInactive ? (
                         <Tooltip>
                           <TooltipTrigger asChild>{runButton}</TooltipTrigger>
@@ -611,8 +658,10 @@ export function RunOverview({
 
       {/* Batch Delete Confirmation Modal */}
       <Dialog
-        open={showBatchDeleteModal}
-        onOpenChange={setShowBatchDeleteModal}
+        open={canDeleteRuns && showBatchDeleteModal}
+        onOpenChange={(open) => {
+          if (canDeleteRuns) setShowBatchDeleteModal(open);
+        }}
       >
         <DialogContent>
           <DialogHeader>
@@ -649,7 +698,7 @@ export function RunOverview({
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </>
+    </div>
   );
 }
 

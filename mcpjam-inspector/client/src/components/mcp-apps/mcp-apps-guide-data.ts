@@ -36,9 +36,7 @@ export const MCP_APPS_GUIDE_METADATA: Record<McpAppsStep, McpAppsStepGuide> = {
       "The iframe is isolated, so widget code does not directly control the host page.",
       "The host can also pass theme info so the UI feels native.",
     ],
-    tips: [
-      "When debugging, watch both MCP traffic and postMessage traffic.",
-    ],
+    tips: ["When debugging, watch both MCP traffic and postMessage traffic."],
   },
 
   tool_definition: {
@@ -50,9 +48,7 @@ export const MCP_APPS_GUIDE_METADATA: Record<McpAppsStep, McpAppsStepGuide> = {
       "The host reads the UI URI before the tool runs, so it knows what to open.",
       "Tool results can still include plain text as a fallback for hosts without UI support.",
     ],
-    tips: [
-      "The model uses the tool description. The host uses the UI URI.",
-    ],
+    tips: ["The model uses the tool description. The host uses the UI URI."],
     examples: ['_meta: { ui: { resourceUri: "ui://my-server/dashboard" } }'],
   },
 
@@ -83,9 +79,7 @@ export const MCP_APPS_GUIDE_METADATA: Record<McpAppsStep, McpAppsStepGuide> = {
       "The widget and host talk through postMessage using JSON-RPC-shaped messages.",
       "The widget can render tool input, tool results, and errors.",
     ],
-    tips: [
-      "Show a fallback state if the handshake or tool call fails.",
-    ],
+    tips: ["Show a fallback state if the handshake or tool call fails."],
   },
 
   iframe_view: {

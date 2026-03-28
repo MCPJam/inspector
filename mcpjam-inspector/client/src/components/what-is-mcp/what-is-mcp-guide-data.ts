@@ -53,9 +53,7 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
       "It handles the protocol details so the model does not have to.",
       "Each client-server pair starts with a handshake to agree on version and features.",
     ],
-    tips: [
-      "You usually use an SDK instead of writing the protocol by hand.",
-    ],
+    tips: ["You usually use an SDK instead of writing the protocol by hand."],
   },
 
   mcp_servers: {
@@ -67,9 +65,7 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
       "Good MCP servers usually do one job well instead of trying to do everything.",
       "A server built once can work in many MCP hosts.",
     ],
-    tips: [
-      "Servers can run locally on your machine or remotely over HTTP.",
-    ],
+    tips: ["Servers can run locally on your machine or remotely over HTTP."],
   },
 
   tools: {
@@ -101,9 +97,7 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
       "Resources are usually for reading, not changing things.",
       "They use URIs so the host can ask for the exact data it wants.",
     ],
-    tips: [
-      "Use resources when the AI needs context before it answers.",
-    ],
+    tips: ["Use resources when the AI needs context before it answers."],
     examples: [
       "file:///project/README.md — a project file",
       "postgres://localhost/users — database table contents",
@@ -120,9 +114,7 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
       "Prompts are user-controlled. The user chooses them.",
       "A prompt can take arguments, like a repo name or a programming language.",
     ],
-    tips: [
-      "Prompts are useful when you want the same good setup every time.",
-    ],
+    tips: ["Prompts are useful when you want the same good setup every time."],
     examples: [
       "review-code — review a pull request with specific criteria",
       "summarize-doc — summarize a document in a particular style",
@@ -139,9 +131,7 @@ export const WHAT_IS_MCP_GUIDE_METADATA: Record<
       "That shared protocol means less duplicate integration work.",
       "As more servers exist, every host becomes more useful.",
     ],
-    tips: [
-      "Before you build a new server, check whether one already exists.",
-    ],
+    tips: ["Before you build a new server, check whether one already exists."],
   },
 };
 

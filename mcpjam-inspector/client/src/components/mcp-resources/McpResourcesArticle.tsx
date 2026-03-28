@@ -41,7 +41,9 @@ export function McpResourcesArticle() {
           <li>
             <code>resources/templates/list</code> returns URI templates.
           </li>
-          <li>The server can notify the client if the available list changes.</li>
+          <li>
+            The server can notify the client if the available list changes.
+          </li>
         </ul>
 
         <Aside>
@@ -71,7 +73,10 @@ export function McpResourcesArticle() {
         </p>
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
-          <li>Common schemes include <code>file://</code>, <code>https://</code>, and database-style URIs.</li>
+          <li>
+            Common schemes include <code>file://</code>, <code>https://</code>,
+            and database-style URIs.
+          </li>
           <li>Custom schemes are fine if they are clear and stable.</li>
           <li>Subscriptions let the client know when a resource changed.</li>
         </ul>
@@ -86,7 +91,9 @@ export function McpResourcesArticle() {
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>A schema or README is a resource.</li>
           <li>Running a query or sending a message is a tool.</li>
-          <li>If there are no side effects, a resource is often the better fit.</li>
+          <li>
+            If there are no side effects, a resource is often the better fit.
+          </li>
         </ul>
 
         <Aside>
