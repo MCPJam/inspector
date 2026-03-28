@@ -107,4 +107,84 @@ describe("TraceTimeline detail pane", () => {
     expect(stepRow?.textContent).toContain("Need docs");
     expect(stepRow?.textContent).not.toContain("Prompt 1");
   });
+
+  it("marks tool spans as failed from transcript when persisted status is ok", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "step-root",
+        name: "Step 1",
+        category: "step",
+        startMs: 0,
+        endMs: 500,
+        stepIndex: 0,
+      },
+      {
+        id: "tool-create-view",
+        parentId: "step-root",
+        name: "create_view",
+        category: "tool",
+        status: "ok",
+        startMs: 100,
+        endMs: 300,
+        stepIndex: 0,
+        toolCallId: "call-cv",
+        toolName: "create_view",
+      },
+    ];
+
+    const transcriptMessages = [
+      { role: "user", content: "hi" },
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-cv",
+            toolName: "create_view",
+            input: { elements: [] },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-cv",
+            toolName: "create_view",
+            result: {
+              isError: true,
+              content: [{ type: "text", text: "Invalid JSON in elements" }],
+            },
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
+    );
+
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("create_view"));
+    expect(toolRow).toBeTruthy();
+    fireEvent.click(within(toolRow!).getByRole("button", { name: /Tool · create_view/i }));
+
+    const errorBar = screen.getByTestId("trace-row-bar-error");
+    expect(errorBar.className).toContain("bg-red-500");
+
+    const pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).getByLabelText("Error")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "ERROR" }));
+    expect(
+      screen
+        .getAllByTestId("trace-row")
+        .some((el) => el.textContent?.includes("create_view")),
+    ).toBe(true);
+  });
 });

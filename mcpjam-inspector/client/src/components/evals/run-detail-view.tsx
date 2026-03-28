@@ -526,11 +526,10 @@ export function RunDetailView({
           "mt-4 flex gap-0 overflow-hidden rounded-xl border bg-card text-card-foreground",
           omitIterationList ? "min-h-0 flex-1 flex-col" : "",
         )}
-        style={
-          omitIterationList
-            ? { minHeight: "400px" }
-            : { height: "calc(100vh - 200px)", minHeight: "400px" }
-        }
+        style={{
+          height: "calc(100vh - 200px)",
+          minHeight: "400px",
+        }}
       >
         {!omitIterationList ? (
           <div className="flex w-[280px] shrink-0 flex-col border-r">

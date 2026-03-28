@@ -4,9 +4,11 @@ import {
   Brain,
   ChevronDown,
   ChevronRight,
+  Expand,
   Layers,
   ListTree,
   MessageSquareQuote,
+  Shrink,
   Wrench,
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
@@ -14,6 +16,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
 
 const LABEL_W = 320;
@@ -56,6 +59,8 @@ type PromptRow = {
   messageStartIndex?: number;
   messageEndIndex?: number;
   counts: Record<EvalTraceSpanCategory, number>;
+  /** Includes transcript-derived tool failures, not only category:error spans. */
+  hasAnyFailure: boolean;
   isExpanded: boolean;
 };
 
@@ -184,6 +189,55 @@ function formatMessageSummary(message: TranscriptMessage): string {
   return summary.length > 220 ? `${summary.slice(0, 217)}...` : summary;
 }
 
+/** Match AI SDK / trace envelope tool output wrapper `{ type, value }`. */
+function unwrapTraceToolOutput(output: unknown): unknown {
+  if (!isRecord(output)) return output;
+  if (!("type" in output) || !("value" in output)) return output;
+  return output.value;
+}
+
+function toolResultDisplayValue(part: Record<string, unknown>): unknown {
+  if (part.result !== undefined) return part.result;
+  return unwrapTraceToolOutput(part.output);
+}
+
+/** Mirrors trace-viewer-adapter `getToolErrorText` for raw transcript parts. */
+function toolResultPartErrorText(part: Record<string, unknown>): string | undefined {
+  const displayValue = toolResultDisplayValue(part);
+
+  if (typeof part.error === "string" && part.error.trim()) {
+    return part.error.trim();
+  }
+
+  if (isRecord(part.error) && typeof part.error.message === "string") {
+    return part.error.message;
+  }
+
+  if (isRecord(part.output) && part.output.type === "error-text") {
+    return typeof part.output.value === "string"
+      ? part.output.value
+      : "Tool error";
+  }
+
+  if (isRecord(part.result) && part.result.isError === true) {
+    return extractTextFromToolResult(displayValue) ?? "Tool error";
+  }
+
+  if (
+    isRecord(part.output) &&
+    isRecord(part.output.value) &&
+    part.output.value.isError === true
+  ) {
+    return extractTextFromToolResult(displayValue) ?? "Tool error";
+  }
+
+  if (part.isError === true) {
+    return extractTextFromToolResult(displayValue) ?? "Tool error";
+  }
+
+  return undefined;
+}
+
 function extractToolData(
   messages: TranscriptMessage[],
   toolCallId?: string,
@@ -224,25 +278,33 @@ function extractToolData(
           (isRecord(part.output) && "value" in part.output
             ? part.output.value
             : part.output);
-
-        if (typeof part.error === "string" && part.error.trim()) {
-          errorText = part.error.trim();
-        } else if (isRecord(part.error) && typeof part.error.message === "string") {
-          errorText = part.error.message;
-        } else if (
-          isRecord(part.output) &&
-          part.output.type === "error-text" &&
-          typeof part.output.value === "string"
-        ) {
-          errorText = part.output.value;
-        } else if (part.isError === true) {
-          errorText = summarizeValue(output);
+        const fromPart = toolResultPartErrorText(part);
+        if (fromPart) {
+          errorText = fromPart;
         }
       }
     }
   }
 
   return { input, output, errorText };
+}
+
+function spanIndicatesTranscriptFailure(
+  span: EvalTraceSpan,
+  messages: TranscriptMessage[],
+): boolean {
+  if (span.category === "error") return true;
+  if (span.status === "error") return true;
+  if (span.category === "tool") {
+    return Boolean(
+      extractToolData(
+        messages,
+        span.toolCallId,
+        span.toolName ?? span.name,
+      ).errorText,
+    );
+  }
+  return false;
 }
 
 function getTranscriptRange(
@@ -665,10 +727,6 @@ function deriveSpanLabel(
   };
 }
 
-function getSlowThreshold(maxEndMs: number): number {
-  return Math.max(250, Math.round(maxEndMs * 0.08));
-}
-
 function getRowTiming(row: TimelineRow): {
   startMs: number;
   endMs: number;
@@ -762,10 +820,19 @@ function TimelineDetailPane({
       : deriveSpanLabel(row, transcriptMessages).subtitle;
   const status =
     row.kind === "prompt"
-      ? row.counts.error > 0
+      ? row.hasAnyFailure
         ? "error"
         : "ok"
-      : row.span.status;
+      : spanIndicatesTranscriptFailure(row.span, transcriptMessages)
+        ? "error"
+        : "ok";
+  const detailGlyphCategory: EvalTraceSpanCategory | "prompt" =
+    row.kind === "prompt"
+      ? "prompt"
+      : row.span.category === "tool" &&
+          spanIndicatesTranscriptFailure(row.span, transcriptMessages)
+        ? "error"
+        : row.span.category;
 
   const llmIo =
     row.kind === "span" &&
@@ -819,7 +886,7 @@ function TimelineDetailPane({
           {row.kind === "prompt" ? (
             <CategoryGlyph category="prompt" />
           ) : (
-            <CategoryGlyph category={row.span.category} />
+            <CategoryGlyph category={detailGlyphCategory} />
           )}
           {status === "error" ? (
             <span
@@ -837,7 +904,7 @@ function TimelineDetailPane({
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3 text-xs">
+      <div className="flex flex-col gap-3 text-xs">
         <div className="rounded-md border border-border/50 bg-muted/10 p-3">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
             Duration
@@ -922,15 +989,24 @@ function TimelineDetailPane({
       ) : null}
 
       {showIoTabs ? (
-        <Tabs defaultValue="input" className="w-full">
-          <TabsList className="h-8 w-full justify-start gap-1">
-            <TabsTrigger value="input" className="text-xs">
+        <Tabs defaultValue="input" className="w-full gap-3">
+          <TabsList className="flex h-auto w-full flex-col items-stretch gap-1 p-1">
+            <TabsTrigger
+              value="input"
+              className="h-8 w-full flex-none justify-start px-3 text-xs"
+            >
               Input
             </TabsTrigger>
-            <TabsTrigger value="output" className="text-xs">
+            <TabsTrigger
+              value="output"
+              className="h-8 w-full flex-none justify-start px-3 text-xs"
+            >
               Output
             </TabsTrigger>
-            <TabsTrigger value="transcript" className="text-xs">
+            <TabsTrigger
+              value="transcript"
+              className="h-8 w-full flex-none justify-start px-3 text-xs"
+            >
               Transcript
             </TabsTrigger>
           </TabsList>
@@ -1060,7 +1136,6 @@ export function TraceTimeline({
   const maxEndMs = recordedSpans?.length
     ? Math.max(...recordedSpans.map((span) => span.endMs), 1)
     : Math.max(estimatedDurationMs ?? 0, 1);
-  const slowThreshold = getSlowThreshold(maxEndMs);
   const traceIdentity = useMemo(
     () =>
       recordedSpans?.map((span) => `${span.id}:${span.startMs}:${span.endMs}`).join("|") ??
@@ -1069,7 +1144,6 @@ export function TraceTimeline({
   );
 
   const [filter, setFilter] = useState<TimelineFilter>("all");
-  const [slowOnly, setSlowOnly] = useState(false);
   const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(new Set());
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(new Set());
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
@@ -1088,9 +1162,11 @@ export function TraceTimeline({
     const nextRows: TimelineRow[] = [];
 
     function rowSelfVisible(span: EvalTraceSpan): boolean {
-      const matchesFilter = filter === "all" || span.category === filter;
-      const matchesSlow = !slowOnly || span.category === "error" || span.endMs - span.startMs >= slowThreshold;
-      return matchesFilter && matchesSlow;
+      if (filter === "all") return true;
+      if (filter === "error") {
+        return spanIndicatesTranscriptFailure(span, transcriptMessages);
+      }
+      return span.category === filter;
     }
 
     function collectNodeRows(node: TraceNode, promptIndex: number, depth: number): {
@@ -1138,11 +1214,15 @@ export function TraceTimeline({
       const childRows = rootResults.flatMap((result) => result.rows);
       const hasVisibleContent =
         childRows.length > 0 ||
-        (!slowOnly && filter === "all" && group.spans.length > 0);
+        (filter === "all" && group.spans.length > 0);
 
       if (!hasVisibleContent) {
         continue;
       }
+
+      const hasAnyFailure = group.spans.some((span) =>
+        spanIndicatesTranscriptFailure(span, transcriptMessages),
+      );
 
       nextRows.push({
         kind: "prompt",
@@ -1154,6 +1234,7 @@ export function TraceTimeline({
         messageStartIndex: group.messageStartIndex,
         messageEndIndex: group.messageEndIndex,
         counts: group.counts,
+        hasAnyFailure,
         isExpanded: expandedPromptIds.has(group.key),
       });
 
@@ -1169,9 +1250,23 @@ export function TraceTimeline({
     filter,
     groups,
     mode,
-    slowOnly,
-    slowThreshold,
+    transcriptMessages,
   ]);
+
+  const fullyExpandedStepIds = useMemo(
+    () => collectStepSpanIdsWithChildren(groups),
+    [groups],
+  );
+  const isFullyExpanded = useMemo(() => {
+    if (groups.length === 0) return false;
+    for (const group of groups) {
+      if (!expandedPromptIds.has(group.key)) return false;
+    }
+    for (const id of fullyExpandedStepIds) {
+      if (!expandedStepIds.has(id)) return false;
+    }
+    return true;
+  }, [groups, expandedPromptIds, expandedStepIds, fullyExpandedStepIds]);
 
   useEffect(() => {
     if (rows.length === 0) {
@@ -1224,80 +1319,63 @@ export function TraceTimeline({
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="outline" className="bg-muted/20">
-            Recorded timing
-          </Badge>
-          <span className="text-xs text-muted-foreground">
-            {groups.length} prompt{groups.length === 1 ? "" : "s"} ·{" "}
-            {formatDuration(maxEndMs)}
-          </span>
+    <div className="space-y-2">
+      <div className="flex min-h-8 items-center gap-2 overflow-x-auto border-b border-border/30 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+          <span className="font-medium text-foreground/90">Recorded</span>
+          <span className="mx-1.5 text-muted-foreground/50">·</span>
+          {groups.length} prompt{groups.length === 1 ? "" : "s"}
+          <span className="mx-1.5 text-muted-foreground/50">·</span>
+          {formatDuration(maxEndMs)}
+        </span>
+        <span className="bg-border hidden h-3 w-px shrink-0 sm:block" aria-hidden />
+        <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border/50 bg-background p-0.5">
+          {FILTERS.map((entry) => (
+            <button
+              key={entry}
+              type="button"
+              className={cn(
+                "rounded px-1.5 py-0.5 text-[10px] transition-colors",
+                filter === entry
+                  ? "bg-primary/10 font-medium text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => setFilter(entry)}
+            >
+              {entry === "all" ? "All" : entry.toUpperCase()}
+            </button>
+          ))}
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-md border border-border/50 bg-background p-1">
-            {FILTERS.map((entry) => (
-              <button
-                key={entry}
-                type="button"
-                className={cn(
-                  "rounded px-2 py-1 text-[11px] transition-colors",
-                  filter === entry
-                    ? "bg-primary/10 font-medium text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-                onClick={() => setFilter(entry)}
-              >
-                {entry === "all" ? "All" : entry.toUpperCase()}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            className={cn(
-              "rounded-md border px-2 py-1 text-[11px] transition-colors",
-              slowOnly
-                ? "border-primary/30 bg-primary/10 text-foreground"
-                : "border-border/50 bg-background text-muted-foreground hover:text-foreground",
-            )}
-            onClick={() => setSlowOnly((current) => !current)}
-          >
-            Slow only ({formatDuration(slowThreshold)}+)
-          </button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
-              setExpandedPromptIds(new Set(groups.map((group) => group.key)));
-              setExpandedStepIds(
-                new Set(
-                  recordedSpans
-                    ?.filter((span) => span.category === "step")
-                    .map((span) => span.id) ?? [],
-                ),
-              );
-            }}
-          >
-            Expand all
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            onClick={() => {
+        <span className="bg-border hidden h-3 w-px shrink-0 md:block" aria-hidden />
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          disabled={groups.length === 0}
+          className="h-7 w-7 shrink-0 border-border/50 text-muted-foreground hover:text-foreground disabled:opacity-40"
+          title={isFullyExpanded ? "Collapse all" : "Expand all"}
+          aria-label={isFullyExpanded ? "Collapse all" : "Expand all"}
+          aria-pressed={isFullyExpanded}
+          onClick={() => {
+            if (isFullyExpanded) {
               setExpandedPromptIds(new Set());
               setExpandedStepIds(new Set());
-            }}
-          >
-            Collapse all
-          </Button>
-        </div>
+            } else {
+              setExpandedPromptIds(new Set(groups.map((group) => group.key)));
+              setExpandedStepIds(new Set(fullyExpandedStepIds));
+            }
+          }}
+        >
+          {isFullyExpanded ? (
+            <Shrink className="size-3.5" strokeWidth={2} aria-hidden />
+          ) : (
+            <Expand className="size-3.5" strokeWidth={2} aria-hidden />
+          )}
+        </Button>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="overflow-auto rounded-lg border border-border/50 bg-background">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
+        <div className="min-h-0 overflow-auto rounded-lg border border-border/50 bg-background xl:max-h-[calc(100vh-8rem)]">
           <div
             className="grid min-w-[1100px]"
             style={{
@@ -1364,13 +1442,24 @@ export function TraceTimeline({
                 ((endMs - startMs) / maxEndMs) * 100,
                 0.45,
               );
+              const spanShowsFailure =
+                row.kind === "span" &&
+                spanIndicatesTranscriptFailure(row.span, transcriptMessages);
               const categoryClasses =
                 row.kind === "prompt"
                   ? {
                       bar: "bg-violet-500/70",
                       rail: "bg-violet-500/10",
                     }
-                  : getCategoryClasses(row.span.category);
+                  : getCategoryClasses(
+                      spanShowsFailure ? "error" : row.span.category,
+                    );
+              const rowGlyphCategory: EvalTraceSpanCategory | "prompt" =
+                row.kind === "prompt"
+                  ? "prompt"
+                  : row.span.category === "tool" && spanShowsFailure
+                    ? "error"
+                    : row.span.category;
               const label =
                 row.kind === "prompt"
                   ? row.label
@@ -1451,7 +1540,7 @@ export function TraceTimeline({
                         {row.kind === "prompt" ? (
                           <CategoryGlyph category="prompt" />
                         ) : (
-                          <CategoryGlyph category={row.span.category} />
+                          <CategoryGlyph category={rowGlyphCategory} />
                         )}
                         <span className="truncate text-sm font-medium text-foreground">
                           {label}
@@ -1464,15 +1553,14 @@ export function TraceTimeline({
                             {tokenHint}
                           </span>
                         ) : null}
-                        {row.kind === "prompt" && row.counts.error > 0 ? (
+                        {row.kind === "prompt" && row.hasAnyFailure ? (
                           <span
                             className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
                             title="Contains errors"
                             aria-label="Contains errors"
                           />
                         ) : null}
-                        {row.kind === "span" &&
-                        row.span.status === "error" ? (
+                        {row.kind === "span" && spanShowsFailure ? (
                           <span
                             className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
                             title="Error"
@@ -1500,6 +1588,11 @@ export function TraceTimeline({
                     title={`${label} · ${formatDuration(durationMs)}`}
                   >
                     <div
+                      data-testid={
+                        row.kind === "span" && spanShowsFailure
+                          ? "trace-row-bar-error"
+                          : "trace-row-bar"
+                      }
                       className={cn(
                         "absolute top-1/2 z-[1] h-6 -translate-y-1/2 rounded-sm shadow-sm",
                         categoryClasses.bar,
@@ -1519,11 +1612,16 @@ export function TraceTimeline({
           </div>
         </div>
 
-        <TimelineDetailPane
-          row={selectedRow}
-          transcriptMessages={transcriptMessages}
-          onRevealInTranscript={onRevealInTranscript}
-        />
+        <div
+          data-testid="trace-timeline-detail-sticky"
+          className="min-w-0 xl:sticky xl:top-3 xl:max-h-[calc(100vh-8rem)] xl:self-start xl:overflow-y-auto"
+        >
+          <TimelineDetailPane
+            row={selectedRow}
+            transcriptMessages={transcriptMessages}
+            onRevealInTranscript={onRevealInTranscript}
+          />
+        </div>
       </div>
     </div>
   );

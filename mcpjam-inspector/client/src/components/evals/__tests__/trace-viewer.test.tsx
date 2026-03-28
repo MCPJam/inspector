@@ -290,7 +290,7 @@ describe("TraceViewer", () => {
     expect(screen.getByText("Estimated total only")).toBeInTheDocument();
   });
 
-  it("recorded spans show Recorded timing badge", () => {
+  it("recorded spans show Recorded timing summary", () => {
     render(
       <TraceViewer
         trace={{
@@ -309,7 +309,7 @@ describe("TraceViewer", () => {
         estimatedDurationMs={99_999}
       />,
     );
-    expect(screen.getByText("Recorded timing")).toBeInTheDocument();
+    expect(screen.getByText(/Recorded/)).toBeInTheDocument();
     expect(screen.queryByText("Estimated total only")).not.toBeInTheDocument();
   });
 
@@ -408,7 +408,7 @@ describe("TraceViewer", () => {
         }}
       />,
     );
-    expect(screen.getByText("Recorded timing")).toBeInTheDocument();
+    expect(screen.getByText(/Recorded/)).toBeInTheDocument();
     openChatTab();
     expect(screen.getByText("No messages in trace")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));
