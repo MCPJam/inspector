@@ -375,10 +375,12 @@ function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
   for (const span of spans) {
     const promptIndex =
       typeof span.promptIndex === "number" ? span.promptIndex : 0;
-    spansByPrompt.set(promptIndex, [
-      ...(spansByPrompt.get(promptIndex) ?? []),
-      span,
-    ]);
+    const existing = spansByPrompt.get(promptIndex);
+    if (existing) {
+      existing.push(span);
+    } else {
+      spansByPrompt.set(promptIndex, [span]);
+    }
   }
 
   return [...spansByPrompt.entries()]
@@ -423,12 +425,17 @@ function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
         return values;
       });
 
-      const counts = {
-        step: promptSpans.filter((span) => span.category === "step").length,
-        llm: promptSpans.filter((span) => span.category === "llm").length,
-        tool: promptSpans.filter((span) => span.category === "tool").length,
-        error: promptSpans.filter((span) => span.category === "error").length,
-      } satisfies Record<EvalTraceSpanCategory, number>;
+      const counts: Record<EvalTraceSpanCategory, number> = {
+        step: 0,
+        llm: 0,
+        tool: 0,
+        error: 0,
+      };
+      for (const span of promptSpans) {
+        if (span.category in counts) {
+          counts[span.category]++;
+        }
+      }
 
       return {
         key: `prompt-${promptIndex}`,
@@ -811,16 +818,13 @@ function TimelineDetailPane({
           row.span.toolName ?? row.span.name,
         )
       : {};
-  const promptIndex = row.kind === "prompt" ? row.promptIndex : row.promptIndex;
+  const promptIndex = row.promptIndex;
   const { startMs, endMs, durationMs } = getRowTiming(row);
-  const label =
-    row.kind === "prompt"
-      ? row.label
-      : deriveSpanLabel(row, transcriptMessages).title;
+  const spanLabel =
+    row.kind === "span" ? deriveSpanLabel(row, transcriptMessages) : null;
+  const label = row.kind === "prompt" ? row.label : spanLabel!.title;
   const subtitle =
-    row.kind === "prompt"
-      ? formatOffset(row.startMs)
-      : deriveSpanLabel(row, transcriptMessages).subtitle;
+    row.kind === "prompt" ? formatOffset(row.startMs) : spanLabel!.subtitle;
   const status =
     row.kind === "prompt"
       ? row.hasAnyFailure
@@ -1139,7 +1143,7 @@ export function TraceTimeline({
     [recordedSpans],
   );
   const maxEndMs = recordedSpans?.length
-    ? Math.max(...recordedSpans.map((span) => span.endMs), 1)
+    ? recordedSpans.reduce((max, span) => Math.max(max, span.endMs), 1)
     : Math.max(estimatedDurationMs ?? 0, 1);
   const traceIdentity = useMemo(
     () =>
@@ -1482,14 +1486,16 @@ export function TraceTimeline({
                   : row.span.category === "tool" && spanShowsFailure
                     ? "error"
                     : row.span.category;
+              const derivedLabel =
+                row.kind === "span"
+                  ? deriveSpanLabel(row, transcriptMessages)
+                  : null;
               const label =
-                row.kind === "prompt"
-                  ? row.label
-                  : deriveSpanLabel(row, transcriptMessages).title;
+                row.kind === "prompt" ? row.label : derivedLabel!.title;
               const subtitle =
                 row.kind === "prompt"
                   ? `${formatOffset(row.startMs)} · ${row.counts.step} step${row.counts.step === 1 ? "" : "s"}`
-                  : deriveSpanLabel(row, transcriptMessages).subtitle;
+                  : derivedLabel!.subtitle;
               const canToggle = row.kind === "prompt" ? true : row.hasChildren;
               const gridRow = rowIndex + 2;
               const tokenHint =

@@ -25,14 +25,13 @@ export function getSuiteReplayEligibility({
       ? normalizedSuiteServers.filter(
           (serverName) => !connectedServerNames.has(serverName),
         )
-      : [];
+      : normalizedSuiteServers;
   const replayableLatestRun =
     latestRun?.hasServerReplayConfig === true ? latestRun : null;
   const canRunLive = hasServersConfigured && missingServers.length === 0;
   const canReplayFallback =
-    hasServersConfigured &&
-    missingServers.length > 0 &&
-    replayableLatestRun !== null;
+    replayableLatestRun !== null &&
+    (!hasServersConfigured || missingServers.length > 0);
 
   return {
     hasServersConfigured,

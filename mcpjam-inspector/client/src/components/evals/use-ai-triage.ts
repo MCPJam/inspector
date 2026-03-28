@@ -3,6 +3,23 @@ import { useMutation } from "convex/react";
 import type { EvalSuiteRun } from "./types";
 
 // ---------------------------------------------------------------------------
+// Shared error classification for triage mutations
+// ---------------------------------------------------------------------------
+
+function classifyTriageError(err: unknown): {
+  unavailable: boolean;
+  message: string;
+} {
+  const message = err instanceof Error ? err.message : String(err);
+  const unavailable =
+    message.includes("Could not find") ||
+    message.includes("not found") ||
+    message.includes("is not a function") ||
+    message.includes("Server Error");
+  return { unavailable, message };
+}
+
+// ---------------------------------------------------------------------------
 // Hook: triage for a single suite run (used in RunDetailView)
 // ---------------------------------------------------------------------------
 
@@ -52,16 +69,11 @@ export function useAiTriage(
     requestTriageMutation({ suiteRunId: run._id, force } as any).catch(
       (err: unknown) => {
         setRequested(false);
-        const message = err instanceof Error ? err.message : String(err);
-        if (
-          message.includes("Could not find") ||
-          message.includes("not found") ||
-          message.includes("is not a function") ||
-          message.includes("Server Error")
-        ) {
+        const classified = classifyTriageError(err);
+        if (classified.unavailable) {
           setUnavailable(true);
         } else {
-          setError(message);
+          setError(classified.message);
         }
       },
     );
@@ -103,17 +115,12 @@ export function useAiTriage(
       (err: unknown) => {
         hasAutoAttemptedRef.current = false;
         setRequested(false);
-        const message = err instanceof Error ? err.message : String(err);
-        if (
-          message.includes("Could not find") ||
-          message.includes("not found") ||
-          message.includes("is not a function") ||
-          message.includes("Server Error")
-        ) {
+        const classified = classifyTriageError(err);
+        if (classified.unavailable) {
           setUnavailable(true);
           setError(null);
         } else {
-          setError(message);
+          setError(classified.message);
         }
       },
     );
@@ -174,17 +181,12 @@ export function useCommitTriage(failedRuns: EvalSuiteRun[]): {
 
     requestTriageMutation({ suiteRunId: primaryRun._id, force } as any).catch(
       (err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        if (
-          message.includes("Could not find") ||
-          message.includes("not found") ||
-          message.includes("is not a function") ||
-          message.includes("Server Error")
-        ) {
+        const classified = classifyTriageError(err);
+        if (classified.unavailable) {
           setUnavailable(true);
           setError(null);
         } else {
-          setError(message);
+          setError(classified.message);
         }
       },
     );

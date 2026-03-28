@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useRef, useState } from "react";
+import { useMemo, useCallback, useEffect, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
@@ -44,6 +44,9 @@ interface EvalsTabProps {
 
 const EMPTY_CASES: EvalCase[] = [];
 
+/** Module-level guard so fast tab-switches (unmount/remount) don't duplicate suite creation. */
+const globalInitializedExplore = new Set<string>();
+
 export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
@@ -56,7 +59,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
   const [isCopyingExploreSdkBrief, setIsCopyingExploreSdkBrief] =
     useState(false);
-  const initializedExploreRef = useRef<Set<string>>(new Set());
 
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
@@ -218,11 +220,11 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     if (exploreSuiteEntry) {
       return;
     }
-    if (initializedExploreRef.current.has(selectedServer)) {
+    if (globalInitializedExplore.has(selectedServer)) {
       return;
     }
 
-    initializedExploreRef.current.add(selectedServer);
+    globalInitializedExplore.add(selectedServer);
     setIsPreparingExplore(true);
 
     void (async () => {
@@ -241,7 +243,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           });
         }
       } catch (error) {
-        initializedExploreRef.current.delete(selectedServer);
+        globalInitializedExplore.delete(selectedServer);
         toast.error(
           getBillingErrorMessage(
             error,

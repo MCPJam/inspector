@@ -286,6 +286,68 @@ describe("useEvalHandlers", () => {
       });
     });
 
+    it("replays the latest run when suite server metadata is empty but replay is available", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          success: true,
+          suiteId: "suite-123",
+          runId: "run-replay",
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          latestRunBySuiteId: new Map([
+            [
+              "suite-123",
+              {
+                _id: "run-source",
+                hasServerReplayConfig: true,
+                passCriteria: { minimumPassRate: 92 },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const mockSuite = {
+        _id: "suite-123",
+        name: "SDK Suite",
+        description: "A replayable suite without stored server names",
+        source: "sdk",
+        environment: { servers: [] },
+      };
+
+      await act(async () => {
+        await result.current.handleRerun(mockSuite as any);
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/web/evals/replay-run",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const callArgs = mockAuthFetch.mock.calls[0];
+      const requestBody = JSON.parse(callArgs[1].body);
+      expect(requestBody).toMatchObject({
+        runId: "run-source",
+        passCriteria: { minimumPassRate: 92 },
+      });
+
+      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
+        type: "run-detail",
+        suiteId: "suite-123",
+        runId: "run-replay",
+      });
+    });
+
     it("uses the normal rerun path when live servers are connected", async () => {
       mockIsHostedMode.mockReturnValue(true);
       setHostedApiContext({

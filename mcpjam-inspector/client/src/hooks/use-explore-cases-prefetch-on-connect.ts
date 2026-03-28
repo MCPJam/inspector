@@ -95,12 +95,16 @@ export function useExploreCasesPrefetchOnConnect(
 
     inFlightRef.current.add(inFlightKey);
 
+    let cancelled = false;
+
     void (async () => {
       try {
         const freshOverview = (await convex.query(
           "testSuites:getTestSuitesOverview" as any,
           { workspaceId } as any,
         )) as EvalSuiteOverviewEntry[] | undefined;
+
+        if (cancelled) return;
 
         let exploreEntry = findExploreSuiteEntry(freshOverview, serverName);
         let suiteId = exploreEntry?.suite._id;
@@ -112,11 +116,13 @@ export function useExploreCasesPrefetchOnConnect(
             description: `Explore cases for ${serverName}`,
             environment: { servers: [serverName] },
           });
+          if (cancelled) return;
           if (createdSuite?._id) {
             await updateTestSuiteMutation({
               suiteId: createdSuite._id,
               tags: [EXPLORE_SUITE_TAG],
             });
+            if (cancelled) return;
             suiteId = createdSuite._id;
           }
         }
@@ -135,6 +141,8 @@ export function useExploreCasesPrefetchOnConnect(
           skipIfExistingCases: true,
         });
 
+        if (cancelled) return;
+
         if (outcome.skippedBecauseExistingCases) {
           return;
         }
@@ -151,6 +159,7 @@ export function useExploreCasesPrefetchOnConnect(
           });
         }
       } catch (error) {
+        if (cancelled) return;
         console.error("Explore cases prefetch failed:", error);
         toast.error(
           getBillingErrorMessage(
@@ -162,6 +171,10 @@ export function useExploreCasesPrefetchOnConnect(
         inFlightRef.current.delete(inFlightKey);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
     convex,
     createTestCaseMutation,

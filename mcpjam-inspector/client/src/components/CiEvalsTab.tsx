@@ -42,15 +42,10 @@ import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
+import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
-}
-
-const EXPLORE_TAG = "explore";
-
-function isExploreSuite(suite: EvalSuite): boolean {
-  return suite.tags?.includes(EXPLORE_TAG) === true;
 }
 
 export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {

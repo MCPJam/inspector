@@ -84,6 +84,7 @@ import {
   isBillingFeatureLocked,
   isBillingGracePeriodActive,
 } from "./lib/billing-entitlements";
+import { getNewlyConnectedServers } from "./lib/connected-server-auto-open";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
@@ -419,7 +420,7 @@ export default function App() {
     handleConnect,
   ]);
 
-  const previousConnectedServersRef = useRef<Set<string>>(new Set());
+  const previousConnectedServersRef = useRef<Set<string> | null>(null);
   useEffect(() => {
     const connectedServers = new Set(
       Object.entries(appState.servers)
@@ -428,8 +429,9 @@ export default function App() {
     );
 
     const previousConnectedServers = previousConnectedServersRef.current;
-    const newlyConnectedServers = Array.from(connectedServers).filter(
-      (serverName) => !previousConnectedServers.has(serverName),
+    const newlyConnectedServers = getNewlyConnectedServers(
+      previousConnectedServers,
+      connectedServers,
     );
 
     if (activeTab === "servers") {
@@ -453,8 +455,11 @@ export default function App() {
           // Ignore localStorage failures and still navigate.
         }
         setSelectedServer(firstVisitServer);
-        if (window.location.hash !== "#ci-evals") {
-          window.location.hash = "ci-evals";
+        if (
+          window.location.hash !== "#ci-evals" &&
+          window.location.hash !== "#/ci-evals"
+        ) {
+          window.location.hash = "#/ci-evals";
         }
       }
     }
