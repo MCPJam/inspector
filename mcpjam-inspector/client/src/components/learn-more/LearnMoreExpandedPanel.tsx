@@ -10,7 +10,33 @@ interface LearnMoreExpandedPanelProps {
 }
 
 const PANEL_WIDTH = 900;
+const PANEL_GUTTER = 16;
 const EASING: [number, number, number, number] = [0.16, 1, 0.3, 1]; // ease-out-expo
+
+function getViewportSize() {
+  if (typeof window === "undefined") {
+    return { width: PANEL_WIDTH + PANEL_GUTTER * 2, height: 900 };
+  }
+
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+
+export function getLearnMorePanelLayout(viewWidth: number, viewHeight: number) {
+  const width = Math.min(
+    PANEL_WIDTH,
+    Math.max(viewWidth - PANEL_GUTTER * 2, 0),
+  );
+  const left = Math.max((viewWidth - width) / 2, PANEL_GUTTER);
+  const top = Math.max(viewHeight * 0.1, PANEL_GUTTER);
+  const maxHeight = Math.max(viewHeight - top - PANEL_GUTTER, 0);
+
+  return {
+    left,
+    top,
+    width,
+    maxHeight,
+  };
+}
 
 function VideoThumbnail({
   entry,
@@ -141,6 +167,8 @@ export function LearnMoreExpandedPanel({
 }: LearnMoreExpandedPanelProps) {
   const entry = tabId ? learnMoreContent[tabId] : null;
   const panelRef = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState(getViewportSize);
+  const panelLayout = getLearnMorePanelLayout(viewport.width, viewport.height);
 
   // Close on Escape
   useEffect(() => {
@@ -152,6 +180,21 @@ export function LearnMoreExpandedPanel({
     return () => document.removeEventListener("keydown", handleKey);
   }, [tabId, onClose]);
 
+  useEffect(() => {
+    if (!tabId) return;
+
+    const updateViewport = () => {
+      setViewport(getViewportSize());
+    };
+
+    updateViewport();
+    window.addEventListener("resize", updateViewport);
+
+    return () => {
+      window.removeEventListener("resize", updateViewport);
+    };
+  }, [tabId]);
+
   // Compute initial transform from sourceRect to final centered position
   const getInitialStyle = () => {
     if (!sourceRect) {
@@ -159,17 +202,11 @@ export function LearnMoreExpandedPanel({
       return { opacity: 0, scale: 0.95 };
     }
 
-    const viewW = window.innerWidth;
-    const viewH = window.innerHeight;
-
-    // Final position: centered
-    const finalX = (viewW - PANEL_WIDTH) / 2;
-    const finalY = viewH * 0.1; // 10% from top
-
     // Offset from center to where the hover card was
-    const deltaX = sourceRect.left - finalX;
-    const deltaY = sourceRect.top - finalY;
-    const scaleX = sourceRect.width / PANEL_WIDTH;
+    const deltaX = sourceRect.left - panelLayout.left;
+    const deltaY = sourceRect.top - panelLayout.top;
+    const scaleX =
+      panelLayout.width > 0 ? sourceRect.width / panelLayout.width : 1;
 
     return {
       opacity: 0.8,
@@ -201,12 +238,10 @@ export function LearnMoreExpandedPanel({
             key="learn-more-panel"
             className="fixed z-50 bg-background rounded-lg border shadow-lg overflow-y-auto overflow-x-hidden"
             style={{
-              top: "10vh",
-              left: "50%",
-              marginLeft: -(PANEL_WIDTH / 2),
-              width: PANEL_WIDTH,
-              maxWidth: "calc(100vw - 2rem)",
-              maxHeight: "80vh",
+              top: panelLayout.top,
+              left: panelLayout.left,
+              width: panelLayout.width,
+              maxHeight: panelLayout.maxHeight,
             }}
             initial={getInitialStyle()}
             animate={{

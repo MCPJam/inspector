@@ -41,9 +41,24 @@ vi.mock("framer-motion", async () => {
   };
 });
 
-import { LearnMoreExpandedPanel } from "../LearnMoreExpandedPanel";
+import {
+  getLearnMorePanelLayout,
+  LearnMoreExpandedPanel,
+} from "../LearnMoreExpandedPanel";
 
 describe("LearnMoreExpandedPanel", () => {
+  it("keeps the panel centered within viewport gutters on narrow screens", () => {
+    expect(getLearnMorePanelLayout(700, 900)).toMatchObject({
+      left: 16,
+      width: 668,
+    });
+
+    expect(getLearnMorePanelLayout(1400, 900)).toMatchObject({
+      left: 250,
+      width: 900,
+    });
+  });
+
   it("renders the expanded description when available", () => {
     render(
       <LearnMoreExpandedPanel
