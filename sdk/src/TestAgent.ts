@@ -14,6 +14,7 @@ import type {
   ToolSet,
   ModelMessage,
   UserModelMessage,
+  StepResult,
 } from "ai";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
@@ -31,6 +32,7 @@ import type {
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
+import { createEvalSpanSink } from "./eval-trace-spans.js";
 
 /**
  * Configuration for creating a TestAgent
@@ -105,6 +107,10 @@ type StartedToolCall = {
   toolName: string;
   arguments: Record<string, unknown>;
   shortCircuited: boolean;
+};
+
+type EvalAwareStepResult = StepResult<ToolSet> & {
+  stepNumber?: number;
 };
 
 /**
@@ -306,6 +312,8 @@ export class TestAgent implements EvalAgent {
     onLatency: (ms: number) => void,
     snapshotBuffer: Map<string, EvalWidgetSnapshotInput>,
     pendingStepToolCalls: StartedToolCall[],
+    spanSink: ReturnType<typeof createEvalSpanSink>,
+    getCurrentStepStartMs: () => number,
     shortCircuitTools?: Set<string>
   ): ToolSet {
     const instrumented: ToolSet = {};
@@ -331,6 +339,14 @@ export class TestAgent implements EvalAgent {
               shortCircuited: shouldShortCircuit,
             });
 
+            // AI SDK 6.0.50 does not expose tool lifecycle callbacks yet, so
+            // the execute wrapper remains the timing fallback for current builds.
+            spanSink.onToolStart(
+              toolCallId,
+              name,
+              undefined,
+              getCurrentStepStartMs()
+            );
             try {
               if (shouldShortCircuit) {
                 return CallToolResultSchema.parse({
@@ -354,6 +370,7 @@ export class TestAgent implements EvalAgent {
               });
               return result;
             } finally {
+              spanSink.onToolEnd(toolCallId);
               onLatency(Date.now() - start);
             }
           },
@@ -463,8 +480,10 @@ export class TestAgent implements EvalAgent {
     options?: PromptOptions
   ): Promise<PromptResult> {
     const startTime = Date.now();
+    const spanSink = createEvalSpanSink(() => Date.now() - startTime);
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
+    const getCurrentStepStartMs = () => Math.max(0, lastStepEndTime - startTime);
     let totalLlmMs = 0;
     let stepMcpMs = 0; // MCP time within current step
     const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
@@ -493,6 +512,8 @@ export class TestAgent implements EvalAgent {
         },
         widgetSnapshots,
         pendingStepToolCalls,
+        spanSink,
+        getCurrentStepStartMs,
         new Set(stopAfterToolCallNames)
       );
 
@@ -501,8 +522,9 @@ export class TestAgent implements EvalAgent {
       const userMessage: UserModelMessage = { role: "user", content: message };
       const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
 
-      // Cast model to any to handle AI SDK version compatibility
-      const result = await generateText({
+      // Cast to any so newer AI SDK lifecycle hooks can be forwarded when the
+      // runtime supports them, while preserving compatibility with 6.0.50.
+      const generateTextOptions: any = {
         model: model as any,
         tools: instrumentedTools,
         system: this.systemPrompt,
@@ -520,17 +542,43 @@ export class TestAgent implements EvalAgent {
         ...(resolvedTimeout !== undefined && {
           timeout: resolvedTimeout,
         }),
+        prepareStep: ({ stepNumber }: { stepNumber: number }) => {
+          spanSink.onStepStart(stepNumber, getCurrentStepStartMs());
+          return {};
+        },
+        experimental_onStepStart: (event: { stepNumber: number }) => {
+          spanSink.onStepStart(event.stepNumber, getCurrentStepStartMs());
+        },
+        experimental_onToolCallStart: (event: {
+          stepNumber?: number;
+          toolCall: { toolCallId: string; toolName: string };
+        }) => {
+          spanSink.onToolStart(
+            event.toolCall.toolCallId,
+            event.toolCall.toolName,
+            event.stepNumber,
+            getCurrentStepStartMs()
+          );
+        },
+        experimental_onToolCallFinish: (event: {
+          toolCall: { toolCallId: string };
+        }) => {
+          spanSink.onToolEnd(event.toolCall.toolCallId);
+        },
         stopWhen: this.resolveStopWhen(
           options?.stopWhen,
           options?.stopAfterToolCall
         ),
-        onStepFinish: (stepResult) => {
+        onStepFinish: (stepResult: EvalAwareStepResult) => {
+          const stepStartMs = getCurrentStepStartMs();
           const now = Date.now();
           const stepDuration = now - lastStepEndTime;
           // LLM time for this step = step duration - MCP time in this step
           totalLlmMs += Math.max(0, stepDuration - stepMcpMs);
           lastStepEndTime = now;
           stepMcpMs = 0; // Reset for next step
+
+          spanSink.onStepFinish(stepResult?.stepNumber, stepStartMs);
 
           if (!stepResult) {
             return;
@@ -550,7 +598,12 @@ export class TestAgent implements EvalAgent {
           );
           pendingStepToolCalls.length = 0;
         },
-      });
+        onFinish: (finalStep: EvalAwareStepResult) => {
+          spanSink.onStepFinish(finalStep?.stepNumber, getCurrentStepStartMs());
+        },
+      };
+
+      const result = await generateText(generateTextOptions);
 
       const e2eMs = Date.now() - startTime;
       const toolCalls = extractToolCalls(result);
@@ -580,6 +633,7 @@ export class TestAgent implements EvalAgent {
         provider: this._parsedProvider,
         model: this._parsedModel,
         widgetSnapshots: Array.from(widgetSnapshots.values()),
+        spans: spanSink.getSpans(),
       });
 
       this.promptHistory.push(this.lastResult);
@@ -611,6 +665,8 @@ export class TestAgent implements EvalAgent {
       ];
       const totalTokens = partialInputTokens + partialOutputTokens;
 
+      spanSink.finalizeFailure(errorMessage);
+
       this.lastResult = PromptResult.from({
         prompt: message,
         messages: partialMessages,
@@ -630,6 +686,7 @@ export class TestAgent implements EvalAgent {
         provider: this._parsedProvider,
         model: this._parsedModel,
         widgetSnapshots: Array.from(widgetSnapshots.values()),
+        spans: spanSink.getSpans(),
       });
       this.promptHistory.push(this.lastResult);
       return this.lastResult;

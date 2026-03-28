@@ -8,8 +8,45 @@ import type { EvalRunResult } from "./EvalTest.js";
 import type {
   EvalResultInput,
   EvalExpectedToolCall,
+  EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
 import type { PromptResult } from "./PromptResult.js";
+
+/**
+ * Merge per-prompt timeline spans into one iteration trace.
+ * Prompt N spans are offset by the cumulative e2e latency of prompts 0..N-1.
+ */
+function mergePromptSpansForIteration(
+  prompts: PromptResult[]
+): EvalTraceSpanInput[] {
+  const merged: EvalTraceSpanInput[] = [];
+  let offsetMs = 0;
+  for (const prompt of prompts) {
+    for (const span of prompt.getSpans()) {
+      merged.push({
+        ...span,
+        startMs: span.startMs + offsetMs,
+        endMs: span.endMs + offsetMs,
+      });
+    }
+    offsetMs += prompt.e2eLatencyMs();
+  }
+  return merged;
+}
+
+function iterationTraceFromPrompts(
+  prompts: PromptResult[],
+  traceMessages: Array<{ role: string; content: unknown }>
+): EvalResultInput["trace"] | undefined {
+  const mergedSpans = mergePromptSpansForIteration(prompts);
+  if (traceMessages.length === 0 && mergedSpans.length === 0) {
+    return undefined;
+  }
+  return {
+    messages: traceMessages,
+    ...(mergedSpans.length > 0 ? { spans: mergedSpans } : {}),
+  };
+}
 
 /**
  * Options for converting a single iteration to an EvalResultInput.
@@ -57,6 +94,7 @@ export function iterationToEvalResult(
   const widgetSnapshots = prompts.flatMap((prompt) =>
     prompt.getWidgetSnapshots()
   );
+  const trace = iterationTraceFromPrompts(prompts, traceMessages);
 
   // Use iteration-level tokens (already pre-aggregated by EvalTest)
   const durationMs = iteration.latencies.reduce(
@@ -83,7 +121,7 @@ export function iterationToEvalResult(
       total: iteration.tokens.total,
     },
     error: iteration.error,
-    trace: traceMessages.length > 0 ? { messages: traceMessages } : undefined,
+    trace,
     widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
     metadata: {
       iterationNumber: index + 1,
@@ -186,6 +224,7 @@ export function iterationsToEvalResultInputs(
     const widgetSnapshots = prompts.flatMap((prompt) =>
       prompt.getWidgetSnapshots()
     );
+    const trace = iterationTraceFromPrompts(prompts, traceMessages);
 
     return {
       caseTitle: testName,
@@ -200,12 +239,7 @@ export function iterationsToEvalResultInputs(
         total: iteration.tokens.total,
       },
       error: iteration.error,
-      trace:
-        traceMessages.length > 0
-          ? {
-              messages: traceMessages,
-            }
-          : undefined,
+      trace,
       widgetSnapshots: widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
       metadata: {
         retryCount: iteration.retryCount ?? 0,
@@ -247,6 +281,7 @@ export function suiteTestResultsToEvalResultInputs(
       const widgetSnapshots = prompts.flatMap((prompt) =>
         prompt.getWidgetSnapshots()
       );
+      const trace = iterationTraceFromPrompts(prompts, traceMessages);
 
       inputs.push({
         caseTitle: testName,
@@ -261,12 +296,7 @@ export function suiteTestResultsToEvalResultInputs(
           total: iteration.tokens.total,
         },
         error: iteration.error,
-        trace:
-          traceMessages.length > 0
-            ? {
-                messages: traceMessages,
-              }
-            : undefined,
+        trace,
         widgetSnapshots:
           widgetSnapshots.length > 0 ? widgetSnapshots : undefined,
         metadata: {

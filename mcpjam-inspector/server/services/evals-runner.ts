@@ -29,6 +29,18 @@ import {
   createSuiteRunRecorder,
   type SuiteRunRecorder,
 } from "./evals/recorder";
+import {
+  pushBackendStepLlmFailureSpans,
+  pushBackendStepSuccessSpans,
+  pushBackendStepToolFailureSpans,
+  createAiSdkEvalTraceContext,
+  emitAiSdkOnStepFinish,
+  finalizeAiSdkTraceOnFailure,
+  registerAiSdkPrepareStep,
+  wrapToolSetForEvalTrace,
+} from "./evals/eval-trace-capture";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
+import { appendDedupedModelMessages } from "@/shared/eval-trace";
 
 export type EvalTestCase = {
   title: string;
@@ -114,6 +126,7 @@ async function finishIterationDirectly(
     toolsCalled: Array<{ toolName: string; arguments: Record<string, any> }>;
     usage: UsageTotals;
     messages: ModelMessage[];
+    spans?: EvalTraceSpan[];
     status?: "completed" | "failed" | "cancelled";
     startedAt?: number;
     error?: string;
@@ -151,6 +164,7 @@ async function finishIterationDirectly(
       actualToolCalls: params.toolsCalled,
       tokensUsed: params.usage.totalTokens ?? 0,
       messages: params.messages,
+      ...(params.spans?.length ? { spans: params.spans } : {}),
       error: params.error,
       errorDetails: params.errorDetails,
     });
@@ -179,6 +193,7 @@ type RunIterationBaseParams = {
   tools: ToolSet;
   recorder: SuiteRunRecorder | null;
   testCaseId?: string;
+  suiteId?: string;
   modelApiKeys?: Record<string, string>;
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
@@ -210,6 +225,7 @@ const runIterationWithAiSdk = async ({
   tools,
   recorder,
   testCaseId,
+  suiteId,
   modelDefinition,
   modelApiKeys,
   convexClient,
@@ -282,23 +298,68 @@ const runIterationWithAiSdk = async ({
   }
   baseMessages.push({ role: "user", content: query });
 
+  const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
+  let partialResponseMessages: ModelMessage[] = [];
+  let completedStepCount = 0;
+
+  const tracedTools = wrapToolSetForEvalTrace(tools, traceCtx);
+
   try {
     const llmModel = createLlmModel(modelDefinition, apiKey);
 
     const result = await generateText({
       model: llmModel,
       messages: baseMessages,
-      tools,
+      tools: tracedTools,
       stopWhen: stepCountIs(20),
       ...(temperature == null ? {} : { temperature }),
       ...(toolChoice
         ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
         : {}),
       ...(abortSignal ? { abortSignal } : {}),
+      experimental_telemetry: {
+        isEnabled: true,
+        functionId: "evals.generateText",
+        recordInputs: false,
+        recordOutputs: false,
+        metadata: {
+          source: "evals",
+          ...(suiteId ? { suiteId } : {}),
+          ...(runId ? { runId } : {}),
+          ...(testCaseId ? { testCaseId } : {}),
+          ...(iterationId ? { iterationId } : {}),
+          iterationNumber: runIndex + 1,
+          provider: test.provider,
+          model: test.model,
+        },
+      },
+      // AI SDK `generateText` does not expose `experimental_onStepStart` (see ai@6 types); `prepareStep` runs once per step before the LLM call with the same `stepNumber`.
+      prepareStep: ({ stepNumber }) => {
+        registerAiSdkPrepareStep(traceCtx, stepNumber);
+        return undefined;
+      },
+      onStepFinish: async (step) => {
+        completedStepCount += 1;
+        const stepFinishedAt = Date.now();
+        emitAiSdkOnStepFinish(traceCtx, stepFinishedAt);
+        const responseMessages = step.response?.messages ?? [];
+        appendDedupedModelMessages(
+          partialResponseMessages,
+          responseMessages as ModelMessage[],
+        );
+      },
+      onFinish: async () => {
+        /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
+      },
     });
 
+    const finalMessagesRaw = result.response?.messages as
+      | ModelMessage[]
+      | undefined;
     const finalMessages =
-      (result.response?.messages as ModelMessage[]) ?? baseMessages;
+      finalMessagesRaw && finalMessagesRaw.length > 0
+        ? finalMessagesRaw
+        : [...baseMessages, ...partialResponseMessages];
 
     // Extract all tool calls from all steps in the conversation
     const toolsCalled: Array<{
@@ -386,6 +447,9 @@ const runIterationWithAiSdk = async ({
       toolsCalled,
       usage,
       messages: finalMessages,
+      ...(traceCtx.recordedSpans.length
+        ? { spans: traceCtx.recordedSpans }
+        : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
     };
@@ -423,6 +487,17 @@ const runIterationWithAiSdk = async ({
       errorMessage = String(error);
     }
 
+    const failAt = Date.now();
+    finalizeAiSdkTraceOnFailure(traceCtx, failAt, {
+      completedStepCount,
+      lastStepEndedAt: traceCtx.lastStepClosedEndAt,
+    });
+    const failSpans = traceCtx.recordedSpans;
+    const failMessages =
+      completedStepCount > 0 || partialResponseMessages.length > 0
+        ? [...baseMessages, ...partialResponseMessages]
+        : baseMessages;
+
     const failParams = {
       iterationId,
       passed: false,
@@ -432,7 +507,8 @@ const runIterationWithAiSdk = async ({
         outputTokens: undefined,
         totalTokens: undefined,
       },
-      messages: baseMessages,
+      messages: failMessages,
+      ...(failSpans.length ? { spans: failSpans } : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
@@ -568,8 +644,12 @@ const runIterationViaBackend = async ({
 
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
+  const capturedSpans: EvalTraceSpan[] = [];
   let steps = 0;
   while (steps < MAX_STEPS) {
+    const stepStartAbs = Date.now();
+    const stepIndex = steps;
+    const llmStartAbs = stepStartAbs;
     try {
       const res = await fetch(`${convexHttpUrl}/stream`, {
         method: "POST",
@@ -592,13 +672,22 @@ const runIterationViaBackend = async ({
       if (!res.ok) {
         const errorText = await res.text().catch(() => res.statusText);
         iterationError = `Backend stream error: ${res.status} ${errorText}`;
-        // Store the full error response as details
         iterationErrorDetails = errorText;
         logger.error("[evals] backend stream error", new Error(res.statusText));
+        const failAbs = Date.now();
+        pushBackendStepLlmFailureSpans(
+          capturedSpans,
+          runStartedAt,
+          stepIndex,
+          stepStartAbs,
+          llmStartAbs,
+          failAbs,
+        );
         break;
       }
 
       const json: any = await res.json();
+      const llmEndAbs = Date.now();
       if (!json?.ok || !Array.isArray(json.messages)) {
         iterationError = "Invalid backend response payload";
         iterationErrorDetails = JSON.stringify(json, null, 2);
@@ -606,10 +695,18 @@ const runIterationViaBackend = async ({
           "[evals] invalid backend response payload",
           new Error("Invalid backend response payload"),
         );
+        const failAbs = Date.now();
+        pushBackendStepLlmFailureSpans(
+          capturedSpans,
+          runStartedAt,
+          stepIndex,
+          stepStartAbs,
+          llmStartAbs,
+          failAbs,
+        );
         break;
       }
 
-      // Accumulate usage from this step
       if (json.usage) {
         accumulatedUsage.inputTokens =
           (accumulatedUsage.inputTokens || 0) + (json.usage.promptTokens || 0);
@@ -644,9 +741,44 @@ const runIterationViaBackend = async ({
       }
 
       if (hasUnresolvedToolCalls(messageHistory as any)) {
-        await executeToolCallsFromMessages(messageHistory, {
-          tools: tools as any,
-        });
+        const toolsStartAbs = Date.now();
+        try {
+          await executeToolCallsFromMessages(messageHistory, {
+            tools: tools as any,
+          });
+          const toolsEndAbs = Date.now();
+          pushBackendStepSuccessSpans(
+            capturedSpans,
+            runStartedAt,
+            stepIndex,
+            stepStartAbs,
+            { startAbs: llmStartAbs, endAbs: llmEndAbs },
+            { startAbs: toolsStartAbs, endAbs: toolsEndAbs },
+          );
+        } catch (toolErr) {
+          const failAbs = Date.now();
+          pushBackendStepToolFailureSpans(
+            capturedSpans,
+            runStartedAt,
+            stepIndex,
+            stepStartAbs,
+            { startAbs: llmStartAbs, endAbs: llmEndAbs },
+            toolsStartAbs,
+            failAbs,
+          );
+          iterationError =
+            toolErr instanceof Error ? toolErr.message : String(toolErr);
+          logger.error("[evals] tool execution failed", toolErr);
+          break;
+        }
+      } else {
+        pushBackendStepSuccessSpans(
+          capturedSpans,
+          runStartedAt,
+          stepIndex,
+          stepStartAbs,
+          { startAbs: llmStartAbs, endAbs: llmEndAbs },
+        );
       }
 
       steps += 1;
@@ -656,14 +788,11 @@ const runIterationViaBackend = async ({
         break;
       }
     } catch (error) {
-      // Check if request was aborted
       if (error instanceof Error && error.name === "AbortError") {
         logger.debug("[evals] backend iteration aborted due to cancellation");
-        // Return empty result for aborted iterations
         return evaluateResults(expectedToolCalls, [], test.isNegativeTest);
       }
 
-      // Extract error message
       if (error instanceof Error) {
         iterationError = error.message || error.toString();
 
@@ -677,12 +806,20 @@ const runIterationViaBackend = async ({
         iterationError = String(error);
       }
 
-      // Limit error message length
       if (iterationError && iterationError.length > 500) {
         iterationError = iterationError.substring(0, 497) + "...";
       }
 
       logger.error("[evals] backend fetch failed", error);
+      const failAbs = Date.now();
+      pushBackendStepLlmFailureSpans(
+        capturedSpans,
+        runStartedAt,
+        stepIndex,
+        stepStartAbs,
+        llmStartAbs,
+        failAbs,
+      );
       break;
     }
   }
@@ -699,6 +836,7 @@ const runIterationViaBackend = async ({
     toolsCalled,
     usage: accumulatedUsage,
     messages: messageHistory,
+    ...(capturedSpans.length ? { spans: capturedSpans } : {}),
     status: "completed" as const,
     startedAt: runStartedAt,
     error: iterationError,
@@ -723,6 +861,7 @@ const runTestCase = async (params: {
   convexAuthToken: string;
   convexClient: ConvexHttpClient;
   testCaseId?: string;
+  suiteId?: string;
   runId: string | null;
   abortSignal?: AbortSignal;
 }) => {
@@ -735,6 +874,7 @@ const runTestCase = async (params: {
     convexAuthToken,
     convexClient,
     testCaseId: parentTestCaseId,
+    suiteId,
     runId,
     abortSignal,
   } = params;
@@ -752,6 +892,7 @@ const runTestCase = async (params: {
         tools,
         recorder,
         testCaseId,
+        suiteId,
         convexHttpUrl,
         convexAuthToken,
         convexClient,
@@ -769,6 +910,7 @@ const runTestCase = async (params: {
       tools,
       recorder,
       testCaseId,
+      suiteId,
       modelDefinition,
       modelApiKeys,
       convexClient,
@@ -857,6 +999,7 @@ export const runEvalSuiteWithAiSdk = async ({
         convexAuthToken,
         convexClient,
         testCaseId,
+        suiteId,
         runId,
         abortSignal: abortController.signal,
       }),

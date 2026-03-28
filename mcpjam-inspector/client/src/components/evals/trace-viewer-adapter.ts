@@ -13,6 +13,7 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 export interface TraceContentPart {
   type: string;
@@ -51,8 +52,10 @@ export interface TraceWidgetSnapshot {
 }
 
 export interface TraceEnvelope {
+  traceVersion?: 1;
   messages?: TraceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];
+  spans?: EvalTraceSpan[];
   [key: string]: unknown;
 }
 

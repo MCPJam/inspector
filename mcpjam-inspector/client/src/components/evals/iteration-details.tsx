@@ -289,6 +289,15 @@ export function IterationDetails({
     [iteration, testCase],
   );
 
+  const estimatedDurationMs = useMemo(
+    () =>
+      Math.max(
+        iteration.updatedAt - (iteration.startedAt ?? iteration.createdAt),
+        0,
+      ),
+    [iteration.updatedAt, iteration.startedAt, iteration.createdAt],
+  );
+
   // Use snapshot values first (reflects what was actually tested, including unsaved edits)
   const expectedToolCalls =
     iteration.testCaseSnapshot?.expectedToolCalls ??
@@ -644,6 +653,7 @@ export function IterationDetails({
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 connectedServerIds={connectedServerIds}
+                estimatedDurationMs={estimatedDurationMs}
               />
             )}
           </div>

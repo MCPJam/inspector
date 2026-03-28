@@ -126,15 +126,126 @@ const widgetSnapshotTrace = {
   ],
 };
 
+function openChatTab() {
+  fireEvent.click(screen.getByTitle("Chat view"));
+}
+
 describe("TraceViewer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("defaults to Timeline tab", () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+  });
+
+  it("timeline shows no data when no spans and zero estimated duration", () => {
+    render(
+      <TraceViewer trace={simpleTextTrace} estimatedDurationMs={0} />,
+    );
+    expect(
+      screen.getByText("No timing data recorded for this iteration."),
+    ).toBeInTheDocument();
+  });
+
+  it("switching Timeline, Chat, and Raw works", () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    openChatTab();
+    expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByTitle("Raw JSON"));
+    expect(screen.getByTestId("json-editor")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Timeline"));
+    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+  });
+
+  it("recorded spans show Recorded timing badge", () => {
+    render(
+      <TraceViewer
+        trace={{
+          traceVersion: 1,
+          messages: simpleTextTrace.messages,
+          spans: [
+            {
+              id: "a",
+              name: "Step 1",
+              category: "step",
+              startMs: 0,
+              endMs: 50,
+            },
+          ],
+        }}
+        estimatedDurationMs={99_999}
+      />,
+    );
+    expect(screen.getByText("Recorded timing")).toBeInTheDocument();
+    expect(screen.queryByText("Estimated total only")).not.toBeInTheDocument();
+  });
+
+  it("legacy trace without spans shows Estimated total only", () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={250} />);
+    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    expect(
+      screen.getByText("Per-step timing was not recorded for this run."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Conversation detail is in the Chat tab/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/confirm whether a/i)).toBeInTheDocument();
+  });
+
+  it("legacy estimated timeline omits transcript hint when there are no messages", () => {
+    render(
+      <TraceViewer
+        trace={{ traceVersion: 1 as const, messages: [] }}
+        estimatedDurationMs={40}
+      />,
+    );
+    expect(screen.getByText("Estimated total only")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Conversation detail is in the Chat tab/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("Raw tab exposes blob JSON so spans presence can be verified", () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    fireEvent.click(screen.getByTitle("Raw JSON"));
+    const raw = screen.getByTestId("json-editor").textContent ?? "";
+    expect(raw).toContain('"messages"');
+    expect(raw).not.toContain('"spans"');
+  });
+
+  it("timeline with spans but no messages still renders; Chat is empty", () => {
+    render(
+      <TraceViewer
+        trace={{
+          traceVersion: 1,
+          messages: [],
+          spans: [
+            {
+              id: "s1",
+              name: "Step 1",
+              category: "step",
+              startMs: 0,
+              endMs: 10,
+            },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByText("Recorded timing")).toBeInTheDocument();
+    openChatTab();
+    expect(screen.getByText("No messages in trace")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Raw JSON"));
+    expect(screen.getByTestId("json-editor").textContent).toContain("spans");
   });
 
   // --- Widget snapshot replay ---
 
   it("renders MCP App replay from stored widget snapshots", () => {
     render(<TraceViewer trace={widgetSnapshotTrace} />);
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalled();
     const props = mockMessageView.mock.calls[0][0];
@@ -158,18 +269,19 @@ describe("TraceViewer", () => {
         toolServerMap={{ create_view: "server-1" }}
       />,
     );
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalled();
     const props = mockMessageView.mock.calls[0][0];
     const overrides = props.toolRenderOverrides as Record<string, any>;
-    // No snapshot with widgetHtmlUrl and no connected servers → widget scrubbed, no replay override with cachedWidgetHtmlUrl
     expect(overrides["call-1"]?.cachedWidgetHtmlUrl).toBeUndefined();
   });
 
-  // --- Formatted / Raw mode ---
+  // --- Chat mode ---
 
-  it("formatted mode renders MessageView entries", () => {
+  it("chat tab renders MessageView entries", () => {
     render(<TraceViewer trace={simpleTextTrace} />);
+    openChatTab();
 
     const messageViews = screen.getAllByTestId("message-view");
     expect(messageViews.length).toBeGreaterThanOrEqual(1);
@@ -183,7 +295,7 @@ describe("TraceViewer", () => {
   it("raw mode shows original blob via JsonEditor", () => {
     render(<TraceViewer trace={simpleTextTrace} />);
 
-    fireEvent.click(screen.getByTitle("Raw JSON view"));
+    fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("json-editor")).toBeDefined();
     expect(screen.getByTestId("json-editor").textContent).toContain("Hello");
   });
@@ -192,6 +304,7 @@ describe("TraceViewer", () => {
 
   it("passes minimalMode={true} and interactive={false} to MessageView", () => {
     render(<TraceViewer trace={simpleTextTrace} />);
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -201,8 +314,9 @@ describe("TraceViewer", () => {
     );
   });
 
-  it("requests collapsed reasoning rendering in formatted trace mode", () => {
+  it("requests collapsed reasoning rendering in chat trace mode", () => {
     render(<TraceViewer trace={reasoningTrace} />);
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -218,6 +332,7 @@ describe("TraceViewer", () => {
       provider: "openai" as const,
     };
     render(<TraceViewer trace={simpleTextTrace} model={model} />);
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -232,6 +347,7 @@ describe("TraceViewer", () => {
 
   it("uses fallback ModelDefinition when model prop is omitted", () => {
     render(<TraceViewer trace={simpleTextTrace} />);
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -282,11 +398,11 @@ describe("TraceViewer", () => {
         }}
       />,
     );
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalled();
     const props = mockMessageView.mock.calls[0][0];
     const overrides = props.toolRenderOverrides as Record<string, any>;
-    // Widget is scrubbed — override has empty toolMetadata, no cachedWidgetHtmlUrl
     expect(overrides["call-w"]).toBeDefined();
     expect(overrides["call-w"].toolMetadata).toEqual({});
     expect(overrides["call-w"].cachedWidgetHtmlUrl).toBeUndefined();
@@ -303,18 +419,17 @@ describe("TraceViewer", () => {
         connectedServerIds={["server-1"]}
       />,
     );
+    openChatTab();
 
     expect(mockMessageView).toHaveBeenCalled();
     const props = mockMessageView.mock.calls[0][0];
     const overrides = props.toolRenderOverrides as Record<string, any>;
-    // Live replay — no override needed (PartSwitch resolves from live metadata)
     expect(overrides["call-1"]).toBeUndefined();
   });
 
-  // --- interactive={false} verification ---
-
   it("does not wire action handlers when interactive={false}", () => {
     render(<TraceViewer trace={toolTrace} />);
+    openChatTab();
 
     const lastCall = mockMessageView.mock.calls[0][0];
     expect(lastCall.interactive).toBe(false);

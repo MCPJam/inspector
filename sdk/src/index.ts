@@ -150,6 +150,8 @@ export type {
   EvalExpectedToolCall,
   EvalCiMetadata,
   EvalTraceInput,
+  EvalTraceSpanCategory,
+  EvalTraceSpanInput,
   EvalWidgetCsp,
   EvalWidgetPermissions,
   EvalWidgetSnapshotInput,

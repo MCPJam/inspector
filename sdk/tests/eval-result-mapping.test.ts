@@ -1,4 +1,5 @@
 import { PromptResult } from "../src/PromptResult";
+import type { EvalTraceSpanInput } from "../src/eval-reporting-types";
 import type { IterationResult, EvalRunResult } from "../src/EvalTest";
 import {
   iterationToEvalResult,
@@ -22,6 +23,7 @@ function makePrompt(overrides: {
   provider?: string;
   model?: string;
   error?: string;
+  spans?: EvalTraceSpanInput[];
 }): PromptResult {
   if (overrides.error) {
     return PromptResult.error(
@@ -49,6 +51,7 @@ function makePrompt(overrides: {
     latency: overrides.latency ?? { e2eMs: 100, llmMs: 80, mcpMs: 20 },
     provider: overrides.provider,
     model: overrides.model,
+    spans: overrides.spans,
   });
 }
 
@@ -172,6 +175,63 @@ describe("iterationToEvalResult", () => {
     expect(messages).toHaveLength(4);
     expect(messages[0]).toEqual({ role: "user", content: "turn 1" });
     expect(messages[3]).toEqual({ role: "assistant", content: "reply 2" });
+  });
+
+  it("merges spans from multi-prompt iteration with e2e offsets", () => {
+    const p1 = makePrompt({
+      prompt: "turn 1",
+      latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+      spans: [
+        {
+          id: "a",
+          name: "Step",
+          category: "step",
+          startMs: 0,
+          endMs: 50,
+        },
+      ],
+    });
+    const p2 = makePrompt({
+      prompt: "turn 2",
+      latency: { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+      spans: [
+        {
+          id: "b",
+          parentId: "a",
+          name: "LLM",
+          category: "llm",
+          startMs: 10,
+          endMs: 80,
+        },
+      ],
+    });
+    const iteration = makeIteration({
+      prompts: [p1, p2],
+      latencies: [
+        { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+        { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+      ],
+    });
+
+    const result = iterationToEvalResult(iteration, 0, { caseTitle: "spans" });
+
+    expect((result.trace as any).spans).toEqual([
+      {
+        id: "a",
+        name: "Step",
+        category: "step",
+        startMs: 0,
+        endMs: 50,
+      },
+      {
+        id: "b",
+        parentId: "a",
+        name: "LLM",
+        category: "llm",
+        startMs: 110,
+        endMs: 180,
+      },
+    ]);
   });
 
   it("uses promptSelector to pick query/provider/model from selected prompt", () => {

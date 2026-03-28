@@ -14,11 +14,23 @@ export type EvalCiMetadata = {
   commitSha?: string;
 };
 
+export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+
+export type EvalTraceSpanInput = {
+  id: string;
+  parentId?: string;
+  name: string;
+  category: EvalTraceSpanCategory;
+  startMs: number;
+  endMs: number;
+};
+
 export type EvalTraceInput =
   | string
   | Array<{ role: string; content: unknown }>
   | {
       messages?: Array<{ role: string; content: unknown }>;
+      spans?: EvalTraceSpanInput[];
       prompts?: unknown[];
       raw?: unknown;
     };
