@@ -1,6 +1,24 @@
 import type { EvalTraceSpanInput } from "./eval-reporting-types.js";
 
 type MutableSpan = EvalTraceSpanInput;
+type SpanStatus = "ok" | "error";
+
+type StepMeta = {
+  modelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  messageStartIndex?: number;
+  messageEndIndex?: number;
+  status?: SpanStatus;
+};
+
+type ToolMeta = {
+  serverId?: string;
+  messageStartIndex?: number;
+  messageEndIndex?: number;
+  status?: SpanStatus;
+};
 
 function genSpanId(): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -20,15 +38,20 @@ export function normalizeEvalTraceSpans(spans: MutableSpan[]): void {
 }
 
 export type EvalSpanSink = {
-  onStepStart: (stepNumber: number, startMsHint?: number) => void;
+  onStepStart: (stepNumber: number, startMsHint?: number, meta?: StepMeta) => void;
   onToolStart: (
     toolCallId: string,
     toolName: string,
     stepNumber?: number,
-    stepStartMsHint?: number
+    stepStartMsHint?: number,
+    meta?: ToolMeta
   ) => void;
-  onToolEnd: (toolCallId: string) => void;
-  onStepFinish: (stepNumber?: number, startMsHint?: number) => void;
+  onToolEnd: (toolCallId: string, meta?: ToolMeta) => void;
+  onStepFinish: (
+    stepNumber?: number,
+    startMsHint?: number,
+    meta?: StepMeta
+  ) => void;
   finalizeFailure: (errorLabel?: string) => void;
   getSpans: () => EvalTraceSpanInput[];
 };
@@ -48,6 +71,75 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
   let nextSyntheticStepNumber = 0;
   let lastFinishedStepNumber: number | null = null;
   const pendingToolSpans = new Map<string, MutableSpan>();
+
+  function applyStepMeta(span: MutableSpan, meta?: StepMeta): void {
+    if (!meta) {
+      return;
+    }
+
+    if (typeof meta.modelId === "string" && meta.modelId.length > 0) {
+      span.modelId = meta.modelId;
+    }
+    if (typeof meta.inputTokens === "number") {
+      span.inputTokens = meta.inputTokens;
+    }
+    if (typeof meta.outputTokens === "number") {
+      span.outputTokens = meta.outputTokens;
+    }
+    if (typeof meta.totalTokens === "number") {
+      span.totalTokens = meta.totalTokens;
+    }
+    if (typeof meta.messageStartIndex === "number") {
+      span.messageStartIndex = meta.messageStartIndex;
+    }
+    if (typeof meta.messageEndIndex === "number") {
+      span.messageEndIndex = meta.messageEndIndex;
+    }
+    if (meta.status) {
+      span.status = meta.status;
+    }
+  }
+
+  function applyToolMeta(span: MutableSpan, meta?: ToolMeta): void {
+    if (!meta) {
+      return;
+    }
+
+    if (typeof meta.serverId === "string" && meta.serverId.length > 0) {
+      span.serverId = meta.serverId;
+    }
+    if (typeof meta.messageStartIndex === "number") {
+      span.messageStartIndex = meta.messageStartIndex;
+    }
+    if (typeof meta.messageEndIndex === "number") {
+      span.messageEndIndex = meta.messageEndIndex;
+    }
+    if (meta.status) {
+      span.status = meta.status;
+    }
+  }
+
+  function applyStepMetaToChildren(stepSpanId: string, meta?: StepMeta): void {
+    if (
+      !meta ||
+      typeof meta.messageStartIndex !== "number" ||
+      typeof meta.messageEndIndex !== "number"
+    ) {
+      return;
+    }
+
+    for (const span of recordedSpans) {
+      if (span.parentId !== stepSpanId) {
+        continue;
+      }
+      if (typeof span.messageStartIndex !== "number") {
+        span.messageStartIndex = meta.messageStartIndex;
+      }
+      if (typeof span.messageEndIndex !== "number") {
+        span.messageEndIndex = meta.messageEndIndex;
+      }
+    }
+  }
 
   function closeLlmIfOpen(atMs = rel()): void {
     if (!activeStep || !activeStep.llmOpen) {
@@ -81,6 +173,9 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
       category: "step",
       startMs,
       endMs: startMs,
+      promptIndex: 0,
+      stepIndex: stepNumber,
+      status: "ok",
     };
     const llmSpan: MutableSpan = {
       id: llmId,
@@ -89,6 +184,9 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
       category: "llm",
       startMs,
       endMs: startMs,
+      promptIndex: 0,
+      stepIndex: stepNumber,
+      status: "ok",
     };
     recordedSpans.push(stepSpan, llmSpan);
     activeStep = { stepNumber, stepSpan, llmSpan, llmOpen: true };
@@ -112,15 +210,18 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
   }
 
   return {
-    onStepStart(stepNumber: number, startMsHint?: number) {
-      ensureActiveStep(stepNumber, startMsHint);
+    onStepStart(stepNumber: number, startMsHint?: number, meta?: StepMeta) {
+      const step = ensureActiveStep(stepNumber, startMsHint);
+      applyStepMeta(step.stepSpan, meta);
+      applyStepMeta(step.llmSpan, meta);
     },
 
     onToolStart(
       toolCallId: string,
       toolName: string,
       stepNumber?: number,
-      stepStartMsHint?: number
+      stepStartMsHint?: number,
+      meta?: ToolMeta
     ) {
       if (pendingToolSpans.has(toolCallId)) {
         return;
@@ -136,27 +237,37 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
         category: "tool",
         startMs: t,
         endMs: t,
+        promptIndex: 0,
+        stepIndex: step.stepNumber,
+        toolCallId,
+        toolName,
+        status: "ok",
       };
+      applyToolMeta(toolSpan, meta);
       recordedSpans.push(toolSpan);
       pendingToolSpans.set(toolCallId, toolSpan);
     },
 
-    onToolEnd(toolCallId: string) {
+    onToolEnd(toolCallId: string, meta?: ToolMeta) {
       const toolSpan = pendingToolSpans.get(toolCallId);
       if (!toolSpan) {
         return;
       }
       const t = rel();
       toolSpan.endMs = bumpEndMs(toolSpan.startMs, t);
+      applyToolMeta(toolSpan, meta);
       pendingToolSpans.delete(toolCallId);
     },
 
-    onStepFinish(stepNumber?: number, startMsHint?: number) {
+    onStepFinish(stepNumber?: number, startMsHint?: number, meta?: StepMeta) {
       if (!activeStep && stepNumber != null && stepNumber === lastFinishedStepNumber) {
         return;
       }
 
-      ensureActiveStep(stepNumber, startMsHint);
+      const step = ensureActiveStep(stepNumber, startMsHint);
+      applyStepMeta(step.stepSpan, meta);
+      applyStepMeta(step.llmSpan, meta);
+      applyStepMetaToChildren(step.stepSpan.id, meta);
       finalizeActiveStep(rel());
     },
 
@@ -164,8 +275,15 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
       const t = rel();
       for (const [, toolSpan] of pendingToolSpans) {
         toolSpan.endMs = bumpEndMs(toolSpan.startMs, t);
+        toolSpan.status = "error";
       }
       pendingToolSpans.clear();
+      if (activeStep) {
+        activeStep.stepSpan.status = "error";
+        if (activeStep.llmOpen) {
+          activeStep.llmSpan.status = "error";
+        }
+      }
       finalizeActiveStep(t);
       recordedSpans.push({
         id: genSpanId(),
@@ -173,6 +291,8 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
         category: "error",
         startMs: t,
         endMs: bumpEndMs(t, t),
+        promptIndex: 0,
+        status: "error",
       });
       normalizeEvalTraceSpans(recordedSpans);
     },

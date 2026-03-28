@@ -3,6 +3,7 @@ import { z } from "zod";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpan = {
   id: string;
@@ -11,6 +12,20 @@ export type EvalTraceSpan = {
   category: EvalTraceSpanCategory;
   startMs: number;
   endMs: number;
+  promptIndex?: number;
+  stepIndex?: number;
+  status?: EvalTraceSpanStatus;
+  toolCallId?: string;
+  toolName?: string;
+  serverId?: string;
+  modelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  /** Inclusive index of the first related trace message in the stored blob. */
+  messageStartIndex?: number;
+  /** Inclusive index of the last related trace message in the stored blob. */
+  messageEndIndex?: number;
 };
 
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
@@ -28,6 +43,18 @@ export const evalTraceSpanZ = z.object({
   category: z.enum(["step", "llm", "tool", "error"]),
   startMs: z.number(),
   endMs: z.number(),
+  promptIndex: z.number().optional(),
+  stepIndex: z.number().optional(),
+  status: z.enum(["ok", "error"]).optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+  serverId: z.string().optional(),
+  modelId: z.string().optional(),
+  inputTokens: z.number().optional(),
+  outputTokens: z.number().optional(),
+  totalTokens: z.number().optional(),
+  messageStartIndex: z.number().optional(),
+  messageEndIndex: z.number().optional(),
 });
 
 export const evalTraceBlobV1Z = z.object({

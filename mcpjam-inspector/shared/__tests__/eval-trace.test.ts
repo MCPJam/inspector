@@ -58,4 +58,50 @@ describe("eval-trace helpers", () => {
     expect(parsed.traceVersion).toBe(1);
     expect(parsed.spans).toHaveLength(1);
   });
+
+  it("evalTraceBlobV1Z preserves optional rich span metadata", () => {
+    const parsed = evalTraceBlobV1Z.parse({
+      traceVersion: 1,
+      messages: [],
+      spans: [
+        {
+          id: "tool-1",
+          parentId: "step-1",
+          name: "search",
+          category: "tool",
+          startMs: 5,
+          endMs: 20,
+          promptIndex: 1,
+          stepIndex: 2,
+          status: "ok",
+          toolCallId: "call-1",
+          toolName: "search",
+          serverId: "server-1",
+          modelId: "gpt-4o",
+          inputTokens: 11,
+          outputTokens: 7,
+          totalTokens: 18,
+          messageStartIndex: 3,
+          messageEndIndex: 4,
+        },
+      ],
+    });
+
+    expect(parsed.spans?.[0]).toEqual(
+      expect.objectContaining({
+        promptIndex: 1,
+        stepIndex: 2,
+        status: "ok",
+        toolCallId: "call-1",
+        toolName: "search",
+        serverId: "server-1",
+        modelId: "gpt-4o",
+        inputTokens: 11,
+        outputTokens: 7,
+        totalTokens: 18,
+        messageStartIndex: 3,
+        messageEndIndex: 4,
+      }),
+    );
+  });
 });

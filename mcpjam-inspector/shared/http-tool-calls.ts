@@ -126,7 +126,10 @@ export async function executeToolCallsFromMessages(
           const tool = index[toolName];
           if (!tool) throw new Error(`Tool '${toolName}' not found`);
           const input = content.input || {};
-          const result = await tool.execute(input);
+          const result = await tool.execute(input, {
+            toolCallId: content.toolCallId,
+            messages,
+          });
 
           let output: ToolResultPart;
           if (result !== undefined && result !== null) {

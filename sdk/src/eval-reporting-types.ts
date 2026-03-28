@@ -15,6 +15,7 @@ export type EvalCiMetadata = {
 };
 
 export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpanInput = {
   id: string;
@@ -23,6 +24,18 @@ export type EvalTraceSpanInput = {
   category: EvalTraceSpanCategory;
   startMs: number;
   endMs: number;
+  promptIndex?: number;
+  stepIndex?: number;
+  status?: EvalTraceSpanStatus;
+  toolCallId?: string;
+  toolName?: string;
+  serverId?: string;
+  modelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  messageStartIndex?: number;
+  messageEndIndex?: number;
 };
 
 export type EvalTraceInput =

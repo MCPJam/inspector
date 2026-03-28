@@ -33,6 +33,7 @@ import {
   pushBackendStepLlmFailureSpans,
   pushBackendStepSuccessSpans,
   pushBackendStepToolFailureSpans,
+  wrapBackendToolsForTrace,
   createAiSdkEvalTraceContext,
   emitAiSdkOnStepFinish,
   finalizeAiSdkTraceOnFailure,
@@ -335,18 +336,40 @@ const runIterationWithAiSdk = async ({
       },
       // AI SDK `generateText` does not expose `experimental_onStepStart` (see ai@6 types); `prepareStep` runs once per step before the LLM call with the same `stepNumber`.
       prepareStep: ({ stepNumber }) => {
-        registerAiSdkPrepareStep(traceCtx, stepNumber);
+        registerAiSdkPrepareStep(traceCtx, stepNumber, {
+          modelId: test.model,
+        });
         return undefined;
       },
       onStepFinish: async (step) => {
         completedStepCount += 1;
         const stepFinishedAt = Date.now();
-        emitAiSdkOnStepFinish(traceCtx, stepFinishedAt);
         const responseMessages = step.response?.messages ?? [];
+        const responseMessageCountBeforeAppend = partialResponseMessages.length;
+        const messageStartIndex =
+          responseMessages.length > 0
+            ? baseMessages.length + responseMessageCountBeforeAppend
+            : undefined;
         appendDedupedModelMessages(
           partialResponseMessages,
           responseMessages as ModelMessage[],
         );
+        const appendedMessageCount =
+          partialResponseMessages.length -
+          responseMessageCountBeforeAppend;
+        const messageEndIndex =
+          messageStartIndex != null && appendedMessageCount > 0
+            ? messageStartIndex + appendedMessageCount - 1
+            : undefined;
+        emitAiSdkOnStepFinish(traceCtx, stepFinishedAt, {
+          modelId: step.response?.modelId ?? test.model,
+          inputTokens: step.usage?.inputTokens,
+          outputTokens: step.usage?.outputTokens,
+          totalTokens: step.usage?.totalTokens,
+          messageStartIndex,
+          messageEndIndex,
+          status: "ok",
+        });
       },
       onFinish: async () => {
         /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
@@ -356,10 +379,11 @@ const runIterationWithAiSdk = async ({
     const finalMessagesRaw = result.response?.messages as
       | ModelMessage[]
       | undefined;
-    const finalMessages =
+    const finalResponseMessages =
       finalMessagesRaw && finalMessagesRaw.length > 0
         ? finalMessagesRaw
-        : [...baseMessages, ...partialResponseMessages];
+        : partialResponseMessages;
+    const finalMessages = [...baseMessages, ...finalResponseMessages];
 
     // Extract all tool calls from all steps in the conversation
     const toolsCalled: Array<{
@@ -491,6 +515,7 @@ const runIterationWithAiSdk = async ({
     finalizeAiSdkTraceOnFailure(traceCtx, failAt, {
       completedStepCount,
       lastStepEndedAt: traceCtx.lastStepClosedEndAt,
+      modelId: test.model,
     });
     const failSpans = traceCtx.recordedSpans;
     const failMessages =
@@ -650,6 +675,7 @@ const runIterationViaBackend = async ({
     const stepStartAbs = Date.now();
     const stepIndex = steps;
     const llmStartAbs = stepStartAbs;
+    const stepMessageStartIndex = messageHistory.length;
     try {
       const res = await fetch(`${convexHttpUrl}/stream`, {
         method: "POST",
@@ -703,6 +729,9 @@ const runIterationViaBackend = async ({
           stepStartAbs,
           llmStartAbs,
           failAbs,
+          {
+            modelId: test.model,
+          },
         );
         break;
       }
@@ -742,21 +771,74 @@ const runIterationViaBackend = async ({
 
       if (hasUnresolvedToolCalls(messageHistory as any)) {
         const toolsStartAbs = Date.now();
+        const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
+          runStartedAt,
+          stepIndex,
+          spans: capturedSpans,
+        });
         try {
-          await executeToolCallsFromMessages(messageHistory, {
-            tools: tools as any,
+          const newToolMessages = await executeToolCallsFromMessages(messageHistory, {
+            tools: tracedBackendTools as any,
           });
           const toolsEndAbs = Date.now();
+          const toolMessageIndexByCallId = new Map<string, number>();
+          for (let index = 0; index < messageHistory.length; index++) {
+            const msg = messageHistory[index] as any;
+            if (msg?.role !== "tool" || !Array.isArray(msg.content)) {
+              continue;
+            }
+            for (const part of msg.content) {
+              if (part?.type === "tool-result" && typeof part.toolCallId === "string") {
+                toolMessageIndexByCallId.set(part.toolCallId, index);
+              }
+            }
+          }
+          for (const span of capturedSpans) {
+            if (
+              span.stepIndex !== stepIndex ||
+              typeof span.toolCallId !== "string" ||
+              typeof span.messageStartIndex === "number"
+            ) {
+              continue;
+            }
+            const toolMessageIndex = toolMessageIndexByCallId.get(span.toolCallId);
+            if (typeof toolMessageIndex === "number") {
+              span.messageStartIndex = toolMessageIndex;
+              span.messageEndIndex = toolMessageIndex;
+            }
+          }
+          const stepMessageEndIndex =
+            messageHistory.length > stepMessageStartIndex
+              ? messageHistory.length - 1
+              : undefined;
           pushBackendStepSuccessSpans(
             capturedSpans,
             runStartedAt,
             stepIndex,
             stepStartAbs,
             { startAbs: llmStartAbs, endAbs: llmEndAbs },
-            { startAbs: toolsStartAbs, endAbs: toolsEndAbs },
+            {
+              startAbs: toolsStartAbs,
+              endAbs: toolsEndAbs,
+              pushAggregateSpan: newToolMessages.length === 0,
+            },
+            {
+              modelId: test.model,
+              inputTokens: json.usage?.promptTokens,
+              outputTokens: json.usage?.completionTokens,
+              totalTokens: json.usage?.totalTokens,
+              messageStartIndex:
+                stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+              messageEndIndex: stepMessageEndIndex,
+              status: "ok",
+            },
           );
         } catch (toolErr) {
           const failAbs = Date.now();
+          const stepMessageEndIndex =
+            messageHistory.length > stepMessageStartIndex
+              ? messageHistory.length - 1
+              : undefined;
           pushBackendStepToolFailureSpans(
             capturedSpans,
             runStartedAt,
@@ -765,6 +847,16 @@ const runIterationViaBackend = async ({
             { startAbs: llmStartAbs, endAbs: llmEndAbs },
             toolsStartAbs,
             failAbs,
+            {
+              modelId: test.model,
+              inputTokens: json.usage?.promptTokens,
+              outputTokens: json.usage?.completionTokens,
+              totalTokens: json.usage?.totalTokens,
+              messageStartIndex:
+                stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+              messageEndIndex: stepMessageEndIndex,
+              pushAggregateSpan: false,
+            },
           );
           iterationError =
             toolErr instanceof Error ? toolErr.message : String(toolErr);
@@ -772,12 +864,27 @@ const runIterationViaBackend = async ({
           break;
         }
       } else {
+        const stepMessageEndIndex =
+          messageHistory.length > stepMessageStartIndex
+            ? messageHistory.length - 1
+            : undefined;
         pushBackendStepSuccessSpans(
           capturedSpans,
           runStartedAt,
           stepIndex,
           stepStartAbs,
           { startAbs: llmStartAbs, endAbs: llmEndAbs },
+          undefined,
+          {
+            modelId: test.model,
+            inputTokens: json.usage?.promptTokens,
+            outputTokens: json.usage?.completionTokens,
+            totalTokens: json.usage?.totalTokens,
+            messageStartIndex:
+              stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+            messageEndIndex: stepMessageEndIndex,
+            status: "ok",
+          },
         );
       }
 
@@ -819,6 +926,9 @@ const runIterationViaBackend = async ({
         stepStartAbs,
         llmStartAbs,
         failAbs,
+        {
+          modelId: test.model,
+        },
       );
       break;
     }

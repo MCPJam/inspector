@@ -21,16 +21,32 @@ function mergePromptSpansForIteration(
 ): EvalTraceSpanInput[] {
   const merged: EvalTraceSpanInput[] = [];
   let offsetMs = 0;
-  for (const prompt of prompts) {
+  let messageOffset = 0;
+
+  prompts.forEach((prompt, promptIndex) => {
+    const idPrefix = `prompt-${promptIndex}`;
     for (const span of prompt.getSpans()) {
       merged.push({
         ...span,
+        id: `${idPrefix}:${span.id}`,
+        parentId: span.parentId ? `${idPrefix}:${span.parentId}` : undefined,
         startMs: span.startMs + offsetMs,
         endMs: span.endMs + offsetMs,
+        promptIndex,
+        modelId: span.modelId ?? prompt.getModel(),
+        messageStartIndex:
+          typeof span.messageStartIndex === "number"
+            ? span.messageStartIndex + messageOffset
+            : undefined,
+        messageEndIndex:
+          typeof span.messageEndIndex === "number"
+            ? span.messageEndIndex + messageOffset
+            : undefined,
       });
     }
     offsetMs += prompt.e2eLatencyMs();
-  }
+    messageOffset += prompt.getMessages().length;
+  });
   return merged;
 }
 

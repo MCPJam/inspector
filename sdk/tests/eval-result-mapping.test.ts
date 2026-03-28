@@ -217,20 +217,111 @@ describe("iterationToEvalResult", () => {
 
     expect((result.trace as any).spans).toEqual([
       {
-        id: "a",
+        id: "prompt-0:a",
+        parentId: undefined,
         name: "Step",
         category: "step",
         startMs: 0,
         endMs: 50,
+        promptIndex: 0,
+        modelId: undefined,
+        messageStartIndex: undefined,
+        messageEndIndex: undefined,
       },
       {
-        id: "b",
-        parentId: "a",
+        id: "prompt-1:b",
+        parentId: "prompt-1:a",
         name: "LLM",
         category: "llm",
         startMs: 110,
         endMs: 180,
+        promptIndex: 1,
+        modelId: undefined,
+        messageStartIndex: undefined,
+        messageEndIndex: undefined,
       },
+    ]);
+  });
+
+  it("preserves prompt grouping and offsets message ranges across prompts", () => {
+    const p1 = makePrompt({
+      prompt: "turn 1",
+      messages: [
+        { role: "user", content: "turn 1" },
+        { role: "assistant", content: "reply 1" },
+      ],
+      model: "gpt-4o",
+      spans: [
+        {
+          id: "step",
+          name: "Step 1",
+          category: "step",
+          startMs: 0,
+          endMs: 60,
+          stepIndex: 0,
+          messageStartIndex: 1,
+          messageEndIndex: 1,
+        },
+      ],
+    });
+    const p2 = makePrompt({
+      prompt: "turn 2",
+      messages: [
+        { role: "user", content: "turn 2" },
+        { role: "assistant", content: "reply 2" },
+        { role: "tool", content: "tool result" },
+      ],
+      latency: { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+      model: "gpt-4.1",
+      spans: [
+        {
+          id: "tool",
+          name: "search",
+          category: "tool",
+          startMs: 10,
+          endMs: 30,
+          stepIndex: 1,
+          toolCallId: "call-2",
+          toolName: "search",
+          messageStartIndex: 1,
+          messageEndIndex: 2,
+        },
+      ],
+    });
+
+    const result = iterationToEvalResult(
+      makeIteration({
+        prompts: [p1, p2],
+        latencies: [
+          { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+          { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+        ],
+      }),
+      0,
+      { caseTitle: "trace-groups" },
+    );
+
+    expect((result.trace as any).spans).toEqual([
+      expect.objectContaining({
+        id: "prompt-0:step",
+        promptIndex: 0,
+        stepIndex: 0,
+        modelId: "gpt-4o",
+        messageStartIndex: 1,
+        messageEndIndex: 1,
+      }),
+      expect.objectContaining({
+        id: "prompt-1:tool",
+        promptIndex: 1,
+        stepIndex: 1,
+        modelId: "gpt-4.1",
+        toolCallId: "call-2",
+        toolName: "search",
+        startMs: 110,
+        endMs: 130,
+        messageStartIndex: 3,
+        messageEndIndex: 4,
+      }),
     ]);
   });
 

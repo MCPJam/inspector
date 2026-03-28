@@ -126,6 +126,135 @@ const widgetSnapshotTrace = {
   ],
 };
 
+const waterfallTrace = {
+  traceVersion: 1 as const,
+  messages: [
+    { role: "user", content: "Need docs" },
+    {
+      role: "assistant",
+      content: [
+        {
+          type: "tool-call",
+          toolCallId: "call-docs",
+          toolName: "read_docs",
+          input: { topic: "telemetry" },
+        },
+      ],
+    },
+    {
+      role: "tool",
+      content: [
+        {
+          type: "tool-result",
+          toolCallId: "call-docs",
+          toolName: "read_docs",
+          output: {
+            type: "json",
+            value: { ok: true, pages: 3 },
+          },
+        },
+      ],
+    },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Telemetry docs loaded." }],
+    },
+    { role: "user", content: "Summarize it" },
+    {
+      role: "assistant",
+      content: [{ type: "text", text: "Summary ready." }],
+    },
+  ],
+  spans: [
+    {
+      id: "p0-step0",
+      name: "Step 1",
+      category: "step" as const,
+      startMs: 0,
+      endMs: 120,
+      promptIndex: 0,
+      stepIndex: 0,
+      status: "ok" as const,
+      modelId: "gpt-4o",
+      inputTokens: 20,
+      outputTokens: 12,
+      totalTokens: 32,
+      messageStartIndex: 1,
+      messageEndIndex: 3,
+    },
+    {
+      id: "p0-llm0",
+      parentId: "p0-step0",
+      name: "LLM",
+      category: "llm" as const,
+      startMs: 0,
+      endMs: 40,
+      promptIndex: 0,
+      stepIndex: 0,
+      status: "ok" as const,
+      modelId: "gpt-4o",
+      messageStartIndex: 1,
+      messageEndIndex: 3,
+    },
+    {
+      id: "p0-tool0",
+      parentId: "p0-step0",
+      name: "read_docs",
+      category: "tool" as const,
+      startMs: 40,
+      endMs: 90,
+      promptIndex: 0,
+      stepIndex: 0,
+      status: "ok" as const,
+      toolCallId: "call-docs",
+      toolName: "read_docs",
+      serverId: "docs-server",
+      messageStartIndex: 1,
+      messageEndIndex: 2,
+    },
+    {
+      id: "p1-step0",
+      name: "Step 1",
+      category: "step" as const,
+      startMs: 140,
+      endMs: 260,
+      promptIndex: 1,
+      stepIndex: 0,
+      status: "error" as const,
+      modelId: "gpt-4.1",
+      messageStartIndex: 5,
+      messageEndIndex: 5,
+    },
+    {
+      id: "p1-llm0",
+      parentId: "p1-step0",
+      name: "LLM",
+      category: "llm" as const,
+      startMs: 140,
+      endMs: 240,
+      promptIndex: 1,
+      stepIndex: 0,
+      status: "error" as const,
+      modelId: "gpt-4.1",
+      messageStartIndex: 5,
+      messageEndIndex: 5,
+    },
+    {
+      id: "p1-err0",
+      parentId: "p1-step0",
+      name: "Generation error",
+      category: "error" as const,
+      startMs: 240,
+      endMs: 260,
+      promptIndex: 1,
+      stepIndex: 0,
+      status: "error" as const,
+      messageStartIndex: 5,
+      messageEndIndex: 5,
+    },
+  ],
+};
+
 function openChatTab() {
   fireEvent.click(screen.getByTitle("Chat view"));
 }
@@ -181,6 +310,43 @@ describe("TraceViewer", () => {
     );
     expect(screen.getByText("Recorded timing")).toBeInTheDocument();
     expect(screen.queryByText("Estimated total only")).not.toBeInTheDocument();
+  });
+
+  it("renders prompt-grouped waterfall rows with detail pane", () => {
+    render(<TraceViewer trace={waterfallTrace} />);
+
+    expect(screen.getAllByText("Prompt 1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Prompt 2").length).toBeGreaterThan(0);
+    expect(screen.getByTestId("trace-detail-pane")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Expand all"));
+    expect(screen.getAllByText("Prompt 2 · Step 1").length).toBeGreaterThan(0);
+    expect(screen.getByText("read_docs")).toBeInTheDocument();
+  });
+
+  it("filters the waterfall to tool rows while preserving step context", () => {
+    render(<TraceViewer trace={waterfallTrace} />);
+
+    fireEvent.click(screen.getByText("Expand all"));
+    expect(screen.getByText("Generation error")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "TOOL" }));
+
+    expect(screen.getByText("read_docs")).toBeInTheDocument();
+    expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Prompt 1").length).toBeGreaterThan(0);
+  });
+
+  it("reveals a selected timeline row in chat view", () => {
+    render(<TraceViewer trace={waterfallTrace} />);
+
+    fireEvent.click(screen.getByText("Expand all"));
+    fireEvent.click(screen.getByText("read_docs"));
+    fireEvent.click(screen.getByText("Reveal in transcript"));
+
+    expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
+    const focusedMessage = document.querySelector('[data-source-range="1-2"]');
+    expect(focusedMessage?.className).toContain("bg-primary/5");
   });
 
   it("legacy trace without spans shows Estimated total only", () => {

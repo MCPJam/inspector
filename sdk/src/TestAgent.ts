@@ -345,8 +345,15 @@ export class TestAgent implements EvalAgent {
               toolCallId,
               name,
               undefined,
-              getCurrentStepStartMs()
+              getCurrentStepStartMs(),
+              {
+                serverId:
+                  typeof (tool as any)._serverId === "string"
+                    ? (tool as any)._serverId
+                    : undefined,
+              }
             );
+            let success = true;
             try {
               if (shouldShortCircuit) {
                 return CallToolResultSchema.parse({
@@ -369,8 +376,13 @@ export class TestAgent implements EvalAgent {
                 snapshotBuffer,
               });
               return result;
+            } catch (error) {
+              success = false;
+              throw error;
             } finally {
-              spanSink.onToolEnd(toolCallId);
+              spanSink.onToolEnd(toolCallId, {
+                status: success ? "ok" : "error",
+              });
               onLatency(Date.now() - start);
             }
           },
@@ -490,6 +502,7 @@ export class TestAgent implements EvalAgent {
     const completedToolCalls: PromptToolCall[] = [];
     const pendingStepToolCalls: StartedToolCall[] = [];
     let lastCompletedStepMessages: ModelMessage[] = [];
+    let emittedMessageCount = 0;
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
     let lastCompletedStepText = "";
@@ -543,11 +556,15 @@ export class TestAgent implements EvalAgent {
           timeout: resolvedTimeout,
         }),
         prepareStep: ({ stepNumber }: { stepNumber: number }) => {
-          spanSink.onStepStart(stepNumber, getCurrentStepStartMs());
+          spanSink.onStepStart(stepNumber, getCurrentStepStartMs(), {
+            modelId: this._parsedModel,
+          });
           return {};
         },
         experimental_onStepStart: (event: { stepNumber: number }) => {
-          spanSink.onStepStart(event.stepNumber, getCurrentStepStartMs());
+          spanSink.onStepStart(event.stepNumber, getCurrentStepStartMs(), {
+            modelId: this._parsedModel,
+          });
         },
         experimental_onToolCallStart: (event: {
           stepNumber?: number;
@@ -578,18 +595,35 @@ export class TestAgent implements EvalAgent {
           lastStepEndTime = now;
           stepMcpMs = 0; // Reset for next step
 
-          spanSink.onStepFinish(stepResult?.stepNumber, stepStartMs);
-
           if (!stepResult) {
             return;
           }
 
+          const stepMessages = stepResult.response?.messages
+            ? [...stepResult.response.messages]
+            : [];
+          const messageStartIndex =
+            stepMessages.length > 0 ? 1 + emittedMessageCount : undefined;
+          const messageEndIndex =
+            stepMessages.length > 0
+              ? messageStartIndex! + stepMessages.length - 1
+              : undefined;
+
+          spanSink.onStepFinish(stepResult.stepNumber, stepStartMs, {
+            modelId: stepResult.response?.modelId ?? this._parsedModel,
+            inputTokens: stepResult.usage?.inputTokens,
+            outputTokens: stepResult.usage?.outputTokens,
+            totalTokens: stepResult.usage?.totalTokens,
+            messageStartIndex,
+            messageEndIndex,
+            status: "ok",
+          });
+
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          lastCompletedStepMessages = stepResult.response?.messages
-            ? [...stepResult.response.messages]
-            : [];
+          lastCompletedStepMessages = stepMessages;
+          emittedMessageCount += stepMessages.length;
           completedToolCalls.push(
             ...stepResult.toolCalls.map((toolCall) => ({
               toolName: toolCall.toolName,
@@ -599,7 +633,29 @@ export class TestAgent implements EvalAgent {
           pendingStepToolCalls.length = 0;
         },
         onFinish: (finalStep: EvalAwareStepResult) => {
-          spanSink.onStepFinish(finalStep?.stepNumber, getCurrentStepStartMs());
+          if (!finalStep) {
+            return;
+          }
+
+          const stepMessages = finalStep.response?.messages
+            ? [...finalStep.response.messages]
+            : [];
+          const messageStartIndex =
+            stepMessages.length > 0 ? 1 + emittedMessageCount : undefined;
+          const messageEndIndex =
+            stepMessages.length > 0
+              ? messageStartIndex! + stepMessages.length - 1
+              : undefined;
+
+          spanSink.onStepFinish(finalStep.stepNumber, getCurrentStepStartMs(), {
+            modelId: finalStep.response?.modelId ?? this._parsedModel,
+            inputTokens: finalStep.usage?.inputTokens,
+            outputTokens: finalStep.usage?.outputTokens,
+            totalTokens: finalStep.usage?.totalTokens,
+            messageStartIndex,
+            messageEndIndex,
+            status: "ok",
+          });
         },
       };
 

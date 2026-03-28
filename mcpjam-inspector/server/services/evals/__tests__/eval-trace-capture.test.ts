@@ -8,6 +8,7 @@ import {
   pushBackendStepSuccessSpans,
   pushBackendStepToolFailureSpans,
   registerAiSdkPrepareStep,
+  wrapBackendToolsForTrace,
   wrapToolSetForEvalTrace,
 } from "../eval-trace-capture";
 
@@ -81,8 +82,15 @@ describe("eval-trace-capture", () => {
   it("AI SDK: one step, no tools — step + LLM only", () => {
     vi.spyOn(Date, "now").mockReturnValue(runAt);
     const ctx = createAiSdkEvalTraceContext(runAt);
-    registerAiSdkPrepareStep(ctx, 0);
-    emitAiSdkOnStepFinish(ctx, runAt + 40);
+    registerAiSdkPrepareStep(ctx, 0, { modelId: "gpt-4o" });
+    emitAiSdkOnStepFinish(ctx, runAt + 40, {
+      inputTokens: 10,
+      outputTokens: 4,
+      totalTokens: 14,
+      messageStartIndex: 1,
+      messageEndIndex: 2,
+      status: "ok",
+    });
     const step = ctx.recordedSpans.find((s) => s.id === "step-0");
     const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
     expect(step?.category).toBe("step");
@@ -93,6 +101,28 @@ describe("eval-trace-capture", () => {
     );
     expect(step!.endMs).toBeGreaterThan(step!.startMs);
     expect(llm!.endMs).toBeGreaterThan(llm!.startMs);
+    expect(step).toEqual(
+      expect.objectContaining({
+        promptIndex: 0,
+        stepIndex: 0,
+        modelId: "gpt-4o",
+        inputTokens: 10,
+        outputTokens: 4,
+        totalTokens: 14,
+        messageStartIndex: 1,
+        messageEndIndex: 2,
+        status: "ok",
+      }),
+    );
+    expect(llm).toEqual(
+      expect.objectContaining({
+        promptIndex: 0,
+        stepIndex: 0,
+        modelId: "gpt-4o",
+        messageStartIndex: 1,
+        messageEndIndex: 2,
+      }),
+    );
   });
 
   it("AI SDK: one step + tool — LLM ends at first tool start", async () => {
@@ -150,6 +180,14 @@ describe("eval-trace-capture", () => {
     expect(tool?.category).toBe("tool");
     expect(err?.category).toBe("error");
     expect(err?.name).toBe("boom error");
+    expect(tool).toEqual(
+      expect.objectContaining({
+        toolCallId: "tcfail",
+        toolName: "boom",
+        stepIndex: 0,
+        status: "error",
+      }),
+    );
   });
 
   it("AI SDK: failure before any step — generation error only", () => {
@@ -193,5 +231,43 @@ describe("eval-trace-capture", () => {
     const spans: EvalTraceSpan[] = [];
     pushAiSdkTrailingErrorSpan(spans, runAt, runAt + 10, runAt + 10);
     expect(spans[0]!.endMs).toBeGreaterThan(spans[0]!.startMs);
+  });
+
+  it("backend wrapped tools emit per-call spans with tool metadata", async () => {
+    let wall = runAt;
+    vi.spyOn(Date, "now").mockImplementation(() => wall);
+
+    const spans: EvalTraceSpan[] = [];
+    const backendTools = wrapBackendToolsForTrace(
+      {
+        search: {
+          execute: async () => ({ ok: true }),
+          _serverId: "server-1",
+        },
+      },
+      {
+        runStartedAt: runAt,
+        stepIndex: 2,
+        spans,
+      },
+    );
+
+    wall = runAt + 15;
+    await backendTools.search.execute(
+      { q: "weather" },
+      { toolCallId: "call-99" },
+    );
+
+    expect(spans).toEqual([
+      expect.objectContaining({
+        category: "tool",
+        promptIndex: 0,
+        stepIndex: 2,
+        toolCallId: "call-99",
+        toolName: "search",
+        serverId: "server-1",
+        status: "ok",
+      }),
+    ]);
   });
 });

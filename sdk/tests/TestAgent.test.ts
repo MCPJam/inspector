@@ -356,6 +356,30 @@ describe("TestAgent", () => {
       expect(stepSpan).toBeDefined();
       expect(toolSpan).toBeDefined();
       expect(toolSpan?.parentId).toBe(stepSpan?.id);
+      expect(stepSpan).toEqual(
+        expect.objectContaining({
+          promptIndex: 0,
+          stepIndex: 0,
+          modelId: "gpt-4o",
+          inputTokens: 5,
+          outputTokens: 4,
+          totalTokens: 9,
+          messageStartIndex: 1,
+          messageEndIndex: 2,
+          status: "ok",
+        })
+      );
+      expect(toolSpan).toEqual(
+        expect.objectContaining({
+          promptIndex: 0,
+          stepIndex: 0,
+          toolCallId: "call-1",
+          toolName: "add",
+          messageStartIndex: 1,
+          messageEndIndex: 2,
+          status: "ok",
+        })
+      );
     });
 
     it("adds an error span when a tool path fails after starting", async () => {

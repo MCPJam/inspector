@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useRef, useState } from "react";
 import { AlignLeft, Code2, MessageSquare } from "lucide-react";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -13,6 +13,11 @@ import {
 import { TraceTimeline } from "./trace-timeline";
 
 const NOOP = (..._args: unknown[]) => {};
+
+type TranscriptRange = {
+  startIndex: number;
+  endIndex: number;
+};
 
 interface TraceViewerProps {
   trace: TraceEnvelope | TraceMessage | TraceMessage[] | null;
@@ -76,6 +81,10 @@ export function TraceViewer({
   const [viewMode, setViewMode] = useState<"timeline" | "chat" | "raw">(
     "timeline",
   );
+  const [highlightedMessageIds, setHighlightedMessageIds] = useState<string[]>(
+    [],
+  );
+  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const resolvedModel: ModelDefinition = model ?? {
     id: "unknown",
     name: "Unknown",
@@ -93,6 +102,45 @@ export function TraceViewer({
       }),
     [trace, toolsMetadata, toolServerMap, connectedServerIds],
   );
+
+  useEffect(() => {
+    setHighlightedMessageIds([]);
+  }, [trace]);
+
+  useEffect(() => {
+    if (viewMode !== "chat" || highlightedMessageIds.length === 0) {
+      return;
+    }
+
+    const focusedMessage = messageRefs.current[highlightedMessageIds[0] ?? ""];
+    if (typeof focusedMessage?.scrollIntoView === "function") {
+      focusedMessage.scrollIntoView({
+        block: "center",
+        behavior: "smooth",
+      });
+    }
+  }, [highlightedMessageIds, viewMode]);
+
+  function handleRevealInTranscript(range: TranscriptRange) {
+    const highlightedIds = new Set<string>();
+    for (let sourceIndex = range.startIndex; sourceIndex <= range.endIndex; sourceIndex += 1) {
+      for (const messageId of adaptedTrace.sourceMessageIndexToUiMessageIds[sourceIndex] ?? []) {
+        highlightedIds.add(messageId);
+      }
+    }
+
+    const orderedIds = adaptedTrace.messages
+      .map((message) => message.id)
+      .filter((messageId) => highlightedIds.has(messageId));
+    if (orderedIds.length === 0) {
+      return;
+    }
+
+    setHighlightedMessageIds(orderedIds);
+    startTransition(() => {
+      setViewMode("chat");
+    });
+  }
 
   if (!trace) {
     return (
@@ -166,6 +214,8 @@ export function TraceViewer({
           transcriptMessageCount={
             recordedSpans?.length ? 0 : traceMessages.length
           }
+          transcriptMessages={traceMessages}
+          onRevealInTranscript={handleRevealInTranscript}
         />
       )}
 
@@ -177,25 +227,41 @@ export function TraceViewer({
         ) : (
           <div className="max-w-4xl space-y-8 px-4 pt-2">
             {adaptedTrace.messages.map((message) => (
-              <MessageView
+              <div
                 key={message.id}
-                message={message}
-                model={resolvedModel}
-                onSendFollowUp={NOOP}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                pipWidgetId={null}
-                fullscreenWidgetId={null}
-                onRequestPip={NOOP}
-                onExitPip={NOOP}
-                onRequestFullscreen={NOOP}
-                onExitFullscreen={NOOP}
-                toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                showSaveViewButton={false}
-                minimalMode={true}
-                interactive={false}
-                reasoningDisplayMode="collapsed"
-              />
+                ref={(element) => {
+                  messageRefs.current[message.id] = element;
+                }}
+                data-source-range={
+                  adaptedTrace.uiMessageSourceRanges[message.id]
+                    ? `${adaptedTrace.uiMessageSourceRanges[message.id]!.startIndex}-${adaptedTrace.uiMessageSourceRanges[message.id]!.endIndex}`
+                    : undefined
+                }
+                className={
+                  highlightedMessageIds.includes(message.id)
+                    ? "rounded-xl border border-primary/30 bg-primary/5 p-2"
+                    : ""
+                }
+              >
+                <MessageView
+                  message={message}
+                  model={resolvedModel}
+                  onSendFollowUp={NOOP}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
+                  pipWidgetId={null}
+                  fullscreenWidgetId={null}
+                  onRequestPip={NOOP}
+                  onExitPip={NOOP}
+                  onRequestFullscreen={NOOP}
+                  onExitFullscreen={NOOP}
+                  toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+                  showSaveViewButton={false}
+                  minimalMode={true}
+                  interactive={false}
+                  reasoningDisplayMode="collapsed"
+                />
+              </div>
             ))}
           </div>
         ))}
