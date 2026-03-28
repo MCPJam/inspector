@@ -54,7 +54,9 @@ describe("LearnMoreExpandedPanel", () => {
     );
 
     expect(
-      screen.getByText(/This is where everything starts\./i),
+      screen.getByText(
+        /Connect to MCP servers using STDIO, SSE, or Streamable HTTP\./i,
+      ),
     ).toBeInTheDocument();
   });
 
