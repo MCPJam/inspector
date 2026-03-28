@@ -13,10 +13,11 @@ import {
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
-  GitBranch,
   GraduationCap,
   Box,
   LayoutGrid,
+  GitBranch,
+  Puzzle,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -25,7 +26,15 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
   SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from "@/components/ui/sidebar";
 import { useConvexAuth } from "convex/react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -34,6 +43,11 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   listTools,
@@ -48,6 +62,9 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
+import { buildEvalsHash } from "@/lib/evals-router";
+import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import { withTestingSurface } from "@/lib/testing-surface";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -67,6 +84,8 @@ interface NavItem {
   hiddenByFlag?: string;
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
+  /** Nested Playground / Runs entries; omit from the flat main menu */
+  evalsSubnav?: boolean;
 }
 
 interface NavSection {
@@ -176,17 +195,11 @@ const navigationSections: NavSection[] = [
         featureFlag: "client-config-enabled",
       },
       {
-        title: "Generate Evals",
+        title: "Evaluate",
         url: "#evals",
         icon: FlaskConical,
         billingFeature: "evals",
-      },
-      {
-        title: "Evals CI/CD",
-        url: "#ci-evals",
-        icon: GitBranch,
-        featureFlag: "ci-evals-enabled",
-        billingFeature: "cicd",
+        evalsSubnav: true,
       },
     ],
   },
@@ -312,6 +325,123 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
 
+function navigateToEvalsExploreList() {
+  window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+}
+
+function navigateToEvalsRunsList() {
+  navigateToCiEvalsRoute({ type: "list" });
+}
+
+function SidebarEvalsNavGroup({
+  title,
+  Icon,
+  disabled,
+  disabledTooltip,
+  activeTab,
+}: {
+  title: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  disabled?: boolean;
+  disabledTooltip?: string;
+  activeTab?: string;
+}) {
+  const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
+  const exploreHash = withTestingSurface(buildEvalsHash({ type: "list" }));
+  const runsHash = "#/ci-evals";
+
+  const parentButton = (
+    <SidebarMenuButton
+      tooltip={title}
+      isActive={!disabled && isEvalsFamily}
+      onClick={() => {
+        if (disabled) return;
+        navigateToEvalsExploreList();
+      }}
+      aria-disabled={disabled || undefined}
+      tabIndex={disabled ? -1 : undefined}
+      className={
+        disabled
+          ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
+          : isEvalsFamily
+            ? "[&[data-active=true]]:bg-accent cursor-pointer"
+            : "cursor-pointer"
+      }
+    >
+      <Icon className="h-4 w-4" />
+      <span>{title}</span>
+    </SidebarMenuButton>
+  );
+
+  return (
+    <SidebarGroup>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            {disabled ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className="w-full cursor-not-allowed"
+                    title={disabledTooltip}
+                  >
+                    {parentButton}
+                  </div>
+                </TooltipTrigger>
+                {disabledTooltip ? (
+                  <TooltipContent side="right" align="center">
+                    {disabledTooltip}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            ) : (
+              parentButton
+            )}
+            <SidebarMenuSub>
+              <SidebarMenuSubItem>
+                <SidebarMenuSubButton
+                  isActive={activeTab === "evals"}
+                  href={exploreHash}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (disabled) return;
+                    navigateToEvalsExploreList();
+                  }}
+                  aria-disabled={disabled || undefined}
+                  className={
+                    disabled ? "pointer-events-none opacity-50" : undefined
+                  }
+                >
+                  <Puzzle className="h-4 w-4" />
+                  <span>Playground</span>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+              <SidebarMenuSubItem>
+                <SidebarMenuSubButton
+                  isActive={activeTab === "ci-evals"}
+                  href={runsHash}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (disabled) return;
+                    navigateToEvalsRunsList();
+                  }}
+                  aria-disabled={disabled || undefined}
+                  className={
+                    disabled ? "pointer-events-none opacity-50" : undefined
+                  }
+                >
+                  <GitBranch className="h-4 w-4" />
+                  <span>Runs</span>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            </SidebarMenuSub>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
+
 export function MCPSidebar({
   onNavigate,
   activeTab,
@@ -328,7 +458,6 @@ export function MCPSidebar({
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
@@ -434,14 +563,12 @@ export function MCPSidebar({
     : null;
   const featureFlags = useMemo(
     () => ({
-      "ci-evals-enabled": !!ciEvalsEnabled && isAuthenticated,
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
     }),
     [
-      ciEvalsEnabled,
       learningEnabled,
       sandboxesEnabled,
       clientConfigEnabled,
@@ -501,31 +628,45 @@ export function MCPSidebar({
           />
         </SidebarHeader>
         <SidebarContent>
-          {visibleNavigationSections.map((section, sectionIndex) => (
-            <React.Fragment key={section.id}>
-              <NavMain
-                items={section.items.map((item) => ({
-                  ...item,
-                  isActive: item.url === `#${activeTab}`,
-                }))}
-                onItemClick={handleNavClick}
-                appBuilderBubble={
-                  section.id === "mcp-apps" ? appBuilderBubble : null
-                }
-                learnMore={
-                  learnMoreEnabled
-                    ? {
-                        onExpand: learnMore.openExpandedModal,
-                      }
-                    : null
-                }
-              />
-              {/* Add subtle divider between sections (except after the last section) */}
-              {sectionIndex < visibleNavigationSections.length - 1 && (
-                <div className="mx-4 my-2 border-t border-border/50" />
-              )}
-            </React.Fragment>
-          ))}
+          {visibleNavigationSections.map((section, sectionIndex) => {
+            const evalsEntry = section.items.find((item) => item.evalsSubnav);
+            const flatItems = section.items.filter((item) => !item.evalsSubnav);
+
+            return (
+              <React.Fragment key={section.id}>
+                <NavMain
+                  items={flatItems.map((item) => ({
+                    ...item,
+                    isActive: item.url === `#${activeTab}`,
+                  }))}
+                  onItemClick={handleNavClick}
+                  appBuilderBubble={
+                    section.id === "mcp-apps" ? appBuilderBubble : null
+                  }
+                  learnMore={
+                    learnMoreEnabled
+                      ? {
+                          onExpand: learnMore.openExpandedModal,
+                        }
+                      : null
+                  }
+                />
+                {evalsEntry ? (
+                  <SidebarEvalsNavGroup
+                    title={evalsEntry.title}
+                    Icon={evalsEntry.icon}
+                    disabled={evalsEntry.disabled}
+                    disabledTooltip={evalsEntry.disabledTooltip}
+                    activeTab={activeTab}
+                  />
+                ) : null}
+                {/* Add subtle divider between sections (except after the last section) */}
+                {sectionIndex < visibleNavigationSections.length - 1 && (
+                  <div className="mx-4 my-2 border-t border-border/50" />
+                )}
+              </React.Fragment>
+            );
+          })}
         </SidebarContent>
         <SidebarFooter>
           <SidebarUser activeOrganizationId={activeOrganizationId} />

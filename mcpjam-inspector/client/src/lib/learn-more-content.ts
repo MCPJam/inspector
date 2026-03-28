@@ -32,7 +32,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
       "https://outstanding-fennec-304.convex.cloud/api/storage/f0f85991-19aa-423e-bbd8-757b466cabae",
     description: "Connect and manage your MCP servers.",
     expandedDescription:
-      "Connect to MCP servers using STDIO, SSE, or Streamable HTTP. Run multiple servers side by side, toggle them on or off, authenticate with OAuth when needed, and get a full overview of each server at a glance.",
+      "Connect MCP servers to your workspace, authorize with OAuth when a server requires it, and inspect each connection: status, tools, and configuration at a glance.",
     docsUrl: "https://docs.mcpjam.com/inspector/connecting-servers",
   },
   "app-builder": {
