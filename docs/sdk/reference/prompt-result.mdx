@@ -414,6 +414,24 @@ console.log("Snapshots:", snapshots.length);
 
 ---
 
+## toEvalResult()
+
+Builds an [`EvalResultInput`](/sdk/reference/eval-reporting#evalresultinput) for MCPJam reporting (messages, spans, tool calls, tokens, optional widget snapshots).
+
+```typescript
+toEvalResult(
+  options?: Partial<Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">> & {
+    failOnToolError?: boolean;
+  },
+): EvalResultInput
+```
+
+The **`passed`** field combines your explicit or inferred structural outcome with **tool execution** checks (see [Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed)): by default, failures in the trace (MCP `isError`, errored tool spans, error-shaped tool-results) force `passed: false` even if you pass `passed: true` in `options`. Set **`failOnToolError: false`** in `options` to keep structural / explicit `passed` only.
+
+See [Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) in the eval reporting reference.
+
+---
+
 ## Using as Context
 
 Pass `PromptResult` as context for multi-turn conversations.

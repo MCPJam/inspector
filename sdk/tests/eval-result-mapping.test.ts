@@ -243,6 +243,45 @@ describe("iterationToEvalResult", () => {
     ]);
   });
 
+  it("marks passed false when merged trace has errored tool span", () => {
+    const p = makePrompt({
+      spans: [
+        {
+          id: "tool-1",
+          name: "create_view",
+          category: "tool",
+          startMs: 0,
+          endMs: 1,
+          status: "error",
+        },
+      ],
+    });
+    const iteration = makeIteration({ passed: true, prompts: [p] });
+    const result = iterationToEvalResult(iteration, 0, { caseTitle: "x" });
+    expect(result.passed).toBe(false);
+  });
+
+  it("keeps passed true for tool error span when failOnToolError is false", () => {
+    const p = makePrompt({
+      spans: [
+        {
+          id: "tool-1",
+          name: "create_view",
+          category: "tool",
+          startMs: 0,
+          endMs: 1,
+          status: "error",
+        },
+      ],
+    });
+    const iteration = makeIteration({ passed: true, prompts: [p] });
+    const result = iterationToEvalResult(iteration, 0, {
+      caseTitle: "x",
+      failOnToolError: false,
+    });
+    expect(result.passed).toBe(true);
+  });
+
   it("preserves prompt grouping and offsets message ranges across prompts", () => {
     const p1 = makePrompt({
       prompt: "turn 1",
@@ -614,6 +653,57 @@ describe("iterationsToEvalResultInputs", () => {
 
     expect(results[0].error).toBe("timeout");
     expect(results[0].passed).toBe(false);
+  });
+
+  it("fails passed when trace has tool error span despite iteration.passed", () => {
+    const iteration = makeIteration({
+      passed: true,
+      prompts: [
+        makePrompt({
+          spans: [
+            {
+              id: "s1",
+              name: "create_view",
+              category: "tool",
+              startMs: 0,
+              endMs: 1,
+              status: "error",
+            },
+          ],
+        }),
+      ],
+    });
+
+    const results = iterationsToEvalResultInputs("t", [iteration]);
+    expect(results[0].passed).toBe(false);
+  });
+
+  it("preserves passed when failOnToolError is false", () => {
+    const iteration = makeIteration({
+      passed: true,
+      prompts: [
+        makePrompt({
+          spans: [
+            {
+              id: "s1",
+              name: "create_view",
+              category: "tool",
+              startMs: 0,
+              endMs: 1,
+              status: "error",
+            },
+          ],
+        }),
+      ],
+    });
+
+    const results = iterationsToEvalResultInputs(
+      "t",
+      [iteration],
+      undefined,
+      false
+    );
+    expect(results[0].passed).toBe(true);
   });
 
   it("forwards expectedToolCalls when provided", () => {

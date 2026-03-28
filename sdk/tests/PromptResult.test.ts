@@ -293,6 +293,49 @@ describe("PromptResult", () => {
       expect(result.getModel()).toBe("gpt-4o");
     });
 
+    it("toEvalResult fails when spans show tool error even if passed is true", () => {
+      const data = createMockData({
+        spans: [
+          {
+            id: "t1",
+            name: "create_view",
+            category: "tool",
+            startMs: 0,
+            endMs: 1,
+            status: "error",
+          },
+        ],
+      });
+      const result = new PromptResult(data);
+      const evalResult = result.toEvalResult({
+        caseTitle: "test",
+        passed: true,
+      });
+      expect(evalResult.passed).toBe(false);
+    });
+
+    it("toEvalResult keeps passed when failOnToolError is false", () => {
+      const data = createMockData({
+        spans: [
+          {
+            id: "t1",
+            name: "create_view",
+            category: "tool",
+            startMs: 0,
+            endMs: 1,
+            status: "error",
+          },
+        ],
+      });
+      const result = new PromptResult(data);
+      const evalResult = result.toEvalResult({
+        caseTitle: "test",
+        passed: true,
+        failOnToolError: false,
+      });
+      expect(evalResult.passed).toBe(true);
+    });
+
     it("toEvalResult should include captured widget snapshots", () => {
       const data = createMockData({
         widgetSnapshots: [

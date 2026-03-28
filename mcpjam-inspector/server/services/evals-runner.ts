@@ -10,7 +10,7 @@ import {
   type EvaluationResult,
   type UsageTotals,
 } from "./evals/types";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
 import {
@@ -468,6 +468,25 @@ const runIterationWithAiSdk = async ({
       test.isNegativeTest,
     );
 
+    const failOnToolError = test.advancedConfig?.failOnToolError !== false;
+    const traceForGate =
+      traceCtx.recordedSpans.length > 0 || finalMessages.length > 0
+        ? {
+            ...(traceCtx.recordedSpans.length > 0
+              ? { spans: traceCtx.recordedSpans }
+              : {}),
+            messages: finalMessages as ModelMessage[] as Array<{
+              role: string;
+              content: unknown;
+            }>,
+          }
+        : undefined;
+    const passed = finalizePassedForEval({
+      matchPassed: evaluation.passed,
+      trace: traceForGate,
+      failOnToolError,
+    });
+
     const usage: UsageTotals = {
       inputTokens: result.usage?.inputTokens,
       outputTokens: result.usage?.outputTokens,
@@ -476,7 +495,7 @@ const runIterationWithAiSdk = async ({
 
     const finishParams = {
       iterationId,
-      passed: evaluation.passed,
+      passed,
       toolsCalled,
       usage,
       messages: finalMessages,
@@ -949,9 +968,27 @@ const runIterationViaBackend = async ({
     test.isNegativeTest,
   );
 
+  const failOnToolError = test.advancedConfig?.failOnToolError !== false;
+  const traceForGate =
+    capturedSpans.length > 0 || messageHistory.length > 0
+      ? {
+          ...(capturedSpans.length > 0 ? { spans: capturedSpans } : {}),
+          messages: messageHistory as ModelMessage[] as Array<{
+            role: string;
+            content: unknown;
+          }>,
+        }
+      : undefined;
+  const passed = finalizePassedForEval({
+    matchPassed: evaluation.passed,
+    trace: traceForGate,
+    iterationError,
+    failOnToolError,
+  });
+
   const finishParams = {
     iterationId,
-    passed: evaluation.passed,
+    passed,
     toolsCalled,
     usage: accumulatedUsage,
     messages: messageHistory,

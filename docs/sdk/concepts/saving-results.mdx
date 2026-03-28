@@ -41,6 +41,8 @@ await test.run(agent, {
 });
 ```
 
+**Tool execution:** Auto-saved payloads use the same **pass/fail rules** as the [eval reporting reference](/sdk/reference/eval-reporting#tool-execution-and-passed): failed tool calls default to `passed: false` unless you set `failOnToolError: false` on the `mcpjam` object.
+
 For authenticated HTTP servers:
 
 ```typescript

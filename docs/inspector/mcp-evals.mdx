@@ -48,3 +48,9 @@ E2E testing simulates real user workflows by testing complete chains of interact
 An LLM judge can analyze the agent's trace to determine if the test passed.
 
 If you run evals through the SDK, pass the connected `MCPClientManager` into [`TestAgent`](/sdk/reference/test-agent) (or pass `agent` / `mcpClientManager` to reporting APIs) so MCPJam can **persist replay credentials** for authenticated HTTP servers **and** capture **MCP App widget HTML** (via `readResource` on `ui.resourceUri`) for **offline widget replay** in Eval traces. Without `mcpClientManager` on `TestAgent`, uploaded traces still include messages and spans but not embedded app previews.
+
+### Pass/fail and tool errors
+
+Suite runs in the Inspector combine **expected vs. actual tool matching** with **tool execution outcome**: if a tool returns an MCP error (`isError`) or the trace records a failed tool step, the iteration is marked **failed** by default, even when the right tools were invoked. That matches the behavior documented for the SDK in [Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed).
+
+To only score structural matching for a test case, set **`failOnToolError: false`** on that case’s **advanced config** (extra fields are accepted on the run payload). SDK uploads use the same flag on [`MCPJamReportingConfig.failOnToolError`](/sdk/reference/eval-reporting#mcpjamreportingconfig).

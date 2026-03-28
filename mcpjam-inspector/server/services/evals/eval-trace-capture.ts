@@ -1,3 +1,4 @@
+import { isCallToolResultError } from "@mcpjam/sdk";
 import type { EvalTraceSpan, EvalTraceSpanStatus } from "@/shared/eval-trace";
 import {
   appendDedupedModelMessages,
@@ -193,7 +194,11 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         });
         let success = true;
         try {
-          return await origExecute(input, options);
+          const result = await origExecute(input, options);
+          if (isCallToolResultError(result)) {
+            success = false;
+          }
+          return result;
         } catch (err) {
           success = false;
           throw err;
@@ -676,7 +681,11 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
             : `backend-tool-${params.stepIndex}-${startedAt}`;
         let success = true;
         try {
-          return await origExecute(input, options);
+          const result = await origExecute(input, options);
+          if (isCallToolResultError(result)) {
+            success = false;
+          }
+          return result;
         } catch (error) {
           success = false;
           throw error;

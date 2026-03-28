@@ -19,6 +19,23 @@ Use `MCPJAM_BASE_URL` only when you need to override the default ingest host, su
 
 ---
 
+## Tool execution and `passed`
+
+Uploaded iterations have a single boolean `passed` that drives pass rate on the dashboard. The SDK distinguishes:
+
+1. **Structural pass** — Your test returned `true`, or expected tool calls were satisfied (Inspector/UI flows use shared matching logic).
+2. **Tool execution** — The trace shows a real tool failure: MCP results with `isError: true`, timeline spans where a tool step ended in `error`, tool-result parts the UI would treat as errors, or a runner-level `iterationError` after a thrown tool step.
+
+**Default behavior:** When the SDK **derives** `passed` from a trace (for example `EvalTest` / `EvalSuite` auto-save, [`PromptResult.toEvalResult()`](/sdk/reference/prompt-result#toevalresult), `createEvalRunReporter` helpers, or Inspector suite runs), structural success is **not enough** if tool execution failed — the iteration is recorded as **failed** unless you opt out.
+
+**Opt out:** set `failOnToolError: false` on [`MCPJamReportingConfig`](#mcpjamreportingconfig) (global for that reporter or auto-save), or pass it on specific helper options (`addFromPrompt` / `recordFromRun` / `RunToEvalResultsOptions`, etc.). Use this when you only care that the model *invoked* the right tools with the right arguments, not that every MCP call returned a success payload.
+
+**Manual `reportEvalResults`:** If you build `results[]` yourself and set `passed` explicitly, MCPJam stores your values as-is. The execution gate applies to code paths that **compute** `passed` from prompts, traces, and iterations.
+
+**Programmatic reuse:** `@mcpjam/sdk` also exports `finalizePassedForEval`, `traceIndicatesToolExecutionFailure`, `isCallToolResultError`, and `traceMessagePartIndicatesToolFailure` for custom ingestion pipelines.
+
+---
+
 ## reportEvalResults()
 
 One-shot reporting. Sends all results in a single call. Throws on failure.
@@ -321,6 +338,7 @@ type ReportEvalResultsInput = MCPJamReportingConfig & {
 | `serverReplayConfigs` | `MCPServerReplayConfig[]` | No | Advanced override for replay credential capture |
 | `notes` | `string` | No | Free-form notes |
 | `passCriteria` | `{ minimumPassRate: number }` | No | Pass threshold (0-100) |
+| `failOnToolError` | `boolean` | No | When not `false`, results derived from traces treat tool execution failures as failed iterations (default: strict). See [Tool execution and `passed`](#tool-execution-and-passed) |
 | `strict` | `boolean` | No | Throw on upload errors (`false` = warn only) |
 | `externalRunId` | `string` | No | Custom run ID (auto-generated if omitted) |
 | `framework` | `string` | No | Test framework name (e.g., `"jest"`, `"vitest"`) |

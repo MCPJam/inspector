@@ -36,6 +36,7 @@ import {
   createEvalSpanSink,
   patchEvalSpansMessageRangesFromSteps,
 } from "./eval-trace-spans.js";
+import { isCallToolResultError } from "./eval-tool-execution.js";
 
 /**
  * Configuration for creating a TestAgent
@@ -370,6 +371,9 @@ export class TestAgent implements EvalAgent {
               }
 
               const result = await originalExecute(args, options);
+              if (isCallToolResultError(result)) {
+                success = false;
+              }
               await this.captureMcpAppSnapshot({
                 toolName: name,
                 tool,

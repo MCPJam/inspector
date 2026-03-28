@@ -162,6 +162,14 @@ export type {
   ReportEvalResultsOutput,
 } from "./eval-reporting-types.js";
 
+export {
+  finalizePassedForEval,
+  isCallToolResultError,
+  traceIndicatesToolExecutionFailure,
+  traceMessagePartIndicatesToolFailure,
+} from "./eval-tool-execution.js";
+export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
+
 // Eval result mapping utilities
 export type {
   RunToEvalResultsOptions,

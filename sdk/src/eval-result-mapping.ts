@@ -11,6 +11,7 @@ import type {
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
 import type { PromptResult } from "./PromptResult.js";
+import { finalizePassedForEval } from "./eval-tool-execution.js";
 
 /**
  * Merge per-prompt timeline spans into one iteration trace.
@@ -73,6 +74,8 @@ export interface IterationToEvalResultOptions {
   model?: string;
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
+  /** @see MCPJamReportingConfig.failOnToolError */
+  failOnToolError?: boolean;
 }
 
 /**
@@ -122,10 +125,17 @@ export function iterationToEvalResult(
   const provider = options.provider ?? selectedPrompt?.getProvider();
   const model = options.model ?? selectedPrompt?.getModel();
 
+  const passed = finalizePassedForEval({
+    matchPassed: iteration.passed,
+    trace,
+    iterationError: iteration.error,
+    failOnToolError: options.failOnToolError,
+  });
+
   return {
     caseTitle: options.caseTitle,
     query: selectedPrompt?.getPrompt(),
-    passed: iteration.passed,
+    passed,
     durationMs: durationMs > 0 ? durationMs : undefined,
     provider,
     model,
@@ -155,6 +165,7 @@ export interface RunToEvalResultsOptions {
   model?: string;
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
+  failOnToolError?: boolean;
 }
 
 /**
@@ -171,6 +182,7 @@ export function runToEvalResults(
       model: options.model,
       expectedToolCalls: options.expectedToolCalls,
       promptSelector: options.promptSelector,
+      failOnToolError: options.failOnToolError,
     })
   );
 }
@@ -184,6 +196,7 @@ export interface SuiteRunToEvalResultsOptions {
   model?: string;
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>;
   promptSelector?: "first" | "last";
+  failOnToolError?: boolean;
 }
 
 /**
@@ -204,6 +217,7 @@ export function suiteRunToEvalResults(
       model: options.model,
       expectedToolCalls,
       promptSelector: options.promptSelector,
+      failOnToolError: options.failOnToolError,
     });
     results.push(...testResults);
   }
@@ -217,7 +231,8 @@ export function suiteRunToEvalResults(
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
-  expectedToolCalls?: EvalExpectedToolCall[]
+  expectedToolCalls?: EvalExpectedToolCall[],
+  failOnToolError?: boolean
 ): EvalResultInput[] {
   return iterations.map((iteration, index) => {
     const prompts = iteration.prompts ?? [];
@@ -242,10 +257,17 @@ export function iterationsToEvalResultInputs(
     );
     const trace = iterationTraceFromPrompts(prompts, traceMessages);
 
+    const passed = finalizePassedForEval({
+      matchPassed: iteration.passed,
+      trace,
+      iterationError: iteration.error,
+      failOnToolError,
+    });
+
     return {
       caseTitle: testName,
       query: prompts[0]?.getPrompt() ?? testName,
-      passed: iteration.passed,
+      passed,
       durationMs: durationMs > 0 ? durationMs : undefined,
       expectedToolCalls,
       actualToolCalls,
@@ -270,7 +292,8 @@ export function iterationsToEvalResultInputs(
  */
 export function suiteTestResultsToEvalResultInputs(
   testResults: Map<string, EvalRunResult>,
-  expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>
+  expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>,
+  failOnToolError?: boolean
 ): EvalResultInput[] {
   const inputs: EvalResultInput[] = [];
   for (const [testName, testResult] of testResults) {
@@ -299,10 +322,17 @@ export function suiteTestResultsToEvalResultInputs(
       );
       const trace = iterationTraceFromPrompts(prompts, traceMessages);
 
+      const passed = finalizePassedForEval({
+        matchPassed: iteration.passed,
+        trace,
+        iterationError: iteration.error,
+        failOnToolError,
+      });
+
       inputs.push({
         caseTitle: testName,
         query: prompts[0]?.getPrompt() ?? testName,
-        passed: iteration.passed,
+        passed,
         durationMs: durationMs > 0 ? durationMs : undefined,
         expectedToolCalls,
         actualToolCalls,

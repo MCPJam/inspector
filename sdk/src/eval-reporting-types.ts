@@ -121,6 +121,11 @@ export type MCPJamReportingConfig = {
     minimumPassRate: number;
   };
   strict?: boolean;
+  /**
+   * When not `false`, auto-reported results fail if the trace shows tool
+   * execution errors. Default: strict tool outcomes (equivalent to `true`).
+   */
+  failOnToolError?: boolean;
   externalRunId?: string;
   framework?: string;
   ci?: EvalCiMetadata;
