@@ -20,10 +20,10 @@ import {
 import type {
   BillingFeatureName,
   BillingInterval,
-  BillingLimitName,
   OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
+  PlanCatalogEntry,
 } from "@/hooks/useOrganizationBilling";
 import {
   formatBillingFeatureName,
@@ -45,32 +45,97 @@ const FEATURE_ROWS: BillingFeatureName[] = [
   "auditLog",
 ];
 
-const LIMIT_ROWS: Array<{ key: BillingLimitName; label: string }> = [
-  { key: "maxMembers", label: "Members" },
-  { key: "maxSandboxesPerWorkspace", label: "Sandboxes / workspace" },
-  { key: "maxEvalRunsPerMonth", label: "Eval runs / month" },
+function formatMembersLimit(
+  plan: OrganizationPlan,
+  value: number | null,
+): string {
+  if (value === null) {
+    return "Unlimited";
+  }
+  if (plan === "free" && value === 1) {
+    return "1";
+  }
+  if (plan === "starter" && value === 3) {
+    return "Up to 3";
+  }
+  return value.toLocaleString();
+}
+
+/** Mirrors mcpjam_pricing_page.html "Internal server registry" row. */
+function formatRegistryLimit(value: number | null): string {
+  if (value === null) {
+    return "Unlimited";
+  }
+  if (value === 0) {
+    return "Not included";
+  }
+  return `${value.toLocaleString()} entries`;
+}
+
+/** Mirrors mcpjam_pricing_page.html "Sandbox environments" row. */
+function formatSandboxEnvironments(
+  plan: OrganizationPlan,
+  value: number | null,
+): string {
+  if (plan === "enterprise") {
+    return "Dedicated";
+  }
+  if (value === null) {
+    return "Unlimited";
+  }
+  if (value === 0) {
+    return "Not included";
+  }
+  return value.toLocaleString();
+}
+
+const PLAN_LIMIT_ROWS: Array<{
+  label: string;
+  format: (entry: PlanCatalogEntry, plan: OrganizationPlan) => string;
+}> = [
+  {
+    label: "Members",
+    format: (entry, plan) => formatMembersLimit(plan, entry.limits.maxMembers),
+  },
+  {
+    label: "Eval runs / month",
+    format: (entry) => formatLimitValue(entry.limits.maxEvalRunsPerMonth),
+  },
+  {
+    label: "Sandbox environments",
+    format: (entry, plan) =>
+      formatSandboxEnvironments(plan, entry.limits.maxSandboxesPerWorkspace),
+  },
+  {
+    label: "Internal server registry",
+    format: (entry) => formatRegistryLimit(entry.limits.maxServersPerWorkspace),
+  },
+  {
+    label: "Audit logs",
+    format: (entry) => entry.auditLogRetentionLabel ?? "—",
+  },
 ];
 
 const PLAN_HIGHLIGHTS: Record<OrganizationPlan, string[]> = {
   free: [
-    "Get started with small organizations",
-    "Up to 5 members",
-    "Up to 3 workspaces",
+    "Open source and core MCP testing tools",
+    "Limited CI/CD eval runs",
+    "Community support",
   ],
   starter: [
-    "Generate Evals included",
-    "Evals CI/CD included",
-    "Sandboxes included",
+    "CI/CD runs with overage",
+    "1 sandbox environment",
+    "Up to 3 users",
   ],
   team: [
-    "Everything in Starter",
-    "Higher member and workspace limits",
-    "Priority support",
+    "Higher CI/CD run limits",
+    "5 sandbox environments",
+    "SSO included",
   ],
   enterprise: [
-    "Everything in Team",
-    "Audit Log included",
-    "SSO and bespoke support",
+    "Committed CI/CD volume pricing",
+    "SSO, SCIM, RBAC & audit logs",
+    "Data residency & compliance",
   ],
 };
 
@@ -561,7 +626,7 @@ export function OrganizationBillingSection({
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Feature</TableHead>
+                  <TableHead>Item</TableHead>
                   {PLAN_ORDER.map((plan) => (
                     <TableHead key={plan} className="text-center">
                       {planCatalog.plans[plan].displayName}
@@ -587,17 +652,15 @@ export function OrganizationBillingSection({
                     ))}
                   </TableRow>
                 ))}
-                {LIMIT_ROWS.map((limit) => (
-                  <TableRow key={limit.key}>
-                    <TableCell className="font-medium">{limit.label}</TableCell>
+                {PLAN_LIMIT_ROWS.map((row) => (
+                  <TableRow key={row.label}>
+                    <TableCell className="font-medium">{row.label}</TableCell>
                     {PLAN_ORDER.map((plan) => (
                       <TableCell
-                        key={`${limit.key}-${plan}`}
+                        key={`${row.label}-${plan}`}
                         className="text-center"
                       >
-                        {formatLimitValue(
-                          planCatalog.plans[plan].limits[limit.key],
-                        )}
+                        {row.format(planCatalog.plans[plan], plan)}
                       </TableCell>
                     ))}
                   </TableRow>

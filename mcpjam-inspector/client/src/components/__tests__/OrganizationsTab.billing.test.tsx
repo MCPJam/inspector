@@ -12,7 +12,7 @@ const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
 
 function createPlanCatalog() {
   return {
-    catalogVersion: "2026-03-19",
+    catalogVersion: "mcpjam_pricing_page",
     currency: "usd",
     plans: {
       free: {
@@ -30,18 +30,19 @@ function createPlanCatalog() {
           prioritySupport: false,
         },
         limits: {
-          maxMembers: 5,
-          maxWorkspaces: 3,
-          maxServersPerWorkspace: 10,
+          maxMembers: 1,
+          maxWorkspaces: null,
+          maxServersPerWorkspace: 0,
           maxSandboxesPerWorkspace: 0,
-          maxEvalRunsPerMonth: 0,
+          maxEvalRunsPerMonth: 5,
         },
+        auditLogRetentionLabel: "Not included",
       },
       starter: {
         plan: "starter",
         displayName: "Starter",
         isSelfServe: true,
-        prices: { monthly: 2900, annual: 29000 },
+        prices: { monthly: 5900, annual: 58800 },
         features: {
           evals: true,
           sandboxes: true,
@@ -52,34 +53,36 @@ function createPlanCatalog() {
           prioritySupport: false,
         },
         limits: {
-          maxMembers: 25,
-          maxWorkspaces: 10,
-          maxServersPerWorkspace: 25,
-          maxSandboxesPerWorkspace: 5,
+          maxMembers: 3,
+          maxWorkspaces: null,
+          maxServersPerWorkspace: 10,
+          maxSandboxesPerWorkspace: 1,
           maxEvalRunsPerMonth: 500,
         },
+        auditLogRetentionLabel: "Not included",
       },
       team: {
         plan: "team",
         displayName: "Team",
         isSelfServe: true,
-        prices: { monthly: 7900, annual: 79000 },
+        prices: { monthly: 7100, annual: 70800 },
         features: {
           evals: true,
           sandboxes: true,
           cicd: true,
           customDomains: true,
           auditLog: false,
-          sso: false,
+          sso: true,
           prioritySupport: true,
         },
         limits: {
-          maxMembers: 100,
-          maxWorkspaces: 50,
-          maxServersPerWorkspace: 100,
-          maxSandboxesPerWorkspace: null,
-          maxEvalRunsPerMonth: null,
+          maxMembers: null,
+          maxWorkspaces: null,
+          maxServersPerWorkspace: 50,
+          maxSandboxesPerWorkspace: 5,
+          maxEvalRunsPerMonth: 5000,
         },
+        auditLogRetentionLabel: "Not included",
       },
       enterprise: {
         plan: "enterprise",
@@ -102,6 +105,7 @@ function createPlanCatalog() {
           maxSandboxesPerWorkspace: null,
           maxEvalRunsPerMonth: null,
         },
+        auditLogRetentionLabel: "Included",
       },
     },
   };
@@ -433,9 +437,9 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(screen.getByText("$29")).toBeInTheDocument();
+    expect(screen.getByText(/\$59/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
-    expect(screen.getByText("$24.17")).toBeInTheDocument();
+    expect(screen.getByText(/\$49/)).toBeInTheDocument();
   });
 
   it("starts checkout for Starter from the billing subview", async () => {

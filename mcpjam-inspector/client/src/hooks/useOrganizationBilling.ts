@@ -87,6 +87,8 @@ export interface PlanCatalogEntry {
   prices: Record<BillingInterval, number | null>;
   features: Record<BillingFeatureName, boolean>;
   limits: Record<BillingLimitName, number | null>;
+  /** Plan comparison table: human-readable audit retention (e.g. "None", "7 days"). */
+  auditLogRetentionLabel?: string;
 }
 
 export interface PlanCatalog {
