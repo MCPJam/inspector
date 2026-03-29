@@ -45,6 +45,7 @@ import {
   formatBillingFeatureName,
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
+import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 import { cn } from "@/lib/utils";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
@@ -55,6 +56,8 @@ import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 interface OrganizationsTabProps {
   organizationId?: string;
   section?: OrganizationRouteSection;
+  checkoutIntent?: CheckoutIntentWithOrganization | null;
+  onCheckoutIntentConsumed?: () => void;
 }
 
 function getOrganizationRouteHash(
@@ -69,6 +72,8 @@ function getOrganizationRouteHash(
 export function OrganizationsTab({
   organizationId,
   section = "overview",
+  checkoutIntent = null,
+  onCheckoutIntentConsumed,
 }: OrganizationsTabProps) {
   const { user, signIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -147,15 +152,33 @@ export function OrganizationsTab({
     );
   }
 
-  return <OrganizationPage organization={organization} section={section} />;
+  return (
+    <OrganizationPage
+      organization={organization}
+      section={section}
+      checkoutIntent={
+        checkoutIntent?.organizationId === organization._id
+          ? checkoutIntent
+          : null
+      }
+      onCheckoutIntentConsumed={onCheckoutIntentConsumed}
+    />
+  );
 }
 
 interface OrganizationPageProps {
   organization: Organization;
   section: OrganizationRouteSection;
+  checkoutIntent?: CheckoutIntentWithOrganization | null;
+  onCheckoutIntentConsumed?: () => void;
 }
 
-function OrganizationPage({ organization, section }: OrganizationPageProps) {
+function OrganizationPage({
+  organization,
+  section,
+  checkoutIntent = null,
+  onCheckoutIntentConsumed,
+}: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const currentUserEmail = user?.email;
@@ -611,6 +634,8 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
               isOpeningPortal={isOpeningPortal}
               onManageBilling={handleManageBilling}
               onStartCheckout={handlePlanCheckout}
+              checkoutIntent={checkoutIntent}
+              onCheckoutIntentConsumed={onCheckoutIntentConsumed}
             />
             {billingError ? (
               <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">

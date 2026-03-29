@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useState } from "react";
 import { Check, CreditCard, Info, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
@@ -22,6 +23,7 @@ import type {
   OrganizationPlan,
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
+import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import {
   getDisplayPriceCentsForPlan,
   MARKETING_PLAN_PRICE_CENTS_USD,
@@ -459,6 +461,8 @@ interface OrganizationBillingSectionProps {
     plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
+  checkoutIntent?: CheckoutIntentWithOrganization | null;
+  onCheckoutIntentConsumed?: () => void;
 }
 
 export function OrganizationBillingSection({
@@ -471,9 +475,17 @@ export function OrganizationBillingSection({
   isOpeningPortal,
   onManageBilling,
   onStartCheckout,
+  checkoutIntent = null,
+  onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
+
+  useEffect(() => {
+    if (checkoutIntent?.interval) {
+      setBillingInterval(checkoutIntent.interval);
+    }
+  }, [checkoutIntent?.interval]);
 
   useEffect(() => {
     if (billingStatus?.billingInterval === "annual") {
@@ -483,6 +495,60 @@ export function OrganizationBillingSection({
     }
   }, [billingStatus?.billingInterval]);
 
+  useEffect(() => {
+    if (!checkoutIntent) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const run = async () => {
+      if (isLoadingBilling || isLoadingPlanCatalog) {
+        return;
+      }
+      if (!billingStatus || !planCatalog) {
+        return;
+      }
+
+      if (!billingStatus.billingConfigured || !billingStatus.canManageBilling) {
+        if (!cancelled) {
+          toast.error(
+            !billingStatus.canManageBilling
+              ? "Only organization owners can start checkout."
+              : "Checkout isn't available in this environment.",
+          );
+          onCheckoutIntentConsumed?.();
+        }
+        return;
+      }
+
+      try {
+        await onStartCheckout(checkoutIntent.plan, checkoutIntent.interval);
+        if (!cancelled) {
+          onCheckoutIntentConsumed?.();
+        }
+      } catch {
+        if (!cancelled) {
+          onCheckoutIntentConsumed?.();
+        }
+      }
+    };
+
+    void run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    billingStatus,
+    checkoutIntent,
+    isLoadingBilling,
+    isLoadingPlanCatalog,
+    onCheckoutIntentConsumed,
+    onStartCheckout,
+    planCatalog,
+  ]);
+
   const currentPlan = billingStatus?.plan ?? "free";
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
@@ -491,6 +557,15 @@ export function OrganizationBillingSection({
 
   return (
     <div className="space-y-5">
+      {checkoutIntent ? (
+        <div
+          className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
+          data-testid="billing-deep-link-redirect"
+        >
+          <Loader2 className="size-4 shrink-0 animate-spin" aria-hidden />
+          Redirecting to checkout…
+        </div>
+      ) : null}
       <div className="space-y-1.5">
         <div className="flex items-center gap-2 text-xl font-semibold tracking-tight">
           <CreditCard

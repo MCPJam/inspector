@@ -1,5 +1,5 @@
 import { useConvexAuth } from "convex/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -82,6 +82,19 @@ import {
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import {
+  clearCheckoutIntentFromUrl,
+  clearPersistedCheckoutIntent,
+  hasInvalidCheckoutIntervalParam,
+  hasInvalidCheckoutQueryParams,
+  hashMatchesOrganizationBilling,
+  isBillingEntryPathname,
+  persistCheckoutIntent,
+  readCheckoutIntentFromSearch,
+  readPersistedCheckoutIntent,
+  resolveCheckoutOrganizationId,
+  type CheckoutIntentWithOrganization,
+} from "./lib/billing-deep-link";
+import {
   getInvalidOrganizationRouteNavigationTarget,
   getWorkspaceSwitchNavigationTarget,
   resolveHostedNavigation,
@@ -145,6 +158,10 @@ export default function App() {
   const [chatHasMessages, setChatHasMessages] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
+  const billingDeepLinkNavRef = useRef(false);
+  /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
+  const billingCheckoutQueryConsumedRef = useRef(false);
+  const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
@@ -367,6 +384,7 @@ export default function App() {
     activeWorkspaceId,
     handleSwitchWorkspace,
     handleCreateWorkspace,
+    handleLeaveWorkspace,
     handleUpdateWorkspace,
     handleUpdateClientConfig,
     handleDeleteWorkspace,
@@ -663,6 +681,115 @@ export default function App() {
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
 
+  // `/billing?plan=&interval=` → auth (if needed) → org billing hash → auto-checkout when intent is valid.
+  useEffect(() => {
+    if (isDebugCallback) return;
+    if (isHostedChatRoute) return;
+
+    const path = window.location.pathname;
+    if (!isBillingEntryPathname(path)) {
+      billingCheckoutQueryConsumedRef.current = false;
+    }
+
+    if (window.location.pathname === "/callback") return;
+
+    const onBillingEntry = isBillingEntryPathname(path);
+
+    if (onBillingEntry) {
+      billingDeepLinkNavRef.current = false;
+      const search = window.location.search;
+      const invalid =
+        hasInvalidCheckoutQueryParams(search) ||
+        hasInvalidCheckoutIntervalParam(search);
+
+      if (invalid) {
+        clearPersistedCheckoutIntent();
+        billingCheckoutQueryConsumedRef.current = false;
+      } else {
+        const fromUrl = readCheckoutIntentFromSearch(search);
+        if (fromUrl) {
+          persistCheckoutIntent(fromUrl);
+          billingCheckoutQueryConsumedRef.current = true;
+        } else if (!new URLSearchParams(search).has("plan")) {
+          if (!billingCheckoutQueryConsumedRef.current) {
+            clearPersistedCheckoutIntent();
+          }
+        }
+      }
+
+      clearCheckoutIntentFromUrl();
+
+      if (!isAuthenticated) {
+        if (!isAuthLoading) {
+          void signIn();
+        }
+        return;
+      }
+
+      if (path !== "/" && path !== "") {
+        window.history.replaceState(
+          {},
+          "",
+          `${window.location.origin}/${window.location.hash}`,
+        );
+        setBillingPathSync((n) => n + 1);
+      }
+    }
+
+    if (!isAuthenticated || isAuthLoading) return;
+    if (isLoadingOrganizations) return;
+
+    if (billingEntitlementsUiEnabled === false) {
+      return;
+    }
+
+    const persisted = readPersistedCheckoutIntent();
+    if (!persisted) {
+      billingDeepLinkNavRef.current = false;
+      return;
+    }
+
+    const workspaceOrgId = activeWorkspace?.organizationId;
+    const orgId = resolveCheckoutOrganizationId(
+      sortedOrganizations,
+      activeOrganizationId,
+      workspaceOrgId,
+    );
+
+    if (!orgId) {
+      toast.error("Create or join an organization to continue with checkout.");
+      clearPersistedCheckoutIntent();
+      billingDeepLinkNavRef.current = false;
+      return;
+    }
+
+    const h = window.location.hash || "";
+    if (hashMatchesOrganizationBilling(h, orgId)) {
+      return;
+    }
+
+    if (billingDeepLinkNavRef.current) {
+      return;
+    }
+
+    applyNavigation(`organizations/${orgId}/billing`, { updateHash: true });
+    billingDeepLinkNavRef.current = true;
+  }, [
+    activeOrganizationId,
+    activeWorkspace?.organizationId,
+    applyNavigation,
+    billingEntitlementsUiEnabled,
+    billingPathSync,
+    isAuthLoading,
+    isAuthenticated,
+    isDebugCallback,
+    isHostedChatRoute,
+    isLoadingOrganizations,
+    signIn,
+    sortedOrganizations,
+    workOsUser?.id,
+  ]);
+
   // Redirect away from tabs hidden by the ci-evals feature flag.
   // Use strict equality to avoid redirecting while the flag is still loading (undefined).
   useEffect(() => {
@@ -842,6 +969,20 @@ export default function App() {
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
         }
       : undefined;
+
+  const persistedCheckoutIntent = readPersistedCheckoutIntent();
+  const checkoutIntentForBilling: CheckoutIntentWithOrganization | null =
+    billingUiEnabled &&
+    activeTab === "organizations" &&
+    currentHashRoute.organizationId &&
+    currentHashRoute.organizationSection === "billing" &&
+    persistedCheckoutIntent
+      ? {
+          plan: persistedCheckoutIntent.plan,
+          interval: persistedCheckoutIntent.interval,
+          organizationId: currentHashRoute.organizationId,
+        }
+      : null;
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
@@ -1088,6 +1229,11 @@ export default function App() {
                 currentHashRoute.organizationSection ??
                 activeOrganizationSection
               }
+              checkoutIntent={checkoutIntentForBilling}
+              onCheckoutIntentConsumed={() => {
+                clearPersistedCheckoutIntent();
+                billingDeepLinkNavRef.current = false;
+              }}
             />
           )}
         </div>
