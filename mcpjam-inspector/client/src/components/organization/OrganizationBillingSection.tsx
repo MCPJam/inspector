@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Check, CreditCard, Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -478,6 +478,7 @@ export function OrganizationBillingSection({
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
+  const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
 
@@ -497,8 +498,11 @@ export function OrganizationBillingSection({
 
   useEffect(() => {
     if (!checkoutIntent) {
+      autoCheckoutStartedForKeyRef.current = null;
       return;
     }
+
+    const intentKey = `${checkoutIntent.organizationId}:${checkoutIntent.plan}:${checkoutIntent.interval}`;
 
     let cancelled = false;
 
@@ -521,6 +525,11 @@ export function OrganizationBillingSection({
         }
         return;
       }
+
+      if (autoCheckoutStartedForKeyRef.current === intentKey) {
+        return;
+      }
+      autoCheckoutStartedForKeyRef.current = intentKey;
 
       try {
         await onStartCheckout(checkoutIntent.plan, checkoutIntent.interval);

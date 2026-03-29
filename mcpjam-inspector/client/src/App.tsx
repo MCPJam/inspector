@@ -873,6 +873,31 @@ export default function App() {
     ],
   );
 
+  const persistedCheckout = readPersistedCheckoutIntent();
+  const checkoutIntentForBilling = useMemo((): CheckoutIntentWithOrganization | null => {
+    if (
+      !billingUiEnabled ||
+      activeTab !== "organizations" ||
+      !currentHashRoute.organizationId ||
+      currentHashRoute.organizationSection !== "billing" ||
+      !persistedCheckout
+    ) {
+      return null;
+    }
+    return {
+      plan: persistedCheckout.plan,
+      interval: persistedCheckout.interval,
+      organizationId: currentHashRoute.organizationId,
+    };
+  }, [
+    billingUiEnabled,
+    activeTab,
+    currentHashRoute.organizationId,
+    currentHashRoute.organizationSection,
+    persistedCheckout?.plan,
+    persistedCheckout?.interval,
+  ]);
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
@@ -969,20 +994,6 @@ export default function App() {
           hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
         }
       : undefined;
-
-  const persistedCheckoutIntent = readPersistedCheckoutIntent();
-  const checkoutIntentForBilling: CheckoutIntentWithOrganization | null =
-    billingUiEnabled &&
-    activeTab === "organizations" &&
-    currentHashRoute.organizationId &&
-    currentHashRoute.organizationSection === "billing" &&
-    persistedCheckoutIntent
-      ? {
-          plan: persistedCheckoutIntent.plan,
-          interval: persistedCheckoutIntent.interval,
-          organizationId: currentHashRoute.organizationId,
-        }
-      : null;
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
