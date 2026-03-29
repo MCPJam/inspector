@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useQuery } from "convex/react";
 import {
   ChartContainer,
   ChartTooltip,
@@ -20,8 +21,11 @@ import {
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { AiTriagePanel } from "./ai-triage-panel";
+import { TraceRepairBanner } from "./trace-repair-banner";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import { ExternalLink } from "lucide-react";
+import { startTraceRepair, stopTraceRepair } from "@/lib/apis/evals-api";
+import { Button } from "@/components/ui/button";
+import { ExternalLink, Loader2 } from "lucide-react";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -345,6 +349,134 @@ export function RunDetailView({
     return m;
   }, [caseGroupsForSelectedRun]);
 
+  const loopCaseTitleByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const iter of caseGroupsForSelectedRun) {
+      const key =
+        iter.testCaseSnapshot?.caseKey ??
+        iter.testCaseId ??
+        iter._id;
+      const title = iter.testCaseSnapshot?.title;
+      if (title) m[key] = title;
+    }
+    return m;
+  }, [caseGroupsForSelectedRun]);
+
+  const traceRepairJobView = useQuery(
+    "traceRepair:getTraceRepairJobView" as any,
+    selectedRunDetails.source !== "sdk"
+      ? { testSuiteId: selectedRunDetails.suiteId }
+      : "skip",
+  );
+
+  const latestTraceRepairOutcome = useQuery(
+    "traceRepair:getLatestTraceRepairOutcome" as any,
+    selectedRunDetails.source !== "sdk"
+      ? { testSuiteId: selectedRunDetails.suiteId }
+      : "skip",
+  );
+
+  const traceRepairSuiteJobActive =
+    traceRepairJobView != null &&
+    typeof traceRepairJobView === "object" &&
+    traceRepairJobView.scope === "suite" &&
+    ["queued", "running", "stopping"].includes(traceRepairJobView.status);
+
+  const [traceRepairStarting, setTraceRepairStarting] = useState(false);
+
+  const handleStartTraceRepair = useCallback(async () => {
+    setTraceRepairStarting(true);
+    try {
+      await startTraceRepair({
+        scope: "suite",
+        suiteId: selectedRunDetails.suiteId,
+        sourceRunId: selectedRunDetails._id,
+      });
+    } finally {
+      setTraceRepairStarting(false);
+    }
+  }, [selectedRunDetails.suiteId, selectedRunDetails._id]);
+
+  const handleStopTraceRepair = useCallback(async () => {
+    if (
+      !traceRepairJobView ||
+      typeof traceRepairJobView !== "object" ||
+      !traceRepairJobView.jobId
+    ) {
+      return;
+    }
+    await stopTraceRepair(traceRepairJobView.jobId as string);
+  }, [traceRepairJobView]);
+
+  const traceRepairActiveBannerView =
+    traceRepairSuiteJobActive &&
+    traceRepairJobView &&
+    typeof traceRepairJobView === "object"
+      ? {
+          jobId: String(traceRepairJobView.jobId),
+          status: String(traceRepairJobView.status),
+          phase: String(traceRepairJobView.phase),
+          scope: "suite" as const,
+          currentCaseKey: traceRepairJobView.currentCaseKey ?? undefined,
+          activeCaseKeys: traceRepairJobView.activeCaseKeys ?? [],
+          attemptLimit: traceRepairJobView.attemptLimit,
+          provisionalAppliedCount: traceRepairJobView.provisionalAppliedCount,
+          durableFixCount: traceRepairJobView.durableFixCount,
+          regressedCount: traceRepairJobView.regressedCount,
+          serverLikelyCount: traceRepairJobView.serverLikelyCount,
+          exhaustedCount: traceRepairJobView.exhaustedCount,
+          promisingCount: traceRepairJobView.promisingCount,
+          accuracyBefore: traceRepairJobView.accuracyBefore ?? null,
+          accuracyAfter: traceRepairJobView.accuracyAfter ?? null,
+        }
+      : null;
+
+  const latestTraceRepairOutcomeBanner =
+    latestTraceRepairOutcome && typeof latestTraceRepairOutcome === "object"
+      ? {
+          ...latestTraceRepairOutcome,
+          jobId: String(latestTraceRepairOutcome.jobId),
+          status: String(latestTraceRepairOutcome.status),
+          phase: String(latestTraceRepairOutcome.phase),
+          scope:
+            latestTraceRepairOutcome.scope === "case"
+              ? ("case" as const)
+              : ("suite" as const),
+          stopReason: latestTraceRepairOutcome.stopReason,
+          lastError: latestTraceRepairOutcome.lastError,
+          completedAt: latestTraceRepairOutcome.completedAt,
+          updatedAt: latestTraceRepairOutcome.updatedAt,
+        }
+      : null;
+
+  const traceRepairEligible =
+    selectedRunDetails.source !== "sdk" &&
+    selectedRunDetails.status === "completed" &&
+    computedStats.failed > 0 &&
+    selectedRunDetails.hasServerReplayConfig === true &&
+    !traceRepairSuiteJobActive;
+
+  const traceRepairCopyJobId = useMemo(() => {
+    if (traceRepairActiveBannerView?.jobId) {
+      return traceRepairActiveBannerView.jobId;
+    }
+    if (
+      latestTraceRepairOutcomeBanner?.scope === "suite" &&
+      latestTraceRepairOutcomeBanner.jobId
+    ) {
+      return latestTraceRepairOutcomeBanner.jobId;
+    }
+    return null;
+  }, [traceRepairActiveBannerView, latestTraceRepairOutcomeBanner]);
+
+  const traceRepairCopyDebug =
+    selectedRunDetails.source !== "sdk" && traceRepairCopyJobId != null;
+
+  const traceRepairDebugJson = useQuery(
+    "traceRepair:getTraceRepairJobDebugJson" as any,
+    traceRepairCopyDebug ? { jobId: traceRepairCopyJobId } : "skip",
+  );
+
   return (
     <div
       className={cn(
@@ -368,6 +500,11 @@ export function RunDetailView({
             className="mb-4 text-xs text-muted-foreground"
             title={selectedRunDetails.replayedFromRunId}
           >
+            {selectedRunDetails.traceRepairJobId ? (
+              <span className="mr-2 rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90">
+                Trace repair
+              </span>
+            ) : null}
             Replay of{" "}
             <span className="font-mono text-foreground/90">
               Run {formatRunId(selectedRunDetails.replayedFromRunId)}
@@ -398,8 +535,25 @@ export function RunDetailView({
               </div>
               <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">Failed</div>
-                <div className="text-sm font-semibold tabular-nums">
-                  {computedStats.failed.toLocaleString()}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-semibold tabular-nums">
+                    {computedStats.failed.toLocaleString()}
+                  </div>
+                  {traceRepairEligible ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 gap-1 text-[10px]"
+                      disabled={traceRepairStarting}
+                      onClick={() => void handleStartTraceRepair()}
+                    >
+                      {traceRepairStarting ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : null}
+                      Trace repair
+                    </Button>
+                  ) : null}
                 </div>
               </div>
               <div className="min-w-0 space-y-0.5">
@@ -549,12 +703,31 @@ export function RunDetailView({
         </div>
       </div>
 
-      {/* AI Triage — shown between summary and iteration panes */}
-      <AiTriagePanel
-        run={selectedRunDetails}
-        failedCount={computedStats.failed}
-        failedTestTitleToCaseId={failedTestTitleToCaseId}
+      <TraceRepairBanner
+        scope="suite"
+        className="mt-3"
+        activeView={traceRepairActiveBannerView}
+        caseTitleByKey={loopCaseTitleByKey}
+        onStop={handleStopTraceRepair}
+        latestOutcome={
+          latestTraceRepairOutcomeBanner?.scope === "suite"
+            ? latestTraceRepairOutcomeBanner
+            : null
+        }
+        showTerminalOutcome={false}
+        traceRepairCopyDebug={traceRepairCopyDebug}
+        traceRepairDebugJson={traceRepairDebugJson}
       />
+
+      {/* AI Triage — shown between summary and iteration panes */}
+        <AiTriagePanel
+          run={selectedRunDetails}
+          failedCount={computedStats.failed}
+          failedIterations={caseGroupsForSelectedRun.filter(
+            (iteration) => computeIterationResult(iteration) === "failed",
+          )}
+          failedTestTitleToCaseId={failedTestTitleToCaseId}
+        />
 
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div

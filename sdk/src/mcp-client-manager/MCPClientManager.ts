@@ -135,6 +135,7 @@ export class MCPClientManager {
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
+  private readonly lazyConnect: boolean;
 
   // Progress token counter for uniqueness
   private progressTokenCounter = 0;
@@ -160,10 +161,13 @@ export class MCPClientManager {
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultProgressHandler = options.progressHandler;
+    this.lazyConnect = options.lazyConnect ?? false;
 
-    // Start connecting to all configured servers
-    for (const [id, config] of Object.entries(servers)) {
-      void this.connectToServer(id, config);
+    // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
+    if (!this.lazyConnect) {
+      for (const [id, config] of Object.entries(servers)) {
+        void this.connectToServer(id, config);
+      }
     }
   }
 

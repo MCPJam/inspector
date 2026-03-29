@@ -46,6 +46,7 @@ export type EvalCase = {
   testSuiteId: string;
   createdBy: string;
   workspaceId?: string;
+  caseKey?: string;
   title: string;
   query: string;
   models: Array<{
@@ -70,6 +71,7 @@ export type EvalIteration = {
   testCaseId?: string;
   workspaceId?: string;
   testCaseSnapshot?: {
+    caseKey?: string;
     title: string;
     query: string;
     provider: string;
@@ -139,6 +141,8 @@ export type EvalSuiteRun = {
   result?: "pending" | "passed" | "failed" | "cancelled";
   source?: "ui" | "sdk";
   replayedFromRunId?: string;
+  /** Set when this run was created by the Trace repair suite replay step. */
+  traceRepairJobId?: string;
   hasServerReplayConfig?: boolean;
   externalRunId?: string;
   framework?: string;
@@ -167,6 +171,26 @@ export type EvalSuiteRun = {
       recommendation: string;
     }>;
     topRecommendations: string[];
+    refinementCandidates?: Array<{
+      testCaseTitle: string;
+      failureSignature: string;
+      testWeaknessHypothesis: string;
+      serverHypothesis: string;
+      confidenceChecklist: string[];
+      paraphraseQuery?: string;
+      candidate: {
+        title: string;
+        query: string;
+        expectedToolCalls: Array<{
+          toolName: string;
+          arguments: Record<string, any>;
+        }>;
+        isNegativeTest?: boolean;
+        scenario?: string;
+        expectedOutput?: string;
+        rationale?: string;
+      };
+    }>;
     suggestedTestCases?: Array<{
       title: string;
       query: string;
@@ -184,6 +208,75 @@ export type EvalSuiteRun = {
     generatedAt: number;
     modelUsed: string;
   };
+};
+
+export type EvalRefinementSession = {
+  _id: string;
+  status:
+    | "pending_candidate"
+    | "ready"
+    | "verifying"
+    | "completed"
+    | "failed";
+  outcome?: "improved_test" | "still_ambiguous" | "server_likely";
+  failureSignature?: string;
+  testWeaknessHypothesis?: string;
+  serverHypothesis?: string;
+  confidenceChecklist?: string[];
+  candidateParaphraseQuery?: string;
+  verificationRuns: Array<{
+    label: string;
+    iterationId?: string;
+    provider: string;
+    model: string;
+    query: string;
+    passed: boolean;
+    failureSignature?: string;
+  }>;
+  attributionSummary?: string;
+  promotedAt?: number;
+  updatedAt: number;
+  baseSnapshot?: {
+    caseKey?: string;
+    title: string;
+    query: string;
+    runs: number;
+    models: Array<{ model: string; provider: string }>;
+    expectedToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
+    isNegativeTest?: boolean;
+    scenario?: string;
+    expectedOutput?: string;
+    advancedConfig?: Record<string, unknown>;
+  };
+  candidateSnapshot?: {
+    caseKey?: string;
+    title: string;
+    query: string;
+    runs: number;
+    models: Array<{ model: string; provider: string }>;
+    expectedToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
+    isNegativeTest?: boolean;
+    scenario?: string;
+    expectedOutput?: string;
+    advancedConfig?: Record<string, unknown>;
+  };
+};
+
+export type EvalRunRefinementCase = {
+  sourceIterationId: string;
+  testCaseId?: string;
+  caseKey: string;
+  title: string;
+  query: string;
+  failureSignature?: string;
+  failureStreak: number;
+  session: EvalRefinementSession | null;
 };
 
 export type EvalSuiteOverviewEntry = {

@@ -43,6 +43,7 @@ import {
 } from "./evals/eval-trace-capture";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
+import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 
 export type EvalTestCase = {
   title: string;
@@ -79,6 +80,17 @@ export type RunEvalSuiteOptions = {
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
 };
 
+/** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
+export type EvalIterationOutcome = {
+  evaluation: EvaluationResult;
+  iterationId?: string;
+};
+
+export type RunEvalSuiteWithAiSdkResult = {
+  /** Only set when `runId === null` (quick run); one entry per (test × run index) in suite order. */
+  quickRunIterationOutcomes?: EvalIterationOutcome[];
+};
+
 const MAX_STEPS = 20;
 
 type ToolSet = Record<string, any>;
@@ -106,7 +118,7 @@ async function createIterationDirectly(
       "testSuites:recordIterationStartWithoutRun" as any,
       {
         testCaseId: params.testCaseId,
-        testCaseSnapshot: params.testCaseSnapshot,
+        testCaseSnapshot: sanitizeForConvexTransport(params.testCaseSnapshot),
         iterationNumber: params.iterationNumber,
         startedAt: params.startedAt,
       },
@@ -163,10 +175,12 @@ async function finishIterationDirectly(
       iterationId: params.iterationId,
       result,
       status: iterationStatus,
-      actualToolCalls: params.toolsCalled,
+      actualToolCalls: sanitizeForConvexTransport(params.toolsCalled),
       tokensUsed: params.usage.totalTokens ?? 0,
-      messages: params.messages,
-      ...(params.spans?.length ? { spans: params.spans } : {}),
+      messages: sanitizeForConvexTransport(params.messages),
+      ...(params.spans?.length
+        ? { spans: sanitizeForConvexTransport(params.spans) }
+        : {}),
       error: params.error,
       errorDetails: params.errorDetails,
     });
@@ -242,8 +256,10 @@ const runIterationWithAiSdk = async ({
         { runId },
       );
       if (currentRun?.status === "cancelled") {
-        // Return empty result for cancelled iteration
-        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
+        return {
+          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          iterationId: undefined,
+        };
       }
     } catch (error) {
       // If run not found, it was likely deleted - skip iteration
@@ -253,7 +269,10 @@ const runIterationWithAiSdk = async ({
         errorMessage.includes("not found") ||
         errorMessage.includes("unauthorized")
       ) {
-        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
+        return {
+          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          iterationId: undefined,
+        };
       }
     }
   }
@@ -511,13 +530,19 @@ const runIterationWithAiSdk = async ({
       await finishIterationDirectly(convexClient, finishParams);
     }
 
-    return evaluation;
+    return {
+      evaluation,
+      iterationId: iterationId ?? undefined,
+    };
   } catch (error) {
     // Check if request was aborted
     if (error instanceof Error && error.name === "AbortError") {
       logger.debug("[evals] iteration aborted due to cancellation");
       // Don't record anything for aborted iterations
-      return evaluateResults(expectedToolCalls, [], test.isNegativeTest);
+      return {
+        evaluation: evaluateResults(expectedToolCalls, [], test.isNegativeTest),
+        iterationId: undefined,
+      };
     }
 
     logger.error("[evals] iteration failed", error);
@@ -572,7 +597,10 @@ const runIterationWithAiSdk = async ({
     } else {
       await finishIterationDirectly(convexClient, failParams);
     }
-    return evaluateResults(expectedToolCalls, [], test.isNegativeTest);
+    return {
+      evaluation: evaluateResults(expectedToolCalls, [], test.isNegativeTest),
+      iterationId: iterationId ?? undefined,
+    };
   }
 };
 
@@ -596,8 +624,10 @@ const runIterationViaBackend = async ({
         { runId },
       );
       if (currentRun?.status === "cancelled") {
-        // Return empty result for cancelled iteration
-        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
+        return {
+          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          iterationId: undefined,
+        };
       }
     } catch (error) {
       // If run not found, it was likely deleted - skip iteration
@@ -607,7 +637,10 @@ const runIterationViaBackend = async ({
         errorMessage.includes("not found") ||
         errorMessage.includes("unauthorized")
       ) {
-        return evaluateResults(test.expectedToolCalls, [], test.isNegativeTest);
+        return {
+          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          iterationId: undefined,
+        };
       }
     }
   }
@@ -932,7 +965,10 @@ const runIterationViaBackend = async ({
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") {
         logger.debug("[evals] backend iteration aborted due to cancellation");
-        return evaluateResults(expectedToolCalls, [], test.isNegativeTest);
+        return {
+          evaluation: evaluateResults(expectedToolCalls, [], test.isNegativeTest),
+          iterationId: undefined,
+        };
       }
 
       if (error instanceof Error) {
@@ -1012,7 +1048,10 @@ const runIterationViaBackend = async ({
     await finishIterationDirectly(convexClient, finishParams);
   }
 
-  return evaluation;
+  return {
+    evaluation,
+    iterationId: iterationId ?? undefined,
+  };
 };
 
 const runTestCase = async (params: {
@@ -1045,11 +1084,11 @@ const runTestCase = async (params: {
   const modelDefinition = buildModelDefinition(test);
   const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
 
-  const evaluations: EvaluationResult[] = [];
+  const outcomes: EvalIterationOutcome[] = [];
 
   for (let runIndex = 0; runIndex < test.runs; runIndex++) {
     if (isJamModel) {
-      const evaluation = await runIterationViaBackend({
+      const iterationOutcome = await runIterationViaBackend({
         test,
         runIndex,
         tools,
@@ -1063,11 +1102,11 @@ const runTestCase = async (params: {
         runId,
         abortSignal,
       });
-      evaluations.push(evaluation);
+      outcomes.push(iterationOutcome);
       continue;
     }
 
-    const evaluation = await runIterationWithAiSdk({
+    const iterationOutcome = await runIterationWithAiSdk({
       test,
       runIndex,
       tools,
@@ -1080,10 +1119,10 @@ const runTestCase = async (params: {
       runId,
       abortSignal,
     });
-    evaluations.push(evaluation);
+    outcomes.push(iterationOutcome);
   }
 
-  return evaluations;
+  return outcomes;
 };
 
 export const runEvalSuiteWithAiSdk = async ({
@@ -1097,7 +1136,7 @@ export const runEvalSuiteWithAiSdk = async ({
   mcpClientManager,
   recorder: providedRecorder,
   testCaseId,
-}: RunEvalSuiteOptions) => {
+}: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const tests = config.tests ?? [];
   const serverIds = config.environment?.servers ?? [];
 
@@ -1144,7 +1183,7 @@ export const runEvalSuiteWithAiSdk = async ({
             notes: "Run cancelled by user",
           });
         }
-        return;
+        return undefined;
       }
     }
 
@@ -1205,7 +1244,7 @@ export const runEvalSuiteWithAiSdk = async ({
       }
     };
 
-    let results: PromiseSettledResult<EvaluationResult[]>[];
+    let results: PromiseSettledResult<EvalIterationOutcome[]>[];
 
     try {
       // Race between all tests completing and cancellation check
@@ -1229,24 +1268,29 @@ export const runEvalSuiteWithAiSdk = async ({
             notes: "Run cancelled by user",
           });
         }
-        return;
+        return undefined;
       }
       throw error;
     } finally {
       stopPolling = true;
     }
 
+    const quickRunOutcomes: EvalIterationOutcome[] = [];
+
     // Aggregate results from all tests
     for (const result of results) {
       if (result.status === "fulfilled") {
-        const evaluations = result.value;
-        for (const evaluation of evaluations) {
+        const outcomes = result.value;
+        for (const { evaluation } of outcomes) {
           summary.total += 1;
           if (evaluation.passed) {
             summary.passed += 1;
           } else {
             summary.failed += 1;
           }
+        }
+        if (runId === null) {
+          quickRunOutcomes.push(...outcomes);
         }
       } else {
         // Test failed entirely - log error but continue
@@ -1271,6 +1315,11 @@ export const runEvalSuiteWithAiSdk = async ({
         },
       });
     }
+
+    if (runId === null) {
+      return { quickRunIterationOutcomes: quickRunOutcomes };
+    }
+    return undefined;
   } catch (error) {
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
 

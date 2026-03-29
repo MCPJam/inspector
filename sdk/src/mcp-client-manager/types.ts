@@ -215,6 +215,11 @@ export interface MCPClientManagerOptions {
   rpcLogger?: RpcLogger;
   /** Global progress handler */
   progressHandler?: ProgressHandler;
+  /**
+   * When true, do not connect in the constructor; callers must use connectToServer
+   * (e.g. connectReplayManagerServers) to avoid racing eager connects.
+   */
+  lazyConnect?: boolean;
 }
 
 // ============================================================================

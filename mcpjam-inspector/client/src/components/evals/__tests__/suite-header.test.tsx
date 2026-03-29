@@ -115,6 +115,60 @@ describe("SuiteHeader", () => {
     ).toBeTruthy();
   });
 
+  it("shows Trace repair in playground overview when eligible", () => {
+    const playgroundSuite = { ...baseSuite, source: "ui" as const };
+    const failedUiRun = {
+      ...baseRun,
+      source: "ui" as const,
+      summary: {
+        total: 4,
+        passed: 2,
+        failed: 2,
+        passRate: 0.5,
+      },
+      completedAt: 999,
+      hasServerReplayConfig: true,
+    };
+    const onTraceRepair = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        suite={playgroundSuite}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runs={[failedUiRun]}
+        readOnlyConfig={false}
+        onEditSuite={() => {}}
+        onTraceRepairSuite={onTraceRepair}
+        traceRepairEligible
+        traceRepairSuiteJobActive={false}
+        traceRepairStarting={false}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Trace repair/i }),
+    ).toBeEnabled();
+  });
+
+  it("does not show Trace repair for SDK suites even if callback is passed", () => {
+    const onTraceRepair = vi.fn();
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        onTraceRepairSuite={onTraceRepair}
+        traceRepairEligible
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /^Trace repair$/i }),
+    ).toBeNull();
+  });
+
   it("shows Delete suite in overview when editable and calls onDelete", async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();

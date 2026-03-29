@@ -55,6 +55,22 @@ describe("argumentsMatch", () => {
     expect(argumentsMatch({ value: null }, { value: null })).toBe(true);
     expect(argumentsMatch({ value: null }, { value: undefined })).toBe(false);
   });
+
+  it("treats simple type placeholder strings as wildcard type checks", () => {
+    expect(
+      argumentsMatch(
+        { text: "string", count: "number", ok: "boolean" },
+        { text: "hello", count: 3, ok: false },
+      ),
+    ).toBe(true);
+    expect(
+      argumentsMatch(
+        { payload: "object", items: "array", anything: "any" },
+        { payload: { nested: true }, items: [1, 2], anything: "x" },
+      ),
+    ).toBe(true);
+    expect(argumentsMatch({ text: "string" }, { text: 3 })).toBe(false);
+  });
 });
 
 describe("matchToolCalls", () => {
@@ -159,6 +175,18 @@ describe("matchToolCalls", () => {
         expectedArgs: { path: "/expected.txt" },
         actualArgs: { path: "/actual.txt" },
       });
+    });
+
+    it("passes when expected arguments use placeholder types", () => {
+      const expected: ToolCall[] = [
+        { toolName: "create_view", arguments: { elements: "string" } },
+      ];
+      const actual: ToolCall[] = [
+        { toolName: "create_view", arguments: { elements: "[{\"type\":\"rectangle\"}]" } },
+      ];
+      const result = matchToolCalls(expected, actual);
+      expect(result.passed).toBe(true);
+      expect(result.argumentMismatches).toEqual([]);
     });
 
     it("handles multiple tool calls with some matching", () => {

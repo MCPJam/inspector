@@ -1,17 +1,14 @@
 import type { ModelMessage } from "ai";
 import { logger } from "../utils/logger";
-
-export interface DiscoveredTool {
-  name: string;
-  description?: string;
-  inputSchema: any;
-  outputSchema?: any;
-  serverId: string;
-}
+import type { ServerToolSnapshot } from "../utils/export-helpers.js";
+import {
+  flattenServerToolSnapshotTools,
+  renderServerToolSnapshotSection,
+} from "../utils/export-helpers.js";
 
 export interface GenerateTestsRequest {
   serverIds: string[];
-  tools: DiscoveredTool[];
+  toolSnapshot: ServerToolSnapshot;
 }
 
 export interface GeneratedTestCase {
@@ -54,12 +51,15 @@ Negative test cases are prompts where the AI assistant should NOT use any tools.
 3. **Cross-Server Tests**: If multiple servers are available, create tests that use tools from different servers together
 4. **Specific Details**: Include concrete examples (dates, names, values) to make tests actionable
 5. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes
+6. **Tool descriptions are authoritative**: If a tool description implies another tool must be called first or before first use, include that prerequisite in expectedToolCalls
+7. **No heuristic cleanup**: Do not drop discovery or prerequisite steps unless the tool metadata makes them unnecessary
 
 **Guidelines for Negative Tests:**
 1. **Edge Cases**: Create prompts that test the boundary between triggering and not triggering tools
 2. **Similar Keywords**: Use words that appear in tool descriptions but in non-actionable contexts
 3. **Meta Questions**: Ask about capabilities, documentation, or how tools work (not using them)
 4. **Conversational**: Include casual conversation that mentions tool-related topics
+5. **Inventory is context only**: Negative tests must still keep expectedToolCalls as []
 
 **Output Format (CRITICAL):**
 Respond with ONLY a valid JSON array. No explanations, no markdown code blocks, just the raw JSON array.
@@ -133,39 +133,16 @@ Example:
  * Generates test cases using the backend LLM
  */
 export async function generateTestCases(
-  tools: DiscoveredTool[],
+  toolSnapshot: ServerToolSnapshot,
   convexHttpUrl: string,
   convexAuthToken: string,
 ): Promise<GeneratedTestCase[]> {
-  // Group tools by server
-  const serverGroups = tools.reduce(
-    (acc, tool) => {
-      if (!acc[tool.serverId]) {
-        acc[tool.serverId] = [];
-      }
-      acc[tool.serverId].push(tool);
-      return acc;
-    },
-    {} as Record<string, DiscoveredTool[]>,
-  );
-
-  const serverCount = Object.keys(serverGroups).length;
+  const tools = flattenServerToolSnapshotTools(toolSnapshot);
+  const serverCount = toolSnapshot.servers.length;
   const totalTools = tools.length;
-
-  // Build context about available tools grouped by server
-  const toolsContext = Object.entries(serverGroups)
-    .map(([serverId, serverTools]) => {
-      const toolsList = serverTools
-        .map((tool) => {
-          return `  - ${tool.name}: ${tool.description || "No description"}
-    Input: ${JSON.stringify(tool.inputSchema)}`;
-        })
-        .join("\n");
-
-      return `**Server: ${serverId}** (${serverTools.length} tools)
-${toolsList}`;
-    })
-    .join("\n\n");
+  const toolsContext =
+    renderServerToolSnapshotSection(toolSnapshot).promptSection ??
+    "# Available MCP Tools\nNo tools captured.";
 
   const crossServerGuidance =
     serverCount > 1
@@ -188,7 +165,8 @@ ${toolsContext}
 3. Include scenario and expectedOutput for ALL tests
 4. Use specific examples (dates, filenames, values) for normal tests
 5. For negative tests, use keywords from tools but in non-actionable contexts
-6. Respond with ONLY a JSON array - no other text or markdown`;
+6. If tool descriptions imply prerequisites, include them explicitly in expectedToolCalls
+7. Respond with ONLY a JSON array - no other text or markdown`;
 
   const messageHistory: ModelMessage[] = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },

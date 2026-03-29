@@ -15,6 +15,7 @@ import { RunDetailView } from "../run-detail-view";
 
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
+  useQuery: () => undefined,
 }));
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
