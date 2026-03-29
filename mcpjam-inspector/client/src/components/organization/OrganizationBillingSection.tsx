@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
-import { Check, CreditCard, Loader2, Minus } from "lucide-react";
+import { Check, CreditCard, Info, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -17,21 +17,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type {
-  BillingFeatureName,
   BillingInterval,
-  BillingLimitName,
   OrganizationBillingStatus,
   OrganizationPlan,
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import {
-  formatBillingFeatureName,
   formatPlanName,
   getDisplayPriceCentsForPlan,
   MARKETING_PLAN_PRICE_CENTS_USD,
 } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
+import {
+  COMPARE_PLAN_MARKETING_SECTIONS,
+  type ComparePlanCell,
+} from "@/components/organization/compare-plan-marketing";
 
 const PLAN_ORDER: OrganizationPlan[] = [
   "free",
@@ -40,42 +46,15 @@ const PLAN_ORDER: OrganizationPlan[] = [
   "enterprise",
 ];
 
-const FEATURE_ROWS: BillingFeatureName[] = [
-  "evals",
-  "cicd",
-  "sandboxes",
-  "auditLog",
-];
-
-const LIMIT_ROWS: Array<{ key: BillingLimitName; label: string }> = [
-  { key: "maxMembers", label: "Members" },
-  { key: "maxSandboxesPerWorkspace", label: "Sandboxes / workspace" },
-  { key: "maxEvalRunsPerMonth", label: "Eval runs / month" },
-];
-
 /** Column highlighted as the recommended tier (matches common pricing-page “Popular”). */
 const POPULAR_PLAN: OrganizationPlan = "team";
 
-const COMPARE_SECTIONS: Array<{
-  title: string;
-  rows: Array<
-    | { type: "feature"; key: BillingFeatureName }
-    | { type: "limit"; key: BillingLimitName; label: string }
-  >;
-}> = [
-  {
-    title: "Product access",
-    rows: FEATURE_ROWS.map((key) => ({ type: "feature" as const, key })),
-  },
-  {
-    title: "Usage limits",
-    rows: LIMIT_ROWS.map(({ key, label }) => ({
-      type: "limit" as const,
-      key,
-      label,
-    })),
-  },
-];
+/** Defines org as the billed scope for plans and limits (vs workspaces). */
+const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
+
+const LLM_USAGE_SECTION_TITLE = "LLM Usage";
+const LLM_USAGE_SECTION_TOOLTIP =
+  "LLM usage billing isn’t live yet. Figures below are placeholders and may change.";
 
 function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
@@ -144,6 +123,9 @@ function getPlanColumnCta(params: {
   }
 
   if (isHigherTier && entry.isSelfServe) {
+    if (plan !== "starter" && plan !== "team") {
+      return { label: "Unavailable", disabled: true, variant: "outline" };
+    }
     return {
       label: "Upgrade",
       disabled:
@@ -171,7 +153,7 @@ function formatCurrency(
   }).format(amount);
 }
 
-/** Price line for the compare table; Starter uses `/mo` (single seat), Team uses `/seat/mo`. */
+/** Price line for the compare table; Starter uses flat `/mo` (3-seat cap), Team uses `/seat/mo`. */
 function formatPlanPriceLabel(
   plan: OrganizationPlan,
   amountInCents: number | null,
@@ -209,20 +191,12 @@ function formatPerSeatCadence(
   }
   if (plan === "starter") {
     return interval === "annual"
-      ? "1 seat, billed annually"
-      : "1 seat, billed monthly";
+      ? "Flat rate, billed annually"
+      : "Flat rate, billed monthly";
   }
   return interval === "annual"
     ? "Per seat, billed annually"
     : "Per seat, billed monthly";
-}
-
-function formatLimitValue(value: number | null): string {
-  if (value === null) {
-    return "Unlimited";
-  }
-
-  return value.toLocaleString();
 }
 
 const PER_SEAT_MO_SUFFIX = "/seat/mo";
@@ -274,16 +248,128 @@ function getAnnualDiscountPercent(): number {
   return Math.round(((annualizedMonthly - annual) / annualizedMonthly) * 100);
 }
 
-function FeatureAvailability({ included }: { included: boolean }) {
-  return included ? (
-    <span className="inline-flex items-center gap-1 text-sm font-medium text-foreground">
-      <Check className="size-4 text-emerald-600" />
-      Included
+const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
+  string,
+  { ariaLabel: string; content: string; contentClassName?: string }
+> = {
+  "Evals CI/CD runs": {
+    ariaLabel: "Included runs and overage pricing",
+    content: "Free: hard cap. Overages $0.02/run otherwise.",
+    contentClassName: "max-w-[20rem]",
+  },
+  "Triage Insights": {
+    ariaLabel: "About Triage Insights",
+    content: "Recommendations for how to improve your server.",
+    contentClassName: "max-w-[20rem]",
+  },
+  Uptime: {
+    ariaLabel: "Included uptime and overage",
+    content:
+      "Included hours are per plan. Overage after that is billed at $0.003 per minute.",
+    contentClassName: "max-w-[20rem]",
+  },
+  "User Feedback Insights": {
+    ariaLabel: "User feedback and usage insights",
+    content:
+      "User feedback and usage insights, e.g. to inform user intent and more effective product decisions and evaluations.",
+    contentClassName: "max-w-[26rem]",
+  },
+  Branding: {
+    ariaLabel: "About branding",
+    content:
+      "Custom branding (e.g. logo and colors) on shared sandbox experiences.",
+    contentClassName: "max-w-[18rem]",
+  },
+  Workspaces: {
+    ariaLabel: "What is a workspace?",
+    content:
+      "Workspaces are containers for your MCP servers and related objects.",
+    contentClassName: "max-w-[16rem]",
+  },
+  "Seat limit": {
+    ariaLabel: "About seat limits",
+    content:
+      "Seats don't need to be filled by a member. To add a new member, you'll need to have one empty seat.",
+    contentClassName: "max-w-[18rem]",
+  },
+  "Role-based access control (RBAC)": {
+    ariaLabel: "About RBAC",
+    content:
+      "Basic Admin/Member-style access on Team; customizable roles and fine-grained permissions on Enterprise.",
+    contentClassName: "max-w-[22rem]",
+  },
+  "Data processing agreement (DPA)": {
+    ariaLabel: "About the DPA",
+    content:
+      "A legal agreement covering how MCPJam processes personal data on your behalf",
+    contentClassName: "max-w-[22rem]",
+  },
+  "Uptime service level agreement (SLA)": {
+    ariaLabel: "About the uptime SLA",
+    content:
+      "Formal uptime commitment with Enterprise; not offered on lower tiers.",
+    contentClassName: "max-w-[18rem]",
+  },
+};
+
+function ComparePlanRowLabel({ label }: { label: string }) {
+  const tip = COMPARE_PLAN_ROW_LABEL_TOOLTIPS[label];
+  if (!tip) {
+    return <>{label}</>;
+  }
+  return (
+    <span className="inline-flex max-w-full items-center gap-1.5">
+      <span className="min-w-0">{label}</span>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={tip.ariaLabel}
+          >
+            <Info className="size-3.5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent
+          side="right"
+          sideOffset={6}
+          className={cn("text-balance", tip.contentClassName)}
+        >
+          {tip.content}
+        </TooltipContent>
+      </Tooltip>
     </span>
-  ) : (
-    <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-      <Minus className="size-4" />
-      Not included
+  );
+}
+
+function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
+  if (cell.kind === "check") {
+    return (
+      <span className="flex w-full justify-center">
+        <Check
+          className="size-4 shrink-0 text-emerald-600"
+          aria-hidden
+        />
+        <span className="sr-only">Included</span>
+      </span>
+    );
+  }
+  if (cell.kind === "x") {
+    return (
+      <span className="flex w-full justify-center text-sm text-muted-foreground/80">
+        <span aria-hidden>-</span>
+        <span className="sr-only">Not included</span>
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "block w-full text-center text-sm text-muted-foreground",
+        cell.emphasize && "font-semibold text-foreground",
+      )}
+    >
+      {cell.text}
     </span>
   );
 }
@@ -491,6 +577,9 @@ export function OrganizationBillingSection({
                 <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
                   Find the right plan for your team
                 </CardTitle>
+                <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                  {ORG_COMPARE_PLANS_NOTE}
+                </p>
               </div>
               <div className="mb-4">
                 <BillingIntervalToggle
@@ -504,7 +593,7 @@ export function OrganizationBillingSection({
               </div>
             </div>
           ) : (
-            <div className="relative w-full overflow-x-auto">
+            <div className="relative w-full overflow-x-auto overscroll-x-contain">
               <div className="min-w-[56rem] px-4 pb-6 sm:px-6">
                 <Table>
                   <TableHeader>
@@ -519,6 +608,9 @@ export function OrganizationBillingSection({
                               <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
                                 Find the right plan for your team
                               </CardTitle>
+                              <p className="pt-1 text-xs leading-snug text-muted-foreground">
+                                {ORG_COMPARE_PLANS_NOTE}
+                              </p>
                             </div>
                             <div className="min-h-0 flex-1" aria-hidden />
                           </div>
@@ -595,6 +687,11 @@ export function OrganizationBillingSection({
                                   <p className="text-xs leading-snug text-muted-foreground">
                                     {priceSubtext}
                                   </p>
+                                  {plan === "team" ? (
+                                    <p className="text-xs leading-snug text-muted-foreground">
+                                      4 seat minimum
+                                    </p>
+                                  ) : null}
                                 </div>
                               </div>
                               <Button
@@ -620,59 +717,72 @@ export function OrganizationBillingSection({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {COMPARE_SECTIONS.map((section) => (
+                    {COMPARE_PLAN_MARKETING_SECTIONS.map((section) => (
                       <Fragment key={section.title}>
                         <TableRow className="border-b hover:bg-transparent">
                           <TableCell
-                            className="bg-muted/40 py-2.5 pl-4 text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                            className="bg-muted/40 py-2.5 pl-4"
                             colSpan={PLAN_ORDER.length + 1}
                           >
-                            {section.title}
+                            <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                              {section.title === LLM_USAGE_SECTION_TITLE ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <span>{section.title}</span>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="inline-flex shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                        aria-label="LLM usage pricing note"
+                                      >
+                                        <Info className="size-3.5" />
+                                      </button>
+                                    </TooltipTrigger>
+                                    <TooltipContent
+                                      side="right"
+                                      sideOffset={6}
+                                      className="max-w-[22rem] text-balance"
+                                    >
+                                      {LLM_USAGE_SECTION_TOOLTIP}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </span>
+                              ) : (
+                                section.title
+                              )}
+                            </div>
                           </TableCell>
                         </TableRow>
-                        {section.rows.map((row) => (
-                          <TableRow
-                            key={
-                              row.type === "feature"
-                                ? row.key
-                                : `${row.key}-${row.label}`
-                            }
-                            className="border-b"
-                          >
-                            <TableCell className="sticky left-0 z-10 bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))]">
-                              {row.type === "feature"
-                                ? formatBillingFeatureName(row.key)
-                                : row.label}
-                            </TableCell>
-                            {PLAN_ORDER.map((plan) => {
-                              const isPopular = plan === POPULAR_PLAN;
-                              return (
-                                <TableCell
-                                  key={plan}
-                                  className={cn(
-                                    "px-3 py-3 text-center text-sm",
-                                    isPopular &&
-                                      "border-x border-primary/35 bg-primary/[0.06]",
-                                  )}
-                                >
-                                  {row.type === "feature" ? (
-                                    <FeatureAvailability
-                                      included={
-                                        planCatalog.plans[plan].features[
-                                          row.key
-                                        ]
-                                      }
-                                    />
-                                  ) : (
-                                    formatLimitValue(
-                                      planCatalog.plans[plan].limits[row.key],
-                                    )
-                                  )}
-                                </TableCell>
-                              );
-                            })}
-                          </TableRow>
-                        ))}
+                        {section.rows.map((row) => {
+                          const cells: ComparePlanCell[] = [
+                            row.free,
+                            row.starter,
+                            row.team,
+                            row.enterprise,
+                          ];
+                          return (
+                            <TableRow key={row.label} className="border-b">
+                              <TableCell className="sticky left-0 z-10 max-w-[14rem] bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
+                                <ComparePlanRowLabel label={row.label} />
+                              </TableCell>
+                              {PLAN_ORDER.map((plan, i) => {
+                                const isPopular = plan === POPULAR_PLAN;
+                                return (
+                                  <TableCell
+                                    key={plan}
+                                    className={cn(
+                                      "max-w-[13rem] whitespace-normal px-3 py-3 text-center align-middle text-sm",
+                                      isPopular &&
+                                        "border-x border-primary/35 bg-primary/[0.06]",
+                                    )}
+                                  >
+                                    <ComparePlanMatrixCell cell={cells[i]!} />
+                                  </TableCell>
+                                );
+                              })}
+                            </TableRow>
+                          );
+                        })}
                       </Fragment>
                     ))}
                   </TableBody>
