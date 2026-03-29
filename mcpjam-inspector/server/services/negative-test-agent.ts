@@ -12,7 +12,7 @@ export interface GeneratedNegativeTestCase {
 
 const NEGATIVE_TEST_CASE_COUNT = 3;
 
-const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating negative test cases for MCP (Model Context Protocol) servers.
+export const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating negative test cases for MCP (Model Context Protocol) servers.
 
 **About MCP:**
 The Model Context Protocol enables AI assistants to securely access external data and tools. MCP servers expose tools, resources, and prompts that AI models can use to accomplish user tasks.
@@ -36,6 +36,8 @@ Negative test cases are prompts that might seem similar to tool-triggering promp
 5. **Conversational**: Include casual conversation that mentions tool-related topics
 6. **Descriptive Scenarios**: Provide clear descriptions of why each case should NOT trigger tools
 7. **Inventory is context only**: The tool list is authoring context only. Every generated case must still expect no tools.
+8. **Keep cases attributable**: Prefer short, clearly non-actionable prompts over long synthetic workflows involving invented entities, ids, places, or blocked workspace actions
+9. **No fake-fixture negatives**: Do not make a case negative merely because it depends on fake workspace entities; make it negative because the request itself should not trigger tools
 
 **Test Case Distribution:**
 Generate 3 negative test cases covering different categories:
@@ -111,7 +113,8 @@ ${toolsContext}
 3. The tool inventory is context only; the generated eval cases must still expect no tools
 4. Provide clear scenarios explaining why tools should not be triggered
 5. Use keywords from tool descriptions but in non-actionable ways
-6. Respond with ONLY a JSON array - no other text or markdown`;
+6. Prefer short prompts that stay clearly non-actionable without relying on fake workspace fixtures
+7. Respond with ONLY a JSON array - no other text or markdown`;
 
   const messageHistory: ModelMessage[] = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },

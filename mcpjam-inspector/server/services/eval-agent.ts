@@ -24,7 +24,7 @@ export interface GeneratedTestCase {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
 }
 
-const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realistic test cases for MCP (Model Context Protocol) servers.
+export const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realistic test cases for MCP (Model Context Protocol) servers.
 
 **About MCP:**
 The Model Context Protocol enables AI assistants to securely access external data and tools. MCP servers expose tools, resources, and prompts that AI models can use to accomplish user tasks. Your test cases should reflect real-world usage patterns where users ask an AI assistant to perform tasks, and the assistant uses MCP tools to fulfill those requests.
@@ -49,10 +49,14 @@ Negative test cases are prompts where the AI assistant should NOT use any tools.
 1. **Realistic User Queries**: Write queries as if a real user is talking to an AI assistant
 2. **Natural Workflows**: Chain tools together in logical sequences that solve real problems
 3. **Cross-Server Tests**: If multiple servers are available, create tests that use tools from different servers together
-4. **Specific Details**: Include concrete examples (dates, names, values) to make tests actionable
+4. **Specific Details**: Include concrete examples only when they are discoverable, user-supplied, or safely generic
 5. **Test Titles**: Write clear, descriptive titles WITHOUT difficulty prefixes
 6. **Tool descriptions are authoritative**: If a tool description implies another tool must be called first or before first use, include that prerequisite in expectedToolCalls
 7. **No heuristic cleanup**: Do not drop discovery or prerequisite steps unless the tool metadata makes them unnecessary
+8. **Attributable cases over synthetic fixtures**: Do not write long tests that rely on fake names, ids, places, premium-only assumptions, or other unestablished workspace fixtures
+9. **Discovery-backed cases**: Prefer shorter tests that first resolve the live entity they act on, or switch to a safer capability variant that does not depend on brittle workspace state
+10. **Preserve stable sequences**: If the capability naturally requires a recurring discovery or bootstrap pattern, keep that stable sequence in expectedToolCalls instead of simplifying it away
+11. **Rewrite brittle workflows**: If a candidate workflow would only pass with unverified workspace fixtures, replace it with a substantially different but still relevant case that can cleanly attribute future failures to the MCP server
 
 **Guidelines for Negative Tests:**
 1. **Edge Cases**: Create prompts that test the boundary between triggering and not triggering tools
@@ -163,10 +167,12 @@ ${toolsContext}
    - 3 negative tests: 1 meta/doc question, 1 similar keywords non-actionable, 1 ambiguous
 2. Write realistic user queries that sound natural
 3. Include scenario and expectedOutput for ALL tests
-4. Use specific examples (dates, filenames, values) for normal tests
+4. Prefer short, discovery-backed cases over long synthetic workflows with invented workspace entities
 5. For negative tests, use keywords from tools but in non-actionable contexts
-6. If tool descriptions imply prerequisites, include them explicitly in expectedToolCalls
-7. Respond with ONLY a JSON array - no other text or markdown`;
+6. If tool descriptions imply prerequisites or a stable discovery sequence, include them explicitly in expectedToolCalls
+7. Do not rely on fake names, ids, places, premium-only assumptions, or other unverified live fixtures unless an earlier step establishes them
+8. If a workflow depends on brittle live state, replace it with a safer attributable variant instead of preserving the same scenario
+9. Respond with ONLY a JSON array - no other text or markdown`;
 
   const messageHistory: ModelMessage[] = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
