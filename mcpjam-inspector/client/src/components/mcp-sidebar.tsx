@@ -66,6 +66,8 @@ import { buildEvalsHash } from "@/lib/evals-router";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { withTestingSurface } from "@/lib/testing-surface";
 import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
+import { useLearnMore } from "@/hooks/use-learn-more";
+import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
@@ -460,6 +462,7 @@ export function MCPSidebar({
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -470,6 +473,7 @@ export function MCPSidebar({
   const [hasVisitedAppBuilder, setHasVisitedAppBuilder] = useState(() => {
     return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
   });
+  const learnMore = useLearnMore();
 
   // Get list of connected server names
   const connectedServerNames = useMemo(() => {
@@ -582,77 +586,99 @@ export function MCPSidebar({
   );
 
   return (
-    <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
-        <button
-          onClick={() => handleNavClick("#servers")}
-          className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
-        >
-          <img
-            src={
-              themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"
+    <>
+      <Sidebar collapsible="icon" {...props}>
+        <SidebarHeader>
+          <button
+            onClick={() => handleNavClick("#servers")}
+            className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
+          >
+            <img
+              src={
+                themeMode === "dark"
+                  ? "/mcp_jam_dark.png"
+                  : "/mcp_jam_light.png"
+              }
+              alt="MCP Jam"
+              className="h-4 w-auto"
+            />
+          </button>
+          {updateReady && (
+            <div className="px-2 pb-2">
+              <Button
+                size="sm"
+                onClick={restartAndInstall}
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
+              >
+                Update & Restart
+              </Button>
+            </div>
+          )}
+          <SidebarWorkspaceSelector
+            activeWorkspaceId={activeWorkspaceId}
+            workspaces={workspaces}
+            onSwitchWorkspace={onSwitchWorkspace}
+            onCreateWorkspace={onCreateWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
+            isLoading={isLoadingWorkspaces}
+            onNavigateToSettings={() => handleNavClick("#workspace-settings")}
+            onLearnMoreExpand={
+              learnMoreEnabled ? learnMore.openExpandedModal : undefined
             }
-            alt="MCP Jam"
-            className="h-4 w-auto"
           />
-        </button>
-        {updateReady && (
-          <div className="px-2 pb-2">
-            <Button
-              size="sm"
-              onClick={restartAndInstall}
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
-            >
-              Update & Restart
-            </Button>
-          </div>
-        )}
-        <SidebarWorkspaceSelector
-          activeWorkspaceId={activeWorkspaceId}
-          workspaces={workspaces}
-          onSwitchWorkspace={onSwitchWorkspace}
-          onCreateWorkspace={onCreateWorkspace}
-          onDeleteWorkspace={onDeleteWorkspace}
-          isLoading={isLoadingWorkspaces}
-          onNavigateToSettings={() => handleNavClick("#workspace-settings")}
-        />
-      </SidebarHeader>
-      <SidebarContent>
-        {visibleNavigationSections.map((section, sectionIndex) => {
-          const evalsEntry = section.items.find((item) => item.evalsSubnav);
-          const flatItems = section.items.filter((item) => !item.evalsSubnav);
-          return (
-            <React.Fragment key={section.id}>
-              <NavMain
-                items={flatItems.map((item) => ({
-                  ...item,
-                  isActive: item.url === `#${activeTab}`,
-                }))}
-                onItemClick={handleNavClick}
-                appBuilderBubble={
-                  section.id === "mcp-apps" ? appBuilderBubble : null
-                }
-              />
-              {evalsEntry ? (
-                <SidebarEvalsNavGroup
-                  title={evalsEntry.title}
-                  Icon={evalsEntry.icon}
-                  disabled={evalsEntry.disabled}
-                  disabledTooltip={evalsEntry.disabledTooltip}
-                  activeTab={activeTab}
+        </SidebarHeader>
+        <SidebarContent>
+          {visibleNavigationSections.map((section, sectionIndex) => {
+            const evalsEntry = section.items.find((item) => item.evalsSubnav);
+            const flatItems = section.items.filter((item) => !item.evalsSubnav);
+
+            return (
+              <React.Fragment key={section.id}>
+                <NavMain
+                  items={flatItems.map((item) => ({
+                    ...item,
+                    isActive: item.url === `#${activeTab}`,
+                  }))}
+                  onItemClick={handleNavClick}
+                  appBuilderBubble={
+                    section.id === "mcp-apps" ? appBuilderBubble : null
+                  }
+                  learnMore={
+                    learnMoreEnabled
+                      ? {
+                          onExpand: learnMore.openExpandedModal,
+                        }
+                      : null
+                  }
                 />
-              ) : null}
-              {/* Add subtle divider between sections (except after the last section) */}
-              {sectionIndex < visibleNavigationSections.length - 1 && (
-                <div className="mx-4 my-2 border-t border-border/50" />
-              )}
-            </React.Fragment>
-          );
-        })}
-      </SidebarContent>
-      <SidebarFooter>
-        <SidebarUser activeOrganizationId={activeOrganizationId} />
-      </SidebarFooter>
-    </Sidebar>
+                {evalsEntry ? (
+                  <SidebarEvalsNavGroup
+                    title={evalsEntry.title}
+                    Icon={evalsEntry.icon}
+                    disabled={evalsEntry.disabled}
+                    disabledTooltip={evalsEntry.disabledTooltip}
+                    activeTab={activeTab}
+                  />
+                ) : null}
+                {/* Add subtle divider between sections (except after the last section) */}
+                {sectionIndex < visibleNavigationSections.length - 1 && (
+                  <div className="mx-4 my-2 border-t border-border/50" />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </SidebarContent>
+        <SidebarFooter>
+          <SidebarUser activeOrganizationId={activeOrganizationId} />
+        </SidebarFooter>
+      </Sidebar>
+      {learnMoreEnabled && (
+        <LearnMoreExpandedPanel
+          tabId={learnMore.expandedTabId}
+          sourceRect={learnMore.sourceRect}
+          onClose={learnMore.closeExpandedModal}
+        />
+      )}
+    </>
   );
 }
