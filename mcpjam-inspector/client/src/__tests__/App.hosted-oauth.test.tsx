@@ -631,35 +631,11 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
   });
 
-  it("does not auto-route to App Builder until the signed-in user record resolves", async () => {
+  it("does not auto-route signed-in users into App Builder once startup is ready", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
     window.history.replaceState({}, "", "/#servers");
     mockHandleOAuthCallback.mockReset();
-    mockUseQuery.mockImplementation((ref: string) =>
-      ref === "users:getCurrentUser" ? undefined : undefined,
-    );
-
-    render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
-    });
-
-    expect(window.location.hash).toBe("#servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
-  });
-
-  it("does not auto-route to App Builder when onboarding is already completed remotely", async () => {
-    clearHostedOAuthPendingState();
-    clearSandboxSession();
-    window.history.replaceState({}, "", "/#servers");
-    mockHandleOAuthCallback.mockReset();
-    mockUseQuery.mockImplementation((ref: string) =>
-      ref === "users:getCurrentUser"
-        ? { _id: "user-1", hasCompletedOnboarding: true }
-        : undefined,
-    );
 
     render(<App />);
 

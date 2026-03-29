@@ -185,10 +185,6 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const convexCurrentUser = useQuery(
-    "users:getCurrentUser" as any,
-    isAuthenticated ? {} : "skip",
-  );
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
     HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,
   );
@@ -411,8 +407,6 @@ export default function App() {
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
-  const hasCompletedOnboardingRemotely =
-    convexCurrentUser?.hasCompletedOnboarding === true;
   const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
@@ -443,9 +437,7 @@ export default function App() {
     hasWorkOsUser: !!workOsUser,
     isLoadingRemoteWorkspaces: false,
   });
-  const isOnboardingDecisionReady =
-    hostedShellGateState === "ready" &&
-    (!isAuthenticated || convexCurrentUser !== undefined);
+  const isOnboardingDecisionReady = hostedShellGateState === "ready";
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -712,14 +704,14 @@ export default function App() {
       isFirstRunEligible(
         hasAnyWorkspaceServers,
         window.location.hash,
-        hasCompletedOnboardingRemotely,
+        isAuthenticated,
       )
     ) {
       window.location.hash = "app-builder";
     }
   }, [
     hasAnyWorkspaceServers,
-    hasCompletedOnboardingRemotely,
+    isAuthenticated,
     isOnboardingDecisionReady,
     isHostedChatRoute,
   ]);

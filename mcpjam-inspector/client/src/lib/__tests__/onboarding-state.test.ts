@@ -78,7 +78,7 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(true, "")).toBe(false);
     });
 
-    it("returns false when onboarding was completed remotely", () => {
+    it("returns false when the user is already authenticated", () => {
       expect(isFirstRunEligible(false, "", true)).toBe(false);
     });
 

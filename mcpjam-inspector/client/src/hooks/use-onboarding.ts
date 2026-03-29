@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import type { OnboardingPhase } from "@/lib/onboarding-state";
 import {
@@ -34,7 +34,12 @@ interface UseOnboardingReturn {
 
 function getInitialLocalPhase(
   servers: Record<string, ServerWithName>,
+  isAuthenticated: boolean,
+  isAuthLoading: boolean,
 ): OnboardingPhase {
+  if (isAuthLoading) return "dismissed";
+  if (isAuthenticated) return "completed";
+
   const persisted = readOnboardingState();
   if (persisted?.status === "completed") return "completed";
   if (persisted?.status === "dismissed") return "dismissed";
@@ -54,10 +59,6 @@ export function useOnboarding({
   isAuthLoading,
 }: UseOnboardingOptions): UseOnboardingReturn {
   const posthog = usePostHog();
-  const convexUser = useQuery(
-    "users:getCurrentUser" as any,
-    isAuthenticated ? {} : "skip",
-  );
   const completeOnboardingMutation = useMutation(
     "users:completeOnboarding" as any,
   );
@@ -67,28 +68,17 @@ export function useOnboarding({
   };
 
   const [phase, setPhase] = useState<OnboardingPhase>(() =>
-    getInitialLocalPhase(servers),
+    getInitialLocalPhase(servers, isAuthenticated, isAuthLoading),
   );
 
   const [connectError, setConnectError] = useState<string | null>(null);
   const excalidrawServer = servers[EXCALIDRAW_SERVER_NAME];
   const hasConnectedExcalidraw =
     excalidrawServer?.connectionStatus === "connected";
-  const isResolvingRemoteCompletion =
-    isAuthenticated && (isAuthLoading || convexUser === undefined);
-  const hasCompletedOnboardingRemotely =
-    convexUser?.hasCompletedOnboarding === true;
+  const isResolvingRemoteCompletion = isAuthLoading;
 
-  // Track first-run eligible on mount once local and remote completion state
-  // have both settled.
+  // Track first-run eligible on mount once the guest welcome state settles.
   const didTrackFirstRun = useRef(false);
-  const didAttemptRemoteBackfill = useRef(false);
-
-  useEffect(() => {
-    if (!isAuthenticated) {
-      didAttemptRemoteBackfill.current = false;
-    }
-  }, [isAuthenticated, convexUser?._id]);
 
   const persistCompletedState = useCallback(() => {
     writeOnboardingState({ status: "completed", completedAt: Date.now() });
@@ -98,7 +88,12 @@ export function useOnboarding({
   }, [completeOnboardingMutation, isAuthenticated]);
 
   useEffect(() => {
-    if (isResolvingRemoteCompletion) {
+    if (isAuthLoading) {
+      return;
+    }
+
+    if (isAuthenticated) {
+      setPhase("completed");
       return;
     }
 
@@ -106,49 +101,24 @@ export function useOnboarding({
       return;
     }
 
-    if (hasCompletedOnboardingRemotely) {
-      setPhase("completed");
-      return;
-    }
-
     const persisted = readOnboardingState();
     if (persisted?.status === "completed") {
       setPhase("completed");
     }
-
-    if (!isAuthenticated || didAttemptRemoteBackfill.current) {
-      return;
-    }
-
-    if (persisted?.status !== "completed" || !convexUser?._id) {
-      return;
-    }
-
-    didAttemptRemoteBackfill.current = true;
-    completeOnboardingMutation().catch(() => {
-      didAttemptRemoteBackfill.current = false;
-    });
-  }, [
-    completeOnboardingMutation,
-    convexUser?._id,
-    hasCompletedOnboardingRemotely,
-    isAuthenticated,
-    isResolvingRemoteCompletion,
-    phase,
-  ]);
+  }, [isAuthLoading, isAuthenticated, phase]);
 
   useEffect(() => {
     if (
+      !isAuthenticated &&
+      !isAuthLoading &&
       phase === "welcome" &&
-      !didTrackFirstRun.current &&
-      !isResolvingRemoteCompletion &&
-      !hasCompletedOnboardingRemotely
+      !didTrackFirstRun.current
     ) {
       didTrackFirstRun.current = true;
       writeOnboardingState({ status: "seen" });
       posthog.capture("onboarding_first_run_eligible", trackingProps);
     }
-  }, [hasCompletedOnboardingRemotely, isResolvingRemoteCompletion, phase]);
+  }, [isAuthLoading, isAuthenticated, phase, posthog]);
 
   // Monitor server connection for Excalidraw after clicking connect
   useEffect(() => {

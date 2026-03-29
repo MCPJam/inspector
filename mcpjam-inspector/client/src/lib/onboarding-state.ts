@@ -51,15 +51,15 @@ export function clearOnboardingState(): void {
  * - No explicit hash route (empty, "#", "#/", or "#servers" which is the default)
  * - No saved servers
  * - Onboarding has never been started (no localStorage entry)
- * - The signed-in user has not already completed onboarding remotely
+ * - The user is not already authenticated
  */
 export function isFirstRunEligible(
   hasAnyServers: boolean,
   currentHash: string,
-  hasCompletedOnboardingRemotely = false,
+  isAuthenticated = false,
 ): boolean {
   if (hasAnyServers) return false;
-  if (hasCompletedOnboardingRemotely) return false;
+  if (isAuthenticated) return false;
 
   const hash = currentHash.replace(/^#\/?/, "");
   if (hash && hash !== "servers") return false;

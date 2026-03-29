@@ -73,12 +73,21 @@ describe("useOnboarding", () => {
     expect(result.current.isOverlayVisible).toBe(true);
   });
 
-  it("skips onboarding for signed-in users whose Convex user is already completed", async () => {
-    mockState.convexUser = {
-      _id: "user-1",
-      hasCompletedOnboarding: true,
-    };
+  it("does not show the onboarding overlay while auth is still settling", () => {
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect: vi.fn(),
+        isAuthenticated: false,
+        isAuthLoading: true,
+      }),
+    );
 
+    expect(result.current.isResolvingRemoteCompletion).toBe(true);
+    expect(result.current.isOverlayVisible).toBe(false);
+  });
+
+  it("skips onboarding immediately for signed-in users", async () => {
     const { result } = renderHook(() =>
       useOnboarding({
         servers: {},
@@ -97,9 +106,7 @@ describe("useOnboarding", () => {
     expect(readOnboardingState()).toBeNull();
   });
 
-  it("keeps showing the remote-completion loading state while the signed-in user query is unresolved", () => {
-    mockState.convexUser = undefined;
-
+  it("does not use a remote completion loading state for signed-in users", () => {
     const { result } = renderHook(() =>
       useOnboarding({
         servers: {},
@@ -109,67 +116,7 @@ describe("useOnboarding", () => {
       }),
     );
 
-    expect(result.current.isResolvingRemoteCompletion).toBe(true);
-  });
-
-  it("backfills Convex completion for signed-in users with legacy local completion", async () => {
-    localStorage.setItem(
-      "mcp-onboarding-state",
-      JSON.stringify({ status: "completed", completedAt: 123 }),
-    );
-    mockState.convexUser = {
-      _id: "user-1",
-      hasCompletedOnboarding: undefined,
-    };
-
-    const { result } = renderHook(() =>
-      useOnboarding({
-        servers: {},
-        onConnect: vi.fn(),
-        isAuthenticated: true,
-        isAuthLoading: false,
-      }),
-    );
-
-    await waitFor(() => {
-      expect(result.current.phase).toBe("completed");
-    });
-
-    expect(mockState.completeOnboardingMutation).toHaveBeenCalledTimes(1);
-  });
-
-  it("waits for the Convex user row before backfilling legacy local completion", async () => {
-    localStorage.setItem(
-      "mcp-onboarding-state",
-      JSON.stringify({ status: "completed", completedAt: 123 }),
-    );
-    mockState.convexUser = null;
-
-    const { result, rerender } = renderHook(() =>
-      useOnboarding({
-        servers: {},
-        onConnect: vi.fn(),
-        isAuthenticated: true,
-        isAuthLoading: false,
-      }),
-    );
-
-    await waitFor(() => {
-      expect(result.current.phase).toBe("completed");
-    });
-
-    expect(mockState.completeOnboardingMutation).not.toHaveBeenCalled();
-
-    mockState.convexUser = {
-      _id: "user-1",
-      hasCompletedOnboarding: undefined,
-    };
-
-    rerender();
-
-    await waitFor(() => {
-      expect(mockState.completeOnboardingMutation).toHaveBeenCalledTimes(1);
-    });
+    expect(result.current.isResolvingRemoteCompletion).toBe(false);
   });
 
   it("keeps Excalidraw users in guided mode after connect without persisting completion, and does not resume guided mode on remount", async () => {
@@ -239,11 +186,6 @@ describe("useOnboarding", () => {
   });
 
   it("does not call the Convex completion mutation when Excalidraw connects", async () => {
-    mockState.convexUser = {
-      _id: "user-1",
-      hasCompletedOnboarding: undefined,
-    };
-
     const onConnect = vi.fn();
     const connectedServers = {
       [EXCALIDRAW_SERVER_NAME]: createServer(
@@ -261,7 +203,7 @@ describe("useOnboarding", () => {
         useOnboarding({
           servers,
           onConnect,
-          isAuthenticated: true,
+          isAuthenticated: false,
           isAuthLoading: false,
         }),
       {
@@ -285,11 +227,6 @@ describe("useOnboarding", () => {
   });
 
   it("persists onboarding completion only when completeOnboarding is called", async () => {
-    mockState.convexUser = {
-      _id: "user-1",
-      hasCompletedOnboarding: undefined,
-    };
-
     const { result } = renderHook(() =>
       useOnboarding({
         servers: {},

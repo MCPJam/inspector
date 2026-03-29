@@ -29,9 +29,8 @@ describe("PostConnectGuide", () => {
   it("renders the guided prompt copy", () => {
     render(<PostConnectGuide />);
 
-    expect(screen.getByText("Try this prompt")).toBeInTheDocument();
     expect(
-      screen.getByText("Watch Excalidraw draw a diagram in real time"),
+      screen.getByText("Try asking Excalidraw to draw something."),
     ).toBeInTheDocument();
   });
 });
