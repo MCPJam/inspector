@@ -115,7 +115,7 @@ describe("SuiteHeader", () => {
     ).toBeTruthy();
   });
 
-  it("shows Trace repair in playground overview when eligible", () => {
+  it("shows Auto fix in playground overview when eligible", () => {
     const playgroundSuite = { ...baseSuite, source: "ui" as const };
     const failedUiRun = {
       ...baseRun,
@@ -148,11 +148,11 @@ describe("SuiteHeader", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Trace repair/i }),
+      screen.getByRole("button", { name: /Auto fix/i }),
     ).toBeEnabled();
   });
 
-  it("does not show Trace repair for SDK suites even if callback is passed", () => {
+  it("does not show Auto fix for SDK suites even if callback is passed", () => {
     const onTraceRepair = vi.fn();
     renderWithProviders(
       <SuiteHeader
@@ -165,7 +165,7 @@ describe("SuiteHeader", () => {
     );
 
     expect(
-      screen.queryByRole("button", { name: /^Trace repair$/i }),
+      screen.queryByRole("button", { name: /^Auto fix$/i }),
     ).toBeNull();
   });
 

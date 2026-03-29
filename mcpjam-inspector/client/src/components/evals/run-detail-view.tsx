@@ -457,27 +457,6 @@ export function RunDetailView({
     selectedRunDetails.hasServerReplayConfig === true &&
     !traceRepairSuiteJobActive;
 
-  const traceRepairCopyJobId = useMemo(() => {
-    if (traceRepairActiveBannerView?.jobId) {
-      return traceRepairActiveBannerView.jobId;
-    }
-    if (
-      latestTraceRepairOutcomeBanner?.scope === "suite" &&
-      latestTraceRepairOutcomeBanner.jobId
-    ) {
-      return latestTraceRepairOutcomeBanner.jobId;
-    }
-    return null;
-  }, [traceRepairActiveBannerView, latestTraceRepairOutcomeBanner]);
-
-  const traceRepairCopyDebug =
-    selectedRunDetails.source !== "sdk" && traceRepairCopyJobId != null;
-
-  const traceRepairDebugJson = useQuery(
-    "traceRepair:getTraceRepairJobDebugJson" as any,
-    traceRepairCopyDebug ? { jobId: traceRepairCopyJobId } : "skip",
-  );
-
   return (
     <div
       className={cn(
@@ -503,7 +482,7 @@ export function RunDetailView({
           >
             {selectedRunDetails.traceRepairJobId ? (
               <span className="mr-2 rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90">
-                Trace repair
+                Auto fix
               </span>
             ) : null}
             Replay of{" "}
@@ -552,7 +531,7 @@ export function RunDetailView({
                       {traceRepairStarting ? (
                         <Loader2 className="h-3 w-3 animate-spin" />
                       ) : null}
-                      Trace repair
+                      Auto fix
                     </Button>
                   ) : null}
                 </div>
@@ -716,8 +695,6 @@ export function RunDetailView({
             : null
         }
         showTerminalOutcome={false}
-        traceRepairCopyDebug={traceRepairCopyDebug}
-        traceRepairDebugJson={traceRepairDebugJson}
       />
 
       <RunInsightsPrimaryBlock

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test";
 import { TraceRepairBanner } from "../trace-repair-banner";
 
@@ -27,7 +26,9 @@ describe("TraceRepairBanner", () => {
     );
 
     expect(
-      screen.getByText(/No failed cases on this run for trace repair/i),
+      screen.getByText(
+        /Auto fix had nothing to change because there were no failing cases/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -55,7 +56,7 @@ describe("TraceRepairBanner", () => {
 
     expect(
       screen.getByText(
-        /Trace repair ran, but no candidate produced enough verified progress to promote or replay/i,
+        /Auto fix stopped without enough verified progress to promote changes or replay the suite/i,
       ),
     ).toBeInTheDocument();
   });
@@ -84,7 +85,7 @@ describe("TraceRepairBanner", () => {
 
     expect(
       screen.getByText(
-        /Trace repair generation ran, but no usable repair candidate JSON was produced, so verification and replay never started/i,
+        /Auto fix could not produce a usable repair candidate, so verification and replay never started/i,
       ),
     ).toBeInTheDocument();
   });
@@ -113,7 +114,7 @@ describe("TraceRepairBanner", () => {
 
     expect(
       screen.getByText(
-        /Trace repair ran, but no candidate produced enough verified progress to confirm a repair or a likely server fault/i,
+        /Auto fix could not confirm enough verified progress to lock in a repair or a likely server fault for this case/i,
       ),
     ).toBeInTheDocument();
   });
@@ -142,12 +143,12 @@ describe("TraceRepairBanner", () => {
 
     expect(
       screen.getByText(
-        /Trace repair generation ran, but no usable repair candidate JSON was produced, so verification never started/i,
+        /Auto fix could not produce a usable repair candidate, so verification never started/i,
       ),
     ).toBeInTheDocument();
   });
 
-  it("shows Copy JSON when trace repair copy debug is enabled and data is loaded", () => {
+  it("appends lastError to the terminal sentence", () => {
     renderWithProviders(
       <TraceRepairBanner
         scope="suite"
@@ -156,36 +157,27 @@ describe("TraceRepairBanner", () => {
         onStop={vi.fn()}
         latestOutcome={{
           jobId: "job-1",
-          status: "completed",
+          status: "failed",
           phase: "finalizing",
           scope: "suite",
-          stopReason: "stopped_no_progress",
+          stopReason: "stopped_generation_error",
+          lastError: "Field name $schema is reserved.",
           provisionalAppliedCount: 0,
           durableFixCount: 0,
           regressedCount: 0,
           serverLikelyCount: 0,
         }}
         showTerminalOutcome
-        traceRepairCopyDebug
-        traceRepairDebugJson={{ job: { _id: "job-1" }, sessions: [] }}
       />,
     );
 
     expect(
-      screen.getByRole("button", { name: /Copy JSON/i }),
+      screen.getByText(/— Field name \$schema is reserved\./i),
     ).toBeInTheDocument();
   });
 
-  it("active suite banner copies debug bundle JSON to the clipboard", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", {
-      ...navigator,
-      clipboard: { writeText },
-    });
-
-    const bundle = { job: { _id: "job-1" }, sessions: [{ _id: "s1" }] };
-
+  it("active suite banner shows a single status sentence and Stop", () => {
+    const onStop = vi.fn();
     renderWithProviders(
       <TraceRepairBanner
         scope="suite"
@@ -196,53 +188,22 @@ describe("TraceRepairBanner", () => {
           scope: "suite",
           currentCaseKey: undefined,
           activeCaseKeys: [],
+          provisionalAppliedCount: 2,
+          promisingCount: 1,
         }}
         caseTitleByKey={{}}
-        onStop={vi.fn()}
-        traceRepairCopyDebug
-        traceRepairDebugJson={bundle}
+        onStop={onStop}
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Copy JSON/i }));
-
-    expect(writeText).toHaveBeenCalledWith(JSON.stringify(bundle, null, 2));
-  });
-
-  it("case terminal banner copies JSON when copy debug is on", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", {
-      ...navigator,
-      clipboard: { writeText },
-    });
-
-    const bundle = { job: { _id: "job-case" }, sessions: [] };
-
-    renderWithProviders(
-      <TraceRepairBanner
-        scope="case"
-        activeView={null}
-        caseTitleByKey={{}}
-        onStop={vi.fn()}
-        latestOutcome={{
-          jobId: "job-case",
-          status: "completed",
-          phase: "finalizing",
-          scope: "case",
-          stopReason: "stopped_no_progress",
-          provisionalAppliedCount: 0,
-          durableFixCount: 0,
-          regressedCount: 0,
-          serverLikelyCount: 0,
-        }}
-        showTerminalOutcome
-        traceRepairCopyDebug
-        traceRepairDebugJson={bundle}
-      />,
-    );
-
-    await user.click(screen.getByRole("button", { name: /Copy JSON/i }));
-    expect(writeText).toHaveBeenCalledWith(JSON.stringify(bundle, null, 2));
+    expect(screen.getByText("Auto fix")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Auto fix is generating and verifying repairs for the suite, with 2 provisional changes applied so far and 1 case still in flight/i,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Stop/i }),
+    ).toBeInTheDocument();
   });
 });

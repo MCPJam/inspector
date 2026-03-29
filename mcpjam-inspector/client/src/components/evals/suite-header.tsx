@@ -667,14 +667,14 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   ) : (
                     <Footprints className="h-4 w-4" />
                   )}
-                  Trace repair
+                  Auto fix
                 </Button>
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              Rewrite failing cases using execution traces, verify with two
-              same-model runs, then replay the suite once when anything is
-              promoted.
+              Auto fix rewrites failing cases from execution traces, verifies
+              with two same-model runs, then replays the suite once when a
+              change is promoted.
             </TooltipContent>
           </Tooltip>
         ) : null}

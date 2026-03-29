@@ -141,7 +141,7 @@ export type EvalSuiteRun = {
   result?: "pending" | "passed" | "failed" | "cancelled";
   source?: "ui" | "sdk";
   replayedFromRunId?: string;
-  /** Set when this run was created by the Trace repair suite replay step. */
+  /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;
   hasServerReplayConfig?: boolean;
   externalRunId?: string;

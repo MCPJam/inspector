@@ -30,7 +30,7 @@ interface TestCaseDetailViewProps {
   serverNames?: string[];
   suiteName?: string;
   onNavigateToSuite?: () => void;
-  /** Playground-only: enables per-case trace repair when set with `runs`. */
+  /** Playground-only: enables per-case Auto fix when set with `runs`. */
   suiteId?: string;
   runs?: EvalSuiteRun[];
   suiteSource?: "ui" | "sdk";
@@ -162,24 +162,6 @@ export function TestCaseDetailView({
           updatedAt: latestTraceRepairCaseOutcome.updatedAt,
         }
       : null;
-
-  const traceRepairCopyJobId = useMemo(() => {
-    if (traceRepairActiveBannerView?.jobId) {
-      return traceRepairActiveBannerView.jobId;
-    }
-    if (latestTraceCaseOutcomeBanner?.jobId) {
-      return latestTraceCaseOutcomeBanner.jobId;
-    }
-    return null;
-  }, [traceRepairActiveBannerView, latestTraceCaseOutcomeBanner]);
-
-  const traceRepairCopyDebug =
-    suiteId != null && suiteSource === "ui" && traceRepairCopyJobId != null;
-
-  const traceRepairDebugJson = useQuery(
-    "traceRepair:getTraceRepairJobDebugJson" as any,
-    traceRepairCopyDebug ? { jobId: traceRepairCopyJobId } : "skip",
-  );
 
   const latestCompletedRun = useMemo(
     () => pickLatestCompletedRun(runs),
@@ -346,7 +328,7 @@ export function TestCaseDetailView({
                     ) : (
                       <Footprints className="h-3.5 w-3.5" />
                     )}
-                    Trace repair case
+                    Auto fix case
                   </Button>
                 </span>
               </TooltipTrigger>
@@ -371,8 +353,6 @@ export function TestCaseDetailView({
           onStop={handleStopTraceRepairCase}
           latestOutcome={latestTraceCaseOutcomeBanner}
           showTerminalOutcome
-          traceRepairCopyDebug={traceRepairCopyDebug}
-          traceRepairDebugJson={traceRepairDebugJson}
         />
       ) : null}
 

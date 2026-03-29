@@ -532,7 +532,7 @@ export function RunOverview({
                         </span>
                         {inTraceRepairJob ? (
                           <span className="shrink-0 rounded border border-border/60 bg-muted/30 px-1 py-px text-[9px] font-medium text-foreground/85">
-                            Trace repair
+                            Auto fix
                           </span>
                         ) : null}
                       </span>

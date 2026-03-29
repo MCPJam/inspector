@@ -389,7 +389,7 @@ describe("AiTriagePanel", () => {
     render(<AiTriagePanel run={makeRun()} autoRequestTriage={false} />);
 
     expect(
-      screen.getByText(/Use Trace repair in the suite header or run detail/i),
+      screen.getByText(/Use Auto fix in the suite header or run detail/i),
     ).toBeTruthy();
 
     expect(within(getCaseRow("Unreviewed case")).getByText("Unreviewed")).toBeTruthy();

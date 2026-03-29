@@ -440,27 +440,6 @@ export function SuiteIterationsView({
     };
   }, [traceRepairSuiteJobActive, traceRepairJobView]);
 
-  const traceRepairCopyJobId = useMemo(() => {
-    if (traceRepairActiveBannerView?.jobId) {
-      return traceRepairActiveBannerView.jobId;
-    }
-    if (
-      latestTraceRepairOutcomeBanner?.scope === "suite" &&
-      latestTraceRepairOutcomeBanner.jobId
-    ) {
-      return latestTraceRepairOutcomeBanner.jobId;
-    }
-    return null;
-  }, [traceRepairActiveBannerView, latestTraceRepairOutcomeBanner]);
-
-  const traceRepairCopyDebug =
-    suite.source !== "sdk" && traceRepairCopyJobId != null;
-
-  const traceRepairDebugJson = useQuery(
-    "traceRepair:getTraceRepairJobDebugJson" as any,
-    traceRepairCopyDebug ? { jobId: traceRepairCopyJobId } : "skip",
-  );
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
@@ -511,8 +490,6 @@ export function SuiteIterationsView({
                 : null
             }
             showTerminalOutcome
-            traceRepairCopyDebug={traceRepairCopyDebug}
-            traceRepairDebugJson={traceRepairDebugJson}
           />
         </div>
       ) : null}

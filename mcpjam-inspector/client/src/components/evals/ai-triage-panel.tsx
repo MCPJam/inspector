@@ -138,7 +138,7 @@ function getFailedCaseReadonlyDisplay(
     return {
       badgeLabel: "Unreviewed",
       badgeVariant: "outline",
-      statusLine: `No repair session for this failure yet.${streakText} Use Trace repair from the suite header or run detail.`,
+      statusLine: `No repair session for this failure yet.${streakText} Use Auto fix from the suite header or run detail.`,
     };
   }
 
@@ -154,7 +154,7 @@ function getFailedCaseReadonlyDisplay(
     return {
       badgeLabel: "Candidate ready",
       badgeVariant: "secondary",
-      statusLine: `A candidate exists from trace repair or a prior session.${streakText}`,
+      statusLine: `A candidate exists from Auto fix or a prior session.${streakText}`,
     };
   }
 
@@ -1068,8 +1068,8 @@ export function AiTriagePanel({
                   Failed cases
                 </div>
                 <div className="text-[11px] text-muted-foreground">
-                  Status from trace repair and verification (read-only). Use Trace
-                  repair in the suite header or run detail to drive fixes.
+                  Status from Auto fix and verification (read-only). Use Auto fix
+                  in the suite header or run detail to drive fixes.
                 </div>
               </div>
               <span className="text-[10px] text-muted-foreground">

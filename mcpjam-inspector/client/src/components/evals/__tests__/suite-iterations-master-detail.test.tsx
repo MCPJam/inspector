@@ -137,7 +137,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
   });
 
-  it("renders terminal trace repair outcome details on the suite overview", () => {
+  it("renders terminal Auto fix outcome on the suite overview", () => {
     mocks.useQuery.mockImplementation((name: string, args: unknown) => {
       if (args === "skip") {
         return undefined;
@@ -161,9 +161,6 @@ describe("SuiteIterationsView caseListInSidebar", () => {
           regressedCount: 1,
           serverLikelyCount: 1,
         };
-      }
-      if (name === "traceRepair:getTraceRepairJobDebugJson") {
-        return { job: { _id: "job-1" }, sessions: [] };
       }
       return undefined;
     });
@@ -196,20 +193,11 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,
     );
 
-    expect(screen.getByText("Trace repair finished")).toBeInTheDocument();
+    expect(screen.getAllByText("Auto fix").length).toBeGreaterThan(0);
     expect(
       screen.getByText(
-        "Provisional applied: 0 · Durable fixes: 1 · Regressed: 1 · Likely server: 1",
+        /Auto fix stopped because repeated failures matched the same signature/i,
       ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("Accuracy 75% → 88%"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("No promotions; repeated failures matched the same signature."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Copy JSON/i }),
     ).toBeInTheDocument();
   });
 });
