@@ -28,6 +28,8 @@ import type {
 import {
   formatBillingFeatureName,
   formatPlanName,
+  getDisplayPriceCentsForPlan,
+  MARKETING_PLAN_PRICE_CENTS_USD,
 } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
 
@@ -169,7 +171,9 @@ function formatCurrency(
   }).format(amount);
 }
 
-function formatPrice(
+/** Price line for the compare table; Starter uses `/mo` (single seat), Team uses `/seat/mo`. */
+function formatPlanPriceLabel(
+  plan: OrganizationPlan,
   amountInCents: number | null,
   currency: string,
   interval: BillingInterval,
@@ -178,28 +182,19 @@ function formatPrice(
     return interval === "annual" ? "Custom annual" : "Custom pricing";
   }
 
+  if (plan === "starter") {
+    if (interval === "monthly") {
+      return `${formatCurrency(amountInCents / 100, currency, 0)}/mo`;
+    }
+    const monthlyEquivalentDollars = amountInCents / 12 / 100;
+    return `${formatCurrency(Math.round(monthlyEquivalentDollars), currency, 0)}/mo`;
+  }
+
   if (interval === "monthly") {
     return `${formatCurrency(amountInCents / 100, currency, 0)}/seat/mo`;
   }
-
-  const monthlyEquivalent = amountInCents / 12 / 100;
-  return `${formatCurrency(monthlyEquivalent, currency, 2)}/seat/mo`;
-}
-
-function formatPriceDetail(
-  amountInCents: number | null,
-  currency: string,
-  interval: BillingInterval,
-): string {
-  if (amountInCents == null) {
-    return "Sales-led";
-  }
-
-  if (interval === "monthly") {
-    return "Billed monthly";
-  }
-
-  return `${formatCurrency(amountInCents / 100, currency, 0)} billed annually`;
+  const monthlyEquivalentDollars = amountInCents / 12 / 100;
+  return `${formatCurrency(Math.round(monthlyEquivalentDollars), currency, 0)}/seat/mo`;
 }
 
 function formatPerSeatCadence(
@@ -211,6 +206,11 @@ function formatPerSeatCadence(
   }
   if (plan === "enterprise") {
     return "Annual commitment";
+  }
+  if (plan === "starter") {
+    return interval === "annual"
+      ? "1 seat, billed annually"
+      : "1 seat, billed monthly";
   }
   return interval === "annual"
     ? "Per seat, billed annually"
@@ -226,6 +226,7 @@ function formatLimitValue(value: number | null): string {
 }
 
 const PER_SEAT_MO_SUFFIX = "/seat/mo";
+const PER_MO_SUFFIX = "/mo";
 
 function PlanPriceDisplay({ label }: { label: string }) {
   if (label.endsWith(PER_SEAT_MO_SUFFIX)) {
@@ -242,6 +243,20 @@ function PlanPriceDisplay({ label }: { label: string }) {
     );
   }
 
+  if (label.endsWith(PER_MO_SUFFIX)) {
+    const amount = label.slice(0, -PER_MO_SUFFIX.length);
+    return (
+      <div className="flex min-w-0 flex-wrap items-baseline gap-x-1 gap-y-0">
+        <span className="text-3xl font-semibold tabular-nums tracking-tight">
+          {amount}
+        </span>
+        <span className="text-sm font-semibold text-muted-foreground">
+          {PER_MO_SUFFIX}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <p className="min-w-0 text-3xl font-semibold tabular-nums tracking-tight">
       {label}
@@ -249,22 +264,14 @@ function PlanPriceDisplay({ label }: { label: string }) {
   );
 }
 
-function getAnnualDiscountPercent(planCatalog: PlanCatalog | undefined): number | null {
-  if (!planCatalog) {
-    return null;
-  }
-  const starterPrices = planCatalog.plans.starter.prices;
-  if (
-    starterPrices.monthly == null ||
-    starterPrices.annual == null ||
-    starterPrices.monthly === 0
-  ) {
-    return null;
-  }
-  const annualizedMonthly = starterPrices.monthly * 12;
-  return Math.round(
-    ((annualizedMonthly - starterPrices.annual) / annualizedMonthly) * 100,
-  );
+/**
+ * Badge next to "Annual": Starter-only. Compares paying monthly for 12 months vs one annual bill:
+ * `(12×monthly − annualTotal) / (12×monthly)` → with $61/mo and $588/yr that rounds to 20%.
+ */
+function getAnnualDiscountPercent(): number {
+  const { monthly, annual } = MARKETING_PLAN_PRICE_CENTS_USD.starter;
+  const annualizedMonthly = monthly * 12;
+  return Math.round(((annualizedMonthly - annual) / annualizedMonthly) * 100);
 }
 
 function FeatureAvailability({ included }: { included: boolean }) {
@@ -278,6 +285,55 @@ function FeatureAvailability({ included }: { included: boolean }) {
       <Minus className="size-4" />
       Not included
     </span>
+  );
+}
+
+function BillingIntervalToggle({
+  billingInterval,
+  onBillingIntervalChange,
+  annualDiscountPct,
+}: {
+  billingInterval: BillingInterval;
+  onBillingIntervalChange: (interval: BillingInterval) => void;
+  annualDiscountPct: number;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Billing interval"
+      className="inline-flex max-w-full flex-nowrap items-center gap-1 rounded-lg border border-border/70 bg-muted/40 p-1 whitespace-nowrap"
+    >
+      <button
+        type="button"
+        className={cn(
+          "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:gap-2 sm:px-3",
+          billingInterval === "annual"
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground",
+        )}
+        onClick={() => onBillingIntervalChange("annual")}
+      >
+        Annual
+        <span
+          className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary sm:px-2 sm:text-xs"
+          title="Starter: savings vs paying the monthly rate for 12 months (e.g. $61×12 vs $588/year)."
+        >
+          -{annualDiscountPct}%
+        </span>
+      </button>
+      <button
+        type="button"
+        className={cn(
+          "shrink-0 whitespace-nowrap rounded-md px-2 py-1.5 text-sm font-medium transition-colors sm:px-3",
+          billingInterval === "monthly"
+            ? "bg-background text-foreground shadow-sm"
+            : "text-muted-foreground",
+        )}
+        onClick={() => onBillingIntervalChange("monthly")}
+      >
+        Monthly
+      </button>
+    </div>
   );
 }
 
@@ -322,7 +378,7 @@ export function OrganizationBillingSection({
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;
-  const annualDiscountPct = getAnnualDiscountPercent(planCatalog);
+  const annualDiscountPct = getAnnualDiscountPercent();
   const formattedPeriodEnd =
     billingStatus?.stripeCurrentPeriodEnd != null
       ? new Intl.DateTimeFormat(undefined, {
@@ -425,54 +481,24 @@ export function OrganizationBillingSection({
       </Card>
 
       <Card className="border-border/60 py-6 shadow-sm">
-        <CardHeader className="gap-4 border-b border-border/60 px-4 pb-6 sm:px-6 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-1">
-            <p className="text-xs font-semibold uppercase tracking-wider text-primary">
-              Compare plans
-            </p>
-            <CardTitle className="text-xl">
-              Find the right plan for your team
-            </CardTitle>
-            <CardDescription>
-              Same matrix as the MCPJam marketing pricing page — limits and
-              commercial packaging at a glance.
-            </CardDescription>
-          </div>
-          <div className="inline-flex flex-wrap items-center gap-2 rounded-lg border border-border/70 bg-muted/40 p-1">
-            <button
-              type="button"
-              className={cn(
-                "inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                billingInterval === "annual"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground",
-              )}
-              onClick={() => setBillingInterval("annual")}
-            >
-              Annual
-              {annualDiscountPct != null ? (
-                <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
-                  -{annualDiscountPct}%
-                </span>
-              ) : null}
-            </button>
-            <button
-              type="button"
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-                billingInterval === "monthly"
-                  ? "bg-background text-foreground shadow-sm"
-                  : "text-muted-foreground",
-              )}
-              onClick={() => setBillingInterval("monthly")}
-            >
-              Monthly
-            </button>
-          </div>
-        </CardHeader>
         <CardContent className="px-0 pb-0 pt-0">
           {isLoadingPlanCatalog || !planCatalog ? (
             <div className="px-4 py-6 sm:px-6">
+              <div className="mb-4 space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+                  Compare plans
+                </p>
+                <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
+                  Find the right plan for your team
+                </CardTitle>
+              </div>
+              <div className="mb-4">
+                <BillingIntervalToggle
+                  billingInterval={billingInterval}
+                  onBillingIntervalChange={setBillingInterval}
+                  annualDiscountPct={annualDiscountPct}
+                />
+              </div>
               <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
                 Loading plan catalog...
               </div>
@@ -482,19 +508,47 @@ export function OrganizationBillingSection({
               <div className="min-w-[56rem] px-4 pb-6 sm:px-6">
                 <Table>
                   <TableHeader>
-                    <TableRow className="border-b hover:bg-transparent">
-                      <TableHead className="sticky left-0 z-20 w-[26%] min-w-[11rem] bg-card align-top shadow-[1px_0_0_0_hsl(var(--border))]">
-                        <span className="sr-only">Features</span>
+                    <TableRow className="border-b hover:bg-transparent [&_th]:align-top [&_th]:h-full">
+                      <TableHead className="sticky left-0 z-20 h-full min-h-0 w-[26%] min-w-[11rem] whitespace-normal bg-card text-left shadow-[1px_0_0_0_hsl(var(--border))] px-4 pt-5 pb-4 align-top">
+                        <div className="flex h-full min-h-[11rem] flex-col">
+                          <div className="flex min-h-0 flex-1 flex-col">
+                            <div className="space-y-1 pr-1">
+                              <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+                                Compare plans
+                              </p>
+                              <CardTitle className="text-sm font-semibold leading-snug sm:text-base">
+                                Find the right plan for your team
+                              </CardTitle>
+                            </div>
+                            <div className="min-h-0 flex-1" aria-hidden />
+                          </div>
+                          <div className="shrink-0">
+                            <BillingIntervalToggle
+                              billingInterval={billingInterval}
+                              onBillingIntervalChange={setBillingInterval}
+                              annualDiscountPct={annualDiscountPct}
+                            />
+                          </div>
+                        </div>
                       </TableHead>
                       {PLAN_ORDER.map((plan) => {
                         const entry = planCatalog.plans[plan];
                         const isEnterprisePlan = plan === "enterprise";
+                        const displayCents =
+                          plan === "free" || isEnterprisePlan
+                            ? null
+                            : getDisplayPriceCentsForPlan(
+                                plan,
+                                billingInterval,
+                                entry,
+                              );
                         const priceLabel = isEnterprisePlan
                           ? "Custom"
                           : plan === "free"
                             ? "$0"
-                            : formatPrice(
-                                entry.prices[billingInterval],
+                            : formatPlanPriceLabel(
+                                plan,
+                                displayCents,
                                 planCatalog.currency,
                                 billingInterval,
                               );
@@ -519,30 +573,32 @@ export function OrganizationBillingSection({
                           <TableHead
                             key={plan}
                             className={cn(
-                              "align-top px-3 pb-4 pt-5 text-center",
+                              "h-full min-h-0 whitespace-normal px-3 pt-5 pb-4 text-center align-top",
                               isPopular &&
                                 "border-x border-primary/35 bg-primary/[0.06]",
                             )}
                           >
-                            <div className="mx-auto flex max-w-[13rem] flex-col items-center gap-3">
-                              <div className="flex flex-wrap items-center justify-center gap-2">
-                                <span className="text-base font-semibold">
-                                  {entry.displayName}
-                                </span>
-                                {isPopular ? (
-                                  <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
-                                    Popular
-                                  </Badge>
-                                ) : null}
-                              </div>
-                              <div className="w-full space-y-1">
-                                <PlanPriceDisplay label={priceLabel} />
-                                <p className="text-xs leading-snug text-muted-foreground">
-                                  {priceSubtext}
-                                </p>
+                            <div className="mx-auto flex h-full min-h-[11rem] w-full max-w-[13rem] flex-col">
+                              <div className="flex min-h-0 flex-1 flex-col items-center gap-3">
+                                <div className="flex flex-wrap items-center justify-center gap-2">
+                                  <span className="text-base font-semibold">
+                                    {entry.displayName}
+                                  </span>
+                                  {isPopular ? (
+                                    <Badge className="rounded-md bg-primary px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary-foreground">
+                                      Popular
+                                    </Badge>
+                                  ) : null}
+                                </div>
+                                <div className="w-full space-y-1">
+                                  <PlanPriceDisplay label={priceLabel} />
+                                  <p className="text-xs leading-snug text-muted-foreground">
+                                    {priceSubtext}
+                                  </p>
+                                </div>
                               </div>
                               <Button
-                                className="w-full rounded-lg"
+                                className="w-full shrink-0 rounded-lg"
                                 size="sm"
                                 variant={cta.variant}
                                 disabled={cta.disabled}

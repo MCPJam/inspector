@@ -149,7 +149,7 @@ describe("isGateAccessDenied", () => {
 describe("getDisplayPriceCentsForPlan", () => {
   it("returns marketing cents for Starter and Team regardless of catalog drift", () => {
     const drifted = minimalCatalogEntry({
-      monthly: 5900,
+      monthly: 6100,
       annual: 29000,
     });
     expect(getDisplayPriceCentsForPlan("starter", "annual", drifted)).toBe(

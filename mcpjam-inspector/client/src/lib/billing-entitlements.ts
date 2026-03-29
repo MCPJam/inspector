@@ -10,19 +10,20 @@ import type {
 
 /**
  * Canonical USD cents for Starter/Team shown in-app (matches marketing pricing).
- * `monthly` / `annual` are Stripe-style totals: monthly = per-month charge in cents;
- * annual = full year billed in cents (display divides by 12 for effective monthly).
+ * Starter is single-seat: monthly = monthly charge in cents; annual = full year billed in cents
+ * (effective monthly shown as annual ÷ 12, e.g. $49/mo).
+ * Team is per-seat: same shape; display uses effective monthly per seat for annual.
  */
 export const MARKETING_PLAN_PRICE_CENTS_USD: Record<
   "starter" | "team",
   Record<BillingInterval, number>
 > = {
   starter: {
-    monthly: 5900,
+    monthly: 6100,
     annual: 58800,
   },
   team: {
-    monthly: 7000,
+    monthly: 7400,
     annual: 70800,
   },
 };

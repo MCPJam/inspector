@@ -42,7 +42,7 @@ function createPlanCatalog() {
         plan: "starter",
         displayName: "Starter",
         isSelfServe: true,
-        prices: { monthly: 5900, annual: 58800 },
+        prices: { monthly: 6100, annual: 58800 },
         features: {
           evals: true,
           sandboxes: true,
@@ -65,7 +65,7 @@ function createPlanCatalog() {
         plan: "team",
         displayName: "Team",
         isSelfServe: true,
-        prices: { monthly: 7100, annual: 70800 },
+        prices: { monthly: 7400, annual: 70800 },
         features: {
           evals: true,
           sandboxes: true,
@@ -445,9 +445,12 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
+    // Default interval is monthly — Starter lists $61/mo
+    expect(screen.getByText(/\$61/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Annual/ }));
     expect(screen.getByText(/\$49/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: /^Monthly$/ }));
-    expect(screen.getByText(/\$59/)).toBeInTheDocument();
+    expect(screen.getByText(/\$61/)).toBeInTheDocument();
   });
 
   it("starts checkout for Starter from the billing subview", async () => {
