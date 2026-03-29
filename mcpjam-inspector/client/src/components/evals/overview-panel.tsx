@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -12,7 +12,6 @@ import {
   ArrowRight,
   TrendingUp,
   TrendingDown,
-  Sparkles,
 } from "lucide-react";
 import {
   Collapsible,
@@ -20,7 +19,6 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
 import { TagBadges } from "./tag-editor";
 import type {
   EvalSuiteOverviewEntry,
@@ -28,7 +26,6 @@ import type {
   CommitGroup,
 } from "./types";
 import { classifyFailure, type FailureTag } from "./ai-insights";
-import { useCommitTriage } from "./use-ai-triage";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -271,41 +268,6 @@ export function OverviewPanel({
     };
   }, [filteredSuites]);
 
-  // ---------------------------------------------------------------------------
-  // AI Overview Triage
-  // ---------------------------------------------------------------------------
-  const failedOverviewRuns = useMemo(() => {
-    return filteredSuites
-      .filter(
-        (e) =>
-          (e.totals.failed > 0 || e.latestRun?.result === "failed") &&
-          e.latestRun,
-      )
-      .map((e) => e.latestRun!);
-  }, [filteredSuites]);
-
-  const aiOverviewTriage = useCommitTriage(failedOverviewRuns);
-
-  // Auto-request triage when failures exist (skip if already unavailable or errored)
-  useEffect(() => {
-    if (
-      failedOverviewRuns.length > 0 &&
-      !aiOverviewTriage.summary &&
-      !aiOverviewTriage.loading &&
-      !aiOverviewTriage.unavailable &&
-      !aiOverviewTriage.error
-    ) {
-      aiOverviewTriage.requestTriage();
-    }
-  }, [
-    failedOverviewRuns.length,
-    aiOverviewTriage.summary,
-    aiOverviewTriage.loading,
-    aiOverviewTriage.unavailable,
-    aiOverviewTriage.error,
-    aiOverviewTriage.requestTriage,
-  ]);
-
   // Pre-compute inline failure tags for the failure feed
   // Tags suites with failed cases OR failed result
   const failureTagMap = useMemo(() => {
@@ -514,74 +476,6 @@ export function OverviewPanel({
           </span>
         )}
       </div>
-
-      {/* AI Overview Summary — only when failures exist and triage is active */}
-      {failedOverviewRuns.length > 0 &&
-        !aiOverviewTriage.unavailable &&
-        (aiOverviewTriage.summary ||
-          aiOverviewTriage.loading ||
-          aiOverviewTriage.error) && (
-          <Collapsible
-            defaultOpen
-            className="group/overview-insights relative rounded-lg border border-orange-200/60 bg-orange-50/30 shadow-sm dark:border-orange-900/40 dark:bg-orange-950/10"
-          >
-            <div className="absolute top-0 left-0 right-0 h-[3px] rounded-t-lg ai-shimmer-bar" />
-            <div className="px-4 py-3">
-              <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-sm py-0.5 text-left outline-none hover:bg-orange-100/40 dark:hover:bg-orange-950/20 focus-visible:ring-2 focus-visible:ring-ring">
-                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/overview-insights:-rotate-90 group-data-[state=open]/overview-insights:rotate-0" />
-                <Badge
-                  variant="outline"
-                  className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
-                >
-                  <Sparkles className="mr-1 h-3 w-3" />
-                  AI
-                </Badge>
-                <span className="text-xs font-semibold">Overview Insights</span>
-                {stats.latestCommitSha && (
-                  <span className="text-[10px] text-muted-foreground font-mono min-w-0 truncate">
-                    {stats.latestBranch && <>{stats.latestBranch} @ </>}
-                    {stats.latestCommitSha.slice(0, 7)}
-                    {" · "}
-                    {stats.totalSuites} suite
-                    {stats.totalSuites !== 1 ? "s" : ""}
-                  </span>
-                )}
-                {aiOverviewTriage.loading && (
-                  <span className="ml-auto shrink-0 text-[10px] text-muted-foreground flex items-center gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    analyzing...
-                  </span>
-                )}
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="text-[13px] leading-relaxed mt-2 border-t border-orange-200/40 pt-2 dark:border-orange-900/40">
-                  {aiOverviewTriage.summary ? (
-                    <p>{aiOverviewTriage.summary}</p>
-                  ) : aiOverviewTriage.error ? (
-                    <div className="flex items-start gap-2 text-amber-600 dark:text-amber-400">
-                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                      <div>
-                        <p className="font-medium">AI insights unavailable</p>
-                        <p className="text-[11px] text-muted-foreground mt-0.5">
-                          {aiOverviewTriage.error}
-                        </p>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      <span>
-                        Analyzing {failedOverviewRuns.length} suite
-                        {failedOverviewRuns.length !== 1 ? "s" : ""} with
-                        failures...
-                      </span>
-                    </div>
-                  )}
-                </div>
-              </CollapsibleContent>
-            </div>
-          </Collapsible>
-        )}
 
       {/* Section B: Run Timeline Chips */}
       {timeline.length > 0 && (

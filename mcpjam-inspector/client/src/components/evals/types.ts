@@ -161,53 +161,6 @@ export type EvalSuiteRun = {
   isActive?: boolean;
   expectedIterations?: number;
   _creationTime?: number;
-  triageStatus?: "pending" | "completed" | "failed";
-  triageSummary?: {
-    summary: string;
-    failureCategories: Array<{
-      category: string;
-      count: number;
-      testCaseTitles: string[];
-      recommendation: string;
-    }>;
-    topRecommendations: string[];
-    refinementCandidates?: Array<{
-      testCaseTitle: string;
-      failureSignature: string;
-      testWeaknessHypothesis: string;
-      serverHypothesis: string;
-      confidenceChecklist: string[];
-      paraphraseQuery?: string;
-      candidate: {
-        title: string;
-        query: string;
-        expectedToolCalls: Array<{
-          toolName: string;
-          arguments: Record<string, any>;
-        }>;
-        isNegativeTest?: boolean;
-        scenario?: string;
-        expectedOutput?: string;
-        rationale?: string;
-      };
-    }>;
-    suggestedTestCases?: Array<{
-      title: string;
-      query: string;
-      /** Present only on older persisted runs; UI always uses `runs: 1` on create. */
-      runs?: number;
-      expectedToolCalls: Array<{
-        toolName: string;
-        arguments: Record<string, any>;
-      }>;
-      isNegativeTest?: boolean;
-      scenario?: string;
-      expectedOutput?: string;
-      rationale?: string;
-    }>;
-    generatedAt: number;
-    modelUsed: string;
-  };
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";
   runInsights?: {

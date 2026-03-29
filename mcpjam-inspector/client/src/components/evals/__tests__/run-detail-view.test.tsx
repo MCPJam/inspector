@@ -2,15 +2,6 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 
-const triagePanelPropsSpy = vi.hoisted(() => vi.fn());
-
-vi.mock("../ai-triage-panel", () => ({
-  AiTriagePanel: (props: Record<string, unknown>) => {
-    triagePanelPropsSpy(props);
-    return null;
-  },
-}));
-
 vi.mock("../use-run-insights", () => ({
   useRunInsights: vi.fn(),
 }));
@@ -102,41 +93,6 @@ function defaultRunInsightsReturn() {
 describe("RunDetailView", () => {
   beforeEach(() => {
     vi.mocked(useRunInsights).mockReturnValue(defaultRunInsightsReturn());
-  });
-
-  it("passes the selected run and failed count into AiTriagePanel", () => {
-    triagePanelPropsSpy.mockClear();
-    const run = makeRun({
-      summary: { total: 1, passed: 0, failed: 1, passRate: 0 },
-    });
-    const failedIter = makeIteration({
-      result: "failed",
-      status: "completed",
-      resultSource: "reported",
-    });
-    render(
-      <RunDetailView
-        selectedRunDetails={run}
-        caseGroupsForSelectedRun={[failedIter]}
-        source="ui"
-        selectedRunChartData={{
-          donutData: [],
-          durationData: [],
-          tokensData: [],
-          modelData: [],
-        }}
-        runDetailSortBy="test"
-        onSortChange={() => {}}
-        selectedIterationId={null}
-        onSelectIteration={() => {}}
-      />,
-    );
-    const props = triagePanelPropsSpy.mock.calls.at(-1)?.[0] as {
-      run: EvalSuiteRun;
-      failedCount: number;
-    };
-    expect(props?.run).toBe(run);
-    expect(props?.failedCount).toBe(1);
   });
 
   it("keeps bar charts inside one in-card collapsible; expanding shows both charts", () => {

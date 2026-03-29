@@ -20,7 +20,6 @@ import {
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { AiTriagePanel } from "./ai-triage-panel";
 import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
 import { RunCaseInsightBlock } from "./run-case-insight-block";
 import { findRunInsightForCase } from "./run-insight-helpers";
@@ -731,17 +730,6 @@ export function RunDetailView({
           onRetry={() => requestRunInsights(true)}
         />
       ) : null}
-
-      {/* Legacy triage — deeper failure analysis; not auto-requested */}
-        <AiTriagePanel
-          run={selectedRunDetails}
-          failedCount={computedStats.failed}
-          failedIterations={caseGroupsForSelectedRun.filter(
-            (iteration) => computeIterationResult(iteration) === "failed",
-          )}
-          failedTestTitleToCaseId={failedTestTitleToCaseId}
-          autoRequestTriage={false}
-        />
 
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
