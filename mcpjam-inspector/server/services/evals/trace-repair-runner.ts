@@ -69,6 +69,21 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Never throws; disconnect failures are logged only (avoids masking real errors / unhandled rejections). */
+async function safeDisconnectReplayManager(
+  manager: ReturnType<typeof buildReplayManager>,
+  context: string,
+): Promise<void> {
+  try {
+    await manager.disconnectAllServers();
+  } catch (err) {
+    logger.warn("[trace-repair] disconnect failed (non-fatal)", {
+      context,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 function normalizeProviderKey(provider: string): string | null {
   const normalized = provider.toLowerCase().replace(/[^a-z]/g, "");
   switch (normalized) {
@@ -396,8 +411,8 @@ export async function runTraceRepairJob(params: TraceRepairRunnerParams): Promis
     }
     const replayServerIds = replayConfig.servers.map((s) => s.serverId);
     const replayCaptureManager = buildReplayManager(replayConfig);
-    await connectReplayManagerServers(replayCaptureManager, replayConfig);
     try {
+      await connectReplayManagerServers(replayCaptureManager, replayConfig);
       await captureTraceRepairJobToolSnapshot({
         convexClient,
         jobId,
@@ -406,7 +421,7 @@ export async function runTraceRepairJob(params: TraceRepairRunnerParams): Promis
         replayServerIds,
       });
     } finally {
-      await replayCaptureManager.disconnectAllServers();
+      await safeDisconnectReplayManager(replayCaptureManager, "tool snapshot");
     }
 
     const caseConcurrency = parseRefinementCaseConcurrency(
@@ -539,8 +554,8 @@ export async function runTraceRepairJob(params: TraceRepairRunnerParams): Promis
           let quickOutcome: string | undefined;
           for (const step of plan) {
             const manager = buildReplayManager(replayConfig);
-            await connectReplayManagerServers(manager, replayConfig);
             try {
+              await connectReplayManagerServers(manager, replayConfig);
               if (!fc.testCaseId) {
                 throw new Error("Missing testCaseId for verification");
               }
@@ -585,7 +600,10 @@ export async function runTraceRepairJob(params: TraceRepairRunnerParams): Promis
                 },
               );
             } finally {
-              await manager.disconnectAllServers();
+              await safeDisconnectReplayManager(
+                manager,
+                `verification step ${step.label}`,
+              );
             }
 
             const sCheck = await convexClient.query(

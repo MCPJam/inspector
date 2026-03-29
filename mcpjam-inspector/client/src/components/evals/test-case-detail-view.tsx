@@ -16,6 +16,7 @@ import {
   pickLatestCompletedRun,
 } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
+import { findRunInsightForCase } from "./run-insight-helpers";
 import { IterationDetails } from "./iteration-details";
 import { TraceRepairBanner } from "./trace-repair-banner";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
@@ -170,23 +171,14 @@ export function TestCaseDetailView({
 
   useRunInsights(latestCompletedRun, { autoRequest: true });
 
-  const latestCaseInsight = useMemo(() => {
-    const list = latestCompletedRun?.runInsights?.caseInsights;
-    if (!list?.length) {
-      return null;
-    }
-    return (
-      list.find(
-        (c) =>
-          (testCase.caseKey != null && c.caseKey === testCase.caseKey) ||
-          c.testCaseId === testCase._id,
-      ) ?? null
-    );
-  }, [
-    latestCompletedRun?.runInsights?.caseInsights,
-    testCase.caseKey,
-    testCase._id,
-  ]);
+  const latestCaseInsight = useMemo(
+    () =>
+      findRunInsightForCase(latestCompletedRun, {
+        caseKey: testCase.caseKey,
+        testCaseId: testCase._id,
+      }),
+    [latestCompletedRun, testCase.caseKey, testCase._id],
+  );
 
   const activeIterations = useMemo(() => iterations, [iterations]);
 

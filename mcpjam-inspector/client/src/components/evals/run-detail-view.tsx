@@ -22,6 +22,9 @@ import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { AiTriagePanel } from "./ai-triage-panel";
 import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
+import { RunCaseInsightBlock } from "./run-case-insight-block";
+import { findRunInsightForCase } from "./run-insight-helpers";
+import { useRunInsights } from "./use-run-insights";
 import { TraceRepairBanner } from "./trace-repair-banner";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import { startTraceRepair, stopTraceRepair } from "@/lib/apis/evals-api";
@@ -264,6 +267,16 @@ export function RunDetailView({
   hideReplayLineage,
   omitIterationList = false,
 }: RunDetailViewProps) {
+  const {
+    summary: runInsightsSummary,
+    pending: runInsightsPending,
+    requested: runInsightsRequested,
+    failedGeneration: runInsightsFailedGeneration,
+    error: runInsightsError,
+    requestRunInsights,
+    unavailable: runInsightsUnavailable,
+  } = useRunInsights(selectedRunDetails, { autoRequest: true });
+
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
@@ -328,6 +341,16 @@ export function RunDetailView({
         : null,
     [selectedIterationId, caseGroupsForSelectedRun],
   );
+
+  const caseInsightForSelectedIteration = useMemo(() => {
+    if (!selectedIteration) {
+      return null;
+    }
+    return findRunInsightForCase(selectedRunDetails, {
+      caseKey: selectedIteration.testCaseSnapshot?.caseKey,
+      testCaseId: selectedIteration.testCaseId,
+    });
+  }, [selectedIteration, selectedRunDetails]);
 
   const hasTokenData = useMemo(
     () =>
@@ -697,10 +720,17 @@ export function RunDetailView({
         showTerminalOutcome={false}
       />
 
-      <RunInsightsPrimaryBlock
-        run={selectedRunDetails}
-        className="mt-3"
-      />
+      {selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
+        <RunInsightsPrimaryBlock
+          className="mt-3"
+          summary={runInsightsSummary}
+          pending={runInsightsPending}
+          requested={runInsightsRequested}
+          failedGeneration={runInsightsFailedGeneration}
+          error={runInsightsError}
+          onRetry={() => requestRunInsights(true)}
+        />
+      ) : null}
 
       {/* Legacy triage — deeper failure analysis; not auto-requested */}
         <AiTriagePanel
@@ -747,8 +777,16 @@ export function RunDetailView({
           {selectedIteration ? (
             <div
               key={selectedIterationId}
-              className="flex-1 min-h-0 overflow-y-auto p-4"
+              className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
             >
+              <RunCaseInsightBlock
+                runStatus={selectedRunDetails.status}
+                caseInsight={caseInsightForSelectedIteration}
+                pending={runInsightsPending}
+                requested={runInsightsRequested}
+                failedGeneration={runInsightsFailedGeneration}
+                error={runInsightsError}
+              />
               <IterationDetails
                 iteration={selectedIteration}
                 testCase={null}

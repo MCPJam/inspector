@@ -1,33 +1,28 @@
 import { Loader2, Sparkles, RotateCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import type { EvalSuiteRun } from "./types";
-import { useRunInsights } from "./use-run-insights";
 
 /**
  * Diff-based run insights (vs prior completed baseline). Primary narrative above legacy triage.
+ * Data and retry are provided by the parent (single useRunInsights per run detail).
  */
 export function RunInsightsPrimaryBlock({
-  run,
+  summary,
+  pending,
+  requested,
+  failedGeneration,
+  error,
+  onRetry,
   className,
 }: {
-  run: EvalSuiteRun;
+  summary: string | null;
+  pending: boolean;
+  requested: boolean;
+  failedGeneration: boolean;
+  error: string | null;
+  onRetry: () => void;
   className?: string;
 }) {
-  const {
-    summary,
-    pending,
-    failedGeneration,
-    error,
-    requestRunInsights,
-    unavailable,
-    requested,
-  } = useRunInsights(run, { autoRequest: true });
-
-  if (run.status !== "completed" || unavailable) {
-    return null;
-  }
-
   return (
     <div
       className={cn(
@@ -51,7 +46,7 @@ export function RunInsightsPrimaryBlock({
             variant="ghost"
             size="sm"
             className="h-7 gap-1 text-xs"
-            onClick={() => requestRunInsights(true)}
+            onClick={() => onRetry()}
           >
             <RotateCw className="h-3 w-3" />
             Retry
