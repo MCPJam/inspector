@@ -1,9 +1,17 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Check, CreditCard, Info, Loader2 } from "lucide-react";
+import { Check, CheckCircle2, CreditCard, Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -24,6 +32,7 @@ import type {
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
+import { guardCheckoutIntentAgainstEffectivePlan } from "@/lib/billing-checkout-intent-guard";
 import {
   getDisplayPriceCentsForPlan,
   MARKETING_PLAN_PRICE_CENTS_USD,
@@ -481,6 +490,11 @@ export function OrganizationBillingSection({
   const autoCheckoutStartedForKeyRef = useRef<string | null>(null);
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("monthly");
+  const [checkoutPlanNotice, setCheckoutPlanNotice] = useState<{
+    reason: "already_on" | "already_higher";
+    currentDisplayName: string;
+    requestedDisplayName: string;
+  } | null>(null);
 
   useEffect(() => {
     if (checkoutIntent?.interval) {
@@ -526,6 +540,28 @@ export function OrganizationBillingSection({
         return;
       }
 
+      const intentGuard = guardCheckoutIntentAgainstEffectivePlan(
+        billingStatus.effectivePlan,
+        checkoutIntent.plan,
+      );
+      if (!intentGuard.proceed) {
+        if (
+          !cancelled &&
+          autoCheckoutStartedForKeyRef.current !== intentKey
+        ) {
+          autoCheckoutStartedForKeyRef.current = intentKey;
+          const currentEntry = planCatalog.plans[intentGuard.currentPlan];
+          const requestedEntry = planCatalog.plans[checkoutIntent.plan];
+          setCheckoutPlanNotice({
+            reason: intentGuard.reason,
+            currentDisplayName: currentEntry.displayName,
+            requestedDisplayName: requestedEntry.displayName,
+          });
+          onCheckoutIntentConsumed?.();
+        }
+        return;
+      }
+
       if (autoCheckoutStartedForKeyRef.current === intentKey) {
         return;
       }
@@ -566,6 +602,83 @@ export function OrganizationBillingSection({
 
   return (
     <div className="space-y-5">
+      <Dialog
+        open={checkoutPlanNotice !== null}
+        onOpenChange={(open) => {
+          if (!open) setCheckoutPlanNotice(null);
+        }}
+      >
+        {checkoutPlanNotice ? (
+          <DialogContent
+            className="gap-0 overflow-hidden border-border/80 p-0 sm:max-w-md"
+            aria-describedby={undefined}
+          >
+            <div className="border-b border-border/60 bg-muted/25 px-6 py-5">
+              <div className="flex items-start gap-4">
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-primary/25 bg-primary/10 text-primary shadow-sm">
+                  <CheckCircle2 className="size-5" aria-hidden />
+                </span>
+                <DialogHeader className="flex-1 gap-1.5 space-y-0 text-left">
+                  <DialogTitle className="text-xl font-semibold tracking-tight text-foreground">
+                    {checkoutPlanNotice.reason === "already_higher"
+                      ? "You’re already on a higher plan"
+                      : "You’re already on this plan"}
+                  </DialogTitle>
+                  <DialogDescription asChild>
+                    <div className="space-y-3 pt-1 text-sm leading-relaxed text-muted-foreground">
+                      {checkoutPlanNotice.reason === "already_higher" ? (
+                        <>
+                          <p>
+                            Your organization is on{" "}
+                            <span className="font-medium text-foreground">
+                              {checkoutPlanNotice.currentDisplayName}
+                            </span>
+                            . The link you followed was for{" "}
+                            <span className="font-medium text-foreground">
+                              {checkoutPlanNotice.requestedDisplayName}
+                            </span>
+                            , which would be a downgrade.
+                          </p>
+                          <p className="text-xs text-muted-foreground/90">
+                            To change plans or manage billing, use the actions
+                            in the comparison table below or open the billing
+                            portal.
+                          </p>
+                        </>
+                      ) : (
+                        <>
+                          <p>
+                            You’re already subscribed to{" "}
+                            <span className="font-medium text-foreground">
+                              {checkoutPlanNotice.currentDisplayName}
+                            </span>
+                            . There’s no need to check out again for the same
+                            plan.
+                          </p>
+                          <p className="text-xs text-muted-foreground/90">
+                            If you meant to change interval or payment method,
+                            use Manage billing or the options below.
+                          </p>
+                        </>
+                      )}
+                    </div>
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+            </div>
+            <DialogFooter className="border-t border-border/50 bg-background/80 px-6 py-4 sm:justify-center">
+              <Button
+                type="button"
+                className="min-w-[8rem]"
+                onClick={() => setCheckoutPlanNotice(null)}
+              >
+                Got it
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
+
       {checkoutIntent ? (
         <div
           className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2 text-sm text-muted-foreground"
