@@ -206,6 +206,56 @@ describe("MCPClientManager", () => {
       expect(replayManager.getServerReplayConfigs()).toEqual([]);
     });
 
+    it("returns tokenless replay configs for public HTTP servers with empty headers", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("public-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {},
+          },
+          preferSSE: true,
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([
+        {
+          serverId: "public-http",
+          url: "https://example.com/mcp",
+          preferSSE: true,
+        },
+      ]);
+    });
+
+    it("skips stdio servers when building replay configs", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("stdio-server", {
+        config: {
+          command: "node",
+          args: ["server.js"],
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("skips HTTP configs with unsupported requestInit options", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("request-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            method: "POST",
+          },
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
     it("extracts bearer auth from requestInit headers for replay configs", () => {
       const replayManager = new MCPClientManager();
       (replayManager as any).clientStates.set("header-http", {

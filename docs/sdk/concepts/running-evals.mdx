@@ -149,6 +149,25 @@ await test.run(agent, {
 
 For manual save APIs, CI metadata, and artifact uploads, see the [Save Results to MCPJam](/sdk/concepts/saving-results) guide.
 
+### Tool errors vs. `passed` on upload
+
+By default, when results are **built from traces** (auto-save and reporter helpers), a failed tool execution (MCP `isError`, errored tool spans, or error tool-results in messages) sets `passed: false` for that iteration even if your test function returned `true`. That keeps CI pass rate aligned with real server behavior.
+
+To disable that for a run (for example you only assert which tools were called, not that every call succeeded), set `failOnToolError: false` on the `mcpjam` block:
+
+```typescript
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: {
+    suiteName: "Addition Eval",
+    passCriteria: { minimumPassRate: 90 },
+    failOnToolError: false,
+  },
+});
+```
+
+See [Eval reporting — Tool execution and `passed`](/sdk/reference/eval-reporting#tool-execution-and-passed) for full detail and [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) overrides.
+
 ### Suite Results
 
 ```typescript

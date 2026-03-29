@@ -43,6 +43,7 @@ import {
   type DeviceType,
   type DisplayMode,
 } from "@/stores/ui-playground-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import {
@@ -62,18 +63,21 @@ import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useClientConfigStore } from "@/stores/client-config-store";
-import {
-  extractEffectiveHostDisplayMode,
-  extractHostTheme,
-} from "@/lib/client-config";
+import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import { AnimatePresence } from "framer-motion";
+import {
+  SandboxHostStyleProvider,
+  SandboxHostThemeProvider,
+} from "@/contexts/sandbox-host-style-context";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
   icon: Settings2,
 };
+
+type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
   serverName: string;
@@ -337,14 +341,33 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
-  const hostTheme = extractHostTheme(hostContext) ?? "dark";
+  const globalThemeMode = usePreferencesStore(
+    (s) => s.themeMode,
+  ) as ThreadThemeMode;
+  const themePreset = usePreferencesStore((s) => s.themePreset);
+  const [threadThemeOverride, setThreadThemeOverride] =
+    useState<ThreadThemeMode | null>(null);
+  const effectiveThreadTheme = threadThemeOverride ?? globalThemeMode;
   const chatBg =
     hostStyle === "chatgpt"
       ? CHATGPT_CHAT_BACKGROUND
       : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[hostTheme];
+  const hostBackgroundColor = chatBg[effectiveThreadTheme];
   const displayMode =
     extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
+
+  // The App Builder theme toggle is intentionally local to the emulated thread
+  // and composer surface. It should not change MCPJam's global theme or leak
+  // into other tabs.
+  const toggleLocalThreadTheme = useCallback(() => {
+    setThreadThemeOverride((currentThemeOverride) => {
+      const currentTheme = currentThemeOverride ?? globalThemeMode;
+      const nextTheme: ThreadThemeMode =
+        currentTheme === "dark" ? "light" : "dark";
+
+      return nextTheme === globalThemeMode ? null : nextTheme;
+    });
+  }, [globalThemeMode]);
 
   const handleDisplayModeChange = useCallback(
     (mode: DisplayMode) => {
@@ -776,37 +799,52 @@ export function PlaygroundMain({
 
   // Device frame container - display mode is passed to widgets via Thread
   return (
-    <div className={cn("h-full flex flex-col overflow-hidden", showPostConnectGuide ? "bg-background" : "bg-muted/20")}>
+    <div
+      className={cn(
+        "h-full flex flex-col overflow-hidden",
+        showPostConnectGuide ? "bg-background" : "bg-muted/20",
+      )}
+    >
       {/* Device frame header — hidden during onboarding */}
       {!showPostConnectGuide && (
-      <div className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        {/* All controls centered */}
-        <DisplayContextHeader protocol={selectedProtocol} showThemeToggle />
+        <div
+          className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
+          data-testid="playground-main-header"
+        >
+          {/* All controls centered */}
+          <DisplayContextHeader
+            protocol={selectedProtocol}
+            showThemeToggle
+            themeModeOverride={effectiveThreadTheme}
+            onThemeToggleOverride={toggleLocalThreadTheme}
+          />
 
-        {/* Right actions - absolutely positioned */}
-        {!isThreadEmpty && (
-          <div className="absolute right-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowClearConfirm(true)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Clear chat</p>
-                <p className="text-xs text-muted-foreground">
-                  {navigator.platform.includes("Mac") ? "⌘⇧K" : "Ctrl+Shift+K"}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
-      </div>
+          {/* Right actions - absolutely positioned */}
+          {!isThreadEmpty && (
+            <div className="absolute right-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowClearConfirm(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Clear chat</p>
+                  <p className="text-xs text-muted-foreground">
+                    {navigator.platform.includes("Mac")
+                      ? "⌘⇧K"
+                      : "Ctrl+Shift+K"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          )}
+        </div>
       )}
 
       <ConfirmChatResetDialog
@@ -817,56 +855,72 @@ export function PlaygroundMain({
 
       {/* Device frame container */}
       <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
-        <div
-          className="relative flex flex-col overflow-hidden"
-          style={{
-            width: showPostConnectGuide ? "100%" : deviceConfig.width,
-            maxWidth: "100%",
-            height: showPostConnectGuide ? "100%" : (isWidgetFullTakeover ? "100%" : deviceConfig.height),
-            maxHeight: "100%",
-            transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-            backgroundColor: showPostConnectGuide ? undefined : hostBackgroundColor,
-          }}
-        >
-          {/* X-Ray mode: show raw JSON view of AI payload */}
-          {xrayMode && (
-            <StickToBottom
-              className="relative flex flex-1 flex-col min-h-0"
-              resize="smooth"
-              initial="smooth"
+        <SandboxHostStyleProvider value={hostStyle}>
+          <SandboxHostThemeProvider value={effectiveThreadTheme}>
+            <div
+              className={cn(
+                "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                effectiveThreadTheme === "dark" && "dark",
+              )}
+              data-testid="playground-thread-shell"
+              data-host-style={hostStyle}
+              data-theme-preset={themePreset}
+              data-thread-theme={effectiveThreadTheme}
+              style={{
+                width: showPostConnectGuide ? "100%" : deviceConfig.width,
+                maxWidth: "100%",
+                height: showPostConnectGuide
+                  ? "100%"
+                  : isWidgetFullTakeover
+                    ? "100%"
+                    : deviceConfig.height,
+                maxHeight: "100%",
+                transform: isWidgetFullscreen ? "none" : "translateZ(0)",
+                backgroundColor: showPostConnectGuide
+                  ? undefined
+                  : hostBackgroundColor,
+              }}
             >
-              <div className="relative flex-1 min-h-0">
-                <StickToBottom.Content className="flex flex-col min-h-0">
-                  <XRaySnapshotView
-                    systemPrompt={systemPrompt}
-                    messages={messages}
-                    selectedServers={selectedServers}
-                    onClose={() => setXrayMode(false)}
-                  />
-                </StickToBottom.Content>
-                <ScrollToBottomButton />
+              {/* X-Ray mode: show raw JSON view of AI payload */}
+              {xrayMode && (
+                <StickToBottom
+                  className="relative flex flex-1 flex-col min-h-0"
+                  resize="smooth"
+                  initial="smooth"
+                >
+                  <div className="relative flex-1 min-h-0">
+                    <StickToBottom.Content className="flex flex-col min-h-0">
+                      <XRaySnapshotView
+                        systemPrompt={systemPrompt}
+                        messages={messages}
+                        selectedServers={selectedServers}
+                        onClose={() => setXrayMode(false)}
+                      />
+                    </StickToBottom.Content>
+                    <ScrollToBottomButton />
+                  </div>
+                  <div className="flex-shrink-0 border-t border-border">
+                    <div className="max-w-xl mx-auto w-full p-3">
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={!isThreadEmpty}
+                      />
+                    </div>
+                  </div>
+                </StickToBottom>
+              )}
+              {/* Thread: kept mounted (but hidden) during X-Ray to preserve
+                  MCPAppsRenderer iframes and bridge connections */}
+              <div
+                className="flex flex-col flex-1 min-h-0"
+                style={xrayMode ? { display: "none" } : undefined}
+              >
+                {threadContent}
               </div>
-              <div className="flex-shrink-0 border-t border-border">
-                <div className="max-w-xl mx-auto w-full p-3">
-                  <ChatInput
-                    {...sharedChatInputProps}
-                    hasMessages={!isThreadEmpty}
-                  />
-                </div>
-              </div>
-            </StickToBottom>
-          )}
-          {/* Thread: kept mounted (but hidden) during X-Ray to preserve
-              MCPAppsRenderer iframes and bridge connections */}
-          <div
-            className="flex flex-col flex-1 min-h-0"
-            style={xrayMode ? { display: "none" } : undefined}
-          >
-            {threadContent}
-          </div>
-        </div>
+            </div>
+          </SandboxHostThemeProvider>
+        </SandboxHostStyleProvider>
       </div>
-
     </div>
   );
 }

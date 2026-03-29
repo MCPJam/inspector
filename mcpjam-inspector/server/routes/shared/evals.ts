@@ -1,5 +1,5 @@
 import { ConvexHttpClient } from "convex/browser";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { z } from "zod";
 import {
   generateTestCases,
@@ -10,6 +10,7 @@ import {
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
+import { storeReplayConfig } from "../../services/evals/route-helpers";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
@@ -186,6 +187,36 @@ function normalizeForComparison(obj: any): any {
       sorted[key] = normalizeForComparison(obj[key]);
     });
   return sorted;
+}
+
+export function filterAndRemapReplayConfigs(
+  replayConfigs: MCPServerReplayConfig[],
+  resolvedServerIds: string[],
+  persistedServerIds: string[],
+): MCPServerReplayConfig[] {
+  const persistedIdByResolvedId = new Map<string, string>();
+
+  for (const [index, resolvedServerId] of resolvedServerIds.entries()) {
+    const persistedServerId = persistedServerIds[index] ?? resolvedServerId;
+    if (!resolvedServerId || !persistedServerId) {
+      continue;
+    }
+    persistedIdByResolvedId.set(resolvedServerId, persistedServerId);
+  }
+
+  return replayConfigs.flatMap((config) => {
+    const persistedServerId = persistedIdByResolvedId.get(config.serverId);
+    if (!persistedServerId) {
+      return [];
+    }
+
+    return [
+      {
+        ...config,
+        serverId: persistedServerId,
+      },
+    ];
+  });
 }
 
 export async function runEvalsWithManager(
@@ -393,6 +424,22 @@ export async function runEvalsWithManager(
     passCriteria,
     serverIds: resolvedServerIds,
   });
+
+  const replayConfigsToStore = filterAndRemapReplayConfigs(
+    clientManager.getServerReplayConfigs(),
+    resolvedServerIds,
+    persistedServerIds,
+  );
+  if (replayConfigsToStore.length > 0) {
+    try {
+      await storeReplayConfig(runId, replayConfigsToStore, convexAuthToken);
+    } catch (error) {
+      logger.warn("[evals] Failed to store replay config for suite run", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   await runEvalSuiteWithAiSdk({
     suiteId: resolvedSuiteId,

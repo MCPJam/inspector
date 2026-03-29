@@ -40,7 +40,9 @@ export function McpPromptsArticle() {
           <li>
             <code>prompts/get</code> returns the final messages.
           </li>
-          <li>The server can notify the client when the prompt list changes.</li>
+          <li>
+            The server can notify the client when the prompt list changes.
+          </li>
         </ul>
       </Section>
 
@@ -94,16 +96,16 @@ export function McpPromptsArticle() {
         </ul>
 
         <Aside>
-          A strong MCP server often uses all three: prompts for setup,
-          resources for context, and tools for actions.
+          A strong MCP server often uses all three: prompts for setup, resources
+          for context, and tools for actions.
         </Aside>
       </Section>
 
       <ArticleOutro>
         See also:{" "}
         <span className="font-medium text-foreground/70">MCP Tools</span> and{" "}
-        <span className="font-medium text-foreground/70">MCP Resources</span>{" "}
-        to round out the three core MCP building blocks.
+        <span className="font-medium text-foreground/70">MCP Resources</span> to
+        round out the three core MCP building blocks.
       </ArticleOutro>
     </div>
   );

@@ -10,6 +10,7 @@
 
 export type CiEvalsRoute =
   | { type: "list" }
+  | { type: "create" }
   | { type: "suite-overview"; suiteId: string; view?: "runs" | "test-cases" }
   | { type: "suite-edit"; suiteId: string }
   | { type: "run-detail"; suiteId: string; runId: string; iteration?: string }
@@ -35,13 +36,21 @@ export type CiEvalsRoute =
  * Parse the current hash to extract CI evals route information.
  */
 export function parseCiEvalsRoute(): CiEvalsRoute | null {
-  const hash = window.location.hash.replace("#", "");
+  let hash = window.location.hash.replace(/^#/, "");
+  // Sidebar / navigation uses `#ci-evals`; internal navigations use `#/ci-evals`.
+  if (!hash.startsWith("/")) {
+    hash = `/${hash}`;
+  }
 
   if (!hash.startsWith("/ci-evals")) {
     return null;
   }
 
   const [path, queryString] = hash.split("?");
+
+  if (path === "/ci-evals/create") {
+    return { type: "create" };
+  }
 
   if (path === "/ci-evals") {
     return { type: "list" };
@@ -106,7 +115,7 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
       return {
         type: "suite-overview",
         suiteId,
-        view: view === "runs" ? "runs" : "test-cases",
+        view: view === "test-cases" ? "test-cases" : "runs",
       };
     }
   }
@@ -127,9 +136,12 @@ export function navigateToCiEvalsRoute(
     case "list":
       hash = "#/ci-evals";
       break;
+    case "create":
+      hash = "#/ci-evals/create";
+      break;
     case "suite-overview": {
       const params = new URLSearchParams();
-      if (route.view && route.view !== "test-cases") {
+      if (route.view && route.view !== "runs") {
         params.set("view", route.view);
       }
       const query = params.toString();

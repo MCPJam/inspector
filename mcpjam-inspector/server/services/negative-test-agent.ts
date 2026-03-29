@@ -155,6 +155,7 @@ ${toolsContext}
       model: "anthropic/claude-haiku-4.5",
       tools: [],
       messages: JSON.stringify(messageHistory),
+      maxOutputTokens: 12288,
     }),
   });
 

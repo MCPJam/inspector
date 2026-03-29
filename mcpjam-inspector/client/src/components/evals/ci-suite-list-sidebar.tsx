@@ -1,7 +1,12 @@
 import { useState, useEffect, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type { CommitGroup, EvalSuiteOverviewEntry } from "./types";
-import { TagBadges } from "./tag-editor";
+import {
+  evalOverviewEntryLeftBorderClass,
+  evalOverviewEntryMiniBarClass,
+  evalOverviewEntryOutcomeTitle,
+  evalOverviewEntrySelectedRowClass,
+} from "./helpers";
 import { CommitListSidebar } from "./commit-list-sidebar";
 
 /** Force a re-render every `intervalMs` so relative timestamps stay fresh. */
@@ -27,54 +32,8 @@ interface CiSuiteListSidebarProps {
   onSelectCommit: (commitSha: string) => void;
 }
 
-function getStatusInfo(entry: EvalSuiteOverviewEntry): {
-  label: string;
-  dotClass: string;
-  labelClass: string;
-} {
-  const latestRun = entry.latestRun;
-  if (!latestRun) {
-    return {
-      label: "No runs",
-      dotClass: "bg-muted-foreground/40",
-      labelClass: "text-muted-foreground",
-    };
-  }
-  if (latestRun.status === "running" || latestRun.status === "pending") {
-    return {
-      label: "Running",
-      dotClass: "bg-warning animate-pulse",
-      labelClass: "text-warning",
-    };
-  }
-  if (latestRun.result === "passed") {
-    return {
-      label: "Passed",
-      dotClass: "bg-emerald-500",
-      labelClass: "text-emerald-500",
-    };
-  }
-  if (latestRun.result === "failed") {
-    return {
-      label: "Failed",
-      dotClass: "bg-destructive",
-      labelClass: "text-destructive",
-    };
-  }
-  return {
-    label: latestRun.status,
-    dotClass: "bg-muted-foreground/40",
-    labelClass: "text-muted-foreground",
-  };
-}
-
-function toPercent(value: number): number {
-  const normalized = value <= 1 ? value * 100 : value;
-  return Math.max(0, Math.min(100, Math.round(normalized)));
-}
-
 function formatRelativeTime(timestamp?: number): string {
-  if (!timestamp) return "No runs yet";
+  if (!timestamp) return "—";
   const now = Date.now();
   const diff = now - timestamp;
   const minutes = Math.floor(diff / 60000);
@@ -85,6 +44,12 @@ function formatRelativeTime(timestamp?: number): string {
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
   return new Date(timestamp).toLocaleDateString();
+}
+
+function formatLastRunRelativeTime(entry: EvalSuiteOverviewEntry): string {
+  const r = entry.latestRun;
+  if (!r) return "—";
+  return formatRelativeTime(r.completedAt ?? r.createdAt);
 }
 
 export function CiSuiteListSidebar({
@@ -137,29 +102,17 @@ export function CiSuiteListSidebar({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b px-4 py-3 space-y-2">
-        <div className="flex rounded-md border bg-muted/50 p-0.5">
-          <button
-            onClick={() => onSidebarModeChange("runs")}
-            className={cn(
-              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
-              sidebarMode === "runs"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">Group By</span>
+          <select
+            value={sidebarMode}
+            onChange={(e) => onSidebarModeChange(e.target.value as SidebarMode)}
+            className="text-xs border rounded px-2 py-1 bg-background"
+            aria-label="Group sidebar list by"
           >
-            By Commit
-          </button>
-          <button
-            onClick={() => onSidebarModeChange("suites")}
-            className={cn(
-              "flex-1 rounded-sm px-3 py-1 text-xs font-medium transition-colors",
-              sidebarMode === "suites"
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground",
-            )}
-          >
-            By Suite
-          </button>
+            <option value="runs">Commit</option>
+            <option value="suites">Suite</option>
+          </select>
         </div>
       </div>
 
@@ -177,8 +130,13 @@ export function CiSuiteListSidebar({
               Loading suites...
             </div>
           ) : suites.length === 0 ? (
-            <div className="p-4 text-center text-xs text-muted-foreground">
-              No eval suites found.
+            <div className="space-y-2 p-4 text-center text-xs text-muted-foreground">
+              <p>No suites found.</p>
+              <p>
+                Use the{" "}
+                <span className="font-medium text-foreground">@mcpjam/sdk</span>{" "}
+                quickstart in the main panel to create your first suite.
+              </p>
             </div>
           ) : (
             <div>
@@ -217,14 +175,7 @@ function SuiteGroupItem({
   const isAnySelected = entries.some((e) => e.suite._id === selectedSuiteId);
   const [expanded, setExpanded] = useState(false);
 
-  const latestRun = primary.latestRun;
-  const status = getStatusInfo(primary);
-  const trend = primary.passRateTrend
-    .slice(-12)
-    .map((value) => toPercent(value));
-  const timestamp = formatRelativeTime(
-    latestRun?.completedAt ?? latestRun?.createdAt ?? primary.suite.updatedAt,
-  );
+  const lastRunTimeLabel = formatLastRunRelativeTime(primary);
 
   // For single-entry groups, render directly
   if (!hasMultiple) {
@@ -233,9 +184,6 @@ function SuiteGroupItem({
         entry={primary}
         isSelected={selectedSuiteId === primary.suite._id}
         onSelect={() => onSelectSuite(primary.suite._id)}
-        status={status}
-        trend={trend}
-        timestamp={timestamp}
       />
     );
   }
@@ -243,32 +191,36 @@ function SuiteGroupItem({
   // For multi-entry groups, render as expandable group
   return (
     <div>
-      <button
-        onClick={() => {
-          if (!isAnySelected) {
-            // Click selects the most recent entry
-            onSelectSuite(primary.suite._id);
-          } else {
-            setExpanded(!expanded);
-          }
-        }}
+      <div
         className={cn(
-          "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+          "group flex w-full items-center border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
+          evalOverviewEntryLeftBorderClass(primary),
           isAnySelected && "bg-accent shadow-sm",
         )}
       >
-        <div className="flex items-center gap-2.5">
-          <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
-            <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
-            <span
-              className={cn(
-                "text-[9px] font-medium leading-none",
-                status.labelClass,
-              )}
-            >
-              {status.label}
-            </span>
-          </div>
+        <div
+          role="button"
+          tabIndex={0}
+          title={evalOverviewEntryOutcomeTitle(primary)}
+          onClick={() => {
+            if (!isAnySelected) {
+              onSelectSuite(primary.suite._id);
+            } else {
+              setExpanded(!expanded);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              if (!isAnySelected) {
+                onSelectSuite(primary.suite._id);
+              } else {
+                setExpanded(!expanded);
+              }
+            }
+          }}
+          className="flex min-w-0 flex-1 cursor-pointer items-center text-left"
+        >
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5">
               <span
@@ -283,72 +235,49 @@ function SuiteGroupItem({
                 {entries.length}
               </span>
             </div>
-            {primary.suite.tags && primary.suite.tags.length > 0 && (
-              <TagBadges tags={primary.suite.tags} className="mt-0.5" />
-            )}
-            <div className="text-[11px] text-muted-foreground">{timestamp}</div>
-          </div>
-          {trend.length >= 3 && (
-            <div className="flex h-5 shrink-0 items-end gap-px">
-              {trend.map((value, idx) => (
-                <div
-                  key={`${primary.suite._id}-t-${idx}`}
-                  className={cn(
-                    "w-1 rounded-sm",
-                    value >= 80
-                      ? "bg-emerald-500/70"
-                      : value >= 50
-                        ? "bg-amber-500/70"
-                        : "bg-destructive/70",
-                  )}
-                  style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
-                />
-              ))}
+            <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+              {lastRunTimeLabel}
             </div>
-          )}
+          </div>
         </div>
-      </button>
+      </div>
       {(expanded || isAnySelected) && entries.length > 1 && (
         <div className="border-l-2 border-muted ml-6">
-          {entries.map((entry) => {
-            const entryStatus = getStatusInfo(entry);
-            const entryTimestamp = formatRelativeTime(
-              entry.latestRun?.completedAt ??
-                entry.latestRun?.createdAt ??
-                entry.suite.updatedAt,
-            );
-            return (
-              <button
-                key={entry.suite._id}
-                onClick={() => onSelectSuite(entry.suite._id)}
+          {entries.map((entry) => (
+            <div
+              key={entry.suite._id}
+              className="flex w-full items-stretch gap-2 border-b border-border/40 last:border-b-0"
+            >
+              <div
                 className={cn(
-                  "w-full px-3 py-1.5 text-left transition-colors hover:bg-accent/50",
+                  "my-2 ml-2 w-0.5 shrink-0 self-stretch rounded-full",
+                  evalOverviewEntryMiniBarClass(entry),
+                )}
+                aria-hidden
+              />
+              <div
+                role="button"
+                tabIndex={0}
+                title={evalOverviewEntryOutcomeTitle(entry)}
+                onClick={() => onSelectSuite(entry.suite._id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onSelectSuite(entry.suite._id);
+                  }
+                }}
+                className={cn(
+                  "min-w-0 flex-1 cursor-pointer py-1.5 pl-1 pr-3 text-left transition-colors hover:bg-accent/50",
                   selectedSuiteId === entry.suite._id &&
-                    "bg-primary/10 border-r-2 border-r-primary",
+                    evalOverviewEntrySelectedRowClass(entry),
                 )}
               >
-                <div className="flex items-center gap-2">
-                  <div
-                    className={cn(
-                      "h-1.5 w-1.5 rounded-full shrink-0",
-                      entryStatus.dotClass,
-                    )}
-                  />
-                  <span className="text-[11px] text-muted-foreground truncate flex-1">
-                    {entryTimestamp}
-                  </span>
-                  <span
-                    className={cn(
-                      "text-[10px] font-medium",
-                      entryStatus.labelClass,
-                    )}
-                  >
-                    {entryStatus.label}
-                  </span>
+                <div className="text-[11px] text-muted-foreground tabular-nums">
+                  {formatLastRunRelativeTime(entry)}
                 </div>
-              </button>
-            );
-          })}
+              </div>
+            </div>
+          ))}
         </div>
       )}
     </div>
@@ -359,37 +288,32 @@ function SuiteEntryButton({
   entry,
   isSelected,
   onSelect,
-  status,
-  trend,
-  timestamp,
 }: {
   entry: EvalSuiteOverviewEntry;
   isSelected: boolean;
   onSelect: () => void;
-  status: { label: string; dotClass: string; labelClass: string };
-  trend: number[];
-  timestamp: string;
 }) {
   return (
-    <button
-      onClick={onSelect}
+    <div
       className={cn(
-        "w-full px-4 py-2.5 text-left transition-colors hover:bg-accent/50",
+        "group flex w-full items-center border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
+        evalOverviewEntryLeftBorderClass(entry),
         isSelected && "bg-accent shadow-sm",
       )}
     >
-      <div className="flex items-center gap-2.5">
-        <div className="flex flex-col items-center gap-0.5 shrink-0 w-[3.25rem]">
-          <div className={cn("h-2 w-2 rounded-full", status.dotClass)} />
-          <span
-            className={cn(
-              "text-[9px] font-medium leading-none",
-              status.labelClass,
-            )}
-          >
-            {status.label}
-          </span>
-        </div>
+      <div
+        role="button"
+        tabIndex={0}
+        title={evalOverviewEntryOutcomeTitle(entry)}
+        onClick={onSelect}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onSelect();
+          }
+        }}
+        className="flex min-w-0 flex-1 cursor-pointer items-center text-left"
+      >
         <div className="min-w-0 flex-1">
           <div
             className={cn(
@@ -399,23 +323,11 @@ function SuiteEntryButton({
           >
             {entry.suite.name || "Untitled suite"}
           </div>
-          {entry.suite.tags && entry.suite.tags.length > 0 && (
-            <TagBadges tags={entry.suite.tags} className="mt-0.5" />
-          )}
-          <div className="text-[11px] text-muted-foreground">{timestamp}</div>
-        </div>
-        {trend.length >= 3 && (
-          <div className="flex h-5 shrink-0 items-end gap-px">
-            {trend.map((value, idx) => (
-              <div
-                key={`${entry.suite._id}-t-${idx}`}
-                className="w-1 rounded-sm bg-primary/70"
-                style={{ height: `${Math.max(3, (value / 100) * 20)}px` }}
-              />
-            ))}
+          <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
+            {formatLastRunRelativeTime(entry)}
           </div>
-        )}
+        </div>
       </div>
-    </button>
+    </div>
   );
 }

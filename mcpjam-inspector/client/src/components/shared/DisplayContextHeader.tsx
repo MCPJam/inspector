@@ -45,18 +45,14 @@ import {
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { updateThemeMode } from "@/lib/theme-utils";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import {
-  clampDisplayModeToAvailableModes,
-  extractEffectiveHostDisplayMode,
   extractHostDeviceCapabilities,
-  extractHostDisplayModes,
   extractHostLocale,
-  extractHostTheme,
   extractHostTimeZone,
-  type HostDisplayMode,
 } from "@/lib/client-config";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
@@ -149,6 +145,10 @@ export interface DisplayContextHeaderProps {
   protocol: UIType | null;
   /** Optional: show theme toggle (default: false) */
   showThemeToggle?: boolean;
+  /** Optional: local theme mode override for surfaces that should not touch global app theme */
+  themeModeOverride?: "light" | "dark";
+  /** Optional: local theme toggle handler paired with themeModeOverride */
+  onThemeToggleOverride?: () => void;
   /** Optional: custom class name */
   className?: string;
 }
@@ -156,6 +156,8 @@ export interface DisplayContextHeaderProps {
 export function DisplayContextHeader({
   protocol,
   showThemeToggle = false,
+  themeModeOverride,
+  onThemeToggleOverride,
   className,
 }: DisplayContextHeaderProps) {
   // Popover states
@@ -163,7 +165,6 @@ export function DisplayContextHeader({
   const [localePopoverOpen, setLocalePopoverOpen] = useState(false);
   const [cspPopoverOpen, setCspPopoverOpen] = useState(false);
   const [timezonePopoverOpen, setTimezonePopoverOpen] = useState(false);
-  const [displayModesPopoverOpen, setDisplayModesPopoverOpen] = useState(false);
 
   // Store state
   const deviceType = useUIPlaygroundStore((s) => s.deviceType);
@@ -210,13 +211,24 @@ export function DisplayContextHeader({
   const fallbackLocale = navigator.language || "en-US";
   const fallbackTimeZone =
     Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-  const themePreference = usePreferencesStore((s) => s.themeMode);
-  const theme = extractHostTheme(hostContext) ?? themePreference;
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+  const usesThemeOverride =
+    themeModeOverride !== undefined && onThemeToggleOverride !== undefined;
+  const effectiveThemeMode = usesThemeOverride ? themeModeOverride : themeMode;
 
+  // App Builder can scope theme changes to the emulated thread/composer surface.
+  // Other consumers still fall back to the global MCPJam preference theme.
   const handleThemeChange = useCallback(() => {
-    const newTheme = theme === "dark" ? "light" : "dark";
-    patchHostContext({ theme: newTheme });
-  }, [theme, patchHostContext]);
+    if (usesThemeOverride && onThemeToggleOverride) {
+      onThemeToggleOverride();
+      return;
+    }
+
+    const newTheme = themeMode === "dark" ? "light" : "dark";
+    updateThemeMode(newTheme);
+    setThemeMode(newTheme);
+  }, [onThemeToggleOverride, setThemeMode, themeMode, usesThemeOverride]);
 
   // Device config - use custom dimensions from store for custom type
   const deviceConfig = useMemo(() => {
@@ -234,39 +246,7 @@ export function DisplayContextHeader({
   // Host display context comes directly from hostContext.
   const locale = extractHostLocale(hostContext, fallbackLocale);
   const timeZone = extractHostTimeZone(hostContext, fallbackTimeZone);
-  const displayMode = extractEffectiveHostDisplayMode(hostContext);
-  const availableDisplayModes = extractHostDisplayModes(hostContext);
   const capabilities = extractHostDeviceCapabilities(hostContext);
-
-  const handleDisplayModeChange = useCallback(
-    (nextDisplayMode: "inline" | "pip" | "fullscreen") => {
-      patchHostContext({ displayMode: nextDisplayMode });
-    },
-    [patchHostContext],
-  );
-
-  const toggleAvailableDisplayMode = useCallback(
-    (mode: "inline" | "pip" | "fullscreen") => {
-      const nextAvailableDisplayModes: HostDisplayMode[] =
-        availableDisplayModes.includes(mode)
-          ? availableDisplayModes.filter((value) => value !== mode)
-          : [...availableDisplayModes, mode];
-      const normalizedAvailableDisplayModes: HostDisplayMode[] =
-        nextAvailableDisplayModes.length > 0
-          ? nextAvailableDisplayModes
-          : ["inline"];
-      const nextDisplayMode = clampDisplayModeToAvailableModes(
-        displayMode,
-        normalizedAvailableDisplayModes,
-      );
-
-      patchHostContext({
-        availableDisplayModes: normalizedAvailableDisplayModes,
-        displayMode: nextDisplayMode,
-      });
-    },
-    [availableDisplayModes, displayMode, patchHostContext],
-  );
 
   const handleCapabilityToggle = useCallback(
     (key: "hover" | "touch") => {
@@ -807,85 +787,6 @@ export function DisplayContextHeader({
               </PopoverContent>
             </Popover>
 
-            <Popover
-              open={displayModesPopoverOpen}
-              onOpenChange={setDisplayModesPopoverOpen}
-            >
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 px-2 text-xs gap-1.5 border bg-background shadow-xs"
-                    >
-                      <Settings2 className="h-3.5 w-3.5" />
-                      <span>{displayMode}</span>
-                      <span className="text-muted-foreground text-[10px]">
-                        {availableDisplayModes.length}/3
-                      </span>
-                    </Button>
-                  </PopoverTrigger>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p className="font-medium">Display Modes</p>
-                </TooltipContent>
-              </Tooltip>
-              <PopoverContent className="w-56 p-3" align="start">
-                <div className="space-y-3">
-                  <div className="space-y-1">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Current mode
-                    </div>
-                    <div className="grid grid-cols-3 gap-1">
-                      {(["inline", "pip", "fullscreen"] as const).map(
-                        (mode) => (
-                          <Button
-                            key={mode}
-                            type="button"
-                            variant={
-                              displayMode === mode ? "secondary" : "ghost"
-                            }
-                            size="sm"
-                            disabled={!availableDisplayModes.includes(mode)}
-                            onClick={() => handleDisplayModeChange(mode)}
-                            className="h-7 text-[11px]"
-                          >
-                            {mode}
-                          </Button>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                  <div className="space-y-1">
-                    <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                      Host available modes
-                    </div>
-                    <div className="grid grid-cols-1 gap-1">
-                      {(["inline", "pip", "fullscreen"] as const).map(
-                        (mode) => (
-                          <Button
-                            key={mode}
-                            type="button"
-                            variant={
-                              availableDisplayModes.includes(mode)
-                                ? "secondary"
-                                : "ghost"
-                            }
-                            size="sm"
-                            onClick={() => toggleAvailableDisplayMode(mode)}
-                            className="justify-start h-7 text-[11px]"
-                          >
-                            {mode}
-                          </Button>
-                        ),
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </PopoverContent>
-            </Popover>
-
             {/* CSP mode selector */}
             <Popover open={cspPopoverOpen} onOpenChange={setCspPopoverOpen}>
               <Tooltip>
@@ -1042,9 +943,10 @@ export function DisplayContextHeader({
                 variant="ghost"
                 size="icon"
                 onClick={handleThemeChange}
+                data-testid="display-context-theme-toggle"
                 className="h-7 w-7 border bg-background shadow-xs"
               >
-                {theme === "dark" ? (
+                {effectiveThemeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
                 ) : (
                   <Moon className="h-3.5 w-3.5" />
@@ -1052,7 +954,7 @@ export function DisplayContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {theme === "dark" ? "Light mode" : "Dark mode"}
+              {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
         )}

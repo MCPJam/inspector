@@ -31,8 +31,9 @@ import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
+  getServerUrl,
 } from "./server-card-utils";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { ServerDetailTab } from "./ServerDetailModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
@@ -51,6 +52,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { ShareServerDialog } from "./ShareServerDialog";
+import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -80,6 +82,8 @@ interface ServerConnectionCardProps {
     defaultTab: ServerDetailTab,
   ) => void;
   footerActions?: React.ReactNode;
+  /** When set (e.g. active workspace on Servers tab), prefetches Explore AI test cases on MCP connect. */
+  workspaceId?: string | null;
 }
 
 export function ServerConnectionCard({
@@ -92,9 +96,11 @@ export function ServerConnectionCard({
   hostedServerId,
   onOpenDetailModal,
   footerActions,
+  workspaceId,
 }: ServerConnectionCardProps) {
+  useExploreCasesPrefetchOnConnect(workspaceId ?? null, server);
+
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -233,14 +239,7 @@ export function ServerConnectionCard({
     setIsCopyingBrief(true);
     try {
       const data = await exportServerApi(server.name);
-      const serverUrl =
-        "url" in server.config && server.config.url
-          ? server.config.url.toString()
-          : "command" in server.config
-            ? [server.config.command, ...(server.config.args ?? [])]
-                .filter(Boolean)
-                .join(" ")
-            : undefined;
+      const serverUrl = getServerUrl(server.config);
       const markdown = generateAgentBrief(data, { serverUrl });
       await navigator.clipboard.writeText(markdown);
       toast.success("Agent brief copied to clipboard");
@@ -534,27 +533,25 @@ export function ServerConnectionCard({
                       )}
                       {isExporting ? "Exporting..." : "Export server info"}
                     </DropdownMenuItem>
-                    {ciEvalsEnabled && (
-                      <DropdownMenuItem
-                        onClick={() => {
-                          handleCopyAgentBrief();
-                        }}
-                        disabled={
-                          isCopyingBrief ||
-                          server.connectionStatus !== "connected"
-                        }
-                        className="text-xs cursor-pointer"
-                      >
-                        {isCopyingBrief ? (
-                          <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                        ) : (
-                          <FileText className="h-3 w-3 mr-2" />
-                        )}
-                        {isCopyingBrief
-                          ? "Copying..."
-                          : "Copy markdown for server evals"}
-                      </DropdownMenuItem>
-                    )}
+                    <DropdownMenuItem
+                      onClick={() => {
+                        handleCopyAgentBrief();
+                      }}
+                      disabled={
+                        isCopyingBrief ||
+                        server.connectionStatus !== "connected"
+                      }
+                      className="text-xs cursor-pointer"
+                    >
+                      {isCopyingBrief ? (
+                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                      ) : (
+                        <FileText className="h-3 w-3 mr-2" />
+                      )}
+                      {isCopyingBrief
+                        ? "Copying..."
+                        : "Copy markdown for server evals"}
+                    </DropdownMenuItem>
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -601,15 +598,6 @@ export function ServerConnectionCard({
             >
               Complete sign-in in the browser. Inspector will resume
               automatically.
-            </div>
-          )}
-
-          {server.connectionStatus === "connecting" && (
-            <div
-              className="mt-3 rounded-md border border-blue-300/40 bg-blue-500/10 p-2 text-xs text-muted-foreground"
-              onClick={(e) => e.stopPropagation()}
-            >
-              Authorization complete. Finalizing the MCP connection.
             </div>
           )}
 

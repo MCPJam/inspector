@@ -3,6 +3,23 @@ import { useMutation } from "convex/react";
 import type { EvalSuiteRun } from "./types";
 
 // ---------------------------------------------------------------------------
+// Shared error classification for triage mutations
+// ---------------------------------------------------------------------------
+
+function classifyTriageError(err: unknown): {
+  unavailable: boolean;
+  message: string;
+} {
+  const message = err instanceof Error ? err.message : String(err);
+  const unavailable =
+    message.includes("Could not find") ||
+    message.includes("not found") ||
+    message.includes("is not a function") ||
+    message.includes("Server Error");
+  return { unavailable, message };
+}
+
+// ---------------------------------------------------------------------------
 // Hook: triage for a single suite run (used in RunDetailView)
 // ---------------------------------------------------------------------------
 
@@ -11,12 +28,22 @@ import type { EvalSuiteRun } from "./types";
  *
  * Triage results are reactive — they live on the `testSuiteRun` document
  * (`triageStatus` / `triageSummary`), so no polling or separate query is needed.
- * This hook only manages the mutation call and local error state.
+ * This hook manages the mutation call, local error state, and auto-request when
+ * the user opens a failed run that has not started triage yet.
+ *
+ * @param options.autoRequest - When false, only manual `requestTriage` runs (defaults to true).
  */
-export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
+export function useAiTriage(
+  run: EvalSuiteRun | null,
+  failedCount?: number,
+  options?: { autoRequest?: boolean },
+) {
+  const autoRequest = options?.autoRequest !== false;
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [requested, setRequested] = useState(false);
+  const hasAutoAttemptedRef = useRef(false);
+  const runIdRef = useRef<string | null>(null);
 
   const requestTriageMutation = useMutation("triage:requestTriage" as any);
 
@@ -30,7 +57,8 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
     !unavailable;
 
   const requestTriage = useCallback(() => {
-    if (!run || requested) return;
+    if (!run || unavailable) return;
+    if (requested) return;
 
     setError(null);
     setRequested(true);
@@ -40,20 +68,72 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
 
     requestTriageMutation({ suiteRunId: run._id, force } as any).catch(
       (err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        if (
-          message.includes("Could not find") ||
-          message.includes("not found") ||
-          message.includes("is not a function") ||
-          message.includes("Server Error")
-        ) {
+        setRequested(false);
+        const classified = classifyTriageError(err);
+        if (classified.unavailable) {
           setUnavailable(true);
         } else {
-          setError(message);
+          setError(classified.message);
         }
       },
     );
-  }, [run, requested, requestTriageMutation]);
+  }, [run, requested, unavailable, requestTriageMutation]);
+
+  const runKey = run?._id ?? "";
+  useEffect(() => {
+    if (runIdRef.current !== runKey) {
+      runIdRef.current = runKey;
+      setError(null);
+      setRequested(false);
+      hasAutoAttemptedRef.current = false;
+    }
+  }, [runKey]);
+
+  useEffect(() => {
+    if (run?.triageStatus === "completed" || run?.triageStatus === "failed") {
+      setRequested(false);
+    }
+  }, [run?.triageStatus, run?._id]);
+
+  useEffect(() => {
+    if (!autoRequest) return;
+    if (!run || unavailable || hasAutoAttemptedRef.current) return;
+    if (run.status !== "completed" || failed <= 0) return;
+    if (
+      run.triageStatus === "pending" ||
+      run.triageStatus === "completed" ||
+      run.triageStatus === "failed"
+    ) {
+      return;
+    }
+
+    hasAutoAttemptedRef.current = true;
+    setError(null);
+    setRequested(true);
+
+    requestTriageMutation({ suiteRunId: run._id, force: false } as any).catch(
+      (err: unknown) => {
+        hasAutoAttemptedRef.current = false;
+        setRequested(false);
+        const classified = classifyTriageError(err);
+        if (classified.unavailable) {
+          setUnavailable(true);
+          setError(null);
+        } else {
+          setError(classified.message);
+        }
+      },
+    );
+  }, [
+    run,
+    failed,
+    unavailable,
+    requestTriageMutation,
+    run?.triageStatus,
+    run?._id,
+    run?.status,
+    autoRequest,
+  ]);
 
   return { canTriage, error, unavailable, requested, requestTriage };
 }
@@ -63,71 +143,54 @@ export function useAiTriage(run: EvalSuiteRun | null, failedCount?: number) {
 // and overview-panel
 // ---------------------------------------------------------------------------
 
-export function useCommitTriage(failedRunIds: string[]): {
+export function useCommitTriage(failedRuns: EvalSuiteRun[]): {
   summary: string | null;
   loading: boolean;
   error: string | null;
   unavailable: boolean;
   requestTriage: () => void;
 } {
-  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const hasAttemptedRef = useRef(false);
-
   const requestTriageMutation = useMutation("triage:requestTriage" as any);
 
-  // Reset state when the run IDs change
-  const runKey = failedRunIds.join(",");
+  const primaryRun = failedRuns[0] ?? null;
+  const summary = primaryRun?.triageSummary?.summary ?? null;
+  const loading = failedRuns.some((r) => r.triageStatus === "pending");
+
+  const runKey = failedRuns.map((r) => r._id).join(",");
   const prevRunKeyRef = useRef(runKey);
   useEffect(() => {
     if (prevRunKeyRef.current !== runKey) {
       prevRunKeyRef.current = runKey;
-      setSummary(null);
       setError(null);
-      setLoading(false);
       hasAttemptedRef.current = false;
     }
   }, [runKey]);
 
   const requestTriage = useCallback(() => {
-    if (failedRunIds.length === 0 || unavailable || hasAttemptedRef.current)
-      return;
+    if (!primaryRun || unavailable || hasAttemptedRef.current) return;
 
     hasAttemptedRef.current = true;
-    setLoading(true);
     setError(null);
 
-    const primaryRunId = failedRunIds[0];
-    requestTriageMutation({ suiteRunId: primaryRunId } as any)
-      .then((result: any) => {
-        if (result?.summary) {
-          setSummary(result.summary);
-          setLoading(false);
-        } else {
-          setLoading(false);
-          setSummary(
-            "Triage requested — results will appear when backend processing completes.",
-          );
-        }
-      })
-      .catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        if (
-          message.includes("Could not find") ||
-          message.includes("not found") ||
-          message.includes("is not a function") ||
-          message.includes("Server Error")
-        ) {
+    const force =
+      primaryRun.triageStatus === "completed" ||
+      primaryRun.triageStatus === "failed";
+
+    requestTriageMutation({ suiteRunId: primaryRun._id, force } as any).catch(
+      (err: unknown) => {
+        const classified = classifyTriageError(err);
+        if (classified.unavailable) {
           setUnavailable(true);
           setError(null);
         } else {
-          setError(message);
+          setError(classified.message);
         }
-        setLoading(false);
-      });
-  }, [failedRunIds, requestTriageMutation, unavailable]);
+      },
+    );
+  }, [primaryRun, requestTriageMutation, unavailable]);
 
   return { summary, loading, error, unavailable, requestTriage };
 }

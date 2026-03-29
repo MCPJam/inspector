@@ -110,6 +110,10 @@ export function parseEvalsRoute(): EvalsRoute | null {
  * Navigate to a specific evals route
  */
 export function navigateToEvalsRoute(route: EvalsRoute) {
+  window.location.hash = buildEvalsHash(route);
+}
+
+export function buildEvalsHash(route: EvalsRoute) {
   let hash = "";
 
   switch (route.type) {
@@ -154,7 +158,7 @@ export function navigateToEvalsRoute(route: EvalsRoute) {
       break;
   }
 
-  window.location.hash = hash;
+  return hash;
 }
 
 /**

@@ -189,7 +189,7 @@ export function PlaygroundLeft({
 
   return (
     <div
-      className="h-full flex flex-col border-r border-border bg-background overflow-hidden"
+      className="h-full flex flex-col bg-background overflow-hidden"
       onKeyDownCapture={handleKeyDown}
     >
       {/* Header with tabs and actions */}

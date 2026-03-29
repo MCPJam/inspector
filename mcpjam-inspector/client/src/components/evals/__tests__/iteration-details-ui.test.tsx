@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { IterationDetails } from "../iteration-details";
 import type { EvalCase, EvalIteration } from "../types";
 
@@ -37,7 +37,7 @@ vi.mock("@/lib/apis/mcp-tools-api", () => ({
 }));
 
 vi.mock("../trace-viewer", () => ({
-  TraceViewer: () => null,
+  TraceViewer: () => <div data-testid="mock-trace-viewer" />,
 }));
 
 const testCase: EvalCase = {
@@ -136,5 +136,98 @@ describe("IterationDetails raw tool calls", () => {
         }),
       ]),
     );
+  });
+});
+
+describe("IterationDetails full layout (trace-first)", () => {
+  beforeEach(() => {
+    mockGetBlob.mockReset();
+    mockJsonEditor.mockClear();
+    mockGetBlob.mockResolvedValue({
+      messages: [{ role: "user", content: "hello" }],
+    });
+  });
+
+  it("places trace before tool calls when layout is full and a blob exists", async () => {
+    const { container } = render(
+      <IterationDetails
+        layoutMode="full"
+        iteration={{ ...iteration, blob: "blob-1" }}
+        testCase={testCase}
+      />,
+    );
+
+    await screen.findByTestId("mock-trace-viewer");
+
+    const ordered = container.querySelectorAll(
+      '[data-testid="iteration-trace-section"], [data-testid="iteration-tool-calls-section"]',
+    );
+    expect(ordered).toHaveLength(2);
+    expect(ordered[0]).toHaveAttribute(
+      "data-testid",
+      "iteration-trace-section",
+    );
+    expect(ordered[1]).toHaveAttribute(
+      "data-testid",
+      "iteration-tool-calls-section",
+    );
+  });
+
+  it("places tool calls before trace in compact layout even with a blob", async () => {
+    const { container } = render(
+      <IterationDetails
+        iteration={{ ...iteration, blob: "blob-1" }}
+        testCase={testCase}
+      />,
+    );
+
+    await screen.findByTestId("mock-trace-viewer");
+
+    const ordered = container.querySelectorAll(
+      '[data-testid="iteration-tool-calls-section"], [data-testid="iteration-trace-section"]',
+    );
+    expect(ordered).toHaveLength(2);
+    expect(ordered[0]).toHaveAttribute(
+      "data-testid",
+      "iteration-tool-calls-section",
+    );
+    expect(ordered[1]).toHaveAttribute(
+      "data-testid",
+      "iteration-trace-section",
+    );
+  });
+
+  it("starts with tool calls collapsed for passed iterations in full layout", async () => {
+    render(
+      <IterationDetails
+        layoutMode="full"
+        iteration={{ ...iteration, result: "passed", blob: "blob-1" }}
+        testCase={testCase}
+      />,
+    );
+
+    await screen.findByTestId("mock-trace-viewer");
+
+    const toolCallsRoot = screen.getByTestId("iteration-tool-calls-section");
+    expect(toolCallsRoot.parentElement).toHaveAttribute("data-state", "closed");
+    expect(
+      screen.getByText(/Expected: read_me · Actual: read_me/),
+    ).toBeInTheDocument();
+  });
+
+  it("starts with tool calls expanded for failed iterations in full layout", async () => {
+    render(
+      <IterationDetails
+        layoutMode="full"
+        iteration={{ ...iteration, result: "failed", blob: "blob-1" }}
+        testCase={testCase}
+      />,
+    );
+
+    await screen.findByTestId("mock-trace-viewer");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("iteration-tool-calls-grid")).toBeVisible();
+    });
   });
 });

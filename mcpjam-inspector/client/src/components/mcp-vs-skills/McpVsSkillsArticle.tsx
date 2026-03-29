@@ -15,8 +15,8 @@ export function McpVsSkillsArticle() {
 
       <Section step={1} title="Quick Comparison">
         <p className="text-sm text-muted-foreground leading-relaxed">
-          Skills and MCP solve different problems. Skills are instructions.
-          MCP is connectivity.
+          Skills and MCP solve different problems. Skills are instructions. MCP
+          is connectivity.
         </p>
 
         <ComparisonTable
@@ -44,11 +44,7 @@ export function McpVsSkillsArticle() {
               ],
             },
             {
-              cells: [
-                "Real actions",
-                "No",
-                "Yes",
-              ],
+              cells: ["Real actions", "No", "Yes"],
             },
           ]}
         />
@@ -62,7 +58,9 @@ export function McpVsSkillsArticle() {
 
         <ul className="list-disc pl-5 space-y-1 text-sm text-muted-foreground">
           <li>A skill might say how to review a pull request well.</li>
-          <li>An MCP server gives access to GitHub so the agent can inspect it.</li>
+          <li>
+            An MCP server gives access to GitHub so the agent can inspect it.
+          </li>
           <li>Together, the agent has both judgment and access.</li>
         </ul>
       </Section>

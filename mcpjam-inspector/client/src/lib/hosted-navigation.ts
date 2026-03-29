@@ -71,7 +71,8 @@ function normalizeOrganizationSection(
 
 export function getNormalizedHashParts(hashValue: string): string[] {
   const rawHash = hashValue.replace(/^#/, "");
-  const trimmedHash = rawHash.startsWith("/") ? rawHash.slice(1) : rawHash;
+  const [rawPath] = rawHash.split("?");
+  const trimmedHash = rawPath.startsWith("/") ? rawPath.slice(1) : rawPath;
   const hashParts = (trimmedHash || "servers").split("/");
   hashParts[0] = normalizeHostedHashTab(hashParts[0] || "servers");
 
@@ -90,7 +91,8 @@ export function resolveHostedNavigation(
   hostedMode: boolean,
 ): HostedNavigationResolution {
   const rawWithoutPrefix = target.replace(/^#/, "").replace(/^\/+/, "");
-  const rawSection = rawWithoutPrefix || "servers";
+  const [rawPathWithoutQuery] = rawWithoutPrefix.split("?");
+  const rawSection = rawPathWithoutQuery || "servers";
   const normalizedParts = getNormalizedHashParts(target);
   const normalizedSection = normalizedParts.join("/");
   const normalizedTab = normalizedParts[0] || "servers";

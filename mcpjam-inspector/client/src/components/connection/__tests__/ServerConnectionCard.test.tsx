@@ -47,6 +47,10 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-explore-cases-prefetch-on-connect", () => ({
+  useExploreCasesPrefetchOnConnect: vi.fn(),
+}));
+
 // Mock sonner toast
 vi.mock("sonner", () => ({
   toast: {
@@ -58,6 +62,7 @@ vi.mock("sonner", () => ({
 
 // Must import after mocks are set up
 import { ServerConnectionCard } from "../ServerConnectionCard";
+import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 
 // Mock navigator.clipboard
 const mockClipboard = {
@@ -93,6 +98,26 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("rendering", () => {
+    it("calls explore prefetch hook with workspaceId and server", () => {
+      const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
+      const server = createServer();
+      render(
+        <ServerConnectionCard
+          server={server}
+          workspaceId="ws_abc"
+          {...defaultProps}
+        />,
+      );
+      expect(prefetch).toHaveBeenCalledWith("ws_abc", server);
+    });
+
+    it("calls explore prefetch hook with null workspace when prop omitted", () => {
+      const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
+      const server = createServer();
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+      expect(prefetch).toHaveBeenCalledWith(null, server);
+    });
+
     it("renders server name", () => {
       const server = createServer({ name: "my-server" });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
@@ -151,11 +176,6 @@ describe("ServerConnectionCard", () => {
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
       expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
-      expect(
-        screen.getByText(
-          "Authorization complete. Finalizing the MCP connection.",
-        ),
-      ).toBeInTheDocument();
     });
 
     it("shows oauth browser authorization state", () => {

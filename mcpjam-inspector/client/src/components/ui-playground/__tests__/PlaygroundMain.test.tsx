@@ -308,19 +308,22 @@ vi.mock("../playground-helpers", () => ({
 }));
 
 // Mock preferences store
+const mockPreferencesState = {
+  themeMode: "light",
+  themePreset: "soft-pop",
+  setThemeMode: vi.fn(),
+};
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (selector: any) => {
-    const state = {
-      themeMode: "light",
-      setThemeMode: vi.fn(),
-    };
-    return selector ? selector(state) : state;
-  },
+  usePreferencesStore: (selector: any) =>
+    selector ? selector(mockPreferencesState) : mockPreferencesState,
 }));
 
 // Mock theme-utils
+const mockUpdateThemeMode = vi.fn();
+
 vi.mock("@/lib/theme-utils", () => ({
-  updateThemeMode: vi.fn(),
+  updateThemeMode: mockUpdateThemeMode,
 }));
 
 // Mock UI Playground store
@@ -329,6 +332,8 @@ const mockUIPlaygroundStore = {
   customViewport: { width: 375, height: 667 },
   setCustomViewport: vi.fn(),
   setPlaygroundActive: vi.fn(),
+  hostStyle: "claude",
+  setHostStyle: vi.fn(),
   cspMode: "widget-declared",
   setCspMode: vi.fn(),
   mcpAppsCspMode: "widget-declared",
@@ -350,7 +355,29 @@ vi.mock("@/stores/ui-playground-store", () => ({
 
 // Mock DisplayContextHeader which exports PRESET_DEVICE_CONFIGS
 vi.mock("@/components/shared/DisplayContextHeader", () => ({
-  DisplayContextHeader: () => <div data-testid="display-context-header" />,
+  DisplayContextHeader: ({
+    showThemeToggle,
+    themeModeOverride,
+    onThemeToggleOverride,
+  }: {
+    showThemeToggle?: boolean;
+    themeModeOverride?: string;
+    onThemeToggleOverride?: () => void;
+  }) => (
+    <div
+      data-testid="display-context-header"
+      data-theme-mode-override={themeModeOverride ?? ""}
+    >
+      {showThemeToggle ? (
+        <button
+          data-testid="display-context-theme-toggle"
+          onClick={() => onThemeToggleOverride?.()}
+        >
+          Toggle theme
+        </button>
+      ) : null}
+    </div>
+  ),
   PRESET_DEVICE_CONFIGS: {
     mobile: { width: 375, height: 667, label: "Phone", icon: () => null },
     tablet: { width: 768, height: 1024, label: "Tablet", icon: () => null },
@@ -398,6 +425,8 @@ describe("PlaygroundMain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     capturedChatSessionOptions = null;
+    mockPreferencesState.themeMode = "light";
+    mockPreferencesState.themePreset = "soft-pop";
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -426,9 +455,67 @@ describe("PlaygroundMain", () => {
     it("renders theme toggle button", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Theme toggle should exist (sun/moon icon)
-      const buttons = screen.getAllByRole("button");
-      expect(buttons.length).toBeGreaterThan(0);
+      expect(
+        screen.getByTestId("display-context-theme-toggle"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("thread theme override", () => {
+    it("scopes theme changes to the thread shell and composer surface", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      const header = screen.getByTestId("playground-main-header");
+      const displayContextHeader = screen.getByTestId("display-context-header");
+      const threadShell = screen.getByTestId("playground-thread-shell");
+
+      expect(displayContextHeader).toHaveAttribute(
+        "data-theme-mode-override",
+        "light",
+      );
+      expect(threadShell).toHaveAttribute("data-host-style", "claude");
+      expect(threadShell).toHaveAttribute("data-theme-preset", "soft-pop");
+      expect(threadShell).toHaveAttribute("data-thread-theme", "light");
+      expect(threadShell).not.toHaveClass("dark");
+      expect(header).not.toHaveClass("dark");
+
+      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
+
+      expect(displayContextHeader).toHaveAttribute(
+        "data-theme-mode-override",
+        "dark",
+      );
+      expect(threadShell).toHaveAttribute("data-thread-theme", "dark");
+      expect(threadShell).toHaveClass("dark");
+      expect(header).not.toHaveClass("dark");
+      expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
+      expect(mockUpdateThemeMode).not.toHaveBeenCalled();
+    });
+
+    it("resets the local thread theme override on remount", () => {
+      const firstRender = render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
+      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
+        "data-thread-theme",
+        "dark",
+      );
+
+      firstRender.unmount();
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("display-context-header")).toHaveAttribute(
+        "data-theme-mode-override",
+        "light",
+      );
+      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
+        "data-thread-theme",
+        "light",
+      );
+      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass(
+        "dark",
+      );
     });
   });
 

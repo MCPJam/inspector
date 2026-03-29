@@ -233,6 +233,180 @@ describe("TestAgent", () => {
       expect(result.mcpLatencyMs()).toBeGreaterThanOrEqual(0);
     });
 
+    it("captures step and llm spans even when step start hooks are skipped", async () => {
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        const stepResult = {
+          stepNumber: 0,
+          text: "All done",
+          usage: {
+            inputTokens: 3,
+            outputTokens: 2,
+            totalTokens: 5,
+          },
+          toolCalls: [],
+          response: {
+            messages: [
+              {
+                role: "assistant",
+                content: [{ type: "text", text: "All done" }],
+              },
+            ],
+          },
+        };
+
+        params.onStepFinish?.(stepResult);
+
+        return {
+          text: "All done",
+          steps: [stepResult],
+          usage: stepResult.usage,
+          totalUsage: stepResult.usage,
+          response: stepResult.response,
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools: {},
+        model: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.prompt("Say hello");
+      const spans = result.getSpans();
+
+      expect(spans.some((span) => span.category === "step")).toBe(true);
+      expect(spans.some((span) => span.category === "llm")).toBe(true);
+    });
+
+    it("captures tool spans even when step start hooks are skipped", async () => {
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        await params.tools.add.execute(
+          { a: 2, b: 3 },
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+        );
+
+        const stepResult = {
+          stepNumber: 0,
+          text: "The result is 5",
+          usage: {
+            inputTokens: 5,
+            outputTokens: 4,
+            totalTokens: 9,
+          },
+          toolCalls: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "add",
+              input: { a: 2, b: 3 },
+            },
+          ],
+          response: {
+            messages: [
+              {
+                role: "assistant",
+                content: [
+                  {
+                    type: "tool-call",
+                    toolCallId: "call-1",
+                    toolName: "add",
+                    input: { a: 2, b: 3 },
+                  },
+                ],
+              },
+              {
+                role: "tool",
+                content: [
+                  {
+                    type: "tool-result",
+                    toolCallId: "call-1",
+                    toolName: "add",
+                    output: 5,
+                  },
+                ],
+              },
+            ],
+          },
+        };
+
+        params.onStepFinish?.(stepResult);
+
+        return {
+          text: "The result is 5",
+          steps: [stepResult],
+          usage: stepResult.usage,
+          totalUsage: stepResult.usage,
+          response: stepResult.response,
+        } as any;
+      });
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.prompt("Add 2 and 3");
+      const spans = result.getSpans();
+      const stepSpan = spans.find((span) => span.category === "step");
+      const toolSpan = spans.find(
+        (span) => span.category === "tool" && span.name === "add"
+      );
+
+      expect(stepSpan).toBeDefined();
+      expect(toolSpan).toBeDefined();
+      expect(toolSpan?.parentId).toBe(stepSpan?.id);
+      expect(stepSpan).toEqual(
+        expect.objectContaining({
+          promptIndex: 0,
+          stepIndex: 0,
+          modelId: "gpt-4o",
+          inputTokens: 5,
+          outputTokens: 4,
+          totalTokens: 9,
+          messageStartIndex: 1,
+          messageEndIndex: 2,
+          status: "ok",
+        })
+      );
+      expect(toolSpan).toEqual(
+        expect.objectContaining({
+          promptIndex: 0,
+          stepIndex: 0,
+          toolCallId: "call-1",
+          toolName: "add",
+          messageStartIndex: 1,
+          messageEndIndex: 2,
+          status: "ok",
+        })
+      );
+    });
+
+    it("adds an error span when a tool path fails after starting", async () => {
+      mockGenerateText.mockImplementationOnce(async (params: any) => {
+        await params.tools.add.execute(
+          { a: 2, b: 3 },
+          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+        );
+
+        throw new Error("tool path failed");
+      });
+
+      const agent = new TestAgent({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-api-key",
+      });
+
+      const result = await agent.prompt("Add 2 and 3");
+      const spans = result.getSpans();
+
+      expect(result.hasError()).toBe(true);
+      expect(spans.some((span) => span.category === "step")).toBe(true);
+      expect(spans.some((span) => span.category === "tool")).toBe(true);
+      expect(spans.some((span) => span.category === "error")).toBe(true);
+    });
+
     it("should extract tool calls from result steps", async () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "Done",

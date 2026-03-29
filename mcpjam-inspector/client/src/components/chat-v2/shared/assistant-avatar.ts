@@ -24,19 +24,13 @@ export function getAssistantAvatarDescriptor({
   themeMode,
   sandboxHostStyle,
 }: AssistantAvatarOptions): AssistantAvatarDescriptor {
-  if (sandboxHostStyle !== null) {
-    return {
-      logoSrc: null,
-      logoAlt: null,
-      avatarClasses: DEFAULT_AVATAR_CLASSES,
-      ariaLabel: "Assistant",
-    };
-  }
-
   return {
     logoSrc: getProviderLogoFromModel(model, themeMode),
     logoAlt: `${model.id} logo`,
-    avatarClasses: DEFAULT_AVATAR_CLASSES,
+    avatarClasses:
+      sandboxHostStyle !== null
+        ? `sandbox-host-assistant-avatar ${DEFAULT_AVATAR_CLASSES}`
+        : DEFAULT_AVATAR_CLASSES,
     ariaLabel: `${model.name} assistant`,
   };
 }
