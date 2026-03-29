@@ -642,6 +642,28 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("restores the footer composer after the first guided message even without an onboarding callback", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        {
+          id: "2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Hi there!" }],
+        },
+      ];
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={true}
+          initialInput="Draw me an MCP architecture diagram"
+        />,
+      );
+
+      expect(screen.getByTestId("thread")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-input-field")).toBeInTheDocument();
+    });
+
     it("preserves the guided prompt if chat reset fires before the first message", () => {
       render(
         <PlaygroundMain

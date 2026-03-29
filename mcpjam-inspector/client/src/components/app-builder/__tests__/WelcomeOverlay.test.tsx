@@ -47,6 +47,9 @@ describe("WelcomeOverlay", () => {
   it("renders the demo options without a skip action", () => {
     render(<WelcomeOverlay {...defaultProps} />);
 
+    expect(
+      screen.getByRole("dialog", { name: "Try a demo server" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Try a demo server")).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Skip onboarding/i }),

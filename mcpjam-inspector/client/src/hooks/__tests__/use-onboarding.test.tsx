@@ -87,6 +87,35 @@ describe("useOnboarding", () => {
     expect(result.current.isOverlayVisible).toBe(false);
   });
 
+  it("re-derives the guest welcome phase once auth settles", () => {
+    const { result, rerender } = renderHook(
+      ({
+        isAuthLoading,
+      }: {
+        isAuthLoading: boolean;
+      }) =>
+        useOnboarding({
+          servers: {},
+          onConnect: vi.fn(),
+          isAuthenticated: false,
+          isAuthLoading,
+        }),
+      {
+        initialProps: {
+          isAuthLoading: true,
+        },
+      },
+    );
+
+    expect(result.current.phase).toBe("dismissed");
+    expect(result.current.isOverlayVisible).toBe(false);
+
+    rerender({ isAuthLoading: false });
+
+    expect(result.current.phase).toBe("welcome");
+    expect(result.current.isOverlayVisible).toBe(true);
+  });
+
   it("skips onboarding immediately for signed-in users", async () => {
     const { result } = renderHook(() =>
       useOnboarding({

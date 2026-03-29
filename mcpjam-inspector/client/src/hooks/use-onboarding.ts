@@ -97,15 +97,14 @@ export function useOnboarding({
       return;
     }
 
-    if (phase === "connected_guided") {
-      return;
-    }
+    setPhase((currentPhase) => {
+      if (currentPhase !== "dismissed") {
+        return currentPhase;
+      }
 
-    const persisted = readOnboardingState();
-    if (persisted?.status === "completed") {
-      setPhase("completed");
-    }
-  }, [isAuthLoading, isAuthenticated, phase]);
+      return getInitialLocalPhase(servers, false, false);
+    });
+  }, [servers, isAuthLoading, isAuthenticated]);
 
   useEffect(() => {
     if (
