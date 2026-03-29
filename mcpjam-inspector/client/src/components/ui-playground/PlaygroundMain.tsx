@@ -66,6 +66,8 @@ import {
   extractEffectiveHostDisplayMode,
   extractHostTheme,
 } from "@/lib/client-config";
+import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
+import { AnimatePresence } from "framer-motion";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -112,6 +114,7 @@ interface PlaygroundMainProps {
   // Onboarding
   initialInput?: string;
   pulseSubmit?: boolean;
+  showPostConnectGuide?: boolean;
   onFirstMessageSent?: () => void;
 }
 
@@ -184,19 +187,27 @@ export function PlaygroundMain({
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
   pulseSubmit = false,
+  showPostConnectGuide = false,
   onFirstMessageSent,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
   const [input, setInput] = useState(initialInput ?? "");
+  const [isGuidedInputPristine, setIsGuidedInputPristine] = useState(
+    showPostConnectGuide && !!initialInput,
+  );
 
-  // Update input if initialInput changes from undefined to a value (e.g. after onboarding connect)
+  // Seed the guided prompt when the post-connect flow becomes active.
   useEffect(() => {
-    if (initialInput && !input) {
+    if (showPostConnectGuide && initialInput) {
       setInput(initialInput);
+      setIsGuidedInputPristine(true);
+      return;
     }
-  }, [initialInput]);
+
+    setIsGuidedInputPristine(false);
+  }, [initialInput, showPostConnectGuide]);
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
@@ -302,6 +313,11 @@ export function PlaygroundMain({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     onReset: () => {
+      if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
+        setInput((currentInput) => currentInput || initialInput);
+        return;
+      }
+
       setInput("");
     },
   });
@@ -495,6 +511,9 @@ export function PlaygroundMain({
     const hasContent =
       input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
     if (hasContent && status === "ready" && !submitBlocked) {
+      if (showPostConnectGuide && isGuidedInputPristine) {
+        setIsGuidedInputPristine(false);
+      }
       if (displayMode === "fullscreen" && isWidgetFullscreen) {
         setIsFullscreenChatOpen(true);
       }
@@ -551,11 +570,24 @@ export function PlaygroundMain({
 
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
+  const handleInputChange = useCallback(
+    (nextInput: string) => {
+      setInput(nextInput);
+      if (
+        showPostConnectGuide &&
+        isGuidedInputPristine &&
+        nextInput !== initialInput
+      ) {
+        setIsGuidedInputPristine(false);
+      }
+    },
+    [initialInput, isGuidedInputPristine, showPostConnectGuide],
+  );
 
   // Shared chat input props
   const sharedChatInputProps = {
     value: input,
-    onChange: setInput,
+    onChange: handleInputChange,
     onSubmit,
     stop,
     disabled: inputDisabled,
@@ -590,7 +622,8 @@ export function PlaygroundMain({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
-    pulseSubmit,
+    pulseSubmit: pulseSubmit && isGuidedInputPristine,
+    minimalMode: showPostConnectGuide,
   };
 
   // Check if widget should take over the full container
@@ -618,9 +651,15 @@ export function PlaygroundMain({
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - centered welcome message
-        <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
-          <div className="text-center max-w-md mx-auto space-y-6 py-8">
+        // Empty state - centered when onboarding, otherwise top-aligned
+        <div className={cn(
+          "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
+          showPostConnectGuide ? "items-center justify-center" : "items-center justify-center",
+        )}>
+          <div className={cn(
+            "text-center mx-auto",
+            showPostConnectGuide ? "max-w-3xl w-full" : "max-w-md space-y-6 py-8",
+          )}>
             {isAuthLoading ? (
               <div className="space-y-4">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
@@ -628,6 +667,13 @@ export function PlaygroundMain({
               </div>
             ) : shouldShowUpsell ? (
               <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+            ) : showPostConnectGuide ? (
+              <>
+                <AnimatePresence>
+                  <PostConnectGuide />
+                </AnimatePresence>
+                <ChatInput {...sharedChatInputProps} hasMessages={false} />
+              </>
             ) : (
               <h3 className="text-sm font-semibold text-foreground mb-2">
                 Test ChatGPT Apps and MCP Apps
@@ -676,8 +722,8 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput that persists - hidden when widget takes over */}
-      {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
+      {/* Single ChatInput that persists - hidden when widget takes over or during onboarding (rendered inline above) */}
+      {!isWidgetFullTakeover && !showFullscreenChatOverlay && !showPostConnectGuide && (
         <div
           className={cn(
             "flex-shrink-0 max-w-3xl mx-auto w-full",
@@ -730,8 +776,9 @@ export function PlaygroundMain({
 
   // Device frame container - display mode is passed to widgets via Thread
   return (
-    <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
-      {/* Device frame header */}
+    <div className={cn("h-full flex flex-col overflow-hidden", showPostConnectGuide ? "bg-background" : "bg-muted/20")}>
+      {/* Device frame header — hidden during onboarding */}
+      {!showPostConnectGuide && (
       <div className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
         {/* All controls centered */}
         <DisplayContextHeader protocol={selectedProtocol} showThemeToggle />
@@ -760,6 +807,7 @@ export function PlaygroundMain({
           </div>
         )}
       </div>
+      )}
 
       <ConfirmChatResetDialog
         open={showClearConfirm}
@@ -772,12 +820,12 @@ export function PlaygroundMain({
         <div
           className="relative flex flex-col overflow-hidden"
           style={{
-            width: deviceConfig.width,
+            width: showPostConnectGuide ? "100%" : deviceConfig.width,
             maxWidth: "100%",
-            height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
+            height: showPostConnectGuide ? "100%" : (isWidgetFullTakeover ? "100%" : deviceConfig.height),
             maxHeight: "100%",
             transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-            backgroundColor: hostBackgroundColor,
+            backgroundColor: showPostConnectGuide ? undefined : hostBackgroundColor,
           }}
         >
           {/* X-Ray mode: show raw JSON view of AI payload */}
@@ -818,6 +866,7 @@ export function PlaygroundMain({
           </div>
         </div>
       </div>
+
     </div>
   );
 }

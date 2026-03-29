@@ -3,10 +3,25 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AppBuilderTab } from "../AppBuilderTab";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
+const mockToastDismiss = vi.fn();
+const mockSetMcpSidebarOpen = vi.fn();
+
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
+  }),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    dismiss: (...args: unknown[]) => mockToastDismiss(...args),
+  },
+}));
+
+vi.mock("@/components/ui/sidebar", () => ({
+  useSidebar: () => ({
+    setOpen: mockSetMcpSidebarOpen,
   }),
 }));
 
@@ -71,6 +86,7 @@ const mockUIPlaygroundStore = {
   toggleSidebar: vi.fn(),
   setSelectedProtocol: vi.fn(),
   reset: vi.fn(),
+  setSidebarVisible: vi.fn(),
 };
 
 vi.mock("@/stores/ui-playground-store", () => ({
@@ -155,13 +171,30 @@ vi.mock("../PlaygroundMain", () => ({
   PlaygroundMain: ({
     serverName,
     isExecuting,
+    showPostConnectGuide,
+    initialInput,
+    onFirstMessageSent,
   }: {
     serverName: string;
     isExecuting: boolean;
+    showPostConnectGuide?: boolean;
+    initialInput?: string;
+    onFirstMessageSent?: () => void;
   }) => (
     <div data-testid="playground-main">
       <span data-testid="server-name">{serverName}</span>
       {isExecuting && <span data-testid="executing">Executing...</span>}
+      {initialInput && (
+        <span data-testid="guided-initial-input">{initialInput}</span>
+      )}
+      {showPostConnectGuide && (
+        <div data-testid="post-connect-guide">Post Connect Guide</div>
+      )}
+      {onFirstMessageSent && (
+        <button data-testid="first-message-sent" onClick={onFirstMessageSent}>
+          First Message Sent
+        </button>
+      )}
     </div>
   ),
 }));
@@ -172,22 +205,13 @@ vi.mock("../../tools/SaveRequestDialog", () => ({
     open ? <div data-testid="save-dialog">Save Dialog</div> : null,
 }));
 
-// Mock AddServerModal
-vi.mock("../../connection/AddServerModal", () => ({
-  AddServerModal: ({ isOpen }: { isOpen: boolean }) =>
-    isOpen ? <div data-testid="add-server-modal">Add Server Modal</div> : null,
-}));
-
 // Mock onboarding hook
 const mockOnboarding = {
   phase: "dismissed" as string,
   isOverlayVisible: false,
   isGuidedPostConnect: false,
+  isResolvingRemoteCompletion: false,
   connectExcalidraw: vi.fn(),
-  browseRegistry: vi.fn(),
-  openManualModal: vi.fn(),
-  closeManualModal: vi.fn(),
-  dismissOverlay: vi.fn(),
   completeOnboarding: vi.fn(),
   connectError: null as string | null,
   retryConnect: vi.fn(),
@@ -252,6 +276,7 @@ describe("AppBuilderTab", () => {
       phase: "dismissed",
       isOverlayVisible: false,
       isGuidedPostConnect: false,
+      isResolvingRemoteCompletion: false,
       connectError: null,
     });
   });
@@ -502,6 +527,30 @@ describe("AppBuilderTab", () => {
       expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
     });
 
+    it("renders only the skeleton while signed-in onboarding state is resolving", () => {
+      mockOnboarding.isResolvingRemoteCompletion = true;
+
+      render(<AppBuilderTab />);
+
+      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+      expect(screen.queryByTestId("welcome-overlay")).not.toBeInTheDocument();
+      expect(screen.queryByText("No Server Selected")).not.toBeInTheDocument();
+    });
+
+    it("keeps showing the onboarding overlay while Excalidraw is connecting even after a server config exists", () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isOverlayVisible = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      expect(screen.getByTestId("welcome-overlay")).toBeInTheDocument();
+      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+      expect(screen.queryByTestId("playground-main")).not.toBeInTheDocument();
+    });
+
     it("renders post-connect guide when in guided mode with server", async () => {
       const serverConfig = createServerConfig();
       mockOnboarding.phase = "connected_guided";
@@ -514,6 +563,91 @@ describe("AppBuilderTab", () => {
       await waitFor(() => {
         expect(screen.getByTestId("post-connect-guide")).toBeInTheDocument();
       });
+    });
+
+    it("passes the seeded guided prompt to PlaygroundMain while post-connect onboarding is active", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isGuidedPostConnect = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("guided-initial-input")).toHaveTextContent(
+          "Draw me an MCP architecture diagram",
+        );
+      });
+    });
+
+    it("completes onboarding after the first guided message is sent", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isGuidedPostConnect = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("first-message-sent")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId("first-message-sent"));
+
+      expect(mockOnboarding.completeOnboarding).toHaveBeenCalledTimes(1);
+    });
+
+    it("dismisses onboarding toasts when the onboarding phase changes", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isOverlayVisible = true;
+
+      const { rerender } = render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(mockToastDismiss).toHaveBeenCalled();
+      });
+
+      mockToastDismiss.mockClear();
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isOverlayVisible = false;
+      mockOnboarding.isGuidedPostConnect = true;
+
+      rerender(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(mockToastDismiss).toHaveBeenCalled();
+      });
+    });
+
+    it("clears onboarding chrome and restores sidebars when unmounted mid-onboarding", () => {
+      mockOnboarding.phase = "welcome";
+      mockOnboarding.isOverlayVisible = true;
+      const onOnboardingChange = vi.fn();
+
+      const { unmount } = render(
+        <AppBuilderTab onOnboardingChange={onOnboardingChange} />,
+      );
+
+      expect(onOnboardingChange).toHaveBeenCalledWith(true);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        false,
+      );
+      expect(mockSetMcpSidebarOpen).toHaveBeenCalledWith(false);
+
+      unmount();
+
+      expect(onOnboardingChange).toHaveBeenLastCalledWith(false);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenLastCalledWith(
+        true,
+      );
+      expect(mockSetMcpSidebarOpen).toHaveBeenLastCalledWith(true);
     });
 
     it("does not show overlay when onboarding is dismissed", () => {

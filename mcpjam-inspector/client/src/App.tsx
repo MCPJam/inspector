@@ -1,5 +1,5 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -132,11 +132,42 @@ function getHostedOAuthCallbackErrorMessage(): string {
   );
 }
 
+type AppChromeSidebarProps = ComponentProps<typeof MCPSidebar> & {
+  hidden: boolean;
+};
+
+function AppChromeSidebar({
+  hidden,
+  ...props
+}: AppChromeSidebarProps) {
+  if (hidden) {
+    return null;
+  }
+
+  return <MCPSidebar {...props} />;
+}
+
+type AppChromeHeaderProps = ComponentProps<typeof Header> & {
+  hidden: boolean;
+};
+
+function AppChromeHeader({
+  hidden,
+  ...props
+}: AppChromeHeaderProps) {
+  if (hidden) {
+    return null;
+  }
+
+  return <Header {...props} />;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
@@ -154,6 +185,10 @@ export default function App() {
     isLoading: isWorkOsLoading,
   } = useAuth();
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
+  const convexCurrentUser = useQuery(
+    "users:getCurrentUser" as any,
+    isAuthenticated ? {} : "skip",
+  );
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() =>
     HOSTED_MODE ? getHostedOAuthCallbackContext() !== null : false,
   );
@@ -376,6 +411,9 @@ export default function App() {
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  const hasCompletedOnboardingRemotely =
+    convexCurrentUser?.hasCompletedOnboarding === true;
+  const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
@@ -389,6 +427,25 @@ export default function App() {
         (org) => org._id === currentHashRoute.organizationId,
       )
     : false;
+  const hostedShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces,
+  });
+  const hostedChatShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces: false,
+  });
+  const isOnboardingDecisionReady =
+    hostedShellGateState === "ready" &&
+    (!isAuthenticated || convexCurrentUser !== undefined);
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -633,15 +690,6 @@ export default function App() {
       return;
     }
 
-    // First-run onboarding: auto-land on App Builder if eligible
-    const hasConnected = Object.values(workspaceServers).some(
-      (s) => s.connectionStatus === "connected",
-    );
-    if (isFirstRunEligible(hasConnected, window.location.hash)) {
-      window.location.hash = "app-builder";
-      // The hashchange listener below will pick this up
-    }
-
     const applyHash = () => {
       const currentHash = window.location.hash || "#servers";
       applyNavigation(currentHash, { enforceCanonicalHash: true });
@@ -649,7 +697,32 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
+  }, [applyNavigation, isHostedChatRoute]);
+
+  useEffect(() => {
+    if (isHostedChatRoute) {
+      return;
+    }
+
+    if (!isOnboardingDecisionReady) {
+      return;
+    }
+
+    if (
+      isFirstRunEligible(
+        hasAnyWorkspaceServers,
+        window.location.hash,
+        hasCompletedOnboardingRemotely,
+      )
+    ) {
+      window.location.hash = "app-builder";
+    }
+  }, [
+    hasAnyWorkspaceServers,
+    hasCompletedOnboardingRemotely,
+    isOnboardingDecisionReady,
+    isHostedChatRoute,
+  ]);
 
   // Redirect away from tabs hidden by the ci-evals feature flag.
   // Use strict equality to avoid redirecting while the flag is still loading (undefined).
@@ -789,23 +862,6 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  const hostedShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    isLoadingRemoteWorkspaces,
-  });
-  const hostedChatShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    isLoadingRemoteWorkspaces: false,
-  });
-
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
     activeTab === "resources" ||
@@ -843,7 +899,8 @@ export default function App() {
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
-      <MCPSidebar
+      <AppChromeSidebar
+        hidden={appBuilderOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
         servers={workspaceServers}
@@ -860,7 +917,10 @@ export default function App() {
         }
       />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header activeServerSelectorProps={activeServerSelectorProps} />
+        <AppChromeHeader
+          hidden={appBuilderOnboarding}
+          activeServerSelectorProps={activeServerSelectorProps}
+        />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {activeTabGracePeriodBanner && activeTabBillingFeature ? (
             <div className="border-b border-border/60 px-4 py-3">
@@ -1018,9 +1078,10 @@ export default function App() {
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
               servers={workspaceServers}
-              registryEnabled={registryEnabled === true}
+              isAuthenticated={isAuthenticated}
+              isAuthLoading={isAuthLoading}
               onConnect={handleConnect}
-              onNavigate={handleNavigate}
+              onOnboardingChange={setAppBuilderOnboarding}
             />
           )}
           {activeTab === "client-config" && (

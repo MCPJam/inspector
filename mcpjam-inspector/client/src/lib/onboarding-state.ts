@@ -4,7 +4,6 @@ export type OnboardingPhase =
   | "connecting_excalidraw"
   | "connected_guided"
   | "connect_error"
-  | "manual_modal_open"
   | "completed"
   | "dismissed";
 
@@ -50,14 +49,17 @@ export function clearOnboardingState(): void {
 /**
  * Returns true when the user is eligible for first-run onboarding:
  * - No explicit hash route (empty, "#", "#/", or "#servers" which is the default)
- * - No connected servers
+ * - No saved servers
  * - Onboarding has never been started (no localStorage entry)
+ * - The signed-in user has not already completed onboarding remotely
  */
 export function isFirstRunEligible(
-  hasConnectedServers: boolean,
+  hasAnyServers: boolean,
   currentHash: string,
+  hasCompletedOnboardingRemotely = false,
 ): boolean {
-  if (hasConnectedServers) return false;
+  if (hasAnyServers) return false;
+  if (hasCompletedOnboardingRemotely) return false;
 
   const hash = currentHash.replace(/^#\/?/, "");
   if (hash && hash !== "servers") return false;

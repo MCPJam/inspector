@@ -6,7 +6,7 @@
  * allowing users to execute tools and then chat about the results.
  */
 
-import { useEffect, useCallback, useMemo, useState } from "react";
+import { useEffect, useCallback, useMemo, useRef, useState } from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench } from "lucide-react";
 import {
@@ -36,28 +36,30 @@ import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 // Onboarding
 import { useOnboarding } from "@/hooks/use-onboarding";
 import { WelcomeOverlay } from "@/components/app-builder/WelcomeOverlay";
-import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton";
-import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
+import { useSidebar } from "@/components/ui/sidebar";
+import { toast } from "sonner";
 
 interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
   servers?: Record<string, ServerWithName>;
-  registryEnabled?: boolean;
+  isAuthenticated?: boolean;
+  isAuthLoading?: boolean;
   onConnect?: (formData: ServerFormData) => void;
-  onNavigate?: (section: string) => void;
+  onOnboardingChange?: (isOnboarding: boolean) => void;
 }
 
 export function AppBuilderTab({
   serverConfig,
   serverName,
   servers = {},
-  registryEnabled = false,
+  isAuthenticated = false,
+  isAuthLoading = false,
   onConnect,
-  onNavigate,
+  onOnboardingChange,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
   // Compute server key for saved requests storage
@@ -66,9 +68,9 @@ export function AppBuilderTab({
   // Onboarding state machine
   const onboarding = useOnboarding({
     servers,
-    registryEnabled,
-    onNavigate: onNavigate ?? (() => {}),
     onConnect: onConnect ?? (() => {}),
+    isAuthenticated,
+    isAuthLoading,
   });
 
   // Get store state and actions
@@ -94,7 +96,52 @@ export function AppBuilderTab({
     toggleSidebar,
     setSelectedProtocol,
     reset,
+    setSidebarVisible,
   } = useUIPlaygroundStore();
+
+  // Hide both sidebars and header during onboarding, restore when done
+  const isOnboarding = onboarding.isOverlayVisible || onboarding.isGuidedPostConnect;
+  const { setOpen: setMcpSidebarOpen } = useSidebar();
+  const latestIsOnboardingRef = useRef(isOnboarding);
+  useEffect(() => {
+    latestIsOnboardingRef.current = isOnboarding;
+  }, [isOnboarding]);
+
+  useEffect(() => {
+    onOnboardingChange?.(isOnboarding);
+    if (isOnboarding) {
+      setSidebarVisible(false);
+      setMcpSidebarOpen(false);
+    } else {
+      // Restore sidebars when onboarding ends
+      setSidebarVisible(true);
+      setMcpSidebarOpen(true);
+    }
+  }, [isOnboarding, setSidebarVisible, setMcpSidebarOpen, onOnboardingChange]);
+
+  useEffect(() => {
+    return () => {
+      if (!latestIsOnboardingRef.current) {
+        return;
+      }
+
+      onOnboardingChange?.(false);
+      setSidebarVisible(true);
+      setMcpSidebarOpen(true);
+    };
+  }, [onOnboardingChange, setSidebarVisible, setMcpSidebarOpen]);
+
+  useEffect(() => {
+    if (!isOnboarding) {
+      return;
+    }
+
+    // Some onboarding toasts, including connection success, are emitted during
+    // phase transitions after onboarding has already started.
+    toast.dismiss();
+    const timer = setTimeout(() => toast.dismiss(), 300);
+    return () => clearTimeout(timer);
+  }, [isOnboarding, onboarding.phase]);
 
   // Log when App Builder tab is viewed
   useEffect(() => {
@@ -214,40 +261,33 @@ export function AppBuilderTab({
     ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
     : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
 
-  // No server selected — show onboarding overlay or empty state
+  if (onboarding.isResolvingRemoteCompletion) {
+    return (
+      <div className="h-full flex flex-col overflow-hidden relative">
+        <AppBuilderSkeleton />
+      </div>
+    );
+  }
+
+  if (onboarding.isOverlayVisible) {
+    return (
+      <div className="h-full flex flex-col overflow-hidden relative">
+        <AppBuilderSkeleton />
+
+        {onboarding.isOverlayVisible && (
+          <WelcomeOverlay
+            phase={onboarding.phase}
+            connectError={onboarding.connectError}
+            onConnectExcalidraw={onboarding.connectExcalidraw}
+            onRetry={onboarding.retryConnect}
+          />
+        )}
+      </div>
+    );
+  }
+
+  // No server selected — show empty state once onboarding is not active
   if (!serverConfig) {
-    if (onboarding.isOverlayVisible || onboarding.phase === "manual_modal_open") {
-      return (
-        <div className="h-full flex flex-col overflow-hidden relative">
-          <AppBuilderSkeleton />
-
-          {onboarding.isOverlayVisible && (
-            <WelcomeOverlay
-              phase={onboarding.phase}
-              registryEnabled={registryEnabled}
-              connectError={onboarding.connectError}
-              onConnectExcalidraw={onboarding.connectExcalidraw}
-              onBrowseRegistry={onboarding.browseRegistry}
-              onAddServerManually={onboarding.openManualModal}
-              onRetry={onboarding.retryConnect}
-              onDismiss={onboarding.dismissOverlay}
-            />
-          )}
-
-          {onboarding.phase === "manual_modal_open" && onConnect && (
-            <AddServerModal
-              isOpen={true}
-              onClose={onboarding.closeManualModal}
-              onSubmit={(formData: ServerFormData) => {
-                onConnect(formData);
-                onboarding.dismissOverlay();
-              }}
-            />
-          )}
-        </div>
-      );
-    }
-
     return (
       <EmptyState
         icon={Wrench}
@@ -293,13 +333,13 @@ export function AppBuilderTab({
             </ResizablePanel>
             <ResizableHandle withHandle />
           </>
-        ) : (
+        ) : !isOnboarding ? (
           <CollapsedPanelStrip
             side="left"
             onOpen={toggleSidebar}
             tooltipText="Show tools sidebar"
           />
-        )}
+        ) : null}
 
         {/* Center Panel - Chat Thread */}
         <ResizablePanel
@@ -324,6 +364,7 @@ export function AppBuilderTab({
                 : undefined
             }
             pulseSubmit={onboarding.isGuidedPostConnect}
+            showPostConnectGuide={onboarding.isGuidedPostConnect}
             onFirstMessageSent={
               onboarding.isGuidedPostConnect
                 ? onboarding.completeOnboarding
@@ -333,10 +374,7 @@ export function AppBuilderTab({
         </ResizablePanel>
       </ResizablePanelGroup>
 
-      {/* Post-connect guide overlay */}
-      {onboarding.isGuidedPostConnect && (
-        <PostConnectGuide onDismiss={onboarding.completeOnboarding} />
-      )}
+      {/* Post-connect guide is now rendered inside PlaygroundMain */}
 
       <SaveRequestDialog
         open={savedRequestsHook.saveDialogState.isOpen}

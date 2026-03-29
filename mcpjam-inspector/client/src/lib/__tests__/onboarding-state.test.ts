@@ -74,8 +74,12 @@ describe("onboarding-state", () => {
       expect(isFirstRunEligible(false, "#learning")).toBe(false);
     });
 
-    it("returns false when there are connected servers", () => {
+    it("returns false when there are any saved servers", () => {
       expect(isFirstRunEligible(true, "")).toBe(false);
+    });
+
+    it("returns false when onboarding was completed remotely", () => {
+      expect(isFirstRunEligible(false, "", true)).toBe(false);
     });
 
     it("returns false when onboarding was completed", () => {

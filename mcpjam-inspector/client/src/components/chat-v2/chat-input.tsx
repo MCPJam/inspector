@@ -606,7 +606,7 @@ export function ChatInput({
                 <TooltipContent>Stop generating</TooltipContent>
               </Tooltip>
             ) : (
-              <Tooltip open={pulseSubmit ? true : undefined}>
+              <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     type="submit"
@@ -630,15 +630,7 @@ export function ChatInput({
                     <ArrowUp size={16} />
                   </Button>
                 </TooltipTrigger>
-                <TooltipContent>
-                  {pulseSubmit ? (
-                    <span className="font-semibold text-primary">
-                      SEND THIS
-                    </span>
-                  ) : (
-                    "Send message"
-                  )}
-                </TooltipContent>
+                <TooltipContent>Send message</TooltipContent>
               </Tooltip>
             )}
           </div>

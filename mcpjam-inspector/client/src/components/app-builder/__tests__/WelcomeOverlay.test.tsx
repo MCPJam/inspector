@@ -39,50 +39,32 @@ import { WelcomeOverlay } from "../WelcomeOverlay";
 describe("WelcomeOverlay", () => {
   const defaultProps = {
     phase: "welcome" as const,
-    registryEnabled: true,
     connectError: null,
     onConnectExcalidraw: vi.fn(),
-    onBrowseRegistry: vi.fn(),
-    onAddServerManually: vi.fn(),
     onRetry: vi.fn(),
-    onDismiss: vi.fn(),
   };
 
-  it("renders subtitle and demo section", () => {
+  it("renders the demo options without a skip action", () => {
     render(<WelcomeOverlay {...defaultProps} />);
 
-    expect(
-      screen.getByText("Your playground for MCP servers."),
-    ).toBeInTheDocument();
     expect(screen.getByText("Try a demo server")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Skip onboarding/i }),
+    ).not.toBeInTheDocument();
   });
 
-  it("renders all 3 buttons when registry is enabled", () => {
+  it("renders only the Excalidraw CTA in the default state", () => {
     render(<WelcomeOverlay {...defaultProps} />);
 
     expect(
       screen.getByRole("button", { name: /Connect Excalidraw/i }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Browse Registry/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Add server manually/i }),
-    ).toBeInTheDocument();
-  });
-
-  it("hides Browse Registry when registry is disabled", () => {
-    render(<WelcomeOverlay {...defaultProps} registryEnabled={false} />);
-
     expect(
       screen.queryByRole("button", { name: /Browse Registry/i }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Connect Excalidraw/i }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Add server manually/i }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: /Add server manually/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows loading state when connecting", () => {
@@ -117,10 +99,12 @@ describe("WelcomeOverlay", () => {
     expect(defaultProps.onConnectExcalidraw).toHaveBeenCalled();
   });
 
-  it("calls onDismiss on Escape key", () => {
+  it("does not dismiss on Escape key", () => {
     render(<WelcomeOverlay {...defaultProps} />);
 
     fireEvent.keyDown(document, { key: "Escape" });
-    expect(defaultProps.onDismiss).toHaveBeenCalled();
+    expect(
+      screen.getByRole("button", { name: /Connect Excalidraw/i }),
+    ).toBeInTheDocument();
   });
 });
