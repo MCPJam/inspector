@@ -21,6 +21,7 @@ import {
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { AiTriagePanel } from "./ai-triage-panel";
+import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
 import { TraceRepairBanner } from "./trace-repair-banner";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import { startTraceRepair, stopTraceRepair } from "@/lib/apis/evals-api";
@@ -719,7 +720,12 @@ export function RunDetailView({
         traceRepairDebugJson={traceRepairDebugJson}
       />
 
-      {/* AI Triage — shown between summary and iteration panes */}
+      <RunInsightsPrimaryBlock
+        run={selectedRunDetails}
+        className="mt-3"
+      />
+
+      {/* Legacy triage — deeper failure analysis; not auto-requested */}
         <AiTriagePanel
           run={selectedRunDetails}
           failedCount={computedStats.failed}
@@ -727,6 +733,7 @@ export function RunDetailView({
             (iteration) => computeIterationResult(iteration) === "failed",
           )}
           failedTestTitleToCaseId={failedTestTitleToCaseId}
+          autoRequestTriage={false}
         />
 
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}

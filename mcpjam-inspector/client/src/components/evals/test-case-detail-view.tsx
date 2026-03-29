@@ -10,7 +10,12 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
-import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
+import {
+  evalStatusLeftBorderClasses,
+  formatRunId,
+  pickLatestCompletedRun,
+} from "./helpers";
+import { useRunInsights } from "./use-run-insights";
 import { IterationDetails } from "./iteration-details";
 import { TraceRepairBanner } from "./trace-repair-banner";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
@@ -175,6 +180,31 @@ export function TestCaseDetailView({
     "traceRepair:getTraceRepairJobDebugJson" as any,
     traceRepairCopyDebug ? { jobId: traceRepairCopyJobId } : "skip",
   );
+
+  const latestCompletedRun = useMemo(
+    () => pickLatestCompletedRun(runs),
+    [runs],
+  );
+
+  useRunInsights(latestCompletedRun, { autoRequest: true });
+
+  const latestCaseInsight = useMemo(() => {
+    const list = latestCompletedRun?.runInsights?.caseInsights;
+    if (!list?.length) {
+      return null;
+    }
+    return (
+      list.find(
+        (c) =>
+          (testCase.caseKey != null && c.caseKey === testCase.caseKey) ||
+          c.testCaseId === testCase._id,
+      ) ?? null
+    );
+  }, [
+    latestCompletedRun?.runInsights?.caseInsights,
+    testCase.caseKey,
+    testCase._id,
+  ]);
 
   const activeIterations = useMemo(() => iterations, [iterations]);
 
@@ -344,6 +374,31 @@ export function TestCaseDetailView({
           traceRepairCopyDebug={traceRepairCopyDebug}
           traceRepairDebugJson={traceRepairDebugJson}
         />
+      ) : null}
+
+      {latestCompletedRun ? (
+        <div className="rounded-lg border bg-card text-card-foreground p-3">
+          <h3 className="text-xs font-semibold text-muted-foreground mb-1.5">
+            Latest run insight
+          </h3>
+          {latestCompletedRun.runInsightsStatus === "pending" ? (
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              Generating suite run insights…
+            </span>
+          ) : latestCompletedRun.runInsightsStatus === "failed" ? (
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Run insights did not complete. Open the latest completed run from
+              this suite to retry generation.
+            </p>
+          ) : latestCaseInsight ? (
+            <p className="text-sm leading-relaxed">{latestCaseInsight.summary}</p>
+          ) : (
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              No notable change in the last two runs.
+            </p>
+          )}
+        </div>
       ) : null}
 
       {/* Hero Stats */}

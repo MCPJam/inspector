@@ -224,7 +224,7 @@ export function AiTriagePanel({
   run,
   failedCount,
   failedIterations = [],
-  autoRequestTriage = true,
+  autoRequestTriage = false,
   failedTestTitleToCaseId = {},
 }: AiTriagePanelProps) {
   const { canTriage, error, unavailable, requested, requestTriage, cancelTriage } =

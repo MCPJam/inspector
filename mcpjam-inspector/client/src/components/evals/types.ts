@@ -208,6 +208,27 @@ export type EvalSuiteRun = {
     generatedAt: number;
     modelUsed: string;
   };
+  runInsightsJobId?: number;
+  runInsightsStatus?: "pending" | "completed" | "failed";
+  runInsights?: {
+    summary: string;
+    generatedAt: number;
+    modelUsed: string;
+    baselineRunId?: string;
+    toolSnapshotHash?: string;
+    caseInsights: Array<{
+      caseKey: string;
+      testCaseId?: string;
+      title: string;
+      status:
+        | "new_failure"
+        | "still_failing"
+        | "fixed"
+        | "new_case"
+        | "removed_case";
+      summary: string;
+    }>;
+  };
 };
 
 export type EvalRefinementSession = {
