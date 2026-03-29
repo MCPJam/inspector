@@ -14,6 +14,7 @@ import {
   reportEvalResults,
   reportEvalResultsSafely,
   startEvalRun,
+  uploadWidgetSnapshots,
 } from "./report-eval-results.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { EvalRunResult } from "./EvalTest.js";
@@ -158,7 +159,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
           overrides?.failOnToolError !== undefined
             ? overrides.failOnToolError
             : this.input.failOnToolError,
-      }),
+      })
     );
   }
 
@@ -175,7 +176,7 @@ class EvalRunReporterImpl implements EvalRunReporter {
           overrides?.failOnToolError !== undefined
             ? overrides.failOnToolError
             : this.input.failOnToolError,
-      }),
+      })
     );
   }
 
@@ -286,7 +287,11 @@ class EvalRunReporterImpl implements EvalRunReporter {
         return;
       }
 
-      const uploadReady = this.withUniqueExternalIterationIds(this.buffered);
+      const withIds = this.withUniqueExternalIterationIds(this.buffered);
+      const uploadReady = await uploadWidgetSnapshots(
+        this.runtimeConfig,
+        withIds
+      );
       const chunks = chunkResultsForUpload(uploadReady);
       for (const chunk of chunks) {
         await appendEvalRunIterations(this.runtimeConfig, {

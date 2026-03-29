@@ -631,5 +631,6 @@ export {
   generateExternalRunId,
   reportEvalResultsInternal,
   startEvalRun,
+  uploadWidgetSnapshots,
   withExternalIterationIds,
 };

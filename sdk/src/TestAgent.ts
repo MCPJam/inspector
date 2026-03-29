@@ -502,7 +502,8 @@ export class TestAgent implements EvalAgent {
     const spanSink = createEvalSpanSink(() => Date.now() - startTime);
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
-    const getCurrentStepStartMs = () => Math.max(0, lastStepEndTime - startTime);
+    const getCurrentStepStartMs = () =>
+      Math.max(0, lastStepEndTime - startTime);
     let totalLlmMs = 0;
     let stepMcpMs = 0; // MCP time within current step
     const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
@@ -668,7 +669,7 @@ export class TestAgent implements EvalAgent {
         1,
         result.steps as ReadonlyArray<
           { response?: { messages?: ModelMessage[] } } | undefined
-        >,
+        >
       );
 
       this.lastResult = PromptResult.from({
