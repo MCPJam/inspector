@@ -13,9 +13,9 @@ export interface LearnMoreEntry {
 export const learnMoreContent: Record<string, LearnMoreEntry> = {
   workspaces: {
     title: "Workspaces",
-    videoUrl: "https://www.youtube.com/embed/iVLr4B_HOp0",
+    videoUrl: "https://www.youtube.com/embed/i2IjxWj-zI4",
     videoThumbnail:
-      "https://outstanding-fennec-304.convex.cloud/api/storage/76ac7303-6c9a-46c9-b84e-4556c9008d73",
+      "https://outstanding-fennec-304.convex.cloud/api/storage/364bd7dc-3757-4dda-ac2e-dea49143d61a",
     previewVideoUrl:
       "https://outstanding-fennec-304.convex.cloud/api/storage/f103041b-954b-49e3-83fb-bbeabdeaca03",
     description: "Organize your MCP servers into workspaces.",
