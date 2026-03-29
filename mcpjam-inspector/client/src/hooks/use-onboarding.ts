@@ -127,10 +127,7 @@ export function useOnboarding({
     if (excalidrawServer?.connectionStatus === "connected") {
       setPhase("connected_guided");
       setConnectError(null);
-      posthog.capture(
-        "onboarding_connect_excalidraw_success",
-        trackingProps,
-      );
+      posthog.capture("onboarding_connect_excalidraw_success", trackingProps);
     } else if (excalidrawServer?.lastError) {
       setPhase("connect_error");
       setConnectError(

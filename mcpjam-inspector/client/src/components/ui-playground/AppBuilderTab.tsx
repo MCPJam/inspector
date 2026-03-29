@@ -100,7 +100,8 @@ export function AppBuilderTab({
   } = useUIPlaygroundStore();
 
   // Hide both sidebars and header during onboarding, restore when done
-  const isOnboarding = onboarding.isOverlayVisible || onboarding.isGuidedPostConnect;
+  const isOnboarding =
+    onboarding.isOverlayVisible || onboarding.isGuidedPostConnect;
   const { setOpen: setMcpSidebarOpen } = useSidebar();
   const latestIsOnboardingRef = useRef(isOnboarding);
   useEffect(() => {

@@ -129,11 +129,7 @@ describe("useOnboarding", () => {
     };
 
     const { result, rerender, unmount } = renderHook(
-      ({
-        servers,
-      }: {
-        servers: Record<string, ServerWithName>;
-      }) =>
+      ({ servers }: { servers: Record<string, ServerWithName> }) =>
         useOnboarding({
           servers,
           onConnect,
@@ -195,11 +191,7 @@ describe("useOnboarding", () => {
     };
 
     const { result, rerender } = renderHook(
-      ({
-        servers,
-      }: {
-        servers: Record<string, ServerWithName>;
-      }) =>
+      ({ servers }: { servers: Record<string, ServerWithName> }) =>
         useOnboarding({
           servers,
           onConnect,

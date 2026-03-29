@@ -222,17 +222,23 @@ vi.mock("@/hooks/use-onboarding", () => ({
 
 // Mock WelcomeOverlay
 vi.mock("../../app-builder/WelcomeOverlay", () => ({
-  WelcomeOverlay: () => <div data-testid="welcome-overlay">Welcome Overlay</div>,
+  WelcomeOverlay: () => (
+    <div data-testid="welcome-overlay">Welcome Overlay</div>
+  ),
 }));
 
 // Mock PostConnectGuide
 vi.mock("../../app-builder/PostConnectGuide", () => ({
-  PostConnectGuide: () => <div data-testid="post-connect-guide">Post Connect Guide</div>,
+  PostConnectGuide: () => (
+    <div data-testid="post-connect-guide">Post Connect Guide</div>
+  ),
 }));
 
 // Mock AppBuilderSkeleton
 vi.mock("../../app-builder/AppBuilderSkeleton", () => ({
-  AppBuilderSkeleton: () => <div data-testid="app-builder-skeleton">Skeleton</div>,
+  AppBuilderSkeleton: () => (
+    <div data-testid="app-builder-skeleton">Skeleton</div>
+  ),
 }));
 
 // Mock CollapsedPanelStrip

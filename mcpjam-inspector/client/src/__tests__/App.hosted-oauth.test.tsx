@@ -216,10 +216,7 @@ vi.mock("../components/ui-playground/AppBuilderTab", () => ({
 
     return (
       <div data-testid="app-builder-tab">
-        <button
-          type="button"
-          onClick={() => onOnboardingChange?.(false)}
-        >
+        <button type="button" onClick={() => onOnboardingChange?.(false)}>
           Finish onboarding
         </button>
       </div>

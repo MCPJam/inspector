@@ -68,9 +68,7 @@ describe("WelcomeOverlay", () => {
   });
 
   it("shows loading state when connecting", () => {
-    render(
-      <WelcomeOverlay {...defaultProps} phase="connecting_excalidraw" />,
-    );
+    render(<WelcomeOverlay {...defaultProps} phase="connecting_excalidraw" />);
 
     expect(screen.getByText("Connecting...")).toBeInTheDocument();
   });

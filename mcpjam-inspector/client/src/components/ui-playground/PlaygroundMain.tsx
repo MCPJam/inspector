@@ -675,14 +675,22 @@ export function PlaygroundMain({
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
         // Empty state - centered when onboarding, otherwise top-aligned
-        <div className={cn(
-          "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
-          showPostConnectGuide ? "items-center justify-center" : "items-center justify-center",
-        )}>
-          <div className={cn(
-            "text-center mx-auto",
-            showPostConnectGuide ? "max-w-3xl w-full" : "max-w-md space-y-6 py-8",
-          )}>
+        <div
+          className={cn(
+            "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
+            showPostConnectGuide
+              ? "items-center justify-center"
+              : "items-center justify-center",
+          )}
+        >
+          <div
+            className={cn(
+              "text-center mx-auto",
+              showPostConnectGuide
+                ? "max-w-3xl w-full"
+                : "max-w-md space-y-6 py-8",
+            )}
+          >
             {isAuthLoading ? (
               <div className="space-y-4">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
@@ -746,29 +754,31 @@ export function PlaygroundMain({
       )}
 
       {/* Single ChatInput that persists - hidden when widget takes over or during onboarding (rendered inline above) */}
-      {!isWidgetFullTakeover && !showFullscreenChatOverlay && !showPostConnectGuide && (
-        <div
-          className={cn(
-            "flex-shrink-0 max-w-3xl mx-auto w-full",
-            isThreadEmpty ? "px-4 pb-4" : "p-3",
-          )}
-        >
-          {errorMessage && (
-            <div className="pb-3">
-              <ErrorBox
-                message={errorMessage.message}
-                errorDetails={errorMessage.details}
-                code={errorMessage.code}
-                statusCode={errorMessage.statusCode}
-                isRetryable={errorMessage.isRetryable}
-                isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
-                onResetChat={resetChat}
-              />
-            </div>
-          )}
-          <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
-        </div>
-      )}
+      {!isWidgetFullTakeover &&
+        !showFullscreenChatOverlay &&
+        !showPostConnectGuide && (
+          <div
+            className={cn(
+              "flex-shrink-0 max-w-3xl mx-auto w-full",
+              isThreadEmpty ? "px-4 pb-4" : "p-3",
+            )}
+          >
+            {errorMessage && (
+              <div className="pb-3">
+                <ErrorBox
+                  message={errorMessage.message}
+                  errorDetails={errorMessage.details}
+                  code={errorMessage.code}
+                  statusCode={errorMessage.statusCode}
+                  isRetryable={errorMessage.isRetryable}
+                  isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                  onResetChat={resetChat}
+                />
+              </div>
+            )}
+            <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
+          </div>
+        )}
 
       {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
       {showFullscreenChatOverlay && (

@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 
 // Mock lucide-react icons
@@ -546,12 +552,7 @@ describe("PlaygroundMain", () => {
     });
 
     it("does not render a skip action in the post-connect guide", () => {
-      render(
-        <PlaygroundMain
-          {...defaultProps}
-          showPostConnectGuide={true}
-        />,
-      );
+      render(<PlaygroundMain {...defaultProps} showPostConnectGuide={true} />);
 
       expect(
         screen.queryByRole("button", { name: /Skip onboarding/i }),
@@ -559,17 +560,10 @@ describe("PlaygroundMain", () => {
     });
 
     it("shows the ticket hint copy in the post-connect guide", () => {
-      render(
-        <PlaygroundMain
-          {...defaultProps}
-          showPostConnectGuide={true}
-        />,
-      );
+      render(<PlaygroundMain {...defaultProps} showPostConnectGuide={true} />);
 
       expect(
-        screen.getByText(
-          "Try asking Excalidraw to draw something.",
-        ),
+        screen.getByText("Try asking Excalidraw to draw something."),
       ).toBeInTheDocument();
     });
   });

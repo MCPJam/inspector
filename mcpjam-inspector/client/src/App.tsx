@@ -144,10 +144,7 @@ type AppChromeSidebarProps = ComponentProps<typeof MCPSidebar> & {
   hidden: boolean;
 };
 
-function AppChromeSidebar({
-  hidden,
-  ...props
-}: AppChromeSidebarProps) {
+function AppChromeSidebar({ hidden, ...props }: AppChromeSidebarProps) {
   if (hidden) {
     return null;
   }
@@ -159,10 +156,7 @@ type AppChromeHeaderProps = ComponentProps<typeof Header> & {
   hidden: boolean;
 };
 
-function AppChromeHeader({
-  hidden,
-  ...props
-}: AppChromeHeaderProps) {
+function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
   if (hidden) {
     return null;
   }
