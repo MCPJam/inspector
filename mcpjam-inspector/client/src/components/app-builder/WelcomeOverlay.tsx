@@ -73,18 +73,12 @@ export function WelcomeOverlay({
             />
 
             {/* Demo server section */}
-<<<<<<< HEAD
-            <p className="text-sm text-muted-foreground mb-5">
-              Try a demo server
-            </p>
-=======
             <h2
               id={dialogTitleId}
               className="text-sm text-muted-foreground mb-5"
             >
               Try a demo server
             </h2>
->>>>>>> d3118ca0 (reviews)
 
             <div className="flex flex-col gap-3 w-full">
               {/* Primary: Connect Excalidraw */}
