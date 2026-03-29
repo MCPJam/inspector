@@ -11,6 +11,8 @@ export type ComparePlanCell =
 
 export type ComparePlanRow = {
   label: string;
+  /** When set, used for tooltip lookup while `label` is shown in the table. */
+  tooltipKey?: string;
   free: ComparePlanCell;
   starter: ComparePlanCell;
   team: ComparePlanCell;
@@ -121,14 +123,15 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     title: "Evaluations",
     rows: [
       {
-        label: "Playground",
+        label: "Traces",
+        tooltipKey: "Evaluation traces",
         free: c,
         starter: c,
         team: c,
         enterprise: c,
       },
       {
-        label: "Traces",
+        label: "Playground",
         free: c,
         starter: c,
         team: c,
@@ -138,6 +141,13 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         label: "Triage Insights",
         free: x,
         starter: t("Basic"),
+        team: c,
+        enterprise: c,
+      },
+      {
+        label: "Insights Data Export",
+        free: x,
+        starter: x,
         team: c,
         enterprise: c,
       },
@@ -154,6 +164,14 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     title: "Sandboxes",
     rows: [
       {
+        label: "Traces",
+        tooltipKey: "Sandbox traces",
+        free: c,
+        starter: c,
+        team: c,
+        enterprise: c,
+      },
+      {
         label: "Deployments",
         free: x,
         starter: t("1"),
@@ -169,6 +187,14 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
       },
       {
         label: "User Feedback Insights",
+        free: x,
+        starter: x,
+        team: c,
+        enterprise: c,
+      },
+      {
+        label: "Insights Data Export",
+        tooltipKey: "Sandbox Insights Data Export",
         free: x,
         starter: x,
         team: c,

@@ -18,7 +18,7 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       (n, s) => n + s.rows.length,
       0,
     );
-    expect(rowCount).toBe(32);
+    expect(rowCount).toBe(35);
   });
 
   it("includes representative product and org/workspace cells", () => {

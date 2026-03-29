@@ -29,7 +29,6 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
@@ -50,6 +49,7 @@ import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
 import { cn } from "@/lib/utils";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
+import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 
 interface OrganizationsTabProps {
@@ -446,20 +446,6 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
   };
 
   const initial = organization.name.charAt(0).toUpperCase();
-  const formattedPeriodEnd =
-    billingStatus?.stripeCurrentPeriodEnd != null
-      ? new Intl.DateTimeFormat(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }).format(new Date(billingStatus.stripeCurrentPeriodEnd))
-      : "Not available";
-  const subscriptionStatusLabel = billingStatus?.subscriptionStatus
-    ? billingStatus.subscriptionStatus.replace(/_/g, " ")
-    : "Not subscribed";
-  const billingAccountLabel = billingStatus?.hasCustomer
-    ? "Connected"
-    : "Not connected";
   const auditLogLocked =
     billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
   const navigateToSection = (nextSection: OrganizationRouteSection) => {
@@ -740,7 +726,7 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
                     Billing
                   </CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Start free, scale as you grow. Review your plan here or open
+                    Review your plan here or open
                     the billing view for the full pricing matrix, checkout, and
                     subscription management.
                   </p>
@@ -756,49 +742,13 @@ function OrganizationPage({ organization, section }: OrganizationPageProps) {
                     </div>
                   ) : billingStatus ? (
                     <>
-                      <div className="grid gap-3 rounded-md border border-border/70 p-3.5 sm:grid-cols-2">
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                            Current plan
-                          </p>
-                          <Badge
-                            variant={
-                              (billingStatus.effectivePlan ??
-                                billingStatus.plan) !== "free"
-                                ? "default"
-                                : "secondary"
-                            }
-                          >
-                            {(
-                              billingStatus.effectivePlan ?? billingStatus.plan
-                            ).toUpperCase()}
-                          </Badge>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                            Subscription status
-                          </p>
-                          <p className="text-sm font-medium capitalize">
-                            {subscriptionStatusLabel}
-                          </p>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                            Current period ends
-                          </p>
-                          <p className="text-sm font-medium">
-                            {formattedPeriodEnd}
-                          </p>
-                        </div>
-                        <div className="space-y-1">
-                          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                            Billing account
-                          </p>
-                          <p className="text-sm font-medium">
-                            {billingAccountLabel}
-                          </p>
-                        </div>
-                      </div>
+                      <OrganizationCurrentPlanPanel
+                        billingStatus={billingStatus}
+                        planCatalog={planCatalog}
+                        isLoadingPlanCatalog={isLoadingPlanCatalog}
+                        onManageBilling={handleManageBilling}
+                        isOpeningPortal={isOpeningPortal}
+                      />
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <Button
                           size="default"

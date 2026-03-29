@@ -2,13 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Check, CreditCard, Info, Loader2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import {
   Table,
   TableBody,
@@ -29,7 +23,6 @@ import type {
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import {
-  formatPlanName,
   getDisplayPriceCentsForPlan,
   MARKETING_PLAN_PRICE_CENTS_USD,
 } from "@/lib/billing-entitlements";
@@ -54,7 +47,7 @@ const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
 
 const LLM_USAGE_SECTION_TITLE = "LLM Usage";
 const LLM_USAGE_SECTION_TOOLTIP =
-  "LLM usage billing isn’t live yet. Figures below are placeholders and may change.";
+  "LLM usage billing isn’t live yet; models are currently free! Figures below are placeholders and are subject tochange.";
 
 function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);
@@ -262,6 +255,18 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
     content: "Recommendations for how to improve your server.",
     contentClassName: "max-w-[20rem]",
   },
+  "Evaluation traces": {
+    ariaLabel: "What are evaluation traces?",
+    content:
+      "Traces for evaluations: configured user prompts, tool execution, agent reasoning, errors, and latency breakdown for playground and CI/CD runs.",
+    contentClassName: "max-w-[26rem]",
+  },
+  "Sandbox traces": {
+    ariaLabel: "What are sandbox traces?",
+    content:
+      "Traces for sandboxes: testing user prompts, tool execution, agent reasoning, errors, and latency breakdown while running and sharing MCP experiences.",
+    contentClassName: "max-w-[26rem]",
+  },
   Uptime: {
     ariaLabel: "Included uptime and overage",
     content:
@@ -273,6 +278,18 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
     content:
       "User feedback and usage insights, e.g. to inform user intent and more effective product decisions and evaluations.",
     contentClassName: "max-w-[26rem]",
+  },
+  "Insights Data Export": {
+    ariaLabel: "About insights data export",
+    content:
+      "Export triage and evaluation insights for analysis outside MCPJam.",
+    contentClassName: "max-w-[22rem]",
+  },
+  "Sandbox Insights Data Export": {
+    ariaLabel: "About sandbox insights data export",
+    content:
+      "Export sandbox user feedback and usage insights for analysis outside MCPJam.",
+    contentClassName: "max-w-[22rem]",
   },
   Branding: {
     ariaLabel: "About branding",
@@ -312,8 +329,14 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
   },
 };
 
-function ComparePlanRowLabel({ label }: { label: string }) {
-  const tip = COMPARE_PLAN_ROW_LABEL_TOOLTIPS[label];
+function ComparePlanRowLabel({
+  label,
+  tooltipKey,
+}: {
+  label: string;
+  tooltipKey?: string;
+}) {
+  const tip = COMPARE_PLAN_ROW_LABEL_TOOLTIPS[tooltipKey ?? label];
   if (!tip) {
     return <>{label}</>;
   }
@@ -465,106 +488,43 @@ export function OrganizationBillingSection({
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;
   const annualDiscountPct = getAnnualDiscountPercent();
-  const formattedPeriodEnd =
-    billingStatus?.stripeCurrentPeriodEnd != null
-      ? new Intl.DateTimeFormat(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }).format(new Date(billingStatus.stripeCurrentPeriodEnd))
-      : "Not available";
-  const subscriptionStatusLabel = billingStatus?.subscriptionStatus
-    ? billingStatus.subscriptionStatus.replace(/_/g, " ")
-    : "Not subscribed";
 
   return (
     <div className="space-y-5">
-      <Card className="border-border/60">
-        <CardHeader className="gap-4 md:flex-row md:items-start md:justify-between">
-          <div className="space-y-1.5">
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <CreditCard className="size-4 text-muted-foreground" />
-              Plans & Billing
-            </CardTitle>
-            <CardDescription>
-              Compare plans, review your current subscription, and start billing
-              changes for {organizationName}.
-            </CardDescription>
-          </div>
-          {billingStatus && currentPlan !== "free" ? (
-            <Button
-              variant="outline"
-              onClick={() => void onManageBilling()}
-              disabled={
-                !canManageBilling || !billingConfigured || isOpeningPortal
-              }
-            >
-              {isOpeningPortal ? (
-                <>
-                  <Loader2 className="size-4 animate-spin" />
-                  Loading...
-                </>
-              ) : (
-                "Manage subscription"
-              )}
-            </Button>
-          ) : null}
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isLoadingBilling ? (
+      <div className="space-y-1.5">
+        <div className="flex items-center gap-2 text-xl font-semibold tracking-tight">
+          <CreditCard
+            className="size-5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          Plans & Billing
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Compare plans, review your current subscription, and start billing
+          changes for {organizationName}.
+        </p>
+      </div>
+
+      {isLoadingBilling ? (
+        <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
+          Loading billing details...
+        </div>
+      ) : billingStatus ? (
+        <>
+          {!billingConfigured ? (
             <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-              Loading billing details...
+              Billing is not configured in this environment. Plans are visible,
+              but purchase actions are unavailable.
             </div>
-          ) : billingStatus ? (
-            <>
-              <div className="grid gap-3 rounded-md border border-border/70 p-4 sm:grid-cols-2 xl:grid-cols-4">
-                <div className="space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Current plan
-                  </p>
-                  <p className="text-sm font-medium">
-                    {formatPlanName(currentPlan)}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Subscription status
-                  </p>
-                  <p className="text-sm font-medium capitalize">
-                    {subscriptionStatusLabel}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Billing cycle
-                  </p>
-                  <p className="text-sm font-medium capitalize">
-                    {billingStatus.billingInterval ?? "No subscription"}
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                    Current period ends
-                  </p>
-                  <p className="text-sm font-medium">{formattedPeriodEnd}</p>
-                </div>
-              </div>
-              {!billingConfigured ? (
-                <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                  Billing is not configured in this environment. Plans are
-                  visible, but purchase actions are unavailable.
-                </div>
-              ) : null}
-              {!canManageBilling ? (
-                <p className="text-sm text-muted-foreground">
-                  Only organization owners can manage billing changes. Admins
-                  can review plan details here.
-                </p>
-              ) : null}
-            </>
           ) : null}
-        </CardContent>
-      </Card>
+          {!canManageBilling ? (
+            <p className="text-sm text-muted-foreground">
+              Only organization owners can manage billing changes. Admins can
+              review plan details here.
+            </p>
+          ) : null}
+        </>
+      ) : null}
 
       <Card className="border-border/60 py-6 shadow-sm">
         <CardContent className="px-0 pb-0 pt-0">
@@ -753,7 +713,7 @@ export function OrganizationBillingSection({
                             </div>
                           </TableCell>
                         </TableRow>
-                        {section.rows.map((row) => {
+                        {section.rows.map((row, rowIndex) => {
                           const cells: ComparePlanCell[] = [
                             row.free,
                             row.starter,
@@ -761,9 +721,15 @@ export function OrganizationBillingSection({
                             row.enterprise,
                           ];
                           return (
-                            <TableRow key={row.label} className="border-b">
+                            <TableRow
+                              key={`${section.title}-${rowIndex}-${row.label}`}
+                              className="border-b"
+                            >
                               <TableCell className="sticky left-0 z-10 max-w-[14rem] bg-card py-3 pl-4 text-sm font-medium shadow-[1px_0_0_0_hsl(var(--border))] sm:max-w-none">
-                                <ComparePlanRowLabel label={row.label} />
+                                <ComparePlanRowLabel
+                                  label={row.label}
+                                  tooltipKey={row.tooltipKey}
+                                />
                               </TableCell>
                               {PLAN_ORDER.map((plan, i) => {
                                 const isPopular = plan === POPULAR_PLAN;

@@ -268,12 +268,11 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.getByRole("button", { name: "Plans & billing" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Subscription status")).toBeInTheDocument();
-    expect(screen.getByText("Not subscribed")).toBeInTheDocument();
-    expect(screen.getByText("Current period ends")).toBeInTheDocument();
-    expect(screen.getByText("Not available")).toBeInTheDocument();
-    expect(screen.getByText("Billing account")).toBeInTheDocument();
-    expect(screen.getByText("Not connected")).toBeInTheDocument();
+    expect(screen.getByText("Billing cycle")).toBeInTheDocument();
+    expect(screen.queryByText("Subscription status")).not.toBeInTheDocument();
+    expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
+      "No active subscription",
+    );
     expect(
       screen.getByRole("button", { name: "View plans" }),
     ).toBeInTheDocument();
@@ -305,7 +304,7 @@ describe("OrganizationsTab billing", () => {
       screen.queryByRole("button", { name: "View plans" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Manage subscription" }),
+      screen.queryByRole("button", { name: "Manage plan" }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "Upgrade plan" }),
@@ -313,13 +312,6 @@ describe("OrganizationsTab billing", () => {
   });
 
   it("shows the billing subview summary and plan cards", () => {
-    const periodEnd = 1_705_000_000_000;
-    const formattedPeriodEnd = new Intl.DateTimeFormat(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    }).format(new Date(periodEnd));
-
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -328,7 +320,7 @@ describe("OrganizationsTab billing", () => {
           billingInterval: "monthly",
           subscriptionStatus: "active",
           hasCustomer: true,
-          stripeCurrentPeriodEnd: periodEnd,
+          stripeCurrentPeriodEnd: 1_705_000_000_000,
           stripePriceId: "price_123",
         }),
       }),
@@ -336,18 +328,11 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    expect(
-      screen.getByText("MCPJam plans and pricing"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Plans & Billing")).toBeInTheDocument();
     expect(screen.getAllByText("Current plan").length).toBeGreaterThan(0);
-    expect(screen.getByText("active")).toBeInTheDocument();
-    expect(screen.getByText(formattedPeriodEnd)).toBeInTheDocument();
     expect(screen.getAllByText("Starter").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Team").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Enterprise").length).toBeGreaterThan(0);
-    expect(
-      screen.getByRole("button", { name: "Manage subscription" }),
-    ).toBeInTheDocument();
   });
 
   it("disables billing actions for admins while keeping the page visible", () => {
@@ -407,11 +392,11 @@ describe("OrganizationsTab billing", () => {
       ),
     ).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", {
-      name: /^(Get started|Start free trial)$/,
+      name: "Upgrade",
     })) {
       expect(button).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: "Request a demo" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Talk to sales" })).toBeEnabled();
   });
 
   it("shows Team as a purchasable upgrade when billing UI is enabled", () => {
@@ -432,7 +417,7 @@ describe("OrganizationsTab billing", () => {
 
     expect(screen.queryByText("Coming soon")).not.toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: "Start free trial" }),
+      screen.getAllByRole("button", { name: "Upgrade" }),
     ).toHaveLength(1);
   });
 
@@ -468,13 +453,14 @@ describe("OrganizationsTab billing", () => {
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Get started" }));
+    const upgradeButtons = screen.getAllByRole("button", { name: "Upgrade" });
+    fireEvent.click(upgradeButtons[0]!);
 
     await waitFor(() => {
       expect(startCheckout).toHaveBeenCalledWith(
         expect.stringContaining("#organizations/org-1/billing"),
         "starter",
-        "annual",
+        "monthly",
       );
     });
     expect(openSpy).toHaveBeenCalledWith(
@@ -485,7 +471,7 @@ describe("OrganizationsTab billing", () => {
     openSpy.mockRestore();
   });
 
-  it("opens the billing portal from the billing header for paid owners", async () => {
+  it("opens the billing portal from the overview current plan card for paid owners", async () => {
     const openPortal = vi.fn().mockResolvedValue("https://stripe.test/portal");
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -503,11 +489,9 @@ describe("OrganizationsTab billing", () => {
 
     const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
 
-    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    render(<OrganizationsTab organizationId="org-1" />);
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Manage subscription" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Manage plan" }));
 
     await waitFor(() => {
       expect(openPortal).toHaveBeenCalledWith(
@@ -540,11 +524,11 @@ describe("OrganizationsTab billing", () => {
       ),
     ).toBeInTheDocument();
     for (const button of screen.getAllByRole("button", {
-      name: /^(Get started|Start free trial)$/,
+      name: "Upgrade",
     })) {
       expect(button).toBeDisabled();
     }
-    expect(screen.getByRole("button", { name: "Request a demo" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Talk to sales" })).toBeEnabled();
   });
 
   it("locks audit log behind enterprise after enforcement becomes active", () => {
