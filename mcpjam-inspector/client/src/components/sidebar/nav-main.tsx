@@ -105,8 +105,7 @@ export function NavMain({
             const button = (
               <SidebarMenuButton
                 tooltip={
-                  !item.disabled &&
-                  (!shouldShowHoverCard(item) || sidebarOpen)
+                  !item.disabled && (!shouldShowHoverCard(item) || sidebarOpen)
                     ? item.title
                     : undefined
                 }
