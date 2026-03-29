@@ -89,11 +89,7 @@ describe("useOnboarding", () => {
 
   it("re-derives the guest welcome phase once auth settles", () => {
     const { result, rerender } = renderHook(
-      ({
-        isAuthLoading,
-      }: {
-        isAuthLoading: boolean;
-      }) =>
+      ({ isAuthLoading }: { isAuthLoading: boolean }) =>
         useOnboarding({
           servers: {},
           onConnect: vi.fn(),
