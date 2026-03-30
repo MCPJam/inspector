@@ -143,18 +143,22 @@ evals.post("/trace-repair/start", async (c) =>
         scope: body.scope,
         targetTestCaseId:
           body.scope === "case" ? body.testCaseId : undefined,
+        targetSourceIterationId:
+          body.scope === "case" ? body.sourceIterationId : undefined,
       },
     );
-    void runTraceRepairJob({
-      convexClient,
-      convexAuthToken,
-      jobId: start.jobId,
-      modelApiKeys: body.modelApiKeys,
-    }).catch((err) => {
-      logger.error("[trace-repair] background job failed", err, {
+    if (start.existing !== true) {
+      void runTraceRepairJob({
+        convexClient,
+        convexAuthToken,
         jobId: start.jobId,
+        modelApiKeys: body.modelApiKeys,
+      }).catch((err) => {
+        logger.error("[trace-repair] background job failed", err, {
+          jobId: start.jobId,
+        });
       });
-    });
+    }
     return {
       success: true,
       jobId: start.jobId,

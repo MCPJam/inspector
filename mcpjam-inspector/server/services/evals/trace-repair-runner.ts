@@ -19,7 +19,11 @@ const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 10_000;
 const POLL_MS_INITIAL = 500;
 const POLL_MS_MAX = 2000;
-const CANDIDATE_TIMEOUT_MS = 45_000;
+/**
+ * Must stay >= backend `REFINEMENT_LLM_TIMEOUT_MS` (120s in mcpjam-backend
+ * `convex/lib/refinementGeneration.ts`) plus buffer for persistence/scheduling.
+ */
+export const CANDIDATE_TIMEOUT_MS = 130_000;
 const REFINEMENT_CASE_CONCURRENCY_MAX = 5;
 const REFINEMENT_CASE_CONCURRENCY_DEFAULT = 2;
 
@@ -291,6 +295,7 @@ export async function runTraceRepairJob(params: TraceRepairRunnerParams): Promis
     leaseDurationMs: LEASE_MS,
   });
 
+  let heartbeatFailures = 0;
   const hb = setInterval(() => {
     void convexClient
       .mutation("traceRepair:heartbeatTraceRepairJob" as any, {
@@ -298,7 +303,17 @@ export async function runTraceRepairJob(params: TraceRepairRunnerParams): Promis
         leaseOwner,
         leaseDurationMs: LEASE_MS,
       })
-      .catch(() => {});
+      .then(() => {
+        heartbeatFailures = 0;
+      })
+      .catch((err: unknown) => {
+        heartbeatFailures += 1;
+        logger.warn("[trace-repair] Heartbeat failed", {
+          jobId,
+          consecutiveFailures: heartbeatFailures,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
   }, HEARTBEAT_MS);
 
   try {
@@ -346,19 +361,45 @@ export async function runTraceRepairJob(params: TraceRepairRunnerParams): Promis
       return;
     }
 
-    const refinement = await convexClient.query(
-      "testSuites:getRunRefinementState" as any,
-      { suiteRunId: job.sourceRunId },
-    );
-
-    let failedCases: FailedCase[] = (refinement?.failedCases ?? []).map((fc: any) => ({
-      sourceIterationId: fc.sourceIterationId,
-      testCaseId: fc.testCaseId,
-      caseKey: fc.caseKey,
-    }));
+    let failedCases: FailedCase[];
 
     if (job.scope === "case") {
-      failedCases = failedCases.filter((fc) => fc.testCaseId === job.targetTestCaseId);
+      if (!job.targetSourceIterationId) {
+        throw new Error(
+          "Trace repair case job is missing targetSourceIterationId; restart repair from the inspector.",
+        );
+      }
+      const iteration = await convexClient.query("testSuites:getTestIteration" as any, {
+        iterationId: job.targetSourceIterationId,
+      });
+      const itTc = iteration?.testCaseId as string | undefined;
+      if (!itTc) {
+        throw new Error("Trace repair source iteration has no test case");
+      }
+      if (String(itTc) !== String(job.targetTestCaseId)) {
+        throw new Error(
+          "Trace repair job target test case does not match source iteration",
+        );
+      }
+      const caseKey =
+        iteration.testCaseSnapshot?.caseKey ?? `ui:${itTc}`;
+      failedCases = [
+        {
+          sourceIterationId: String(iteration._id),
+          testCaseId: String(itTc),
+          caseKey,
+        },
+      ];
+    } else {
+      const refinement = await convexClient.query(
+        "testSuites:getRunRefinementState" as any,
+        { suiteRunId: job.sourceRunId },
+      );
+      failedCases = (refinement?.failedCases ?? []).map((fc: any) => ({
+        sourceIterationId: fc.sourceIterationId,
+        testCaseId: fc.testCaseId,
+        caseKey: fc.caseKey,
+      }));
     }
 
     if (failedCases.length === 0) {

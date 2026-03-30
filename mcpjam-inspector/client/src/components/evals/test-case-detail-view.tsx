@@ -180,8 +180,6 @@ export function TestCaseDetailView({
     [latestCompletedRun, testCase.caseKey, testCase._id],
   );
 
-  const activeIterations = useMemo(() => iterations, [iterations]);
-
   // Model breakdown
   const modelBreakdown = useMemo(() => {
     const modelMap = new Map<
@@ -195,7 +193,7 @@ export function TestCaseDetailView({
       }
     >();
 
-    activeIterations.forEach((iteration) => {
+    iterations.forEach((iteration) => {
       const snapshot = iteration.testCaseSnapshot;
       if (!snapshot) return;
 
@@ -236,18 +234,18 @@ export function TestCaseDetailView({
         failed: stats.failed,
       }))
       .sort((a, b) => b.passRate - a.passRate);
-  }, [activeIterations]);
+  }, [iterations]);
 
   // Compute overall stats
   const overallStats = useMemo(() => {
-    const results = activeIterations.map((i) => computeIterationResult(i));
+    const results = iterations.map((i) => computeIterationResult(i));
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter((r) => r === "failed").length;
     const total = passed + failed;
     const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
     // Avg duration
-    const completed = activeIterations.filter(
+    const completed = iterations.filter(
       (i) => i.startedAt && i.updatedAt && i.result !== "pending",
     );
     const avgDuration =
@@ -259,7 +257,7 @@ export function TestCaseDetailView({
         : 0;
 
     return { passed, failed, total, passRate, avgDuration };
-  }, [activeIterations]);
+  }, [iterations]);
 
   const formatDurationHelper = (ms: number) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -448,7 +446,7 @@ export function TestCaseDetailView({
         <Label className="text-xs font-medium text-muted-foreground">
           Iterations
         </Label>
-        {activeIterations.length === 0 ? (
+        {iterations.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
             No iterations found for this test.
           </div>
@@ -470,13 +468,13 @@ export function TestCaseDetailView({
             </div>
             {/* Failing iterations first */}
             {(() => {
-              const failing = activeIterations.filter(
+              const failing = iterations.filter(
                 (i) => computeIterationResult(i) === "failed",
               );
-              const passing = activeIterations.filter(
+              const passing = iterations.filter(
                 (i) => computeIterationResult(i) === "passed",
               );
-              const other = activeIterations.filter((i) => {
+              const other = iterations.filter((i) => {
                 const r = computeIterationResult(i);
                 return r !== "failed" && r !== "passed";
               });

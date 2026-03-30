@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { desanitizeFromConvexTransport } from "@/shared/convex-sanitize";
 import {
   formatTime,
   formatRunId,
@@ -17,14 +18,37 @@ import {
   SuiteAggregate,
 } from "./types";
 
+function desanitizeEvalIteration(iter: EvalIteration): EvalIteration {
+  return {
+    ...iter,
+    actualToolCalls: desanitizeFromConvexTransport(iter.actualToolCalls),
+    testCaseSnapshot: iter.testCaseSnapshot
+      ? {
+          ...iter.testCaseSnapshot,
+          expectedToolCalls: desanitizeFromConvexTransport(
+            iter.testCaseSnapshot.expectedToolCalls,
+          ),
+        }
+      : undefined,
+  };
+}
+
 export function useSuiteData(
   suite: EvalSuite,
   cases: EvalCase[],
-  iterations: EvalIteration[],
-  allIterations: EvalIteration[],
+  rawIterations: EvalIteration[],
+  rawAllIterations: EvalIteration[],
   runs: EvalSuiteRun[],
   aggregate: SuiteAggregate | null,
 ) {
+  const iterations = useMemo(
+    () => rawIterations.map(desanitizeEvalIteration),
+    [rawIterations],
+  );
+  const allIterations = useMemo(
+    () => rawAllIterations.map(desanitizeEvalIteration),
+    [rawAllIterations],
+  );
   const activeRunIds = useMemo(
     () => new Set(runs.map((run) => run._id)),
     [runs],
@@ -404,9 +428,14 @@ export function useSuiteData(
 
 export function useRunDetailData(
   selectedRunId: string | null,
-  allIterations: EvalIteration[],
+  rawAllIterations: EvalIteration[],
   runDetailSortBy: "model" | "test" | "result",
 ) {
+  const allIterations = useMemo(
+    () => rawAllIterations.map(desanitizeEvalIteration),
+    [rawAllIterations],
+  );
+
   // Iterations for selected run
   const iterationsForSelectedRun = useMemo(() => {
     if (!selectedRunId) return [];

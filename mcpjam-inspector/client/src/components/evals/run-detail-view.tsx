@@ -1,5 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
+import { useCallback, useMemo } from "react";
 import {
   ChartContainer,
   ChartTooltip,
@@ -26,7 +25,7 @@ import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
 import { TraceRepairBanner } from "./trace-repair-banner";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import { startTraceRepair, stopTraceRepair } from "@/lib/apis/evals-api";
+import { useTraceRepairState } from "./use-trace-repair-state";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, Loader2 } from "lucide-react";
 
@@ -385,99 +384,22 @@ export function RunDetailView({
     return m;
   }, [caseGroupsForSelectedRun]);
 
-  const traceRepairJobView = useQuery(
-    "traceRepair:getTraceRepairJobView" as any,
-    selectedRunDetails.source !== "sdk"
-      ? { testSuiteId: selectedRunDetails.suiteId }
-      : "skip",
-  );
-
-  const latestTraceRepairOutcome = useQuery(
-    "traceRepair:getLatestTraceRepairOutcome" as any,
-    selectedRunDetails.source !== "sdk"
-      ? { testSuiteId: selectedRunDetails.suiteId }
-      : "skip",
-  );
-
-  const traceRepairSuiteJobActive =
-    traceRepairJobView != null &&
-    typeof traceRepairJobView === "object" &&
-    traceRepairJobView.scope === "suite" &&
-    ["queued", "running", "stopping"].includes(traceRepairJobView.status);
-
-  const [traceRepairStarting, setTraceRepairStarting] = useState(false);
-
-  const handleStartTraceRepair = useCallback(async () => {
-    setTraceRepairStarting(true);
-    try {
-      await startTraceRepair({
-        scope: "suite",
-        suiteId: selectedRunDetails.suiteId,
-        sourceRunId: selectedRunDetails._id,
-      });
-    } finally {
-      setTraceRepairStarting(false);
-    }
-  }, [selectedRunDetails.suiteId, selectedRunDetails._id]);
-
-  const handleStopTraceRepair = useCallback(async () => {
-    if (
-      !traceRepairJobView ||
-      typeof traceRepairJobView !== "object" ||
-      !traceRepairJobView.jobId
-    ) {
-      return;
-    }
-    await stopTraceRepair(traceRepairJobView.jobId as string);
-  }, [traceRepairJobView]);
-
-  const traceRepairActiveBannerView =
-    traceRepairSuiteJobActive &&
-    traceRepairJobView &&
-    typeof traceRepairJobView === "object"
-      ? {
-          jobId: String(traceRepairJobView.jobId),
-          status: String(traceRepairJobView.status),
-          phase: String(traceRepairJobView.phase),
-          scope: "suite" as const,
-          currentCaseKey: traceRepairJobView.currentCaseKey ?? undefined,
-          activeCaseKeys: traceRepairJobView.activeCaseKeys ?? [],
-          attemptLimit: traceRepairJobView.attemptLimit,
-          provisionalAppliedCount: traceRepairJobView.provisionalAppliedCount,
-          durableFixCount: traceRepairJobView.durableFixCount,
-          regressedCount: traceRepairJobView.regressedCount,
-          serverLikelyCount: traceRepairJobView.serverLikelyCount,
-          exhaustedCount: traceRepairJobView.exhaustedCount,
-          promisingCount: traceRepairJobView.promisingCount,
-          accuracyBefore: traceRepairJobView.accuracyBefore ?? null,
-          accuracyAfter: traceRepairJobView.accuracyAfter ?? null,
-        }
-      : null;
-
-  const latestTraceRepairOutcomeBanner =
-    latestTraceRepairOutcome && typeof latestTraceRepairOutcome === "object"
-      ? {
-          ...latestTraceRepairOutcome,
-          jobId: String(latestTraceRepairOutcome.jobId),
-          status: String(latestTraceRepairOutcome.status),
-          phase: String(latestTraceRepairOutcome.phase),
-          scope:
-            latestTraceRepairOutcome.scope === "case"
-              ? ("case" as const)
-              : ("suite" as const),
-          stopReason: latestTraceRepairOutcome.stopReason,
-          lastError: latestTraceRepairOutcome.lastError,
-          completedAt: latestTraceRepairOutcome.completedAt,
-          updatedAt: latestTraceRepairOutcome.updatedAt,
-        }
-      : null;
-
-  const traceRepairEligible =
-    selectedRunDetails.source !== "sdk" &&
-    selectedRunDetails.status === "completed" &&
-    computedStats.failed > 0 &&
-    selectedRunDetails.hasServerReplayConfig === true &&
-    !traceRepairSuiteJobActive;
+  const {
+    traceRepairEligible,
+    traceRepairStarting,
+    traceRepairActiveBannerView,
+    latestTraceRepairOutcomeBanner,
+    handleStartTraceRepair,
+    handleStopTraceRepair,
+  } = useTraceRepairState({
+    mode: "run-detail",
+    suiteId: selectedRunDetails.suiteId,
+    sourceRunId: selectedRunDetails._id,
+    source: selectedRunDetails.source,
+    runStatus: selectedRunDetails.status,
+    failedIterationCount: computedStats.failed,
+    hasServerReplayConfig: selectedRunDetails.hasServerReplayConfig,
+  });
 
   return (
     <div
