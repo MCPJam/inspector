@@ -186,12 +186,7 @@ export type EvalSuiteRun = {
 
 export type EvalRefinementSession = {
   _id: string;
-  status:
-    | "pending_candidate"
-    | "ready"
-    | "verifying"
-    | "completed"
-    | "failed";
+  status: "pending_candidate" | "ready" | "verifying" | "completed" | "failed";
   outcome?: "improved_test" | "still_ambiguous" | "server_likely";
   failureSignature?: string;
   testWeaknessHypothesis?: string;

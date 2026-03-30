@@ -182,7 +182,10 @@ describe("matchToolCalls", () => {
         { toolName: "create_view", arguments: { elements: "string" } },
       ];
       const actual: ToolCall[] = [
-        { toolName: "create_view", arguments: { elements: "[{\"type\":\"rectangle\"}]" } },
+        {
+          toolName: "create_view",
+          arguments: { elements: '[{"type":"rectangle"}]' },
+        },
       ];
       const result = matchToolCalls(expected, actual);
       expect(result.passed).toBe(true);

@@ -369,8 +369,7 @@ export function SuiteIterationsView({
   const loopCaseTitleByKeySuite = useMemo(() => {
     const m: Record<string, string> = {};
     for (const iter of allIterations) {
-      const key =
-        iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
+      const key = iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
       const title = iter.testCaseSnapshot?.title;
       if (title) {
         m[key] = title;
@@ -415,7 +414,9 @@ export function SuiteIterationsView({
           status: String(latestTraceRepairOutcome.status),
           phase: String(latestTraceRepairOutcome.phase),
           scope:
-            latestTraceRepairOutcome.scope === "case" ? ("case" as const) : ("suite" as const),
+            latestTraceRepairOutcome.scope === "case"
+              ? ("case" as const)
+              : ("suite" as const),
           stopReason: latestTraceRepairOutcome.stopReason,
           lastError: latestTraceRepairOutcome.lastError,
           completedAt: latestTraceRepairOutcome.completedAt,

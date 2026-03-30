@@ -197,9 +197,7 @@ export function buildReplayManager(replayConfig: ReplayConfig) {
 }
 
 function isMcpAlreadyConnectedError(error: unknown): boolean {
-  return (
-    error instanceof Error && error.message.includes("already connected")
-  );
+  return error instanceof Error && error.message.includes("already connected");
 }
 
 /**

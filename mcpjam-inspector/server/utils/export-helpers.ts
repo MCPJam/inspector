@@ -287,8 +287,7 @@ export async function exportConnectedServerToolSnapshotForEvalAuthoring(
           tools: sortSnapshotTools(tools),
         } satisfies ServerToolSnapshotServer;
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         logger.warn(
           `[${logPrefix}] Failed to export tools for eval authoring`,
           {

@@ -147,9 +147,7 @@ describe("SuiteHeader", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("button", { name: /Auto fix/i }),
-    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: /Auto fix/i })).toBeEnabled();
   });
 
   it("does not show Auto fix for SDK suites even if callback is passed", () => {
@@ -164,9 +162,7 @@ describe("SuiteHeader", () => {
       />,
     );
 
-    expect(
-      screen.queryByRole("button", { name: /^Auto fix$/i }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Auto fix$/i })).toBeNull();
   });
 
   it("shows Delete suite in overview when editable and calls onDelete", async () => {

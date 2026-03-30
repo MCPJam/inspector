@@ -65,9 +65,13 @@ describe("runWithConcurrencyLimit", () => {
   });
 
   it("returns results in input order", async () => {
-    const out = await runWithConcurrencyLimit(["a", "b", "c"], 2, async (x, i) => {
-      return `${x}:${i}`;
-    });
+    const out = await runWithConcurrencyLimit(
+      ["a", "b", "c"],
+      2,
+      async (x, i) => {
+        return `${x}:${i}`;
+      },
+    );
     expect(out).toEqual(["a:0", "b:1", "c:2"]);
   });
 });
@@ -120,8 +124,16 @@ describe("failedQuickIterationId", () => {
     expect(
       failedQuickIterationId(
         [
-          { label: "same-model-1", passed: true, iterationId: "a" as unknown as string },
-          { label: "paraphrase", passed: false, iterationId: "b" as unknown as string },
+          {
+            label: "same-model-1",
+            passed: true,
+            iterationId: "a" as unknown as string,
+          },
+          {
+            label: "paraphrase",
+            passed: false,
+            iterationId: "b" as unknown as string,
+          },
         ],
         ["same-model-1", "paraphrase"],
       ),

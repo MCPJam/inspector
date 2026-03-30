@@ -86,9 +86,7 @@ export function SuiteHeroStats({
     ).length;
 
     // Avg duration across runs
-    const completedRuns = runs.filter(
-      (r) => r.completedAt && r.createdAt,
-    );
+    const completedRuns = runs.filter((r) => r.completedAt && r.createdAt);
     const avgDuration =
       completedRuns.length > 0
         ? completedRuns.reduce(

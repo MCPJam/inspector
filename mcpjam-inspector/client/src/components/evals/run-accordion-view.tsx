@@ -47,10 +47,10 @@ export function RunAccordionView({
   const sortedRuns = useMemo(
     () =>
       [...runs].sort((a, b) => {
-          const aTime = a.completedAt ?? a.createdAt ?? 0;
-          const bTime = b.completedAt ?? b.createdAt ?? 0;
-          return bTime - aTime;
-        }),
+        const aTime = a.completedAt ?? a.createdAt ?? 0;
+        const bTime = b.completedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      }),
     [runs],
   );
 

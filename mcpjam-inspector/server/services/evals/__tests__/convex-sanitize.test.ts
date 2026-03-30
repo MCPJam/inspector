@@ -7,20 +7,13 @@ describe("sanitizeForConvexTransport", () => {
       sanitizeForConvexTransport({
         $schema: "https://json-schema.org/draft/2020-12/schema",
         nested: {
-          items: [
-            { $ref: "#/defs/node" },
-            { ok: true },
-          ],
+          items: [{ $ref: "#/defs/node" }, { ok: true }],
         },
       }),
     ).toEqual({
-      __convexReserved__schema:
-        "https://json-schema.org/draft/2020-12/schema",
+      __convexReserved__schema: "https://json-schema.org/draft/2020-12/schema",
       nested: {
-        items: [
-          { __convexReserved__ref: "#/defs/node" },
-          { ok: true },
-        ],
+        items: [{ __convexReserved__ref: "#/defs/node" }, { ok: true }],
       },
     });
   });

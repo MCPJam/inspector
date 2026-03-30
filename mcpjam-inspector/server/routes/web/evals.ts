@@ -141,8 +141,7 @@ evals.post("/trace-repair/start", async (c) =>
         testSuiteId: body.suiteId,
         sourceRunId: body.sourceRunId,
         scope: body.scope,
-        targetTestCaseId:
-          body.scope === "case" ? body.testCaseId : undefined,
+        targetTestCaseId: body.scope === "case" ? body.testCaseId : undefined,
       },
     );
     void runTraceRepairJob({
@@ -198,11 +197,7 @@ evals.post("/replay-run", async (c) =>
         message.includes("stored replay config") ||
         message.includes("No replay configuration")
       ) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          message,
-        );
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, message);
       }
       throw err;
     }

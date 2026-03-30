@@ -196,11 +196,7 @@ evals.post("/replay-run", async (c) => {
         message.includes("stored replay config") ||
         message.includes("No replay configuration")
       ) {
-        throw new WebRouteError(
-          400,
-          ErrorCode.VALIDATION_ERROR,
-          message,
-        );
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, message);
       }
       throw err;
     }

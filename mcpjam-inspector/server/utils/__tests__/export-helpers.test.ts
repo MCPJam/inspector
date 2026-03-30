@@ -304,7 +304,8 @@ describe("renderServerToolSnapshotSection", () => {
           tools: [
             {
               name: "search_catalog",
-              description: "Search the product catalog after auth is established.",
+              description:
+                "Search the product catalog after auth is established.",
               inputSchema: {
                 type: "object",
                 properties: {

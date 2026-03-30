@@ -74,7 +74,9 @@ describe("OverviewPanel", () => {
 
     expect(screen.getAllByText("Greeting Suite").length).toBeGreaterThan(0);
     expect(screen.queryByText("AI Overview Summary")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Run AI triage when you want a summary/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Run AI triage when you want a summary/i),
+    ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Triage failures/i }),
     ).not.toBeInTheDocument();

@@ -1,9 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { z } from "zod";
-import {
-  generateTestCases,
-} from "../../services/eval-agent";
+import { generateTestCases } from "../../services/eval-agent";
 import {
   convertToEvalTestCases,
   generateNegativeTestCases,
@@ -235,9 +233,13 @@ export async function runEvalsWithManager(
       : resolvedServerIds;
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
   const { toolSnapshot, toolSnapshotDebug } =
-    await captureToolSnapshotForEvalAuthoring(clientManager, resolvedServerIds, {
-      logPrefix: "evals",
-    });
+    await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      {
+        logPrefix: "evals",
+      },
+    );
 
   let resolvedSuiteId = suiteId ?? null;
 

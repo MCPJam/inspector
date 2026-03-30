@@ -1,6 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
-import { X, ChevronDown, ChevronRight, Footprints, Loader2 } from "lucide-react";
+import {
+  X,
+  ChevronDown,
+  ChevronRight,
+  Footprints,
+  Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import {
@@ -136,7 +142,8 @@ export function TestCaseDetailView({
           currentCaseKey: traceRepairCaseJobView.currentCaseKey ?? undefined,
           activeCaseKeys: traceRepairCaseJobView.activeCaseKeys ?? [],
           attemptLimit: traceRepairCaseJobView.attemptLimit,
-          provisionalAppliedCount: traceRepairCaseJobView.provisionalAppliedCount,
+          provisionalAppliedCount:
+            traceRepairCaseJobView.provisionalAppliedCount,
           durableFixCount: traceRepairCaseJobView.durableFixCount,
           regressedCount: traceRepairCaseJobView.regressedCount,
           serverLikelyCount: traceRepairCaseJobView.serverLikelyCount,
@@ -364,7 +371,9 @@ export function TestCaseDetailView({
               this suite to retry generation.
             </p>
           ) : latestCaseInsight ? (
-            <p className="text-sm leading-relaxed">{latestCaseInsight.summary}</p>
+            <p className="text-sm leading-relaxed">
+              {latestCaseInsight.summary}
+            </p>
           ) : (
             <p className="text-sm text-muted-foreground leading-relaxed">
               No notable change in the last two runs.

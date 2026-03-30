@@ -73,15 +73,14 @@ export function buildRefinementVerificationPlan(
     ...suiteModels,
     ...FALLBACK_VERIFICATION_MODELS,
   ];
-  const crossModel =
-    modelPool.find(
-      (modelConfig) =>
-        modelConfig.model !== currentModel ||
-        modelConfig.provider !== currentProvider,
-    ) ?? {
-      model: currentModel,
-      provider: currentProvider,
-    };
+  const crossModel = modelPool.find(
+    (modelConfig) =>
+      modelConfig.model !== currentModel ||
+      modelConfig.provider !== currentProvider,
+  ) ?? {
+    model: currentModel,
+    provider: currentProvider,
+  };
 
   return [
     {
