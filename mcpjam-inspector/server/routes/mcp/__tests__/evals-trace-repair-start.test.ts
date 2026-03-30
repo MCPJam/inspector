@@ -75,7 +75,7 @@ describe("mcp trace-repair/start", () => {
     expect(runTraceRepairJobMock).toHaveBeenCalledTimes(1);
   });
 
-  it("does not spawn worker when Convex returns existing job", async () => {
+  it("mixed-version fallback: does not spawn when existing true and shouldSpawnWorker omitted", async () => {
     mutationMock.mockResolvedValueOnce({ jobId: "job-old", existing: true });
     const app = createApp();
     const res = await app.request("/api/mcp/evals/trace-repair/start", {
@@ -94,5 +94,51 @@ describe("mcp trace-repair/start", () => {
     const data = (await res.json()) as { existing: boolean };
     expect(data.existing).toBe(true);
     expect(runTraceRepairJobMock).not.toHaveBeenCalled();
+  });
+
+  it("does not spawn worker when shouldSpawnWorker is false", async () => {
+    mutationMock.mockResolvedValueOnce({
+      jobId: "job-old",
+      existing: true,
+      shouldSpawnWorker: false,
+    });
+    const app = createApp();
+    const res = await app.request("/api/mcp/evals/trace-repair/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope: "case",
+        suiteId: "suite-1",
+        sourceRunId: "run-1",
+        testCaseId: "tc-1",
+        sourceIterationId: "iter-9",
+        convexAuthToken: "tok",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(runTraceRepairJobMock).not.toHaveBeenCalled();
+  });
+
+  it("spawns worker when existing true and shouldSpawnWorker true (recoverable queued)", async () => {
+    mutationMock.mockResolvedValueOnce({
+      jobId: "job-queued",
+      existing: true,
+      shouldSpawnWorker: true,
+    });
+    const app = createApp();
+    const res = await app.request("/api/mcp/evals/trace-repair/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        scope: "case",
+        suiteId: "suite-1",
+        sourceRunId: "run-1",
+        testCaseId: "tc-1",
+        sourceIterationId: "iter-9",
+        convexAuthToken: "tok",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(runTraceRepairJobMock).toHaveBeenCalledTimes(1);
   });
 });

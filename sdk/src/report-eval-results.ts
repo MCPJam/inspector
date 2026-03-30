@@ -454,6 +454,7 @@ async function uploadWidgetSnapshots(
         console.warn(
           `[mcpjam/sdk] skipped widget snapshot upload for "${snapshot.toolName}": ${message}`
         );
+        uploadedSnapshots.push(snapshot);
       }
     }
 

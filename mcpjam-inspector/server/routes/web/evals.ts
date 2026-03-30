@@ -146,7 +146,10 @@ evals.post("/trace-repair/start", async (c) =>
           body.scope === "case" ? body.sourceIterationId : undefined,
       },
     );
-    if (start.existing !== true) {
+    const shouldSpawnWorker =
+      start.shouldSpawnWorker !== false &&
+      (start.shouldSpawnWorker === true || start.existing !== true);
+    if (shouldSpawnWorker) {
       void runTraceRepairJob({
         convexClient,
         convexAuthToken,
