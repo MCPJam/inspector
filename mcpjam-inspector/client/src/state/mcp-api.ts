@@ -7,10 +7,7 @@ import {
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 import { webPost } from "@/lib/apis/web/base";
-import {
-  buildGuestServerRequest,
-  isGuestMode,
-} from "@/lib/apis/web/context";
+import { buildGuestServerRequest, isGuestMode } from "@/lib/apis/web/context";
 
 /**
  * Extracts an OAuth access token from an HttpServerConfig's Authorization header.

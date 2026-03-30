@@ -91,7 +91,9 @@ export async function listPromptsForServers(
         await Promise.all(
           serverIds.map(async (serverName) => {
             try {
-              const body = await listHostedPrompts({ serverNameOrId: serverName });
+              const body = await listHostedPrompts({
+                serverNameOrId: serverName,
+              });
               prompts[serverName] = Array.isArray(body?.prompts)
                 ? (body.prompts as MCPPrompt[])
                 : [];
