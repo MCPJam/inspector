@@ -617,7 +617,7 @@ export function IterationDetails({
         <div className="text-xs font-semibold">Trace</div>
       ) : null}
       <div
-        className={`rounded-md bg-muted/20 p-3${layoutMode === "compact" ? " max-h-[480px] overflow-y-auto" : ""}`}
+        className={`${layoutMode === "compact" ? "rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto" : ""}`}
       >
         {loading ? (
           <div className="text-xs text-muted-foreground">Loading trace</div>

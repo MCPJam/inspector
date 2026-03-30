@@ -78,7 +78,7 @@ describe("TraceTimeline detail pane", () => {
     );
   });
 
-  it("shows a transcript-derived preview on step rows instead of only Prompt n", () => {
+  it("hides step rows from the waterfall (only LLM/tool/error spans are shown)", () => {
     const spans = [
       {
         id: "p0-step0",
@@ -114,12 +114,10 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    const stepRow = screen
-      .getAllByTestId("trace-row")
-      .find((el) => el.textContent?.includes("Need docs"));
-    expect(stepRow).toBeTruthy();
-    expect(stepRow!.textContent).toContain("Need docs");
-    expect(stepRow?.textContent).not.toContain("Prompt 1");
+    // Step rows are no longer rendered — only the prompt row should exist
+    const allRows = screen.getAllByTestId("trace-row");
+    const stepRow = allRows.find((el) => el.textContent?.includes("Step 1"));
+    expect(stepRow).toBeUndefined();
   });
 
   it("marks tool spans as failed from transcript when persisted status is ok", async () => {

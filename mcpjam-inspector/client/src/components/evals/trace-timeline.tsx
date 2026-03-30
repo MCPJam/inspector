@@ -1492,16 +1492,26 @@ export function TraceTimeline({
       hasVisibleContent: boolean;
       rows: TimelineRow[];
     } {
+      const isStep = node.span.category === "step";
+      // Steps are hidden — their children inherit the step's depth level
+      const childDepth = isStep ? depth : depth + 1;
       const childResults = node.children.map((child) =>
-        collectNodeRows(child, promptIndex, depth + 1),
+        collectNodeRows(child, promptIndex, childDepth),
       );
       const visibleChildRows = childResults.flatMap((result) => result.rows);
       const hasVisibleChildren = childResults.some(
         (result) => result.hasVisibleContent,
       );
-      const isStep = node.span.category === "step";
-      const showSelf =
-        rowSelfVisible(node.span) || hasVisibleChildren || isStep;
+
+      // Skip step rows entirely — just show their children promoted up
+      if (isStep) {
+        return {
+          hasVisibleContent: hasVisibleChildren || node.children.length > 0,
+          rows: visibleChildRows,
+        };
+      }
+
+      const showSelf = rowSelfVisible(node.span) || hasVisibleChildren;
 
       if (!showSelf) {
         return {
