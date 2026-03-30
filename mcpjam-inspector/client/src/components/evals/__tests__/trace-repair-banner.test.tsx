@@ -202,8 +202,6 @@ describe("TraceRepairBanner", () => {
         /Auto fix is generating and verifying repairs for the suite, with 2 provisional changes applied so far and 1 case still in flight/i,
       ),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: /Stop/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Stop/i })).toBeInTheDocument();
   });
 });

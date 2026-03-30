@@ -1,10 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
-import {
-  GitBranch,
-  GitCommit,
-  Clock,
-  Loader2,
-} from "lucide-react";
+import { GitBranch, GitCommit, Clock, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";

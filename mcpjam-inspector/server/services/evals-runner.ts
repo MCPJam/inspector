@@ -257,7 +257,11 @@ const runIterationWithAiSdk = async ({
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          evaluation: evaluateResults(
+            test.expectedToolCalls,
+            [],
+            test.isNegativeTest,
+          ),
           iterationId: undefined,
         };
       }
@@ -270,7 +274,11 @@ const runIterationWithAiSdk = async ({
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          evaluation: evaluateResults(
+            test.expectedToolCalls,
+            [],
+            test.isNegativeTest,
+          ),
           iterationId: undefined,
         };
       }
@@ -625,7 +633,11 @@ const runIterationViaBackend = async ({
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          evaluation: evaluateResults(
+            test.expectedToolCalls,
+            [],
+            test.isNegativeTest,
+          ),
           iterationId: undefined,
         };
       }
@@ -638,7 +650,11 @@ const runIterationViaBackend = async ({
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateResults(test.expectedToolCalls, [], test.isNegativeTest),
+          evaluation: evaluateResults(
+            test.expectedToolCalls,
+            [],
+            test.isNegativeTest,
+          ),
           iterationId: undefined,
         };
       }
@@ -966,7 +982,11 @@ const runIterationViaBackend = async ({
       if (error instanceof Error && error.name === "AbortError") {
         logger.debug("[evals] backend iteration aborted due to cancellation");
         return {
-          evaluation: evaluateResults(expectedToolCalls, [], test.isNegativeTest),
+          evaluation: evaluateResults(
+            expectedToolCalls,
+            [],
+            test.isNegativeTest,
+          ),
           iterationId: undefined,
         };
       }

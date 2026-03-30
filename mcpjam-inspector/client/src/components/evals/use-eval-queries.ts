@@ -91,8 +91,7 @@ export function useEvalQueries({
     const runIds = new Set(suiteRuns.map((run) => run._id));
 
     return sortedIterations.filter(
-      (iteration) =>
-        !iteration.suiteRunId || runIds.has(iteration.suiteRunId),
+      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId),
     );
   }, [sortedIterations, suiteRuns]);
 

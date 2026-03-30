@@ -24,10 +24,7 @@ export function SuiteInsightsCollapsible({
   runs,
   title = "Run insights",
 }: SuiteInsightsCollapsibleProps) {
-  const latestCompleted = useMemo(
-    () => pickLatestCompletedRun(runs),
-    [runs],
-  );
+  const latestCompleted = useMemo(() => pickLatestCompletedRun(runs), [runs]);
 
   const {
     summary,

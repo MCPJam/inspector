@@ -374,10 +374,7 @@ export function RunDetailView({
   const loopCaseTitleByKey = useMemo(() => {
     const m: Record<string, string> = {};
     for (const iter of caseGroupsForSelectedRun) {
-      const key =
-        iter.testCaseSnapshot?.caseKey ??
-        iter.testCaseId ??
-        iter._id;
+      const key = iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
       const title = iter.testCaseSnapshot?.title;
       if (title) m[key] = title;
     }

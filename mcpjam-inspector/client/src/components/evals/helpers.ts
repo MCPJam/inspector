@@ -638,10 +638,14 @@ export function groupSuitesByTag(
 }
 
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
-export function pickLatestCompletedRun(runs: EvalSuiteRun[]): EvalSuiteRun | null {
+export function pickLatestCompletedRun(
+  runs: EvalSuiteRun[],
+): EvalSuiteRun | null {
   const completed = runs.filter((r) => r.status === "completed");
   if (completed.length === 0) {
     return null;
   }
-  return completed.reduce((best, r) => (r.runNumber > best.runNumber ? r : best));
+  return completed.reduce((best, r) =>
+    r.runNumber > best.runNumber ? r : best,
+  );
 }

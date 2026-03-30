@@ -66,10 +66,7 @@ export function activeAutoFixSentence(
 ): string {
   const clause = phaseClause(view.phase, scope);
   const key = view.currentCaseKey;
-  const title =
-    key != null && key !== ""
-      ? (caseTitleByKey[key] ?? key)
-      : null;
+  const title = key != null && key !== "" ? (caseTitleByKey[key] ?? key) : null;
   const p = view.provisionalAppliedCount ?? 0;
   const inflight = view.promisingCount ?? 0;
 

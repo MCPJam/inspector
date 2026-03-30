@@ -330,8 +330,7 @@ export function SuiteIterationsView({
   const loopCaseTitleByKeySuite = useMemo(() => {
     const m: Record<string, string> = {};
     for (const iter of allIterations) {
-      const key =
-        iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
+      const key = iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
       const title = iter.testCaseSnapshot?.title;
       if (title) {
         m[key] = title;

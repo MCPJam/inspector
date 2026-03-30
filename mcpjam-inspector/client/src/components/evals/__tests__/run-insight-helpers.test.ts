@@ -75,9 +75,9 @@ describe("findRunInsightForCase", () => {
       row("k1", "id-1", "a"),
       row("k2", "id-2", "b"),
     ]);
-    expect(
-      findRunInsightForCase(run, { testCaseId: "id-1" })?.summary,
-    ).toBe("a");
+    expect(findRunInsightForCase(run, { testCaseId: "id-1" })?.summary).toBe(
+      "a",
+    );
   });
 
   it("falls back to testCaseId when caseKey is provided but matches no row", () => {

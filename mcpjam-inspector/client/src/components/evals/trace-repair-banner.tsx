@@ -84,7 +84,9 @@ export function TraceRepairBanner({
               <Sparkles className="mr-1 h-3 w-3" />
               AI
             </Badge>
-            <span className="text-xs font-medium text-foreground">Auto fix</span>
+            <span className="text-xs font-medium text-foreground">
+              Auto fix
+            </span>
           </div>
           <Button
             type="button"
@@ -119,7 +121,9 @@ export function TraceRepairBanner({
               <Sparkles className="mr-1 h-3 w-3" />
               AI
             </Badge>
-            <span className="text-xs font-medium text-foreground">Auto fix</span>
+            <span className="text-xs font-medium text-foreground">
+              Auto fix
+            </span>
           </div>
         </div>
         <button

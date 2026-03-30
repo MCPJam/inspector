@@ -1,7 +1,8 @@
 import type { EvalSuiteRun } from "./types";
 
-export type EvalCaseInsightRow =
-  NonNullable<EvalSuiteRun["runInsights"]>["caseInsights"][number];
+export type EvalCaseInsightRow = NonNullable<
+  EvalSuiteRun["runInsights"]
+>["caseInsights"][number];
 
 /**
  * Resolves the case-level run insight row for a run using exact key/id matching only.
@@ -42,6 +43,9 @@ export function formatRunInsightStatusLabel(status: string): string {
   }
   const first =
     parts[0].charAt(0).toUpperCase() + parts[0].slice(1).toLowerCase();
-  const rest = parts.slice(1).map((w) => w.toLowerCase()).join(" ");
+  const rest = parts
+    .slice(1)
+    .map((w) => w.toLowerCase())
+    .join(" ");
   return rest ? `${first} ${rest}` : first;
 }
