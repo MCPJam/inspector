@@ -130,6 +130,25 @@ describe("RunDetailView", () => {
     ).toBeVisible();
   });
 
+  it("hides run-level Run insights card when an iteration is selected", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        selectedRunChartData={chartDataUsable}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId="iter-1"
+        onSelectIteration={() => {}}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: /Duration and token charts/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it("hides chart section when there is no duration or token data", () => {
     render(
       <RunDetailView

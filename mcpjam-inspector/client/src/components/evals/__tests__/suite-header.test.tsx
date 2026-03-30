@@ -37,7 +37,9 @@ describe("SuiteHeader", () => {
     status: "completed" as const,
     source: "sdk" as const,
     hasServerReplayConfig: true,
-    createdAt: 1,
+    createdAt: 1_000,
+    completedAt: 136_000,
+    summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
   };
 
   const baseProps = {
@@ -67,6 +69,19 @@ describe("SuiteHeader", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsHostedMode.mockReturnValue(false);
+  });
+
+  it("shows compact run stats under the run title in run detail", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+        }}
+      />,
+    );
+    expect(screen.getByText(/1 passed · 1 failed · 50%/)).toBeInTheDocument();
   });
 
   it("shows replay lineage under the run title when replayedFromRunId is set", () => {
@@ -113,6 +128,26 @@ describe("SuiteHeader", () => {
     expect(
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
+  });
+
+  it("shows Cases when cases sidebar is hidden on runs overview", async () => {
+    const user = userEvent.setup();
+    const onShowCasesSidebar = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        casesSidebarHidden
+        onShowCasesSidebar={onShowCasesSidebar}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Cases" }));
+
+    expect(onShowCasesSidebar).toHaveBeenCalled();
   });
 
   it("shows Delete suite in overview when editable and calls onDelete", async () => {

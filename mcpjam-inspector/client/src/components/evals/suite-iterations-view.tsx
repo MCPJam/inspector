@@ -29,7 +29,12 @@ type SuiteRoute = EvalsRoute | CiEvalsRoute;
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
-  toRunDetail: (suiteId: string, runId: string, iteration?: string) => void;
+  toRunDetail: (
+    suiteId: string,
+    runId: string,
+    iteration?: string,
+    options?: { insightsFocus?: boolean },
+  ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (suiteId: string, testId: string) => void;
   toSuiteEdit: (suiteId: string) => void;
@@ -38,8 +43,14 @@ export interface SuiteNavigation {
 const defaultNavigation: SuiteNavigation = {
   toSuiteOverview: (suiteId, view) =>
     navigateToEvalsRoute({ type: "suite-overview", suiteId, view }),
-  toRunDetail: (suiteId, runId, iteration) =>
-    navigateToEvalsRoute({ type: "run-detail", suiteId, runId, iteration }),
+  toRunDetail: (suiteId, runId, iteration, options) =>
+    navigateToEvalsRoute({
+      type: "run-detail",
+      suiteId,
+      runId,
+      iteration,
+      insightsFocus: options?.insightsFocus,
+    }),
   toTestDetail: (suiteId, testId, iteration) =>
     navigateToEvalsRoute({ type: "test-detail", suiteId, testId, iteration }),
   toTestEdit: (suiteId, testId) =>
@@ -79,6 +90,9 @@ export function SuiteIterationsView({
   onRunDetailSortByChange,
   omitRunIterationList = false,
   canDeleteRuns = true,
+  readOnlyConfig = false,
+  casesSidebarHidden,
+  onShowCasesSidebar,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -114,6 +128,10 @@ export function SuiteIterationsView({
   omitRunIterationList?: boolean;
   /** Workspace admins only: run list batch delete and selection. */
   canDeleteRuns?: boolean;
+  /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
+  readOnlyConfig?: boolean;
+  casesSidebarHidden?: boolean;
+  onShowCasesSidebar?: () => void;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -181,6 +199,10 @@ export function SuiteIterationsView({
   // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
   useEffect(() => {
     if (route.type !== "run-detail" || caseGroupsForSelectedRun.length === 0) {
+      return;
+    }
+
+    if (route.insightsFocus && !route.iteration) {
       return;
     }
 
@@ -340,6 +362,9 @@ export function SuiteIterationsView({
           onUpdateModels={handleUpdateTests}
           onEditSuite={() => navigation.toSuiteEdit(suite._id)}
           onSetupCi={onSetupCi}
+          readOnlyConfig={readOnlyConfig}
+          casesSidebarHidden={casesSidebarHidden}
+          onShowCasesSidebar={onShowCasesSidebar}
         />
       </div>
 

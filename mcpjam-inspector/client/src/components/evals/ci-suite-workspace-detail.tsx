@@ -12,7 +12,7 @@ import type {
   SuiteAggregate,
 } from "./types";
 
-interface HostedCiSuiteWorkspaceDetailProps {
+export interface CiSuiteWorkspaceDetailProps {
   suite: EvalSuite;
   cases: EvalCase[];
   iterations: EvalIteration[];
@@ -39,9 +39,12 @@ interface HostedCiSuiteWorkspaceDetailProps {
   onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
   omitRunIterationList?: boolean;
   canDeleteRuns?: boolean;
+  /** Desktop CI uses read-only header; hosted product allows suite edits. */
+  readOnlyConfig?: boolean;
 }
 
-export function HostedCiSuiteWorkspaceDetail({
+/** CI evals suite workspace: same RunOverview / RunDetail experience as Explore’s SuiteIterationsView. */
+export function CiSuiteWorkspaceDetail({
   suite,
   cases,
   iterations,
@@ -68,7 +71,8 @@ export function HostedCiSuiteWorkspaceDetail({
   onRunDetailSortByChange,
   omitRunIterationList = false,
   canDeleteRuns = true,
-}: HostedCiSuiteWorkspaceDetailProps) {
+  readOnlyConfig = false,
+}: CiSuiteWorkspaceDetailProps) {
   const navigation = useMemo(
     () => ({
       toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") =>
@@ -77,12 +81,18 @@ export function HostedCiSuiteWorkspaceDetail({
           suiteId,
           view,
         }),
-      toRunDetail: (suiteId: string, runId: string, iteration?: string) =>
+      toRunDetail: (
+        suiteId: string,
+        runId: string,
+        iteration?: string,
+        options?: { insightsFocus?: boolean },
+      ) =>
         navigateToCiEvalsRoute({
           type: "run-detail",
           suiteId,
           runId,
           iteration,
+          insightsFocus: options?.insightsFocus,
         }),
       toTestDetail: (suiteId: string, testId: string, iteration?: string) =>
         navigateToCiEvalsRoute({
@@ -110,7 +120,6 @@ export function HostedCiSuiteWorkspaceDetail({
           runs={runs}
           runsLoading={runsLoading}
           aggregate={aggregate}
-          caseListInSidebar
           runDetailSortByOverride={runDetailSortByOverride}
           onRunDetailSortByChange={onRunDetailSortByChange}
           omitRunIterationList={omitRunIterationList}
@@ -131,6 +140,7 @@ export function HostedCiSuiteWorkspaceDetail({
           userMap={userMap}
           navigation={navigation}
           canDeleteRuns={canDeleteRuns}
+          readOnlyConfig={readOnlyConfig}
         />
       </div>
     </div>

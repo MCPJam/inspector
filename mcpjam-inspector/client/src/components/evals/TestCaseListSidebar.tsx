@@ -4,7 +4,6 @@ import {
   MoreVertical,
   Copy,
   Trash2,
-  BarChart3,
   Sparkles,
   RotateCw,
   Loader2,
@@ -34,6 +33,7 @@ import {
   getEvalCaseSidebarGroupKey,
   groupEvalCasesForSidebar,
 } from "./case-name-utils";
+import { RunInsightsNavRow } from "./run-insights-sidebar";
 
 interface TestCaseListSidebarProps {
   testCases: EvalCase[];
@@ -273,19 +273,12 @@ export function TestCaseListSidebar({
         </div>
       </div>
 
-      {/* Results Overview Button */}
+      {/* Run Insights — opens latest completed run detail with metrics + vs-prior narrative when available */}
       {suiteId && (
-        <div
+        <RunInsightsNavRow
+          selected={showingOverview}
           onClick={handleNavigateToOverview}
-          className={cn(
-            "flex items-center gap-2 px-4 py-2.5 text-sm cursor-pointer transition-colors border-b",
-            "hover:bg-accent/50",
-            showingOverview && "bg-accent font-medium",
-          )}
-        >
-          <BarChart3 className="h-4 w-4 text-muted-foreground" />
-          <span>Runs</span>
-        </div>
+        />
       )}
 
       {/* Cases List */}

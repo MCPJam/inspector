@@ -274,9 +274,15 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       toSuiteOverview: (_suiteId, _view) => {
         toExploreList();
       },
-      toRunDetail: (suiteId, runId, iteration) => {
+      toRunDetail: (suiteId, runId, iteration, options) => {
         window.location.hash = withTestingSurface(
-          buildEvalsHash({ type: "run-detail", suiteId, runId, iteration }),
+          buildEvalsHash({
+            type: "run-detail",
+            suiteId,
+            runId,
+            iteration,
+            insightsFocus: options?.insightsFocus,
+          }),
         );
       },
       toTestDetail: (suiteId, testId, iteration) => {
@@ -349,6 +355,52 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       !exploreSuite &&
       queries.isOverviewLoading);
 
+  const renderExploreMainPanel = () => {
+    if (!exploreSuite) return null;
+    if (queries.isSuiteDetailsLoading) {
+      return (
+        <div className="flex flex-1 items-center justify-center">
+          <div className="text-center">
+            <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+            <p className="mt-4 text-sm text-muted-foreground">
+              Loading cases...
+            </p>
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-6 pt-4 sm:px-6">
+        <SuiteIterationsView
+          suite={exploreSuite}
+          cases={exploreCases}
+          iterations={activeIterations}
+          allIterations={sortedIterations}
+          runs={runsForSelectedSuite}
+          runsLoading={queries.isSuiteRunsLoading}
+          aggregate={suiteAggregate}
+          caseListInSidebar
+          onRerun={handlers.handleRerun}
+          onCancelRun={handlers.handleCancelRun}
+          onDelete={handlers.handleDelete}
+          onDeleteRun={handlers.handleDeleteRun}
+          onDirectDeleteRun={handlers.directDeleteRun}
+          connectedServerNames={connectedServerNames}
+          rerunningSuiteId={handlers.rerunningSuiteId}
+          cancellingRunId={handlers.cancellingRunId}
+          deletingSuiteId={handlers.deletingSuiteId}
+          deletingRunId={handlers.deletingRunId}
+          availableModels={availableModels}
+          route={route}
+          userMap={userMap}
+          workspaceId={workspaceId}
+          navigation={exploreNavigation}
+          canDeleteRuns={canDeleteRuns}
+        />
+      </div>
+    );
+  };
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -418,9 +470,29 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                 connectedServerNames={connectedServerNames}
                 showSelection={false}
                 onNavigateToOverview={(suiteId) => {
-                  window.location.hash = withTestingSurface(
-                    buildEvalsHash({ type: "suite-overview", suiteId }),
+                  const completed = runsForSelectedSuite.filter(
+                    (r) => r.status === "completed",
                   );
+                  const sorted = [...completed].sort((a, b) => {
+                    const aTime = a.completedAt ?? a.createdAt ?? 0;
+                    const bTime = b.completedAt ?? b.createdAt ?? 0;
+                    return bTime - aTime;
+                  });
+                  const latest = sorted[0];
+                  if (latest) {
+                    window.location.hash = withTestingSurface(
+                      buildEvalsHash({
+                        type: "run-detail",
+                        suiteId,
+                        runId: latest._id,
+                        insightsFocus: true,
+                      }),
+                    );
+                  } else {
+                    window.location.hash = withTestingSurface(
+                      buildEvalsHash({ type: "suite-overview", suiteId }),
+                    );
+                  }
                 }}
               />
             </ResizablePanel>
@@ -429,45 +501,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
               defaultSize={72}
               className="flex min-h-0 flex-col overflow-hidden"
             >
-              {queries.isSuiteDetailsLoading ? (
-                <div className="flex flex-1 items-center justify-center">
-                  <div className="text-center">
-                    <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
-                    <p className="mt-4 text-sm text-muted-foreground">
-                      Loading cases...
-                    </p>
-                  </div>
-                </div>
-              ) : (
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 pb-6 pt-4 sm:px-6">
-                  <SuiteIterationsView
-                    suite={exploreSuite}
-                    cases={exploreCases}
-                    iterations={activeIterations}
-                    allIterations={sortedIterations}
-                    runs={runsForSelectedSuite}
-                    runsLoading={queries.isSuiteRunsLoading}
-                    aggregate={suiteAggregate}
-                    caseListInSidebar
-                    onRerun={handlers.handleRerun}
-                    onCancelRun={handlers.handleCancelRun}
-                    onDelete={handlers.handleDelete}
-                    onDeleteRun={handlers.handleDeleteRun}
-                    onDirectDeleteRun={handlers.directDeleteRun}
-                    connectedServerNames={connectedServerNames}
-                    rerunningSuiteId={handlers.rerunningSuiteId}
-                    cancellingRunId={handlers.cancellingRunId}
-                    deletingSuiteId={handlers.deletingSuiteId}
-                    deletingRunId={handlers.deletingRunId}
-                    availableModels={availableModels}
-                    route={route}
-                    userMap={userMap}
-                    workspaceId={workspaceId}
-                    navigation={exploreNavigation}
-                    canDeleteRuns={canDeleteRuns}
-                  />
-                </div>
-              )}
+              {renderExploreMainPanel()}
             </ResizablePanel>
           </ResizablePanelGroup>
         )}

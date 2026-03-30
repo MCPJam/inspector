@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import {
   ChartContainer,
   ChartTooltip,
@@ -25,6 +25,8 @@ import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import { ExternalLink } from "lucide-react";
+import { RunHeaderCompactStats } from "./run-header-compact-stats";
+import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -194,7 +196,7 @@ function IterationListWithSections({
   );
 }
 
-/** Iteration list + sort (used inside run detail or the CI Runs drilldown sidebar). */
+/** Iteration list + sort (composed inside run detail when the list is not inlined). */
 export function RunIterationsSidebar({
   caseGroupsForSelectedRun,
   runDetailSortBy,
@@ -202,6 +204,8 @@ export function RunIterationsSidebar({
   selectedIterationId,
   onSelectIteration,
   onEditTestCase,
+  runForOverview = null,
+  runOverviewExtra = null,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
@@ -209,9 +213,43 @@ export function RunIterationsSidebar({
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
   onEditTestCase?: (testCaseId: string) => void;
+  /** When set, shows Run Insights summary above the iteration list (CI sidebar + inline run detail). */
+  runForOverview?: EvalSuiteRun | null;
+  /** Optional row below compact stats (e.g. link to full runs table). */
+  runOverviewExtra?: ReactNode;
 }) {
+  const overviewStatsOverride = useMemo(() => {
+    if (!runForOverview) return undefined;
+    if (caseGroupsForSelectedRun.length === 0) {
+      return (
+        runForOverview.summary ?? {
+          passed: 0,
+          failed: 0,
+          total: 0,
+          passRate: 0,
+        }
+      );
+    }
+    const passed = caseGroupsForSelectedRun.filter((i) =>
+      computeIterationPassed(i),
+    ).length;
+    const failed = caseGroupsForSelectedRun.filter(
+      (i) => !computeIterationPassed(i),
+    ).length;
+    const total = caseGroupsForSelectedRun.length;
+    const passRate = total > 0 ? passed / total : 0;
+    return { passed, failed, total, passRate };
+  }, [runForOverview, caseGroupsForSelectedRun]);
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      {runForOverview ? (
+        <RunInsightsSidebarSummary
+          run={runForOverview}
+          statsOverride={overviewStatsOverride}
+          footer={runOverviewExtra}
+        />
+      ) : null}
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
         <div className="text-xs font-semibold">Iterations</div>
         <select
@@ -357,6 +395,200 @@ export function RunDetailView({
   const hasRunBarCharts =
     selectedRunChartData.durationData.length > 0 || hasTokenData;
 
+  const statsOverrideForHeader = {
+    passed: computedStats.passed,
+    failed: computedStats.failed,
+    total: computedStats.total,
+    passRate: computedStats.passRate,
+  };
+
+  const runMetricsDetail = (
+    <>
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 lg:gap-6">
+        {/* Metrics — wrap into multiple lines instead of colliding with the chart row */}
+        <div className="flex min-w-0 flex-1 flex-wrap gap-x-4 gap-y-2 sm:gap-x-6">
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-xs text-muted-foreground">{metricLabel}</div>
+            <div className="text-sm font-semibold tabular-nums">
+              {computedStats.total > 0
+                ? `${Math.round(computedStats.passRate * 100)}%`
+                : "—"}
+            </div>
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-xs text-muted-foreground">Passed</div>
+            <div className="text-sm font-semibold tabular-nums">
+              {computedStats.passed.toLocaleString()}
+            </div>
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-xs text-muted-foreground">Failed</div>
+            <div className="text-sm font-semibold tabular-nums">
+              {computedStats.failed.toLocaleString()}
+            </div>
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-xs text-muted-foreground">Total</div>
+            <div className="text-sm font-semibold tabular-nums">
+              {expected && isRunning
+                ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
+                : computedStats.total.toLocaleString()}
+            </div>
+          </div>
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-xs text-muted-foreground">Duration</div>
+            <div className="text-sm font-semibold tabular-nums break-words">
+              {selectedRunDetails.completedAt && selectedRunDetails.createdAt
+                ? formatDuration(
+                    selectedRunDetails.completedAt -
+                      selectedRunDetails.createdAt,
+                  )
+                : "—"}
+            </div>
+          </div>
+        </div>
+
+        {/* Chart + run status — own row on narrow viewports */}
+        <div className="flex min-w-0 w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:gap-3">
+          {selectedRunChartData.donutData.length > 0 && (
+            <div className="flex shrink-0 items-center gap-2">
+              <ChartContainer
+                config={{
+                  passed: {
+                    label: "Passed",
+                    color: "hsl(142.1 76.2% 36.3%)",
+                  },
+                  failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
+                  pending: {
+                    label: "Pending",
+                    color: "hsl(45.4 93.4% 47.5%)",
+                  },
+                  cancelled: {
+                    label: "Cancelled",
+                    color: "hsl(240 3.7% 15.9%)",
+                  },
+                  remaining: {
+                    label: "Remaining",
+                    color: "hsl(240 3.7% 15.9% / 0.3)",
+                  },
+                }}
+                className="h-11 w-11 shrink-0 sm:h-12 sm:w-12"
+              >
+                <PieChart>
+                  <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                  <Pie
+                    data={progressDonutData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={14}
+                    outerRadius={20}
+                    strokeWidth={1}
+                  >
+                    <Label
+                      content={({ viewBox }) => {
+                        if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                          const cy = viewBox.cy ?? 0;
+                          return (
+                            <text
+                              x={viewBox.cx}
+                              y={viewBox.cy}
+                              textAnchor="middle"
+                              dominantBaseline="middle"
+                            >
+                              <tspan
+                                x={viewBox.cx}
+                                y={cy}
+                                className="fill-foreground text-[11px] font-bold sm:text-xs"
+                              >
+                                {expected && isRunning
+                                  ? `${donutTotal}/${expected}`
+                                  : donutTotal}
+                              </tspan>
+                              <tspan
+                                x={viewBox.cx}
+                                y={cy + 10}
+                                className="hidden fill-muted-foreground text-[8px] sm:inline"
+                              >
+                                Total
+                              </tspan>
+                            </text>
+                          );
+                        }
+                      }}
+                    />
+                  </Pie>
+                </PieChart>
+              </ChartContainer>
+            </div>
+          )}
+
+          <span className="text-xs font-medium capitalize text-foreground sm:shrink-0">
+            {isRunning && progressPercent !== null
+              ? `Running (${progressPercent}%)`
+              : selectedRunDetails.status}
+          </span>
+        </div>
+      </div>
+
+      {selectedRunChartData.modelData.length >= 2 && (
+        <div className="flex flex-wrap items-center gap-4 mt-2 pt-2 border-t border-border/50">
+          <span className="text-[10px] text-muted-foreground">By Model:</span>
+          {selectedRunChartData.modelData.map((model) => (
+            <div key={model.model} className="flex items-center gap-1.5">
+              <div
+                className="h-1.5 w-1.5 rounded-full"
+                style={{
+                  backgroundColor:
+                    model.passRate >= 80
+                      ? "hsl(142.1 76.2% 36.3%)"
+                      : model.passRate >= 50
+                        ? "hsl(45.4 93.4% 47.5%)"
+                        : "hsl(0 84.2% 60.2%)",
+                }}
+              />
+              <span className="text-[11px]">{model.model}</span>
+              <span className="text-[11px] font-mono font-medium">
+                {model.passRate}%
+              </span>
+              <span className="text-[10px] text-muted-foreground">
+                ({model.passed}/{model.total})
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {hasRunBarCharts && (
+        <RunMetricsBarCharts
+          durationData={selectedRunChartData.durationData}
+          tokensData={selectedRunChartData.tokensData}
+          hasTokenData={hasTokenData}
+        />
+      )}
+    </>
+  );
+
+  const runInsightsNarrative =
+    selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
+      <RunInsightsPrimaryBlock
+        embedded
+        className="mt-3"
+        summary={runInsightsSummary}
+        pending={runInsightsPending}
+        requested={runInsightsRequested}
+        failedGeneration={runInsightsFailedGeneration}
+        error={runInsightsError}
+        onRetry={() => requestRunInsights(true)}
+      />
+    ) : null;
+
+  const runInsightsBody = (
+    <>
+      {runMetricsDetail}
+      {runInsightsNarrative}
+    </>
+  );
+
   return (
     <div
       className={cn(
@@ -387,191 +619,23 @@ export function RunDetailView({
           </p>
         ) : null}
 
-        {/* Run Metrics and Chart */}
-        <div className="rounded-lg border bg-background/80 px-3 py-2">
-          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 lg:gap-6">
-            {/* Metrics — wrap into multiple lines instead of colliding with the chart row */}
-            <div className="flex min-w-0 flex-1 flex-wrap gap-x-4 gap-y-2 sm:gap-x-6">
-              <div className="min-w-0 space-y-0.5">
-                <div className="text-xs text-muted-foreground">
-                  {metricLabel}
-                </div>
-                <div className="text-sm font-semibold tabular-nums">
-                  {computedStats.total > 0
-                    ? `${Math.round(computedStats.passRate * 100)}%`
-                    : "—"}
-                </div>
-              </div>
-              <div className="min-w-0 space-y-0.5">
-                <div className="text-xs text-muted-foreground">Passed</div>
-                <div className="text-sm font-semibold tabular-nums">
-                  {computedStats.passed.toLocaleString()}
-                </div>
-              </div>
-              <div className="min-w-0 space-y-0.5">
-                <div className="text-xs text-muted-foreground">Failed</div>
-                <div className="text-sm font-semibold tabular-nums">
-                  {computedStats.failed.toLocaleString()}
-                </div>
-              </div>
-              <div className="min-w-0 space-y-0.5">
-                <div className="text-xs text-muted-foreground">Total</div>
-                <div className="text-sm font-semibold tabular-nums">
-                  {expected && isRunning
-                    ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
-                    : computedStats.total.toLocaleString()}
-                </div>
-              </div>
-              <div className="min-w-0 space-y-0.5">
-                <div className="text-xs text-muted-foreground">Duration</div>
-                <div className="text-sm font-semibold tabular-nums break-words">
-                  {selectedRunDetails.completedAt &&
-                  selectedRunDetails.createdAt
-                    ? formatDuration(
-                        selectedRunDetails.completedAt -
-                          selectedRunDetails.createdAt,
-                      )
-                    : "—"}
-                </div>
-              </div>
-            </div>
-
-            {/* Chart + run status — own row on narrow viewports */}
-            <div className="flex min-w-0 w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:gap-3">
-              {selectedRunChartData.donutData.length > 0 && (
-                <div className="flex shrink-0 items-center gap-2">
-                  <ChartContainer
-                    config={{
-                      passed: {
-                        label: "Passed",
-                        color: "hsl(142.1 76.2% 36.3%)",
-                      },
-                      failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                      pending: {
-                        label: "Pending",
-                        color: "hsl(45.4 93.4% 47.5%)",
-                      },
-                      cancelled: {
-                        label: "Cancelled",
-                        color: "hsl(240 3.7% 15.9%)",
-                      },
-                      remaining: {
-                        label: "Remaining",
-                        color: "hsl(240 3.7% 15.9% / 0.3)",
-                      },
-                    }}
-                    className="h-11 w-11 shrink-0 sm:h-12 sm:w-12"
-                  >
-                    <PieChart>
-                      <ChartTooltip
-                        content={<ChartTooltipContent hideLabel />}
-                      />
-                      <Pie
-                        data={progressDonutData}
-                        dataKey="value"
-                        nameKey="name"
-                        innerRadius={14}
-                        outerRadius={20}
-                        strokeWidth={1}
-                      >
-                        <Label
-                          content={({ viewBox }) => {
-                            if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                              const cy = viewBox.cy ?? 0;
-                              return (
-                                <text
-                                  x={viewBox.cx}
-                                  y={viewBox.cy}
-                                  textAnchor="middle"
-                                  dominantBaseline="middle"
-                                >
-                                  <tspan
-                                    x={viewBox.cx}
-                                    y={cy}
-                                    className="fill-foreground text-[11px] font-bold sm:text-xs"
-                                  >
-                                    {expected && isRunning
-                                      ? `${donutTotal}/${expected}`
-                                      : donutTotal}
-                                  </tspan>
-                                  <tspan
-                                    x={viewBox.cx}
-                                    y={cy + 10}
-                                    className="hidden fill-muted-foreground text-[8px] sm:inline"
-                                  >
-                                    Total
-                                  </tspan>
-                                </text>
-                              );
-                            }
-                          }}
-                        />
-                      </Pie>
-                    </PieChart>
-                  </ChartContainer>
-                </div>
-              )}
-
-              <span className="text-xs font-medium capitalize text-foreground sm:shrink-0">
-                {isRunning && progressPercent !== null
-                  ? `Running (${progressPercent}%)`
-                  : selectedRunDetails.status}
+        {/* Run-level metrics + narrative: only when no case is selected (dedicated ?insights=1 or choose a case). */}
+        {!selectedIterationId ? (
+          <div className="rounded-lg border bg-background/80">
+            <div className="flex w-full flex-wrap items-start gap-2 border-b border-border/80 px-3 py-2">
+              <span className="text-xs font-medium text-foreground">
+                Run insights
               </span>
+              <RunHeaderCompactStats
+                run={selectedRunDetails}
+                statsOverride={statsOverrideForHeader}
+                className="min-w-0 flex-1 pt-0.5 text-right sm:pl-2"
+              />
             </div>
+            <div className="px-3 py-2">{runInsightsBody}</div>
           </div>
-
-          {/* Inline model performance (only when ≥2 models) */}
-          {selectedRunChartData.modelData.length >= 2 && (
-            <div className="flex flex-wrap items-center gap-4 mt-2 pt-2 border-t border-border/50">
-              <span className="text-[10px] text-muted-foreground">
-                By Model:
-              </span>
-              {selectedRunChartData.modelData.map((model) => (
-                <div key={model.model} className="flex items-center gap-1.5">
-                  <div
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{
-                      backgroundColor:
-                        model.passRate >= 80
-                          ? "hsl(142.1 76.2% 36.3%)"
-                          : model.passRate >= 50
-                            ? "hsl(45.4 93.4% 47.5%)"
-                            : "hsl(0 84.2% 60.2%)",
-                    }}
-                  />
-                  <span className="text-[11px]">{model.model}</span>
-                  <span className="text-[11px] font-mono font-medium">
-                    {model.passRate}%
-                  </span>
-                  <span className="text-[10px] text-muted-foreground">
-                    ({model.passed}/{model.total})
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {hasRunBarCharts && (
-            <RunMetricsBarCharts
-              durationData={selectedRunChartData.durationData}
-              tokensData={selectedRunChartData.tokensData}
-              hasTokenData={hasTokenData}
-            />
-          )}
-        </div>
+        ) : null}
       </div>
-
-      {selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
-        <RunInsightsPrimaryBlock
-          className="mt-3"
-          summary={runInsightsSummary}
-          pending={runInsightsPending}
-          requested={runInsightsRequested}
-          failedGeneration={runInsightsFailedGeneration}
-          error={runInsightsError}
-          onRetry={() => requestRunInsights(true)}
-        />
-      ) : null}
 
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
@@ -592,6 +656,7 @@ export function RunDetailView({
               onSortChange={onSortChange}
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
+              runForOverview={selectedRunDetails}
               onEditTestCase={(testCaseId) =>
                 navigateToEvalsRoute({
                   type: "test-edit",
@@ -616,6 +681,7 @@ export function RunDetailView({
                 requested={runInsightsRequested}
                 failedGeneration={runInsightsFailedGeneration}
                 error={runInsightsError}
+                prominent
               />
               <IterationDetails
                 iteration={selectedIteration}

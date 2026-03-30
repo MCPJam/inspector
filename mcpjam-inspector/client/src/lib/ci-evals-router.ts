@@ -13,7 +13,13 @@ export type CiEvalsRoute =
   | { type: "create" }
   | { type: "suite-overview"; suiteId: string; view?: "runs" | "test-cases" }
   | { type: "suite-edit"; suiteId: string }
-  | { type: "run-detail"; suiteId: string; runId: string; iteration?: string }
+  | {
+      type: "run-detail";
+      suiteId: string;
+      runId: string;
+      iteration?: string;
+      insightsFocus?: boolean;
+    }
   | {
       type: "test-detail";
       suiteId: string;
@@ -79,11 +85,17 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
     if (runMatch) {
       const [, runId] = runMatch;
       const params = new URLSearchParams(queryString || "");
+      const insightsRaw = params.get("insights");
+      const insightsFocus =
+        insightsRaw === "1" ||
+        insightsRaw === "true" ||
+        insightsRaw === "yes";
       return {
         type: "run-detail",
         suiteId,
         runId,
         iteration: params.get("iteration") || undefined,
+        ...(insightsFocus ? { insightsFocus: true } : {}),
       };
     }
 
@@ -155,6 +167,9 @@ export function navigateToCiEvalsRoute(
       const params = new URLSearchParams();
       if (route.iteration) {
         params.set("iteration", route.iteration);
+      }
+      if (route.insightsFocus) {
+        params.set("insights", "1");
       }
       const query = params.toString();
       hash = `#/ci-evals/suite/${route.suiteId}/runs/${route.runId}${query ? `?${query}` : ""}`;

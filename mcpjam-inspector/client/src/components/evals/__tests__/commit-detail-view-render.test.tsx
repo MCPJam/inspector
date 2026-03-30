@@ -83,8 +83,11 @@ describe("CommitDetailView", () => {
       />,
     );
 
-    expect(screen.getByText("Greeting Suite")).toBeVisible();
+    expect(
+      screen.getByRole("heading", { name: /Run run-1/ }),
+    ).toBeVisible();
     expect(screen.getByTestId("run-detail-view")).toBeVisible();
+    expect(screen.queryByText(/Suites ·/)).not.toBeInTheDocument();
     expect(screen.queryByText("Commit insights")).not.toBeInTheDocument();
     expect(
       screen.queryByText(/Run AI triage when you want a summary/i),

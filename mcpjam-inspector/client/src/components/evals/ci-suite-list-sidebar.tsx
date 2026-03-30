@@ -30,6 +30,8 @@ interface CiSuiteListSidebarProps {
   commitGroups: CommitGroup[];
   selectedCommitSha: string | null;
   onSelectCommit: (commitSha: string) => void;
+  selectedSuiteIdInCommit?: string | null;
+  onSelectSuiteInCommit?: (suiteId: string) => void;
 }
 
 function formatRelativeTime(timestamp?: number): string {
@@ -62,6 +64,8 @@ export function CiSuiteListSidebar({
   commitGroups,
   selectedCommitSha,
   onSelectCommit,
+  selectedSuiteIdInCommit = null,
+  onSelectSuiteInCommit,
 }: CiSuiteListSidebarProps) {
   useTick(); // keep "Xm ago" labels ticking
 
@@ -122,6 +126,8 @@ export function CiSuiteListSidebar({
           selectedCommitSha={selectedCommitSha}
           onSelectCommit={onSelectCommit}
           isLoading={isLoading}
+          selectedSuiteIdInCommit={selectedSuiteIdInCommit}
+          onSelectSuiteInCommit={onSelectSuiteInCommit}
         />
       ) : (
         <div className="flex-1 overflow-y-auto">

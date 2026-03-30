@@ -496,6 +496,32 @@ export const formatters = {
 } as const;
 
 /**
+ * Order runs for commit drilldown: failed first, then running/pending, then
+ * passed, then other (same ordering as the former in-panel suite list).
+ */
+export function orderCommitGroupRunsByOutcome(
+  runs: EvalSuiteRun[],
+): EvalSuiteRun[] {
+  const failed: EvalSuiteRun[] = [];
+  const running: EvalSuiteRun[] = [];
+  const passed: EvalSuiteRun[] = [];
+  const notRun: EvalSuiteRun[] = [];
+
+  for (const run of runs) {
+    if (run.status === "running" || run.status === "pending") {
+      running.push(run);
+    } else if (run.result === "failed") {
+      failed.push(run);
+    } else if (run.result === "passed") {
+      passed.push(run);
+    } else {
+      notRun.push(run);
+    }
+  }
+  return [...failed, ...running, ...passed, ...notRun];
+}
+
+/**
  * Flatten recentRuns across all suites and group by commitSha.
  * Runs without a commitSha go into a "manual" group.
  */

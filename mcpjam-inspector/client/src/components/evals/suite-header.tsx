@@ -18,6 +18,7 @@ import {
 import {
   GitBranch,
   Loader2,
+  PanelLeft,
   RotateCw,
   Settings2,
   Trash2,
@@ -39,6 +40,7 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 
@@ -75,6 +77,9 @@ interface SuiteHeaderProps {
   readOnlyConfig?: boolean;
   onEditSuite?: () => void;
   onSetupCi?: () => void;
+  /** When the parent hides the cases sidebar (e.g. Explore run insights landing). */
+  casesSidebarHidden?: boolean;
+  onShowCasesSidebar?: () => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -100,6 +105,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     readOnlyConfig = false,
     onEditSuite,
     onSetupCi,
+    casesSidebarHidden = false,
+    onShowCasesSidebar,
+    runsViewMode = "runs",
   } = props;
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -330,26 +338,29 @@ export function SuiteHeader(props: SuiteHeaderProps) {
 
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Run {formatRunId(selectedRunDetails._id)}
-          </h2>
-          <PassCriteriaBadge
-            run={selectedRunDetails}
-            variant="compact"
-            metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
-          />
-          {selectedRunDetails.replayedFromRunId ? (
-            <span
-              className="text-xs text-muted-foreground"
-              title={selectedRunDetails.replayedFromRunId}
-            >
-              Replay of{" "}
-              <span className="font-mono text-foreground/80">
-                Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <h2 className="text-lg font-semibold tracking-tight">
+              Run {formatRunId(selectedRunDetails._id)}
+            </h2>
+            <PassCriteriaBadge
+              run={selectedRunDetails}
+              variant="compact"
+              metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+            />
+            {selectedRunDetails.replayedFromRunId ? (
+              <span
+                className="text-xs text-muted-foreground"
+                title={selectedRunDetails.replayedFromRunId}
+              >
+                Replay of{" "}
+                <span className="font-mono text-foreground/80">
+                  Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+                </span>
               </span>
-            </span>
-          ) : null}
+            ) : null}
+          </div>
+          <RunHeaderCompactStats run={selectedRunDetails} />
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {!readOnlyConfig &&
@@ -455,6 +466,19 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {casesSidebarHidden &&
+        onShowCasesSidebar &&
+        runsViewMode === "runs" ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onShowCasesSidebar}
+          >
+            <PanelLeft className="h-4 w-4 mr-2" />
+            Cases
+          </Button>
+        ) : null}
         {onEditSuite && !readOnlyConfig && (
           <Button size="sm" variant="outline" onClick={onEditSuite}>
             <Settings2 className="h-4 w-4 mr-2" />

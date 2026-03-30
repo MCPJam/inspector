@@ -59,6 +59,26 @@ describe("ci-evals-router", () => {
     });
   });
 
+  it("parses run detail with insights focus query", () => {
+    window.location.hash = "#/ci-evals/suite/s_123/runs/r_456?insights=1";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "run-detail",
+      suiteId: "s_123",
+      runId: "r_456",
+      insightsFocus: true,
+    });
+  });
+
+  it("navigates to run detail with insights focus", () => {
+    navigateToCiEvalsRoute({
+      type: "run-detail",
+      suiteId: "s_abc",
+      runId: "r_def",
+      insightsFocus: true,
+    });
+    expect(window.location.hash).toBe("#/ci-evals/suite/s_abc/runs/r_def?insights=1");
+  });
+
   it("parses test detail route with iteration query", () => {
     window.location.hash = "#/ci-evals/suite/s_123/test/t_789?iteration=i_2";
     expect(parseCiEvalsRoute()).toEqual({

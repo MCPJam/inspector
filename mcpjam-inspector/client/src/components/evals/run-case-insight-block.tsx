@@ -14,6 +14,7 @@ export function RunCaseInsightBlock({
   failedGeneration,
   error,
   className,
+  prominent = false,
 }: {
   runStatus: EvalSuiteRun["status"];
   caseInsight: EvalCaseInsightRow | null;
@@ -22,26 +23,36 @@ export function RunCaseInsightBlock({
   failedGeneration: boolean;
   error: string | null;
   className?: string;
+  /** Stronger visual hierarchy when showing a selected iteration’s insight. */
+  prominent?: boolean;
 }) {
+  const bodyMuted = prominent ? "text-sm text-muted-foreground" : "text-xs text-muted-foreground";
+  const bodyDestructive = prominent ? "text-sm text-destructive" : "text-xs text-destructive";
+
   let body: ReactNode;
   if (runStatus !== "completed") {
     body = (
-      <p className="text-xs text-muted-foreground">
+      <p className={bodyMuted}>
         Complete the run to generate diff insights for this case.
       </p>
     );
   } else if (requested || pending) {
     body = (
-      <span className="flex items-center gap-2 text-xs text-muted-foreground">
+      <span
+        className={cn(
+          "flex items-center gap-2 text-muted-foreground",
+          prominent ? "text-sm" : "text-xs",
+        )}
+      >
         <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
         Generating insights…
       </span>
     );
   } else if (error) {
-    body = <p className="text-xs text-destructive">{error}</p>;
+    body = <p className={bodyDestructive}>{error}</p>;
   } else if (failedGeneration) {
     body = (
-      <p className="text-xs text-muted-foreground">
+      <p className={bodyMuted}>
         Run insights did not complete. Use Retry above.
       </p>
     );
@@ -53,14 +64,24 @@ export function RunCaseInsightBlock({
             {formatRunInsightStatusLabel(caseInsight.status)}
           </Badge>
         ) : null}
-        <p className="text-xs leading-relaxed text-foreground">
+        <p
+          className={cn(
+            "leading-relaxed text-foreground",
+            prominent ? "text-sm" : "text-xs",
+          )}
+        >
           {caseInsight.summary}
         </p>
       </div>
     );
   } else {
     body = (
-      <p className="text-xs text-muted-foreground">
+      <p
+        className={cn(
+          "text-muted-foreground",
+          prominent ? "text-sm" : "text-xs",
+        )}
+      >
         No notable change in the last two runs.
       </p>
     );
@@ -69,11 +90,19 @@ export function RunCaseInsightBlock({
   return (
     <div
       className={cn(
-        "rounded-md border border-border/80 bg-card/50 px-3 py-2",
+        "rounded-md border px-3 py-2",
+        prominent
+          ? "border-primary/25 bg-primary/[0.06] py-3 shadow-sm dark:bg-primary/10"
+          : "border-border/80 bg-card/50",
         className,
       )}
     >
-      <div className="mb-1.5 text-xs font-medium text-foreground">
+      <div
+        className={cn(
+          "mb-1.5 text-foreground",
+          prominent ? "text-sm font-semibold" : "text-xs font-medium",
+        )}
+      >
         Case insight
       </div>
       {body}

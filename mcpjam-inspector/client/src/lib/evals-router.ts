@@ -14,7 +14,14 @@ export type EvalsRoute =
   | { type: "list" }
   | { type: "create" }
   | { type: "suite-overview"; suiteId: string; view?: "runs" | "test-cases" }
-  | { type: "run-detail"; suiteId: string; runId: string; iteration?: string }
+  | {
+      type: "run-detail";
+      suiteId: string;
+      runId: string;
+      iteration?: string;
+      /** Per-run metrics + vs-prior narrative as primary view (no auto-selected iteration). */
+      insightsFocus?: boolean;
+    }
   | { type: "test-detail"; suiteId: string; testId: string; iteration?: string }
   | { type: "test-edit"; suiteId: string; testId: string }
   | { type: "suite-edit"; suiteId: string };
@@ -58,11 +65,17 @@ export function parseEvalsRoute(): EvalsRoute | null {
     if (runMatch) {
       const [, runId] = runMatch;
       const params = new URLSearchParams(queryString || "");
+      const insightsRaw = params.get("insights");
+      const insightsFocus =
+        insightsRaw === "1" ||
+        insightsRaw === "true" ||
+        insightsRaw === "yes";
       return {
         type: "run-detail",
         suiteId,
         runId,
         iteration: params.get("iteration") || undefined,
+        ...(insightsFocus ? { insightsFocus: true } : {}),
       };
     }
 
@@ -136,6 +149,9 @@ export function buildEvalsHash(route: EvalsRoute) {
       const params = new URLSearchParams();
       if (route.iteration) {
         params.set("iteration", route.iteration);
+      }
+      if (route.insightsFocus) {
+        params.set("insights", "1");
       }
       const query = params.toString();
       hash = `#/evals/suite/${route.suiteId}/runs/${route.runId}${query ? `?${query}` : ""}`;

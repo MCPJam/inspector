@@ -27,6 +27,7 @@ import {
   formatRunId,
   groupRunsByCommit,
 } from "./evals/helpers";
+import { RunIterationsSidebar } from "./evals/run-detail-view";
 import { useRunDetailData } from "./evals/use-suite-data";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
@@ -35,10 +36,8 @@ import {
   CiSuiteListSidebar,
   type SidebarMode,
 } from "./evals/ci-suite-list-sidebar";
-import { CiEvalsSuiteDrilldownSidebar } from "./evals/ci-evals-suite-drilldown-sidebar";
-import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
-import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-detail";
+import { CiSuiteWorkspaceDetail } from "./evals/ci-suite-workspace-detail";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import type { EvalSuite } from "./evals/types";
 import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
@@ -163,6 +162,13 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     runDetailSidebarSortBy,
   );
 
+  const selectedRunForSidebar = useMemo(() => {
+    if (route.type !== "run-detail") return null;
+    return (
+      queries.runsForSelectedSuite.find((r) => r._id === route.runId) ?? null
+    );
+  }, [route, queries.runsForSelectedSuite]);
+
   useEffect(() => {
     if (route.type !== "run-detail") {
       setRunDetailSidebarSortBy("result");
@@ -181,6 +187,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   }, [visibleSuites, selectedSuiteId]);
 
   const selectedSuite = selectedSuiteEntry?.suite ?? null;
+
   const latestRunBySuiteId = useMemo(
     () =>
       new Map(
@@ -245,6 +252,21 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const handleSelectCommit = useCallback((commitSha: string) => {
     navigateToCiEvalsRoute({ type: "commit-detail", commitSha });
   }, []);
+
+  const selectedSuiteIdInCommit =
+    route.type === "commit-detail" ? (route.suite ?? null) : null;
+
+  const handleSelectSuiteInCommit = useCallback(
+    (suiteId: string) => {
+      if (!selectedCommitSha) return;
+      navigateToCiEvalsRoute({
+        type: "commit-detail",
+        commitSha: selectedCommitSha,
+        suite: suiteId,
+      });
+    },
+    [selectedCommitSha],
+  );
 
   const handleDeleteSuite = useCallback(
     async (suite: EvalSuite) => {
@@ -446,7 +468,48 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           maxSize={35}
           className="flex min-h-0 flex-col border-r bg-muted/30"
         >
-          {route.type === "commit-detail" || !showCiSuiteDrilldownSidebar ? (
+          {showCiSuiteDrilldownSidebar && route.type === "run-detail" ? (
+            <RunIterationsSidebar
+              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+              runDetailSortBy={runDetailSidebarSortBy}
+              onSortChange={setRunDetailSidebarSortBy}
+              selectedIterationId={route.iteration ?? null}
+              onSelectIteration={(iterationId) => {
+                navigateToCiEvalsRoute({
+                  type: "run-detail",
+                  suiteId: route.suiteId,
+                  runId: route.runId,
+                  iteration: iterationId,
+                });
+              }}
+              runForOverview={selectedRunForSidebar}
+              runOverviewExtra={
+                selectedSuite ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigateToCiEvalsRoute({
+                        type: "run-detail",
+                        suiteId: selectedSuite._id,
+                        runId: route.runId,
+                        insightsFocus: true,
+                      })
+                    }
+                    className="text-left text-[10px] font-medium text-primary hover:underline"
+                  >
+                    Full run insights
+                  </button>
+                ) : null
+              }
+              onEditTestCase={(testCaseId) =>
+                navigateToCiEvalsRoute({
+                  type: "test-edit",
+                  suiteId: route.suiteId,
+                  testId: testCaseId,
+                })
+              }
+            />
+          ) : (
             <CiSuiteListSidebar
               suites={visibleSuites}
               selectedSuiteId={selectedSuiteId}
@@ -457,50 +520,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               commitGroups={commitGroups}
               selectedCommitSha={selectedCommitSha}
               onSelectCommit={handleSelectCommit}
-            />
-          ) : (
-            <CiEvalsSuiteDrilldownSidebar
-              route={route}
-              cases={queries.suiteDetails?.testCases ?? []}
-              aggregate={suiteAggregate}
-              activeIterations={queries.activeIterations}
-              isCasesLoading={queries.isSuiteDetailsLoading}
-              selectedTestId={
-                route.type === "test-detail" || route.type === "test-edit"
-                  ? route.testId
-                  : null
-              }
-              onSelectCase={(testCaseId) =>
-                navigateToCiEvalsRoute(
-                  route.type === "test-edit"
-                    ? {
-                        type: "test-edit",
-                        suiteId: selectedSuite!._id,
-                        testId: testCaseId,
-                      }
-                    : {
-                        type: "test-detail",
-                        suiteId: selectedSuite!._id,
-                        testId: testCaseId,
-                      },
-                )
-              }
-              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-              runDetailSortBy={runDetailSidebarSortBy}
-              onRunDetailSortChange={setRunDetailSidebarSortBy}
-              selectedIterationId={
-                route.type === "run-detail" ? (route.iteration ?? null) : null
-              }
-              onSelectIteration={(iterationId) => {
-                if (route.type === "run-detail") {
-                  navigateToCiEvalsRoute({
-                    type: "run-detail",
-                    suiteId: route.suiteId,
-                    runId: route.runId,
-                    iteration: iterationId,
-                  });
-                }
-              }}
+              selectedSuiteIdInCommit={selectedSuiteIdInCommit}
+              onSelectSuiteInCommit={handleSelectSuiteInCommit}
             />
           )}
         </ResizablePanel>
@@ -569,8 +590,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 </p>
               </div>
             </div>
-          ) : HOSTED_MODE ? (
-            <HostedCiSuiteWorkspaceDetail
+          ) : (
+            <CiSuiteWorkspaceDetail
               suite={selectedSuite}
               cases={queries.suiteDetails?.testCases || []}
               iterations={queries.activeIterations}
@@ -603,46 +624,8 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               }
               omitRunIterationList={route.type === "run-detail"}
               canDeleteRuns={canDeleteRuns}
+              readOnlyConfig={!HOSTED_MODE}
             />
-          ) : (
-            <div
-              className={`flex-1 px-6 pb-6 pt-6 ${route.type === "run-detail" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}
-            >
-              <CiSuiteDetail
-                suite={selectedSuite}
-                cases={queries.suiteDetails?.testCases || []}
-                iterations={queries.activeIterations}
-                allIterations={queries.sortedIterations}
-                runs={queries.runsForSelectedSuite}
-                runsLoading={queries.isSuiteRunsLoading}
-                aggregate={suiteAggregate}
-                onRerun={handlers.handleRerun}
-                onReplayRun={handlers.handleReplayRun}
-                onCancelRun={handlers.handleCancelRun}
-                onDeleteSuite={handleDeleteSuite}
-                onDeleteRun={handleDeleteRun}
-                onDirectDeleteRun={handlers.directDeleteRun}
-                connectedServerNames={connectedServerNames}
-                rerunningSuiteId={handlers.rerunningSuiteId}
-                replayingRunId={handlers.replayingRunId}
-                cancellingRunId={handlers.cancellingRunId}
-                deletingSuiteId={deletingSuiteId}
-                deletingRunId={deletingRunId}
-                route={route}
-                userMap={userMap}
-                runDetailSortByOverride={
-                  route.type === "run-detail"
-                    ? runDetailSidebarSortBy
-                    : undefined
-                }
-                onRunDetailSortByChange={
-                  route.type === "run-detail"
-                    ? setRunDetailSidebarSortBy
-                    : undefined
-                }
-                omitRunIterationList={route.type === "run-detail"}
-              />
-            </div>
           )}
         </ResizablePanel>
       </ResizablePanelGroup>
