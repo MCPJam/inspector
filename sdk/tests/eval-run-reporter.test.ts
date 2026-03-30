@@ -90,6 +90,83 @@ describe("createEvalRunReporter", () => {
     ).toEqual([`${externalRunId}-3`]);
   });
 
+  it("flush uploads widget snapshots before append iterations", async () => {
+    const fetchMock = jest
+      .fn()
+      .mockResolvedValueOnce(
+        okResponse({
+          suiteId: "suite_1",
+          runId: "run_1",
+          status: "running",
+          result: "pending",
+        })
+      )
+      .mockResolvedValueOnce(
+        okResponse({
+          uploadUrl: "https://upload.example.com/widget-1",
+        })
+      )
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({ storageId: "blob_123" }),
+      })
+      .mockResolvedValueOnce(okResponse({ inserted: 1, skipped: 0, total: 1 }));
+    global.fetch = fetchMock as any;
+
+    const reporter = createEvalRunReporter({
+      apiKey: "mcpjam_test_key",
+      baseUrl: "https://example.com",
+      suiteName: "widget-flush",
+    });
+
+    reporter.add({
+      caseTitle: "with-widget",
+      passed: true,
+      widgetSnapshots: [
+        {
+          toolCallId: "call-1",
+          toolName: "create_view",
+          protocol: "mcp-apps",
+          serverId: "server-1",
+          resourceUri: "ui://widget/create-view.html",
+          toolMetadata: {
+            ui: { resourceUri: "ui://widget/create-view.html" },
+          },
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: true,
+          prefersBorder: true,
+          widgetHtml: "<html>test</html>",
+        },
+      ],
+    });
+    await reporter.flush();
+
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "https://example.com/sdk/v1/evals/runs/start"
+    );
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      "https://example.com/sdk/v1/evals/artifacts/upload-url"
+    );
+    expect(fetchMock.mock.calls[2][0]).toBe(
+      "https://upload.example.com/widget-1"
+    );
+    expect(fetchMock.mock.calls[3][0]).toBe(
+      "https://example.com/sdk/v1/evals/runs/iterations"
+    );
+
+    const appendBody = JSON.parse(fetchMock.mock.calls[3][1].body as string);
+    expect(appendBody.results[0].widgetSnapshots[0]).toEqual(
+      expect.objectContaining({
+        toolCallId: "call-1",
+        widgetHtmlBlobId: "blob_123",
+      })
+    );
+    expect(appendBody.results[0].widgetSnapshots[0].widgetHtml).toBeUndefined();
+  });
+
   it("forwards serverReplayConfigs when starting a chunked run", async () => {
     const fetchMock = jest
       .fn()

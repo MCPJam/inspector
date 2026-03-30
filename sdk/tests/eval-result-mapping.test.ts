@@ -337,7 +337,7 @@ describe("iterationToEvalResult", () => {
         ],
       }),
       0,
-      { caseTitle: "trace-groups" },
+      { caseTitle: "trace-groups" }
     );
 
     expect((result.trace as any).spans).toEqual([

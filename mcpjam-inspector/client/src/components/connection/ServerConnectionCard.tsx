@@ -101,7 +101,7 @@ export function ServerConnectionCard({
   footerActions,
   workspaceId,
 }: ServerConnectionCardProps) {
-  useExploreCasesPrefetchOnConnect(workspaceId ?? null, server);
+  useExploreCasesPrefetchOnConnect(workspaceId ?? null, server, hostedServerId);
 
   const posthog = usePostHog();
   const { getAccessToken } = useAuth();

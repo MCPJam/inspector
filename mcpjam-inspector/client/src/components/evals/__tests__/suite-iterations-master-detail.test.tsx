@@ -1,10 +1,16 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 
+const mocks = vi.hoisted(() => ({
+  useMutation: vi.fn(() => vi.fn()),
+  useQuery: vi.fn(),
+}));
+
 vi.mock("convex/react", () => ({
-  useMutation: () => vi.fn(),
+  useMutation: (...args: unknown[]) => mocks.useMutation(...args),
+  useQuery: (...args: unknown[]) => mocks.useQuery(...args),
 }));
 
 vi.mock("../use-suite-data", () => ({
@@ -51,6 +57,17 @@ const baseSuite: EvalSuite = {
 };
 
 describe("SuiteIterationsView caseListInSidebar", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+    mocks.useMutation.mockReturnValue(vi.fn());
+    mocks.useQuery.mockImplementation((_name: string, args: unknown) => {
+      if (args === "skip") {
+        return undefined;
+      }
+      return undefined;
+    });
+  });
+
   it("does not mount TestCasesOverview when case index is in the parent sidebar", () => {
     render(
       <SuiteIterationsView

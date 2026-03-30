@@ -369,7 +369,10 @@ export class EvalTest {
       return;
     }
 
-    const results = this.buildEvalResultInputs(runResult.iterationDetails, config);
+    const results = this.buildEvalResultInputs(
+      runResult.iterationDetails,
+      config
+    );
     if (results.length === 0) {
       return;
     }

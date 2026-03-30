@@ -9,14 +9,15 @@ export function readTestingSurfaceFromHash(hashValue: string): TestingSurface {
   }
 
   const params = new URLSearchParams(queryString || "");
-  // Legacy ?surface=suites bookmarks — treat as Explore (Suites tab removed)
+  // Legacy ?surface=suites bookmarks now map to Explore.
   if (params.get("surface") === "suites") {
     return "explore";
   }
+
   return "explore";
 }
 
-/** Strips legacy `surface` query params from evals hashes. */
+// Strip legacy surface params from eval route hashes.
 export function withTestingSurface(hash: string): string {
   const normalizedHash = hash.startsWith("#") ? hash.slice(1) : hash;
   const [path, queryString] = normalizedHash.split("?");

@@ -26,6 +26,20 @@ describe("MCPClientManager", () => {
       );
       expect(manager).toBeInstanceOf(MCPClientManager);
     });
+
+    it("lazyConnect skips eager connect so listServers is empty until connectToServer", () => {
+      const manager = new MCPClientManager(
+        {
+          pending: {
+            url: "http://127.0.0.1:9/mcp",
+            timeout: 1000,
+          },
+        },
+        { lazyConnect: true }
+      );
+      expect(manager.listServers()).toEqual([]);
+      expect(manager.getConnectionStatus("pending")).toBe("disconnected");
+    });
   });
 
   describe("STDIO server", () => {

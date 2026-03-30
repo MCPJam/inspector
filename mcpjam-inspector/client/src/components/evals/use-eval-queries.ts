@@ -85,17 +85,13 @@ export function useEvalQueries({
     [suiteRuns],
   );
 
-  // Filter iterations to only include those from active runs
   const activeIterations = useMemo(() => {
     if (!suiteRuns || sortedIterations.length === 0) return sortedIterations;
 
-    const activeRunIds = new Set(
-      suiteRuns.filter((run) => run.isActive !== false).map((run) => run._id),
-    );
+    const runIds = new Set(suiteRuns.map((run) => run._id));
 
     return sortedIterations.filter(
-      (iteration) =>
-        !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId),
+      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId),
     );
   }, [sortedIterations, suiteRuns]);
 

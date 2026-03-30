@@ -12,6 +12,7 @@ import {
   EXPLORE_SUITE_TAG,
   isExploreSuite,
 } from "@/components/evals/constants";
+import { HOSTED_MODE } from "@/lib/config";
 
 function findExploreSuiteEntry(
   overview: EvalSuiteOverviewEntry[] | undefined,
@@ -36,6 +37,7 @@ function findExploreSuiteEntry(
 export function useExploreCasesPrefetchOnConnect(
   workspaceId: string | null | undefined,
   server: ServerWithName,
+  hostedServerId?: string | null,
 ) {
   const { isAuthenticated } = useConvexAuth();
   const { user, getAccessToken } = useAuth();
@@ -82,6 +84,16 @@ export function useExploreCasesPrefetchOnConnect(
     }
 
     if (suiteOverview === undefined) {
+      return;
+    }
+
+    const oauthAccessToken = server.oauthTokens?.access_token;
+    if (
+      HOSTED_MODE &&
+      workspaceId &&
+      server.useOAuth &&
+      (!hostedServerId || !oauthAccessToken)
+    ) {
       return;
     }
 
@@ -180,9 +192,12 @@ export function useExploreCasesPrefetchOnConnect(
     createTestCaseMutation,
     createTestSuiteMutation,
     getAccessToken,
+    hostedServerId,
     isAuthenticated,
     server.connectionStatus,
     server.name,
+    server.oauthTokens?.access_token,
+    server.useOAuth,
     suiteOverview,
     updateTestSuiteMutation,
     user,

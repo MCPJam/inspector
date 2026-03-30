@@ -29,13 +29,6 @@ export function formatCaseTitleForSidebar(title: string): {
       fullTitle,
     };
   }
-  if (fullTitle.length > 44) {
-    return {
-      line1: `…${fullTitle.slice(-40)}`,
-      line2: fullTitle.slice(0, fullTitle.length - 40),
-      fullTitle,
-    };
-  }
   return { line1: fullTitle, line2: null, fullTitle };
 }
 

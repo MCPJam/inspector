@@ -1,10 +1,18 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
-import { RunDetailView } from "../run-detail-view";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { EvalIteration, EvalSuiteRun } from "../types";
+
+vi.mock("../use-run-insights", () => ({
+  useRunInsights: vi.fn(),
+}));
+
+import { useRunInsights } from "../use-run-insights";
+import { RunDetailView } from "../run-detail-view";
 
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
+  useQuery: () => undefined,
+  useAction: () => vi.fn().mockResolvedValue(undefined),
 }));
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
@@ -61,7 +69,32 @@ const chartDataUsable = {
   modelData: [],
 };
 
+const emptyChartData = {
+  donutData: [],
+  durationData: [],
+  tokensData: [],
+  modelData: [],
+};
+
+function defaultRunInsightsReturn() {
+  return {
+    summary: null as string | null,
+    pending: false,
+    requested: false,
+    failedGeneration: false,
+    error: null as string | null,
+    requestRunInsights: vi.fn(),
+    cancelRunInsights: vi.fn(),
+    unavailable: false,
+    canRequest: true,
+  };
+}
+
 describe("RunDetailView", () => {
+  beforeEach(() => {
+    vi.mocked(useRunInsights).mockReturnValue(defaultRunInsightsReturn());
+  });
+
   it("keeps bar charts inside one in-card collapsible; expanding shows both charts", () => {
     render(
       <RunDetailView
@@ -119,5 +152,183 @@ describe("RunDetailView", () => {
     expect(
       screen.queryByRole("button", { name: /Duration and token charts/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows case insight summary when selected iteration matches caseKey", () => {
+    const iter = makeIteration({
+      _id: "iter-case",
+      testCaseId: "tc-1",
+      testCaseSnapshot: {
+        title: "Test A",
+        query: "q",
+        provider: "openai",
+        model: "gpt-4",
+        expectedToolCalls: [],
+        caseKey: "ck-match",
+      },
+    });
+    const run = makeRun({
+      runInsights: {
+        summary: "suite level",
+        generatedAt: 1,
+        modelUsed: "m",
+        caseInsights: [
+          {
+            caseKey: "ck-match",
+            testCaseId: "tc-1",
+            title: "t",
+            status: "new_failure",
+            summary: "Matched case summary text",
+          },
+        ],
+      },
+    });
+    render(
+      <RunDetailView
+        selectedRunDetails={run}
+        caseGroupsForSelectedRun={[iter]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId="iter-case"
+        onSelectIteration={() => {}}
+      />,
+    );
+    expect(screen.getByText("Case insight")).toBeInTheDocument();
+    expect(screen.getByText("Matched case summary text")).toBeVisible();
+  });
+
+  it("shows no notable change when there is no matching case insight row", () => {
+    const iter = makeIteration({
+      _id: "iter-x",
+      testCaseId: "tc-1",
+      testCaseSnapshot: {
+        title: "Test A",
+        query: "q",
+        provider: "openai",
+        model: "gpt-4",
+        expectedToolCalls: [],
+        caseKey: "ck-other",
+      },
+    });
+    const run = makeRun({
+      runInsights: {
+        summary: "s",
+        generatedAt: 1,
+        modelUsed: "m",
+        caseInsights: [
+          {
+            caseKey: "unrelated",
+            testCaseId: "other-id",
+            title: "t",
+            status: "fixed",
+            summary: "should not show",
+          },
+        ],
+      },
+    });
+    render(
+      <RunDetailView
+        selectedRunDetails={run}
+        caseGroupsForSelectedRun={[iter]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId="iter-x"
+        onSelectIteration={() => {}}
+      />,
+    );
+    expect(screen.getByText("Case insight")).toBeInTheDocument();
+    expect(
+      screen.getByText("No notable change in the last two runs."),
+    ).toBeVisible();
+  });
+
+  it("shows generating state when run insights are pending", () => {
+    vi.mocked(useRunInsights).mockReturnValue({
+      ...defaultRunInsightsReturn(),
+      pending: true,
+    });
+    const iter = makeIteration({ _id: "iter-p" });
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[iter]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId="iter-p"
+        onSelectIteration={() => {}}
+      />,
+    );
+    const caseCard =
+      screen.getByText("Case insight").parentElement?.parentElement;
+    expect(caseCard).toBeTruthy();
+    expect(
+      within(caseCard as HTMLElement).getByText("Generating insights…"),
+    ).toBeVisible();
+  });
+
+  it("shows failed generation copy on case block when insights failed", () => {
+    vi.mocked(useRunInsights).mockReturnValue({
+      ...defaultRunInsightsReturn(),
+      failedGeneration: true,
+    });
+    const iter = makeIteration({ _id: "iter-f" });
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[iter]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId="iter-f"
+        onSelectIteration={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText("Run insights did not complete. Use Retry above."),
+    ).toBeVisible();
+  });
+
+  it("shows complete-the-run copy when run is not completed", () => {
+    const iter = makeIteration({ _id: "iter-run" });
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun({ status: "running" })}
+        caseGroupsForSelectedRun={[iter]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId="iter-run"
+        onSelectIteration={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "Complete the run to generate diff insights for this case.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("does not render case insight block when no iteration is selected", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        selectedRunChartData={emptyChartData}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+      />,
+    );
+    expect(screen.queryByText("Case insight")).not.toBeInTheDocument();
   });
 });

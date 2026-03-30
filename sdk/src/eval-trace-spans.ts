@@ -22,7 +22,10 @@ type ToolMeta = {
 };
 
 function genSpanId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
   return `span-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -54,7 +57,7 @@ function messageDedupeKey(message: ModelMessage): string {
  */
 export function appendDedupedModelMessages(
   acc: ModelMessage[],
-  incoming: ModelMessage[],
+  incoming: ModelMessage[]
 ): void {
   const seen = new Set(acc.map(messageDedupeKey));
   for (const m of incoming) {
@@ -78,10 +81,8 @@ export function patchEvalSpansMessageRangesFromSteps(
   spans: EvalTraceSpanInput[],
   baseMessagesLength: number,
   steps:
-    | ReadonlyArray<
-        { response?: { messages?: ModelMessage[] } } | undefined
-      >
-    | undefined,
+    | ReadonlyArray<{ response?: { messages?: ModelMessage[] } } | undefined>
+    | undefined
 ): void {
   if (!steps || steps.length === 0) {
     return;
@@ -117,7 +118,11 @@ export function patchEvalSpansMessageRangesFromSteps(
 }
 
 export type EvalSpanSink = {
-  onStepStart: (stepNumber: number, startMsHint?: number, meta?: StepMeta) => void;
+  onStepStart: (
+    stepNumber: number,
+    startMsHint?: number,
+    meta?: StepMeta
+  ) => void;
   onToolStart: (
     toolCallId: string,
     toolName: string,
@@ -339,7 +344,11 @@ export function createEvalSpanSink(rel: () => number): EvalSpanSink {
     },
 
     onStepFinish(stepNumber?: number, startMsHint?: number, meta?: StepMeta) {
-      if (!activeStep && stepNumber != null && stepNumber === lastFinishedStepNumber) {
+      if (
+        !activeStep &&
+        stepNumber != null &&
+        stepNumber === lastFinishedStepNumber
+      ) {
         return;
       }
 

@@ -19,7 +19,12 @@ import {
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { AiTriagePanel } from "./ai-triage-panel";
+import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
+import { RunCaseInsightBlock } from "./run-case-insight-block";
+import { findRunInsightForCase } from "./run-insight-helpers";
+import { useRunInsights } from "./use-run-insights";
+import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { ExternalLink } from "lucide-react";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -60,10 +65,13 @@ function IterationListItem({
   iteration,
   isSelected,
   onSelect,
+  onEditTestCase,
 }: {
   iteration: EvalIteration;
   isSelected: boolean;
   onSelect: () => void;
+  /** When set, failed iterations with a testCaseId show an editor link. */
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   const isPending =
     iteration.status === "pending" || iteration.status === "running";
@@ -72,6 +80,9 @@ function IterationListItem({
   const modelName = testInfo?.model || "—";
 
   const computedResult = computeIterationResult(iteration);
+  const canEditInPlayground =
+    Boolean(onEditTestCase && iteration.testCaseId) &&
+    computedResult === "failed";
 
   return (
     <div
@@ -107,6 +118,21 @@ function IterationListItem({
           {modelName}
         </span>
       </button>
+      {canEditInPlayground && iteration.testCaseId ? (
+        <div className="px-3 pb-2 -mt-0.5">
+          <button
+            type="button"
+            className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditTestCase!(iteration.testCaseId!);
+            }}
+          >
+            Edit in Playground
+            <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-80" />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -116,11 +142,13 @@ function IterationListWithSections({
   sortBy,
   selectedIterationId,
   onSelectIteration,
+  onEditTestCase,
 }: {
   iterations: EvalIteration[];
   sortBy: "model" | "test" | "result";
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   if (sortBy !== "result") {
     return (
@@ -131,6 +159,7 @@ function IterationListWithSections({
             iteration={iteration}
             isSelected={selectedIterationId === iteration._id}
             onSelect={() => onSelectIteration(iteration._id)}
+            onEditTestCase={onEditTestCase}
           />
         ))}
       </>
@@ -158,6 +187,7 @@ function IterationListWithSections({
           iteration={iteration}
           isSelected={selectedIterationId === iteration._id}
           onSelect={() => onSelectIteration(iteration._id)}
+          onEditTestCase={onEditTestCase}
         />
       ))}
     </>
@@ -171,12 +201,14 @@ export function RunIterationsSidebar({
   onSortChange,
   selectedIterationId,
   onSelectIteration,
+  onEditTestCase,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -207,6 +239,7 @@ export function RunIterationsSidebar({
               sortBy={runDetailSortBy}
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
+              onEditTestCase={onEditTestCase}
             />
           )}
         </div>
@@ -229,6 +262,16 @@ export function RunDetailView({
   hideReplayLineage,
   omitIterationList = false,
 }: RunDetailViewProps) {
+  const {
+    summary: runInsightsSummary,
+    pending: runInsightsPending,
+    requested: runInsightsRequested,
+    failedGeneration: runInsightsFailedGeneration,
+    error: runInsightsError,
+    requestRunInsights,
+    unavailable: runInsightsUnavailable,
+  } = useRunInsights(selectedRunDetails, { autoRequest: true });
+
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
@@ -293,6 +336,16 @@ export function RunDetailView({
         : null,
     [selectedIterationId, caseGroupsForSelectedRun],
   );
+
+  const caseInsightForSelectedIteration = useMemo(() => {
+    if (!selectedIteration) {
+      return null;
+    }
+    return findRunInsightForCase(selectedRunDetails, {
+      caseKey: selectedIteration.testCaseSnapshot?.caseKey,
+      testCaseId: selectedIteration.testCaseId,
+    });
+  }, [selectedIteration, selectedRunDetails]);
 
   const hasTokenData = useMemo(
     () =>
@@ -508,11 +561,17 @@ export function RunDetailView({
         </div>
       </div>
 
-      {/* AI Triage — shown between summary and iteration panes */}
-      <AiTriagePanel
-        run={selectedRunDetails}
-        failedCount={computedStats.failed}
-      />
+      {selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
+        <RunInsightsPrimaryBlock
+          className="mt-3"
+          summary={runInsightsSummary}
+          pending={runInsightsPending}
+          requested={runInsightsRequested}
+          failedGeneration={runInsightsFailedGeneration}
+          error={runInsightsError}
+          onRetry={() => requestRunInsights(true)}
+        />
+      ) : null}
 
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
@@ -533,6 +592,13 @@ export function RunDetailView({
               onSortChange={onSortChange}
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
+              onEditTestCase={(testCaseId) =>
+                navigateToEvalsRoute({
+                  type: "test-edit",
+                  suiteId: selectedRunDetails.suiteId,
+                  testId: testCaseId,
+                })
+              }
             />
           </div>
         ) : null}
@@ -541,8 +607,16 @@ export function RunDetailView({
           {selectedIteration ? (
             <div
               key={selectedIterationId}
-              className="flex-1 min-h-0 overflow-y-auto p-4"
+              className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
             >
+              <RunCaseInsightBlock
+                runStatus={selectedRunDetails.status}
+                caseInsight={caseInsightForSelectedIteration}
+                pending={runInsightsPending}
+                requested={runInsightsRequested}
+                failedGeneration={runInsightsFailedGeneration}
+                error={runInsightsError}
+              />
               <IterationDetails
                 iteration={selectedIteration}
                 testCase={null}
