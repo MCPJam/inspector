@@ -312,7 +312,29 @@ describe("TraceViewer", () => {
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
 
-  it("recorded spans show Recorded timing summary", async () => {
+  it("shows Tools tab when eval tool calls are provided and renders compare view", async () => {
+    render(
+      <TraceViewer
+        trace={simpleTextTrace}
+        estimatedDurationMs={100}
+        expectedToolCalls={[{ toolName: "a", arguments: {} }]}
+        actualToolCalls={[{ toolName: "b", arguments: { x: 1 } }]}
+      />,
+    );
+    expect(await screen.findByTestId("trace-viewer-tools-tab")).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("trace-viewer-tools-tab"));
+    expect(screen.getByTestId("trace-viewer-tools-compare")).toBeInTheDocument();
+    expect(screen.getByText("Expected")).toBeInTheDocument();
+    expect(screen.getByText("Actual")).toBeInTheDocument();
+  });
+
+  it("hides Tools tab when there are no expected or actual tool calls", async () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+    expect(screen.queryByTestId("trace-viewer-tools-tab")).not.toBeInTheDocument();
+  });
+
+  it("recorded spans show timeline toolbar instead of estimated-only banner", async () => {
     render(
       <TraceViewer
         trace={{
@@ -331,7 +353,9 @@ describe("TraceViewer", () => {
         estimatedDurationMs={99_999}
       />,
     );
-    expect(await screen.findByText(/Recorded/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Estimated total only")).not.toBeInTheDocument();
   });
 
@@ -354,7 +378,9 @@ describe("TraceViewer", () => {
         traceInsight={<span>Insight caption text</span>}
       />,
     );
-    expect(await screen.findByText(/Recorded/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
+    ).toBeInTheDocument();
     const slot = screen.getByTestId("trace-viewer-insight-slot");
     expect(
       within(slot).getByText("Insight caption text"),
@@ -535,7 +561,9 @@ describe("TraceViewer", () => {
         }}
       />,
     );
-    expect(await screen.findByText(/Recorded/)).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
+    ).toBeInTheDocument();
     openChatTab();
     expect(screen.getByText("No messages in trace")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));

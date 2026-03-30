@@ -28,14 +28,7 @@ export function timelineFilterLabel(entry: TimelineFilter): string {
   }
 }
 
-function formatDuration(ms: number): string {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)}s`;
-  return `${Math.round(ms)}ms`;
-}
-
 export function RecordedTraceToolbar({
-  promptCount,
-  maxEndMs,
   filter,
   onFilterChange,
   isFullyExpanded,
@@ -45,8 +38,6 @@ export function RecordedTraceToolbar({
   zoomControls,
   showBottomBorder = true,
 }: {
-  promptCount: number;
-  maxEndMs: number;
   filter: TimelineFilter;
   onFilterChange: (next: TimelineFilter) => void;
   isFullyExpanded: boolean;
@@ -62,21 +53,10 @@ export function RecordedTraceToolbar({
   return (
     <div
       className={cn(
-        "flex min-h-8 min-w-0 flex-1 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+        "flex min-h-7 min-w-0 flex-1 flex-row flex-nowrap items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
         showBottomBorder && "border-b border-border/30 pb-2",
       )}
     >
-      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-        <span className="font-medium text-foreground/90">Recorded</span>
-        <span className="mx-1.5 text-muted-foreground/50">·</span>
-        {promptCount} prompt{promptCount === 1 ? "" : "s"}
-        <span className="mx-1.5 text-muted-foreground/50">·</span>
-        {formatDuration(maxEndMs)}
-      </span>
-      <span
-        className="bg-border hidden h-3 w-px shrink-0 sm:block"
-        aria-hidden
-      />
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
@@ -93,9 +73,7 @@ export function RecordedTraceToolbar({
         <DropdownMenuContent align="start" className="min-w-[8rem]">
           <DropdownMenuRadioGroup
             value={filter}
-            onValueChange={(value) =>
-              onFilterChange(value as TimelineFilter)
-            }
+            onValueChange={(value) => onFilterChange(value as TimelineFilter)}
           >
             {TRACE_TIMELINE_FILTERS.map((entry) => (
               <DropdownMenuRadioItem
@@ -109,10 +87,6 @@ export function RecordedTraceToolbar({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
-      <span
-        className="bg-border hidden h-3 w-px shrink-0 md:block"
-        aria-hidden
-      />
       <Button
         type="button"
         variant="outline"

@@ -14,7 +14,6 @@ import {
   Copy,
   Layers,
   ListTree,
-  Maximize2,
   MessageSquareQuote,
   Minus,
   Plus,
@@ -357,38 +356,8 @@ function getSpanRowTranscriptRange(row: SpanRow): TranscriptRange | undefined {
   );
 }
 
-function getCategoryClasses(category: EvalTraceSpanCategory): {
-  bar: string;
-  rail: string;
-} {
-  switch (category) {
-    case "step":
-      return {
-        bar: "bg-slate-500/85",
-        rail: "bg-slate-500/10",
-      };
-    case "llm":
-      return {
-        bar: "bg-blue-500/85",
-        rail: "bg-blue-500/10",
-      };
-    case "tool":
-      return {
-        bar: "bg-amber-500/85",
-        rail: "bg-amber-500/10",
-      };
-    case "error":
-      return {
-        bar: "bg-red-500/85",
-        rail: "bg-red-500/10",
-      };
-    default:
-      return {
-        bar: "bg-muted-foreground/60",
-        rail: "bg-muted/40",
-      };
-  }
-}
+/** Unified fill for waterfall timeline segments (category hue stays on glyphs/borders). Uses `--primary` from theme. */
+const TRACE_WATERFALL_BAR_CLASS = "bg-primary/70";
 
 function getCategoryIconClass(
   category: EvalTraceSpanCategory | "prompt",
@@ -1736,17 +1705,6 @@ export function TraceTimeline({
           variant="outline"
           size="icon"
           className="h-7 w-7 border-border/50"
-          title="Fit timeline to trace duration"
-          aria-label="Fit timeline"
-          onClick={() => setInternalViewportMaxMs(maxEndMs)}
-        >
-          <Maximize2 className="size-3.5" aria-hidden />
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="h-7 w-7 border-border/50"
           title="Zoom out timeline"
           aria-label="Zoom out timeline"
           disabled={internalViewportMaxMs >= maxEndMs * 4}
@@ -1765,8 +1723,6 @@ export function TraceTimeline({
     <div className="space-y-2">
       {!hideToolbar ? (
         <RecordedTraceToolbar
-          promptCount={groups.length}
-          maxEndMs={maxEndMs}
           filter={filter}
           onFilterChange={setFilter}
           isFullyExpanded={isFullyExpanded}
@@ -1874,15 +1830,6 @@ export function TraceTimeline({
               const spanShowsFailure =
                 row.kind === "span" &&
                 spanIndicatesTranscriptFailure(row.span, transcriptMessages);
-              const categoryClasses =
-                row.kind === "prompt"
-                  ? {
-                      bar: "bg-violet-500/70",
-                      rail: "bg-violet-500/10",
-                    }
-                  : getCategoryClasses(
-                      spanShowsFailure ? "error" : row.span.category,
-                    );
               const rowGlyphCategory: EvalTraceSpanCategory | "prompt" =
                 row.kind === "prompt"
                   ? "prompt"
@@ -2032,10 +1979,10 @@ export function TraceTimeline({
                           : "trace-row-bar"
                       }
                       className={cn(
-                        "absolute top-1/2 z-[1] h-8 min-w-0 -translate-y-1/2 rounded-md shadow-sm transition-[left,width] duration-150",
-                        categoryClasses.bar,
+                        "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] shadow-sm transition-[left,width] duration-150",
+                        TRACE_WATERFALL_BAR_CLASS,
                         barIsWide &&
-                          "flex items-center gap-1 overflow-hidden px-2",
+                          "flex items-center gap-0.5 overflow-hidden px-1.5",
                       )}
                       style={{
                         left: `${leftPercent}%`,
@@ -2046,13 +1993,13 @@ export function TraceTimeline({
                         <>
                           <span
                             aria-hidden
-                            className="min-w-0 truncate text-[11px] font-medium text-white mix-blend-difference"
+                            className="min-w-0 truncate text-[10px] font-medium leading-none text-primary-foreground"
                           >
                             {label}
                           </span>
                           <span
                             aria-hidden
-                            className="ml-auto shrink-0 text-[10px] text-white/80"
+                            className="ml-auto shrink-0 text-[9px] leading-none text-primary-foreground/85 tabular-nums"
                           >
                             {formatDuration(durationMs)}
                           </span>
@@ -2062,7 +2009,7 @@ export function TraceTimeline({
                     {!barIsWide ? (
                       <span
                         aria-hidden
-                        className="pointer-events-none absolute top-1/2 z-[2] -translate-y-1/2 text-[11px] text-muted-foreground"
+                        className="pointer-events-none absolute top-1/2 z-[2] -translate-y-1/2 text-[10px] leading-none text-muted-foreground tabular-nums"
                         style={{
                           left: `calc(${leftPercent + widthPercent}% + 8px)`,
                         }}

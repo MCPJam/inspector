@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import {
@@ -7,6 +7,8 @@ import {
   Code2,
   ChevronDown,
   ChevronRight,
+  WifiOff,
+  AlertCircle,
 } from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -20,6 +22,10 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
+import { cn } from "@/lib/utils";
+import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
 const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
@@ -161,6 +167,58 @@ function resolveTraceModel(
   );
 }
 
+function TraceBlobLoadErrorPanel({
+  error,
+  layoutMode,
+  onRetry,
+  isDetailsOpen,
+  onDetailsOpenChange,
+}: {
+  error: string;
+  layoutMode: "compact" | "full";
+  onRetry: () => void;
+  isDetailsOpen: boolean;
+  onDetailsOpenChange: (open: boolean) => void;
+}) {
+  const info = formatConvexBlobLoadError(error);
+  const Icon = info.kind === "transient" ? WifiOff : AlertCircle;
+  return (
+    <div
+      className={cn("space-y-3", layoutMode === "full" && "max-w-md")}
+      data-testid="iteration-trace-load-error"
+    >
+      <Alert variant={info.alertVariant}>
+        <Icon />
+        <AlertTitle>{info.title}</AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p>{info.description}</p>
+          <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
+            Try again
+          </Button>
+        </AlertDescription>
+      </Alert>
+      <Collapsible open={isDetailsOpen} onOpenChange={onDetailsOpenChange}>
+        <CollapsibleTrigger
+          type="button"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <span>Technical details</span>
+          {isDetailsOpen ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">
+          <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap overflow-x-auto rounded border border-border/40 bg-muted/30 p-2">
+            {error}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+}
+
 export function IterationDetails({
   iteration,
   testCase,
@@ -182,6 +240,9 @@ export function IterationDetails({
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [blobRetryTick, setBlobRetryTick] = useState(0);
+  const [isBlobErrorDetailsOpen, setIsBlobErrorDetailsOpen] = useState(false);
+  const prevBlobIdRef = useRef<string | undefined>(undefined);
   const [toolViewMode, setToolViewMode] = useState<"formatted" | "raw">(
     "formatted",
   );
@@ -201,10 +262,15 @@ export function IterationDetails({
     let cancelled = false;
     async function run() {
       if (!iteration.blob) {
+        prevBlobIdRef.current = undefined;
         setBlob(null);
         setLoading(false);
         setError(null);
         return;
+      }
+      if (prevBlobIdRef.current !== iteration.blob) {
+        prevBlobIdRef.current = iteration.blob;
+        setIsBlobErrorDetailsOpen(false);
       }
       setLoading(true);
       setError(null);
@@ -224,7 +290,7 @@ export function IterationDetails({
     return () => {
       cancelled = true;
     };
-  }, [iteration.blob, getBlob]);
+  }, [iteration.blob, getBlob, blobRetryTick]);
 
   useEffect(() => {
     if (layoutMode !== "full") return;
@@ -564,7 +630,8 @@ export function IterationDetails({
     </div>
   );
 
-  const toolCallsSection = hasToolCalls ? (
+  const toolCallsSection =
+    hasToolCalls && !iteration.blob ? (
     layoutMode === "full" ? (
       <Collapsible
         open={toolCallsSectionOpen}
@@ -612,17 +679,36 @@ export function IterationDetails({
   ) : null;
 
   const traceSection = iteration.blob ? (
-    <div className="space-y-1.5" data-testid="iteration-trace-section">
+    <div
+      className={cn(
+        "flex flex-col",
+        layoutMode === "full" ? "gap-1" : "gap-1.5",
+      )}
+      data-testid="iteration-trace-section"
+    >
       {layoutMode !== "full" ? (
         <div className="text-xs font-semibold">Trace</div>
       ) : null}
       <div
-        className={`${layoutMode === "compact" ? "rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto" : ""}`}
+        className={cn(
+          layoutMode === "compact" &&
+            "rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto",
+          layoutMode === "full" &&
+            error &&
+            !loading &&
+            "min-h-[320px] flex flex-col justify-center",
+        )}
       >
         {loading ? (
           <div className="text-xs text-muted-foreground">Loading trace</div>
         ) : error ? (
-          <div className="text-xs text-destructive">{error}</div>
+          <TraceBlobLoadErrorPanel
+            error={error}
+            layoutMode={layoutMode}
+            onRetry={() => setBlobRetryTick((n) => n + 1)}
+            isDetailsOpen={isBlobErrorDetailsOpen}
+            onDetailsOpenChange={setIsBlobErrorDetailsOpen}
+          />
         ) : (
           <TraceViewer
             trace={blob}
@@ -632,6 +718,11 @@ export function IterationDetails({
             connectedServerIds={connectedServerIds}
             estimatedDurationMs={estimatedDurationMs}
             traceInsight={caseInsightSlot}
+            chromeDensity={
+              layoutMode === "full" ? "compact" : "default"
+            }
+            expectedToolCalls={expectedToolCalls}
+            actualToolCalls={actualToolCalls}
           />
         )}
       </div>
@@ -646,7 +737,12 @@ export function IterationDetails({
     ) : null;
 
   return (
-    <div className="space-y-4 py-2">
+    <div
+      className={cn(
+        "flex flex-col",
+        layoutMode === "full" ? "gap-3" : "gap-4 py-2",
+      )}
+    >
       {/* Error Display */}
       {iteration.error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">

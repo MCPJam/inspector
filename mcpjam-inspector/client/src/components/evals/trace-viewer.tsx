@@ -11,8 +11,8 @@ import {
 import {
   AlignLeft,
   Code2,
+  GitCompare,
   Loader2,
-  Maximize2,
   MessageSquare,
   Minus,
   Plus,
@@ -36,12 +36,18 @@ import {
   RecordedTraceToolbar,
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
+import { cn } from "@/lib/utils";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
 );
 
 const NOOP = (..._args: unknown[]) => {};
+
+export type TraceViewerEvalToolCall = {
+  toolName: string;
+  arguments: Record<string, any>;
+};
 
 type TranscriptRange = {
   startIndex: number;
@@ -58,6 +64,12 @@ interface TraceViewerProps {
   estimatedDurationMs?: number | null;
   /** Shown under the toolbar row (e.g. run case insight caption). */
   traceInsight?: ReactNode;
+  /** Tighter toolbar/card spacing for full-pane run detail. */
+  chromeDensity?: "default" | "compact";
+  /** Expected tool calls from the eval case (snapshot); enables the Tools tab. */
+  expectedToolCalls?: TraceViewerEvalToolCall[];
+  /** Tool calls observed for this iteration; enables the Tools tab. */
+  actualToolCalls?: TraceViewerEvalToolCall[];
 }
 
 function getTraceMessages(
@@ -109,10 +121,13 @@ export function TraceViewer({
   connectedServerIds = [],
   estimatedDurationMs = null,
   traceInsight,
+  chromeDensity = "default",
+  expectedToolCalls = [],
+  actualToolCalls = [],
 }: TraceViewerProps) {
-  const [viewMode, setViewMode] = useState<"timeline" | "chat" | "raw">(
-    "timeline",
-  );
+  const [viewMode, setViewMode] = useState<
+    "timeline" | "chat" | "raw" | "tools"
+  >("timeline");
   const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
   const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(
     () => new Set(),
@@ -132,6 +147,8 @@ export function TraceViewer({
     provider: "custom" as ModelProvider,
   };
   const traceMessages = getTraceMessages(trace);
+  const hasEvalToolCalls =
+    expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
@@ -212,6 +229,12 @@ export function TraceViewer({
   }, [trace]);
 
   useEffect(() => {
+    if (!hasEvalToolCalls) {
+      setViewMode((mode) => (mode === "tools" ? "timeline" : mode));
+    }
+  }, [hasEvalToolCalls]);
+
+  useEffect(() => {
     if (viewMode !== "chat" || highlightedMessageIds.length === 0) {
       return;
     }
@@ -264,16 +287,25 @@ export function TraceViewer({
   const showRecordedChrome =
     viewMode === "timeline" && hasRecordedSpans;
   const timelineZoomMinMs = Math.max(1, Math.round(maxEndMsForToolbar / 50));
+  const compactChrome = chromeDensity === "compact";
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-lg border border-border/50 bg-muted/15 px-2 py-2 sm:px-3">
-        <div className="flex min-h-9 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 flex-1 items-center gap-2">
+    <div className={compactChrome ? "space-y-2" : "space-y-3"}>
+      <div
+        className={cn(
+          "rounded-lg border border-border/50 bg-muted/15",
+          compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 flex-row items-center justify-between gap-2",
+            compactChrome ? "min-h-8" : "min-h-9",
+          )}
+        >
+          <div className="flex min-w-0 min-h-0 flex-1 items-center gap-2">
             {showRecordedChrome ? (
               <RecordedTraceToolbar
-                promptCount={promptGroups.length}
-                maxEndMs={maxEndMsForToolbar}
                 filter={timelineFilter}
                 onFilterChange={setTimelineFilter}
                 isFullyExpanded={isTimelineFullyExpanded}
@@ -297,19 +329,6 @@ export function TraceViewer({
                       }
                     >
                       <Plus className="size-3.5" aria-hidden />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7 border-border/50"
-                      title="Fit timeline to trace duration"
-                      aria-label="Fit timeline"
-                      onClick={() =>
-                        setTimelineViewportMaxMs(maxEndMsForToolbar)
-                      }
-                    >
-                      <Maximize2 className="size-3.5" aria-hidden />
                     </Button>
                     <Button
                       type="button"
@@ -350,9 +369,11 @@ export function TraceViewer({
               <div className="text-xs font-medium text-muted-foreground">
                 {viewMode === "raw"
                   ? "Trace JSON"
-                  : traceMessages.length > 0
-                    ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
-                    : "Trace"}
+                  : viewMode === "tools"
+                    ? "Expected vs actual tools"
+                    : traceMessages.length > 0
+                      ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
+                      : "Trace"}
               </div>
             )}
           </div>
@@ -396,11 +417,31 @@ export function TraceViewer({
               <Code2 className="h-3 w-3" />
               Raw
             </button>
+            {hasEvalToolCalls ? (
+              <button
+                type="button"
+                onClick={() => setViewMode("tools")}
+                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                  viewMode === "tools"
+                    ? "bg-primary/10 text-foreground font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
+                title="Expected vs actual tool calls"
+                data-testid="trace-viewer-tools-tab"
+              >
+                <GitCompare className="h-3 w-3" />
+                Tools
+              </button>
+            ) : null}
           </div>
         </div>
         {traceInsight ? (
           <div
-            className="mt-2 border-t border-border/40 pt-2"
+            className={
+              compactChrome
+                ? "mt-1.5 border-t border-border/40 pt-1.5"
+                : "mt-2 border-t border-border/40 pt-2"
+            }
             data-testid="trace-viewer-insight-slot"
           >
             {traceInsight}
@@ -497,6 +538,56 @@ export function TraceViewer({
             ))}
           </div>
         ))}
+
+      {viewMode === "tools" && hasEvalToolCalls ? (
+        <div
+          className="grid gap-3 md:grid-cols-2"
+          data-testid="trace-viewer-tools-compare"
+        >
+          <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground uppercase">
+              Expected
+            </div>
+            {expectedToolCalls.length === 0 ? (
+              <div className="text-xs text-muted-foreground italic">
+                No expected tool calls
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-md border border-border/30 bg-background/50">
+                <JsonEditor
+                  value={expectedToolCalls}
+                  viewOnly
+                  collapsible
+                  defaultExpandDepth={2}
+                  collapseStringsAfterLength={160}
+                  className="min-h-[160px] max-h-72"
+                />
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
+            <div className="text-xs font-medium text-muted-foreground uppercase">
+              Actual
+            </div>
+            {actualToolCalls.length === 0 ? (
+              <div className="text-xs text-muted-foreground italic">
+                No tool calls made
+              </div>
+            ) : (
+              <div className="overflow-hidden rounded-md border border-border/30 bg-background/50">
+                <JsonEditor
+                  value={actualToolCalls}
+                  viewOnly
+                  collapsible
+                  defaultExpandDepth={2}
+                  collapseStringsAfterLength={160}
+                  className="min-h-[160px] max-h-72"
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

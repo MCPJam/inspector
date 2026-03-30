@@ -631,8 +631,10 @@ export function RunDetailView({
   return (
     <div
       className={cn(
-        "relative flex flex-col p-4",
-        omitIterationList && "min-h-0 flex-1 overflow-hidden",
+        "relative flex flex-col",
+        omitIterationList
+          ? "min-h-0 flex-1 overflow-hidden px-3 py-3"
+          : "p-4",
       )}
     >
       {/* Run Header */}
@@ -679,10 +681,10 @@ export function RunDetailView({
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
         className={cn(
-          "mt-4 flex gap-0 overflow-hidden",
-          omitIterationList
-            ? "min-h-0 flex-1 flex-col"
-            : "rounded-xl border bg-card text-card-foreground min-h-[400px] h-[calc(100vh-200px)] max-h-[calc(100vh-200px)]",
+          "flex gap-0 overflow-hidden",
+          omitIterationList ? "mt-3 min-h-0 flex-1 flex-col" : "mt-4",
+          !omitIterationList &&
+            "rounded-xl border bg-card text-card-foreground min-h-[400px] h-[calc(100vh-200px)] max-h-[calc(100vh-200px)]",
         )}
         style={
           omitIterationList
@@ -715,7 +717,8 @@ export function RunDetailView({
             <div
               key={selectedIterationId}
               className={cn(
-                "flex-1 min-h-0 overflow-y-auto space-y-4",
+                "flex-1 min-h-0 overflow-y-auto",
+                omitIterationList ? "space-y-3" : "space-y-4",
                 !omitIterationList && "px-4",
               )}
             >

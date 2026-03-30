@@ -116,7 +116,7 @@ export function CiSuiteWorkspaceDetail({
     <div
       className={cn(
         "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-        isRunDetailView ? "px-4 pb-4 pt-4" : "px-6 pb-6 pt-6",
+        isRunDetailView ? "px-4 pb-3 pt-3" : "px-6 pb-6 pt-6",
       )}
     >
       <SuiteIterationsView
