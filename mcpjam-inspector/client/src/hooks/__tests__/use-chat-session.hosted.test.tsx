@@ -7,6 +7,7 @@ const mockState = vi.hoisted(() => ({
   stop: vi.fn(),
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
+  buildHostedServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
   hasToken: vi.fn(() => false),
@@ -105,6 +106,10 @@ vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: mockState.getGuestBearerToken,
 }));
 
+vi.mock("@/lib/apis/web/context", () => ({
+  buildHostedServerRequest: mockState.buildHostedServerRequest,
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockState.getAccessToken,
@@ -141,6 +146,7 @@ describe("useChatSession hosted mode", () => {
   beforeEach(() => {
     mockState.convexAuth.isAuthenticated = true;
     mockState.convexAuth.isLoading = false;
+    mockState.buildHostedServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
@@ -207,6 +213,57 @@ describe("useChatSession hosted mode", () => {
       sandboxToken: "sandbox-token",
       surface: "preview",
     });
+    unmount();
+  });
+
+  it("includes the selected direct-guest server in hosted chat bodies", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.buildHostedServerRequest.mockReturnValue({
+      serverUrl: "https://mcp.excalidraw.com/mcp",
+      serverHeaders: { "X-Api-Key": "guest-key" },
+      oauthAccessToken: "guest-oauth-token",
+      clientCapabilities: { roots: { listChanged: true } },
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["Excalidraw (App)"],
+      }),
+    );
+
+    const body = lastTransportOptions.body();
+
+    expect(result.current.chatSessionId).toBe("chat-session-id");
+    expect(mockState.buildHostedServerRequest).toHaveBeenCalledWith(
+      "Excalidraw (App)",
+    );
+    expect(body).toMatchObject({
+      chatSessionId: "chat-session-id",
+      serverUrl: "https://mcp.excalidraw.com/mcp",
+      serverHeaders: { "X-Api-Key": "guest-key" },
+      oauthAccessToken: "guest-oauth-token",
+      clientCapabilities: { roots: { listChanged: true } },
+    });
+    unmount();
+  });
+
+  it("keeps plain hosted guest chat bodies when no server is selected", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+      }),
+    );
+
+    const body = lastTransportOptions.body();
+
+    expect(result.current.chatSessionId).toBe("chat-session-id");
+    expect(mockState.buildHostedServerRequest).not.toHaveBeenCalled();
+    expect(body).toMatchObject({
+      chatSessionId: "chat-session-id",
+    });
+    expect(body.serverUrl).toBeUndefined();
     unmount();
   });
 

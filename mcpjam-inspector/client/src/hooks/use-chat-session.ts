@@ -55,6 +55,7 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
+import { buildHostedServerRequest } from "@/lib/apis/web/context";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -383,6 +384,13 @@ export function useChatSession({
     // (via hostedContextNotReady), so this branch only runs for guests.
     const buildHostedBody = () => {
       if (!hostedWorkspaceId) {
+        if (directGuestMode && selectedServers.length > 0) {
+          return {
+            chatSessionId,
+            ...buildHostedServerRequest(selectedServers[0]),
+          };
+        }
+
         return {
           chatSessionId,
         };
@@ -430,6 +438,7 @@ export function useChatSession({
     temperature,
     systemPrompt,
     selectedServers,
+    directGuestMode,
     hostedWorkspaceId,
     chatSessionId,
     hostedSelectedServerIds,
