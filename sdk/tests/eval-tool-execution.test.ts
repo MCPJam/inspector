@@ -24,7 +24,7 @@ describe("traceMessagePartIndicatesToolFailure", () => {
         type: "tool-result",
         toolCallId: "1",
         result: { isError: true, content: [{ type: "text", text: "bad" }] },
-      }),
+      })
     ).toBe(true);
   });
 
@@ -33,7 +33,7 @@ describe("traceMessagePartIndicatesToolFailure", () => {
       traceMessagePartIndicatesToolFailure({
         type: "tool-result",
         output: { type: "json", value: { isError: true } },
-      }),
+      })
     ).toBe(true);
   });
 
@@ -42,13 +42,13 @@ describe("traceMessagePartIndicatesToolFailure", () => {
       traceMessagePartIndicatesToolFailure({
         type: "tool-result",
         output: { type: "error-text", value: "x" },
-      }),
+      })
     ).toBe(true);
   });
 
   it("ignores non-tool-result parts", () => {
     expect(
-      traceMessagePartIndicatesToolFailure({ type: "text", text: "hi" }),
+      traceMessagePartIndicatesToolFailure({ type: "text", text: "hi" })
     ).toBe(false);
   });
 });
@@ -67,7 +67,7 @@ describe("traceIndicatesToolExecutionFailure", () => {
             status: "error",
           },
         ],
-      }),
+      })
     ).toBe(true);
   });
 
@@ -84,7 +84,7 @@ describe("traceIndicatesToolExecutionFailure", () => {
             status: "ok",
           },
         ],
-      }),
+      })
     ).toBe(false);
   });
 
@@ -100,7 +100,7 @@ describe("traceIndicatesToolExecutionFailure", () => {
             },
           ],
         },
-      ]),
+      ])
     ).toBe(true);
   });
 });
@@ -123,7 +123,7 @@ describe("finalizePassedForEval", () => {
           ],
         },
         failOnToolError: false,
-      }),
+      })
     ).toBe(true);
   });
 
@@ -143,7 +143,7 @@ describe("finalizePassedForEval", () => {
             },
           ],
         },
-      }),
+      })
     ).toBe(false);
   });
 
@@ -152,7 +152,7 @@ describe("finalizePassedForEval", () => {
       finalizePassedForEval({
         matchPassed: true,
         iterationError: "boom",
-      }),
+      })
     ).toBe(false);
   });
 
@@ -162,7 +162,7 @@ describe("finalizePassedForEval", () => {
         matchPassed: true,
         iterationError: "boom",
         failOnToolError: false,
-      }),
+      })
     ).toBe(true);
   });
 });

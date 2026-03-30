@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { desanitizeFromConvexTransport } from "@/shared/convex-sanitize";
 import {
   formatTime,
   formatRunId,
@@ -17,20 +18,39 @@ import {
   SuiteAggregate,
 } from "./types";
 
+function desanitizeEvalIteration(iter: EvalIteration): EvalIteration {
+  return {
+    ...iter,
+    actualToolCalls: desanitizeFromConvexTransport(iter.actualToolCalls),
+    testCaseSnapshot: iter.testCaseSnapshot
+      ? {
+          ...iter.testCaseSnapshot,
+          expectedToolCalls: desanitizeFromConvexTransport(
+            iter.testCaseSnapshot.expectedToolCalls,
+          ),
+        }
+      : undefined,
+  };
+}
+
 export function useSuiteData(
   suite: EvalSuite,
   cases: EvalCase[],
-  iterations: EvalIteration[],
-  allIterations: EvalIteration[],
+  rawIterations: EvalIteration[],
+  rawAllIterations: EvalIteration[],
   runs: EvalSuiteRun[],
   aggregate: SuiteAggregate | null,
 ) {
-  // Calculate active run IDs once (memoized separately for better performance)
+  const iterations = useMemo(
+    () => rawIterations.map(desanitizeEvalIteration),
+    [rawIterations],
+  );
+  const allIterations = useMemo(
+    () => rawAllIterations.map(desanitizeEvalIteration),
+    [rawAllIterations],
+  );
   const activeRunIds = useMemo(
-    () =>
-      new Set(
-        runs.filter((run) => run.isActive !== false).map((run) => run._id),
-      ),
+    () => new Set(runs.map((run) => run._id)),
     [runs],
   );
 
@@ -62,11 +82,8 @@ export function useSuiteData(
     };
   }, [aggregate]);
 
-  // Run trend data for accuracy chart
   const runTrendData = useMemo(() => {
-    const activeRuns = runs.filter((run) => run.isActive !== false);
-
-    const data = activeRuns
+    const data = [...runs]
       .slice()
       .reverse()
       .map((run) => {
@@ -113,7 +130,6 @@ export function useSuiteData(
     return data;
   }, [runs, allIterations]);
 
-  // Calculate per-model statistics (only from active runs)
   const modelStats = useMemo(() => {
     const activeIterations = allIterations.filter(
       (iteration) =>
@@ -412,9 +428,14 @@ export function useSuiteData(
 
 export function useRunDetailData(
   selectedRunId: string | null,
-  allIterations: EvalIteration[],
+  rawAllIterations: EvalIteration[],
   runDetailSortBy: "model" | "test" | "result",
 ) {
+  const allIterations = useMemo(
+    () => rawAllIterations.map(desanitizeEvalIteration),
+    [rawAllIterations],
+  );
+
   // Iterations for selected run
   const iterationsForSelectedRun = useMemo(() => {
     if (!selectedRunId) return [];

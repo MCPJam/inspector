@@ -50,6 +50,12 @@ interface RunOverviewProps {
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   /** When false, hides run selection and batch delete (workspace members without admin). */
   canDeleteRuns?: boolean;
+  /** Highlights runs tied to an in-flight suite trace-repair job. */
+  traceRepairRunHighlight?: {
+    jobId: string;
+    sourceRunId: string;
+    latestReplayRunId?: string;
+  } | null;
 }
 
 type CiMetadataCompactMode = "full" | "chip";
@@ -183,6 +189,7 @@ export function RunOverview({
   onViewModeChange,
   userMap,
   canDeleteRuns = true,
+  traceRepairRunHighlight = null,
 }: RunOverviewProps) {
   const tableViewportRef = useRef<HTMLDivElement | null>(null);
   const [tableViewportWidth, setTableViewportWidth] = useState(0);
@@ -492,8 +499,6 @@ export function RunOverview({
                         ? formatDuration(Date.now() - run.createdAt)
                         : "—";
 
-                  const isInactive = run.isActive === false;
-
                   const runResult =
                     run.result ||
                     (run.status === "completed" && passRate !== null
@@ -513,10 +518,23 @@ export function RunOverview({
                     !!run.ciMetadata?.commitSha ||
                     !!run.ciMetadata?.runUrl;
 
+                  const inTraceRepairJob =
+                    traceRepairRunHighlight != null &&
+                    (run._id === traceRepairRunHighlight.sourceRunId ||
+                      run._id === traceRepairRunHighlight.latestReplayRunId ||
+                      run.traceRepairJobId === traceRepairRunHighlight.jobId);
+
                   const runRowCells = (
                     <>
-                      <span className="truncate py-0.5 text-xs font-medium">
-                        Run {formatRunId(run._id)}
+                      <span className="flex flex-wrap items-center gap-1 truncate py-0.5 text-xs font-medium min-w-0">
+                        <span className="truncate">
+                          Run {formatRunId(run._id)}
+                        </span>
+                        {inTraceRepairJob ? (
+                          <span className="shrink-0 rounded border border-border/60 bg-muted/30 px-1 py-px text-[9px] font-medium text-foreground/85">
+                            Auto fix
+                          </span>
+                        ) : null}
                       </span>
                       <span className="truncate py-0.5 text-xs text-muted-foreground">
                         {timestamp}
@@ -629,24 +647,9 @@ export function RunOverview({
                   return (
                     <div
                       key={run._id}
-                      className={cn(
-                        "relative border-l-2",
-                        runAccent,
-                        isInactive && "opacity-50",
-                      )}
+                      className={cn("relative border-l-2", runAccent)}
                     >
-                      {isInactive ? (
-                        <Tooltip>
-                          <TooltipTrigger asChild>{runButton}</TooltipTrigger>
-                          <TooltipContent>
-                            <p className="text-xs">
-                              Run is inactive since test cases were updated
-                            </p>
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        runButton
-                      )}
+                      {runButton}
                     </div>
                   );
                 })

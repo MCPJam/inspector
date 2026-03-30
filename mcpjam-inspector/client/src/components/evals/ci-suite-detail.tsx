@@ -219,7 +219,6 @@ export function CiSuiteDetail({
               <TestCaseDetailView
                 testCase={selectedCase}
                 iterations={caseIterations}
-                runs={runs}
                 serverNames={connectedSuiteServers}
                 suiteName={suite.name}
                 onNavigateToSuite={() => {
@@ -265,10 +264,7 @@ export function CiSuiteDetail({
                     run._id === replayingRunId && run.hasServerReplayConfig,
                 ) &&
                 runs
-                  .filter(
-                    (run) =>
-                      run.isActive !== false && run.hasServerReplayConfig,
-                  )
+                  .filter((run) => run.hasServerReplayConfig)
                   .sort((a, b) => {
                     const aTime = a.completedAt ?? a.createdAt ?? 0;
                     const bTime = b.completedAt ?? b.createdAt ?? 0;
@@ -276,7 +272,7 @@ export function CiSuiteDetail({
                   })[0]?._id === replayingRunId
               }
             />
-            {runs.filter((r) => r.isActive !== false).length > 0 && (
+            {runs.length > 0 && (
               <SuiteRunsChartGrid
                 suiteSource={suite.source}
                 runTrendData={runTrendData}

@@ -3,7 +3,7 @@ import { renderWithProviders, screen } from "@/test";
 import { RunOverview } from "../run-overview";
 
 vi.mock("convex/react", () => ({
-  useMutation: () => vi.fn(),
+  useMutation: () => vi.fn().mockResolvedValue(undefined),
   useQuery: () => undefined,
 }));
 

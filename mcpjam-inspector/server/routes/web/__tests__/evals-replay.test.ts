@@ -6,6 +6,7 @@ import { mapRuntimeError, webError } from "../errors.js";
 
 const {
   convexQueryMock,
+  captureToolSnapshotForEvalAuthoringMock,
   fetchReplayConfigMock,
   storeReplayConfigMock,
   startSuiteRunWithRecorderMock,
@@ -13,6 +14,7 @@ const {
   disconnectAllServersMock,
 } = vi.hoisted(() => ({
   convexQueryMock: vi.fn(),
+  captureToolSnapshotForEvalAuthoringMock: vi.fn(),
   fetchReplayConfigMock: vi.fn(),
   storeReplayConfigMock: vi.fn(),
   startSuiteRunWithRecorderMock: vi.fn(),
@@ -23,10 +25,16 @@ const {
 vi.mock("../../../services/evals/route-helpers.js", () => ({
   buildReplayManager: vi.fn(() => ({
     disconnectAllServers: disconnectAllServersMock,
+    connectToServer: vi.fn().mockResolvedValue(undefined),
+    getConnectionStatus: vi.fn(() => "connected"),
+    getToolsForAiSdk: vi.fn().mockResolvedValue({}),
   })),
+  connectReplayManagerServers: vi.fn().mockResolvedValue(undefined),
   createConvexClient: vi.fn(() => ({
     query: convexQueryMock,
   })),
+  captureToolSnapshotForEvalAuthoring: (...args: unknown[]) =>
+    captureToolSnapshotForEvalAuthoringMock(...args),
   fetchReplayConfig: (...args: unknown[]) => fetchReplayConfigMock(...args),
   requireConvexHttpUrl: vi.fn(() => "https://convex.example"),
   storeReplayConfig: (...args: unknown[]) => storeReplayConfigMock(...args),
@@ -50,7 +58,13 @@ function createApp() {
   app.route("/api/web/evals", evalsRoutes);
   app.onError((error, c) => {
     const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details,
+    );
   });
   return app;
 }
@@ -72,6 +86,38 @@ describe("web replay route", () => {
           url: "https://mcp.excalidraw.com",
         },
       ],
+    });
+    captureToolSnapshotForEvalAuthoringMock.mockResolvedValue({
+      toolSnapshot: {
+        version: 1,
+        capturedAt: 123,
+        servers: [
+          {
+            serverId: "excalidraw",
+            tools: [
+              {
+                name: "search",
+                description: "Find drawings.",
+                inputSchema: { type: "object" },
+              },
+            ],
+          },
+        ],
+      },
+      toolSnapshotDebug: {
+        captureResult: {
+          status: "complete",
+          serverCount: 1,
+          toolCount: 1,
+          failedServerCount: 0,
+          failedServerIds: [],
+        },
+        promptSection: "# Available MCP Tools",
+        promptSectionTruncated: false,
+        promptSectionMaxChars: 30000,
+        fallbackReason: null,
+        fullSnapshot: null,
+      },
     });
     startSuiteRunWithRecorderMock.mockResolvedValue({
       runId: "replay-run",
@@ -106,6 +152,18 @@ describe("web replay route", () => {
       expect.objectContaining({
         serverIds: ["excalidraw"],
         replayedFromRunId: "source-run",
+        toolSnapshot: expect.objectContaining({
+          servers: [
+            expect.objectContaining({
+              serverId: "excalidraw",
+            }),
+          ],
+        }),
+        toolSnapshotDebug: expect.objectContaining({
+          captureResult: expect.objectContaining({
+            status: "complete",
+          }),
+        }),
       }),
     );
     expect(storeReplayConfigMock).toHaveBeenCalledWith(

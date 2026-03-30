@@ -1,4 +1,7 @@
-import type { EvalTraceInput, EvalTraceSpanInput } from "./eval-reporting-types.js";
+import type {
+  EvalTraceInput,
+  EvalTraceSpanInput,
+} from "./eval-reporting-types.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -58,7 +61,7 @@ function walkMessageContent(content: unknown): boolean {
 }
 
 function messagesIndicateToolExecutionFailure(
-  messages: Array<{ role: string; content: unknown }> | undefined,
+  messages: Array<{ role: string; content: unknown }> | undefined
 ): boolean {
   if (!Array.isArray(messages)) return false;
   for (const msg of messages) {
@@ -69,12 +72,10 @@ function messagesIndicateToolExecutionFailure(
 }
 
 function spansIndicateToolExecutionFailure(
-  spans: EvalTraceSpanInput[] | undefined,
+  spans: EvalTraceSpanInput[] | undefined
 ): boolean {
   if (!Array.isArray(spans)) return false;
-  return spans.some(
-    (s) => s.category === "tool" && s.status === "error",
-  );
+  return spans.some((s) => s.category === "tool" && s.status === "error");
 }
 
 /**
@@ -82,7 +83,7 @@ function spansIndicateToolExecutionFailure(
  * (errored tool spans and/or MCP error tool-results in messages).
  */
 export function traceIndicatesToolExecutionFailure(
-  trace: EvalTraceInput | undefined,
+  trace: EvalTraceInput | undefined
 ): boolean {
   if (trace == null) return false;
   if (typeof trace === "string") return false;
@@ -120,17 +121,14 @@ export type FinalizeEvalPassedParams = {
  * Combine structural pass/fail with tool execution outcomes for eval reporting.
  */
 export function finalizePassedForEval(
-  params: FinalizeEvalPassedParams,
+  params: FinalizeEvalPassedParams
 ): boolean {
   const { matchPassed, trace, iterationError, failOnToolError } = params;
   const gateActive = failOnToolError !== false;
   if (!gateActive) {
     return matchPassed;
   }
-  if (
-    typeof iterationError === "string" &&
-    iterationError.trim().length > 0
-  ) {
+  if (typeof iterationError === "string" && iterationError.trim().length > 0) {
     return false;
   }
   if (traceIndicatesToolExecutionFailure(trace)) {

@@ -18,6 +18,16 @@ describe("case-name-utils", () => {
     expect(f.fullTitle).toBe("suite-get_task-iter-2");
   });
 
+  it("keeps long natural-language titles on line 1 only (no leading suffix truncation)", () => {
+    const long =
+      "Have a casual conversation about workflow and labels in the Linear project";
+    const f = formatCaseTitleForSidebar(long);
+    expect(f.line1).toBe(long);
+    expect(f.line2).toBeNull();
+    expect(f.fullTitle).toBe(long);
+    expect(f.line1.startsWith("…")).toBe(false);
+  });
+
   it("groups multiple cases in sidebar order", () => {
     const grouped = groupEvalCasesForSidebar([
       { _id: "a", title: "suite-get_task-iter-2" },

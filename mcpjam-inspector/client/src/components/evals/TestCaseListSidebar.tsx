@@ -334,6 +334,8 @@ export function TestCaseListSidebar({
                     );
                     const { line1, line2, fullTitle } =
                       formatCaseTitleForSidebar(testCase.title || "");
+                    const useLineClampForTitle =
+                      line2 == null && fullTitle.length > 44;
 
                     return (
                       <div
@@ -371,8 +373,22 @@ export function TestCaseListSidebar({
                           />
                         )}
                         <div className="flex-1 min-w-0 text-left flex flex-col gap-0.5">
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span className="truncate leading-tight">
+                          <div
+                            className={cn(
+                              "flex gap-1.5 min-w-0",
+                              useLineClampForTitle
+                                ? "items-start"
+                                : "items-center",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "min-w-0 leading-tight",
+                                useLineClampForTitle
+                                  ? "line-clamp-2 break-words"
+                                  : "truncate",
+                              )}
+                            >
                               {line1}
                             </span>
                             {testCase.isNegativeTest && (

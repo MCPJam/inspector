@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import {
   ChartContainer,
   ChartTooltip,
@@ -19,7 +19,15 @@ import {
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { AiTriagePanel } from "./ai-triage-panel";
+import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
+import { RunCaseInsightBlock } from "./run-case-insight-block";
+import { findRunInsightForCase } from "./run-insight-helpers";
+import { useRunInsights } from "./use-run-insights";
+import { TraceRepairBanner } from "./trace-repair-banner";
+import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { useTraceRepairState } from "./use-trace-repair-state";
+import { Button } from "@/components/ui/button";
+import { ExternalLink, Loader2 } from "lucide-react";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -60,10 +68,13 @@ function IterationListItem({
   iteration,
   isSelected,
   onSelect,
+  onEditTestCase,
 }: {
   iteration: EvalIteration;
   isSelected: boolean;
   onSelect: () => void;
+  /** When set, failed iterations with a testCaseId show an editor link. */
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   const isPending =
     iteration.status === "pending" || iteration.status === "running";
@@ -72,6 +83,9 @@ function IterationListItem({
   const modelName = testInfo?.model || "—";
 
   const computedResult = computeIterationResult(iteration);
+  const canEditInPlayground =
+    Boolean(onEditTestCase && iteration.testCaseId) &&
+    computedResult === "failed";
 
   return (
     <div
@@ -107,6 +121,21 @@ function IterationListItem({
           {modelName}
         </span>
       </button>
+      {canEditInPlayground && iteration.testCaseId ? (
+        <div className="px-3 pb-2 -mt-0.5">
+          <button
+            type="button"
+            className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditTestCase!(iteration.testCaseId!);
+            }}
+          >
+            Edit in Playground
+            <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-80" />
+          </button>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -116,11 +145,13 @@ function IterationListWithSections({
   sortBy,
   selectedIterationId,
   onSelectIteration,
+  onEditTestCase,
 }: {
   iterations: EvalIteration[];
   sortBy: "model" | "test" | "result";
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   if (sortBy !== "result") {
     return (
@@ -131,6 +162,7 @@ function IterationListWithSections({
             iteration={iteration}
             isSelected={selectedIterationId === iteration._id}
             onSelect={() => onSelectIteration(iteration._id)}
+            onEditTestCase={onEditTestCase}
           />
         ))}
       </>
@@ -158,6 +190,7 @@ function IterationListWithSections({
           iteration={iteration}
           isSelected={selectedIterationId === iteration._id}
           onSelect={() => onSelectIteration(iteration._id)}
+          onEditTestCase={onEditTestCase}
         />
       ))}
     </>
@@ -171,12 +204,14 @@ export function RunIterationsSidebar({
   onSortChange,
   selectedIterationId,
   onSelectIteration,
+  onEditTestCase,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
@@ -207,6 +242,7 @@ export function RunIterationsSidebar({
               sortBy={runDetailSortBy}
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
+              onEditTestCase={onEditTestCase}
             />
           )}
         </div>
@@ -229,6 +265,16 @@ export function RunDetailView({
   hideReplayLineage,
   omitIterationList = false,
 }: RunDetailViewProps) {
+  const {
+    summary: runInsightsSummary,
+    pending: runInsightsPending,
+    requested: runInsightsRequested,
+    failedGeneration: runInsightsFailedGeneration,
+    error: runInsightsError,
+    requestRunInsights,
+    unavailable: runInsightsUnavailable,
+  } = useRunInsights(selectedRunDetails, { autoRequest: true });
+
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
@@ -294,6 +340,16 @@ export function RunDetailView({
     [selectedIterationId, caseGroupsForSelectedRun],
   );
 
+  const caseInsightForSelectedIteration = useMemo(() => {
+    if (!selectedIteration) {
+      return null;
+    }
+    return findRunInsightForCase(selectedRunDetails, {
+      caseKey: selectedIteration.testCaseSnapshot?.caseKey,
+      testCaseId: selectedIteration.testCaseId,
+    });
+  }, [selectedIteration, selectedRunDetails]);
+
   const hasTokenData = useMemo(
     () =>
       selectedRunChartData.tokensData.length > 0 &&
@@ -303,6 +359,44 @@ export function RunDetailView({
 
   const hasRunBarCharts =
     selectedRunChartData.durationData.length > 0 || hasTokenData;
+
+  const failedTestTitleToCaseId = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const iter of caseGroupsForSelectedRun) {
+      if (computeIterationPassed(iter)) continue;
+      const id = iter.testCaseId;
+      const title = iter.testCaseSnapshot?.title;
+      if (id && title) m[title] = id;
+    }
+    return m;
+  }, [caseGroupsForSelectedRun]);
+
+  const loopCaseTitleByKey = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const iter of caseGroupsForSelectedRun) {
+      const key = iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
+      const title = iter.testCaseSnapshot?.title;
+      if (title) m[key] = title;
+    }
+    return m;
+  }, [caseGroupsForSelectedRun]);
+
+  const {
+    traceRepairEligible,
+    traceRepairStarting,
+    traceRepairActiveBannerView,
+    latestTraceRepairOutcomeBanner,
+    handleStartTraceRepair,
+    handleStopTraceRepair,
+  } = useTraceRepairState({
+    mode: "run-detail",
+    suiteId: selectedRunDetails.suiteId,
+    sourceRunId: selectedRunDetails._id,
+    source: selectedRunDetails.source,
+    runStatus: selectedRunDetails.status,
+    failedIterationCount: computedStats.failed,
+    hasServerReplayConfig: selectedRunDetails.hasServerReplayConfig,
+  });
 
   return (
     <div
@@ -327,6 +421,11 @@ export function RunDetailView({
             className="mb-4 text-xs text-muted-foreground"
             title={selectedRunDetails.replayedFromRunId}
           >
+            {selectedRunDetails.traceRepairJobId ? (
+              <span className="mr-2 rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90">
+                Auto fix
+              </span>
+            ) : null}
             Replay of{" "}
             <span className="font-mono text-foreground/90">
               Run {formatRunId(selectedRunDetails.replayedFromRunId)}
@@ -357,8 +456,25 @@ export function RunDetailView({
               </div>
               <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">Failed</div>
-                <div className="text-sm font-semibold tabular-nums">
-                  {computedStats.failed.toLocaleString()}
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="text-sm font-semibold tabular-nums">
+                    {computedStats.failed.toLocaleString()}
+                  </div>
+                  {traceRepairEligible ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-7 gap-1 text-[10px]"
+                      disabled={traceRepairStarting}
+                      onClick={() => void handleStartTraceRepair()}
+                    >
+                      {traceRepairStarting ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : null}
+                      Auto fix
+                    </Button>
+                  ) : null}
                 </div>
               </div>
               <div className="min-w-0 space-y-0.5">
@@ -508,11 +624,31 @@ export function RunDetailView({
         </div>
       </div>
 
-      {/* AI Triage — shown between summary and iteration panes */}
-      <AiTriagePanel
-        run={selectedRunDetails}
-        failedCount={computedStats.failed}
+      <TraceRepairBanner
+        scope="suite"
+        className="mt-3"
+        activeView={traceRepairActiveBannerView}
+        caseTitleByKey={loopCaseTitleByKey}
+        onStop={handleStopTraceRepair}
+        latestOutcome={
+          latestTraceRepairOutcomeBanner?.scope === "suite"
+            ? latestTraceRepairOutcomeBanner
+            : null
+        }
+        showTerminalOutcome={false}
       />
+
+      {selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
+        <RunInsightsPrimaryBlock
+          className="mt-3"
+          summary={runInsightsSummary}
+          pending={runInsightsPending}
+          requested={runInsightsRequested}
+          failedGeneration={runInsightsFailedGeneration}
+          error={runInsightsError}
+          onRetry={() => requestRunInsights(true)}
+        />
+      ) : null}
 
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
@@ -533,6 +669,13 @@ export function RunDetailView({
               onSortChange={onSortChange}
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
+              onEditTestCase={(testCaseId) =>
+                navigateToEvalsRoute({
+                  type: "test-edit",
+                  suiteId: selectedRunDetails.suiteId,
+                  testId: testCaseId,
+                })
+              }
             />
           </div>
         ) : null}
@@ -541,8 +684,16 @@ export function RunDetailView({
           {selectedIteration ? (
             <div
               key={selectedIterationId}
-              className="flex-1 min-h-0 overflow-y-auto p-4"
+              className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
             >
+              <RunCaseInsightBlock
+                runStatus={selectedRunDetails.status}
+                caseInsight={caseInsightForSelectedIteration}
+                pending={runInsightsPending}
+                requested={runInsightsRequested}
+                failedGeneration={runInsightsFailedGeneration}
+                error={runInsightsError}
+              />
               <IterationDetails
                 iteration={selectedIteration}
                 testCase={null}

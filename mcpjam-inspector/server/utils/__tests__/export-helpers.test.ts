@@ -1,5 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
-import { exportServer } from "../export-helpers.js";
+import {
+  buildServerToolSnapshotDebug,
+  exportConnectedServerToolSnapshotForEvalAuthoring,
+  exportServer,
+  renderServerToolSnapshotSection,
+} from "../export-helpers.js";
 
 function createMockManager(overrides: Record<string, any> = {}) {
   return {
@@ -160,5 +165,273 @@ describe("exportServer", () => {
     });
 
     await expect(exportServer(manager, "srv")).rejects.toThrow("not connected");
+  });
+});
+
+describe("exportConnectedServerToolSnapshotForEvalAuthoring", () => {
+  it("captures tools per connected server in deterministic order", async () => {
+    const manager = createMockManager({
+      listTools: vi.fn().mockImplementation(async (serverId: string) => {
+        if (serverId === "zebra") {
+          return {
+            tools: [
+              {
+                name: "later_tool",
+                description: "Runs later",
+                inputSchema: { z: true },
+              },
+              {
+                name: "alpha_tool",
+                description: "Runs first",
+                inputSchema: { a: true },
+                outputSchema: { done: true },
+              },
+            ],
+          };
+        }
+        return {
+          tools: [
+            {
+              name: "single_tool",
+              description: "Only tool",
+              inputSchema: { type: "object" },
+            },
+          ],
+        };
+      }),
+    });
+
+    const snapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
+      manager,
+      ["zebra", "alpha", "zebra"],
+    );
+
+    expect(snapshot).toEqual({
+      version: 1,
+      capturedAt: expect.any(Number),
+      servers: [
+        {
+          serverId: "alpha",
+          tools: [
+            {
+              name: "single_tool",
+              description: "Only tool",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+        {
+          serverId: "zebra",
+          tools: [
+            {
+              name: "alpha_tool",
+              description: "Runs first",
+              inputSchema: { a: true },
+              outputSchema: { done: true },
+            },
+            {
+              name: "later_tool",
+              description: "Runs later",
+              inputSchema: { z: true },
+            },
+          ],
+        },
+      ],
+    });
+    expect(manager.listTools).toHaveBeenCalledTimes(2);
+  });
+
+  it("stores per-server capture errors without failing the snapshot export", async () => {
+    const manager = createMockManager({
+      listTools: vi.fn().mockImplementation(async (serverId: string) => {
+        if (serverId === "offline") {
+          throw new Error('MCP server "offline" is not connected.');
+        }
+        if (serverId === "broken") {
+          throw new Error("list failed");
+        }
+        return {
+          tools: [
+            {
+              name: "ok_tool",
+              description: "Still captured",
+              inputSchema: { type: "object" },
+            },
+          ],
+        };
+      }),
+    });
+
+    const snapshot = await exportConnectedServerToolSnapshotForEvalAuthoring(
+      manager,
+      ["healthy", "broken", "offline"],
+    );
+
+    expect(snapshot.servers).toEqual([
+      {
+        serverId: "broken",
+        tools: [],
+        captureError: "list failed",
+      },
+      {
+        serverId: "healthy",
+        tools: [
+          {
+            name: "ok_tool",
+            description: "Still captured",
+            inputSchema: { type: "object" },
+          },
+        ],
+      },
+      {
+        serverId: "offline",
+        tools: [],
+        captureError: 'MCP server "offline" is not connected.',
+      },
+    ]);
+    expect(manager.listTools).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("renderServerToolSnapshotSection", () => {
+  it("drops output schemas before input schemas when truncating", () => {
+    const snapshot = {
+      version: 1,
+      capturedAt: 1,
+      servers: [
+        {
+          serverId: "alpha",
+          tools: [
+            {
+              name: "search_catalog",
+              description:
+                "Search the product catalog after auth is established.",
+              inputSchema: {
+                type: "object",
+                properties: {
+                  query: { type: "string" },
+                  filters: { type: "string", description: "x".repeat(120) },
+                },
+              },
+              outputSchema: {
+                type: "object",
+                properties: {
+                  results: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      properties: {
+                        id: { type: "string" },
+                        title: { type: "string", description: "y".repeat(220) },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          ],
+        },
+      ],
+    } as const;
+
+    const full = renderServerToolSnapshotSection(snapshot, {
+      maxChars: Number.MAX_SAFE_INTEGER,
+    }).promptSection!;
+    const withoutOutput = renderServerToolSnapshotSection(
+      {
+        ...snapshot,
+        servers: [
+          {
+            ...snapshot.servers[0],
+            tools: [
+              {
+                ...snapshot.servers[0].tools[0],
+                outputSchema: undefined,
+              },
+            ],
+          },
+        ],
+      },
+      { maxChars: Number.MAX_SAFE_INTEGER },
+    ).promptSection!;
+    const withoutSchemas = renderServerToolSnapshotSection(
+      {
+        ...snapshot,
+        servers: [
+          {
+            ...snapshot.servers[0],
+            tools: [
+              {
+                name: snapshot.servers[0].tools[0].name,
+                description: snapshot.servers[0].tools[0].description,
+              },
+            ],
+          },
+        ],
+      },
+      { maxChars: Number.MAX_SAFE_INTEGER },
+    ).promptSection!;
+
+    expect(full.length).toBeGreaterThan(withoutOutput.length);
+    expect(withoutOutput.length).toBeGreaterThan(withoutSchemas.length);
+
+    const outputTrimmed = renderServerToolSnapshotSection(snapshot, {
+      maxChars: withoutOutput.length,
+    });
+    expect(outputTrimmed.truncated).toBe(true);
+    expect(outputTrimmed.promptSection).toContain("inputSchema:");
+    expect(outputTrimmed.promptSection).not.toContain("outputSchema:");
+
+    const schemasTrimmed = renderServerToolSnapshotSection(snapshot, {
+      maxChars: withoutSchemas.length,
+    });
+    expect(schemasTrimmed.truncated).toBe(true);
+    expect(schemasTrimmed.promptSection).toContain("`search_catalog`");
+    expect(schemasTrimmed.promptSection).toContain(
+      "Search the product catalog after auth is established.",
+    );
+    expect(schemasTrimmed.promptSection).not.toContain("inputSchema:");
+    expect(schemasTrimmed.promptSection).not.toContain("outputSchema:");
+  });
+});
+
+describe("buildServerToolSnapshotDebug", () => {
+  it("returns capture summary, fallback reason, rendered section, and full snapshot", () => {
+    const snapshot = {
+      version: 1,
+      capturedAt: 123,
+      servers: [
+        {
+          serverId: "alpha",
+          tools: [
+            {
+              name: "bootstrap",
+              description: "Call this before any other tool.",
+              inputSchema: { type: "object" },
+            },
+          ],
+        },
+        {
+          serverId: "beta",
+          tools: [],
+          captureError: "timeout",
+        },
+      ],
+    };
+
+    expect(buildServerToolSnapshotDebug(snapshot, { maxChars: 1200 })).toEqual({
+      captureResult: {
+        status: "partial",
+        serverCount: 2,
+        toolCount: 1,
+        failedServerCount: 1,
+        failedServerIds: ["beta"],
+      },
+      promptSection: expect.stringContaining("# Available MCP Tools"),
+      promptSectionTruncated: false,
+      promptSectionMaxChars: 1200,
+      fallbackReason: "tool_snapshot_partial_capture",
+      fullSnapshot: snapshot,
+    });
   });
 });

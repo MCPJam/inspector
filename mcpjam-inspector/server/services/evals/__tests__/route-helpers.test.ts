@@ -10,6 +10,7 @@ vi.mock("@mcpjam/sdk", () => ({
 
 import {
   buildReplayManager,
+  captureToolSnapshotForEvalAuthoring,
   fetchReplayConfig,
   storeReplayConfig,
 } from "../route-helpers";
@@ -162,7 +163,80 @@ describe("buildReplayManager", () => {
       },
       {
         defaultTimeout: expect.any(Number),
+        lazyConnect: true,
       },
     );
+  });
+});
+
+describe("captureToolSnapshotForEvalAuthoring", () => {
+  it("returns a best-effort snapshot plus rendered debug context", async () => {
+    const clientManager = {
+      listTools: vi.fn().mockImplementation(async (serverId: string) => {
+        if (serverId === "offline") {
+          throw new Error('MCP server "offline" is not connected.');
+        }
+        if (serverId === "broken") {
+          throw new Error("tool listing failed");
+        }
+        return {
+          tools: [
+            {
+              name: "bootstrap",
+              description: "Call this before using search.",
+              inputSchema: { type: "object" },
+            },
+          ],
+        };
+      }),
+    } as any;
+
+    const { toolSnapshot, toolSnapshotDebug } =
+      await captureToolSnapshotForEvalAuthoring(
+        clientManager,
+        ["alpha", "broken", "offline"],
+        {
+          logPrefix: "tests",
+          promptSectionMaxChars: 2048,
+        },
+      );
+
+    expect(toolSnapshot.servers).toEqual([
+      {
+        serverId: "alpha",
+        tools: [
+          {
+            name: "bootstrap",
+            description: "Call this before using search.",
+            inputSchema: { type: "object" },
+          },
+        ],
+      },
+      {
+        serverId: "broken",
+        tools: [],
+        captureError: "tool listing failed",
+      },
+      {
+        serverId: "offline",
+        tools: [],
+        captureError: 'MCP server "offline" is not connected.',
+      },
+    ]);
+
+    expect(toolSnapshotDebug).toEqual({
+      captureResult: {
+        status: "partial",
+        serverCount: 3,
+        toolCount: 1,
+        failedServerCount: 2,
+        failedServerIds: ["broken", "offline"],
+      },
+      promptSection: expect.stringContaining("# Available MCP Tools"),
+      promptSectionTruncated: false,
+      promptSectionMaxChars: 2048,
+      fallbackReason: "tool_snapshot_partial_capture",
+      fullSnapshot: toolSnapshot,
+    });
   });
 });
