@@ -6,7 +6,14 @@
  * allowing users to execute tools and then chat about the results.
  */
 
-import { useEffect, useCallback, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useLayoutEffect,
+} from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench } from "lucide-react";
 import {
@@ -108,7 +115,7 @@ export function AppBuilderTab({
     latestIsOnboardingRef.current = isOnboarding;
   }, [isOnboarding]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     onOnboardingChange?.(isOnboarding);
     if (isOnboarding) {
       setSidebarVisible(false);
@@ -120,7 +127,7 @@ export function AppBuilderTab({
     }
   }, [isOnboarding, setSidebarVisible, setMcpSidebarOpen, onOnboardingChange]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     return () => {
       if (!latestIsOnboardingRef.current) {
         return;

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from "react";
+import { type ReactNode, useLayoutEffect } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -208,7 +208,7 @@ vi.mock("../components/ui-playground/AppBuilderTab", () => ({
   }: {
     onOnboardingChange?: (value: boolean) => void;
   }) => {
-    useEffect(() => {
+    useLayoutEffect(() => {
       mockAppBuilderTabMounts();
       onOnboardingChange?.(true);
       return () => onOnboardingChange?.(false);
@@ -533,10 +533,8 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
     });
 
-    await waitFor(() => {
-      expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
 
     expect(mockAppBuilderTabMounts).toHaveBeenCalledTimes(1);
 
@@ -562,10 +560,8 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
     });
 
-    await waitFor(() => {
-      expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
-      expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
-    });
+    expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
 
     window.location.hash = "servers";
     window.dispatchEvent(new Event("hashchange"));
@@ -621,11 +617,12 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
     });
 
     expect(window.location.hash).toBe("#servers");
     expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
   it("does not auto-route signed-in users into App Builder once startup is ready", async () => {
@@ -658,5 +655,33 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(window.location.hash).toBe("#app-builder");
+  });
+
+  it("goes from hosted loading straight to App Builder onboarding for a true guest", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+    mockHostedShellGateState.value = "auth-loading";
+
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+
+    mockHostedShellGateState.value = "ready";
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#app-builder");
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 });

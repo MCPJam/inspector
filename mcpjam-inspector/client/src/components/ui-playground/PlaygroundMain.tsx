@@ -65,7 +65,6 @@ import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
 import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
-import { AnimatePresence } from "framer-motion";
 import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
@@ -198,6 +197,7 @@ export function PlaygroundMain({
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
   const [input, setInput] = useState(initialInput ?? "");
+  const [guidedInputCursorTrigger, setGuidedInputCursorTrigger] = useState(0);
   const [isGuidedInputPristine, setIsGuidedInputPristine] = useState(
     showPostConnectGuide && !!initialInput,
   );
@@ -207,6 +207,7 @@ export function PlaygroundMain({
     if (showPostConnectGuide && initialInput) {
       setInput(initialInput);
       setIsGuidedInputPristine(true);
+      setGuidedInputCursorTrigger((current) => current + 1);
       return;
     }
 
@@ -319,6 +320,7 @@ export function PlaygroundMain({
     onReset: () => {
       if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
         setInput((currentInput) => currentInput || initialInput);
+        setGuidedInputCursorTrigger((current) => current + 1);
         return;
       }
 
@@ -647,6 +649,10 @@ export function PlaygroundMain({
     onRequireToolApprovalChange: setRequireToolApproval,
     pulseSubmit: pulseSubmit && isGuidedInputPristine,
     minimalMode: showPostConnectGuide,
+    moveCaretToEndTrigger:
+      showPostConnectGuide && isThreadEmpty
+        ? guidedInputCursorTrigger
+        : undefined,
   };
 
   // Check if widget should take over the full container
@@ -698,9 +704,7 @@ export function PlaygroundMain({
               <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
             ) : showPostConnectGuide ? (
               <>
-                <AnimatePresence>
-                  <PostConnectGuide />
-                </AnimatePresence>
+                <PostConnectGuide />
                 <ChatInput {...sharedChatInputProps} hasMessages={false} />
               </>
             ) : (

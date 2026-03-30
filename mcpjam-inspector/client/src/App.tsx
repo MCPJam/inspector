@@ -2,6 +2,7 @@ import { useConvexAuth, useQuery } from "convex/react";
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -440,6 +441,12 @@ export default function App() {
     isLoadingRemoteWorkspaces: false,
   });
   const isOnboardingDecisionReady = hostedShellGateState === "ready";
+  const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
+  const shouldHoldHostedDefaultRouteForAuth =
+    HOSTED_MODE &&
+    !isHostedChatRoute &&
+    isHostedDefaultRoute &&
+    hostedShellGateState === "auth-loading";
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -726,7 +733,7 @@ export default function App() {
   );
 
   // Sync tab with hash on mount and when hash changes
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isHostedChatRoute) {
       return;
     }
@@ -756,9 +763,10 @@ export default function App() {
         isAuthenticated,
       )
     ) {
-      window.location.hash = "app-builder";
+      applyNavigation("app-builder", { updateHash: true });
     }
   }, [
+    applyNavigation,
     hasAnyWorkspaceServers,
     isAuthenticated,
     isOnboardingDecisionReady,
@@ -895,6 +903,10 @@ export default function App() {
   }
 
   if (isLoading && !isHostedChatRoute) {
+    return <LoadingScreen />;
+  }
+
+  if (shouldHoldHostedDefaultRouteForAuth) {
     return <LoadingScreen />;
   }
 
