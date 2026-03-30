@@ -141,8 +141,7 @@ evals.post("/trace-repair/start", async (c) =>
         testSuiteId: body.suiteId,
         sourceRunId: body.sourceRunId,
         scope: body.scope,
-        targetTestCaseId:
-          body.scope === "case" ? body.testCaseId : undefined,
+        targetTestCaseId: body.scope === "case" ? body.testCaseId : undefined,
         targetSourceIterationId:
           body.scope === "case" ? body.sourceIterationId : undefined,
       },

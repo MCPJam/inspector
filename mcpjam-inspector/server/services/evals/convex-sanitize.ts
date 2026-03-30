@@ -1,4 +1,4 @@
 export {
   sanitizeForConvexTransport,
   desanitizeFromConvexTransport,
-} from '@/shared/convex-sanitize';
+} from "@/shared/convex-sanitize";

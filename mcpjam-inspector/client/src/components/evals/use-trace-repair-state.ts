@@ -33,8 +33,7 @@ export type UseTraceRepairStateSuiteOverviewArgs = {
 export function useTraceRepairState(
   args: UseTraceRepairStateRunDetailArgs | UseTraceRepairStateSuiteOverviewArgs,
 ) {
-  const suiteId =
-    args.mode === "run-detail" ? args.suiteId : args.suite._id;
+  const suiteId = args.mode === "run-detail" ? args.suiteId : args.suite._id;
   const skipQueries =
     args.mode === "run-detail"
       ? args.source === "sdk"
@@ -163,27 +162,24 @@ export function useTraceRepairState(
         traceRepairSourceRun.hasServerReplayConfig === true &&
         !traceRepairSuiteJobActive);
 
-  const traceRepairRunHighlight: TraceRepairRunHighlight | null = useMemo(() => {
-    if (
-      args.mode !== "suite-overview" ||
-      !traceRepairSuiteJobActive ||
-      !traceRepairJobView ||
-      typeof traceRepairJobView !== "object"
-    ) {
-      return null;
-    }
-    return {
-      jobId: String(traceRepairJobView.jobId),
-      sourceRunId: String(traceRepairJobView.sourceRunId),
-      latestReplayRunId: traceRepairJobView.latestReplayRunId
-        ? String(traceRepairJobView.latestReplayRunId)
-        : undefined,
-    };
-  }, [
-    args.mode,
-    traceRepairSuiteJobActive,
-    traceRepairJobView,
-  ]);
+  const traceRepairRunHighlight: TraceRepairRunHighlight | null =
+    useMemo(() => {
+      if (
+        args.mode !== "suite-overview" ||
+        !traceRepairSuiteJobActive ||
+        !traceRepairJobView ||
+        typeof traceRepairJobView !== "object"
+      ) {
+        return null;
+      }
+      return {
+        jobId: String(traceRepairJobView.jobId),
+        sourceRunId: String(traceRepairJobView.sourceRunId),
+        latestReplayRunId: traceRepairJobView.latestReplayRunId
+          ? String(traceRepairJobView.latestReplayRunId)
+          : undefined,
+      };
+    }, [args.mode, traceRepairSuiteJobActive, traceRepairJobView]);
 
   return {
     traceRepairEligible,

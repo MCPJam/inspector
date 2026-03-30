@@ -1,22 +1,20 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mutationMock, createConvexClientMock, runTraceRepairJobMock } = vi.hoisted(
-  () => ({
+const { mutationMock, createConvexClientMock, runTraceRepairJobMock } =
+  vi.hoisted(() => ({
     mutationMock: vi.fn(),
     createConvexClientMock: vi.fn(() => ({
       mutation: mutationMock,
       query: vi.fn(),
     })),
     runTraceRepairJobMock: vi.fn().mockResolvedValue(undefined),
-  }),
-);
+  }));
 
 vi.mock("../../../services/evals/route-helpers.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../services/evals/route-helpers.js")>(
-      "../../../services/evals/route-helpers.js",
-    );
+  const actual = await importOriginal<
+    typeof import("../../../services/evals/route-helpers.js")
+  >("../../../services/evals/route-helpers.js");
   return {
     ...actual,
     createConvexClient: createConvexClientMock,

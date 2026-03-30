@@ -4,22 +4,20 @@ import { bearerAuthMiddleware } from "../../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../../middleware/guest-rate-limit.js";
 import { mapRuntimeError, webError } from "../errors.js";
 
-const { mutationMock, createConvexClientMock, runTraceRepairJobMock } = vi.hoisted(
-  () => ({
+const { mutationMock, createConvexClientMock, runTraceRepairJobMock } =
+  vi.hoisted(() => ({
     mutationMock: vi.fn(),
     createConvexClientMock: vi.fn(() => ({
       mutation: mutationMock,
       query: vi.fn(),
     })),
     runTraceRepairJobMock: vi.fn().mockResolvedValue(undefined),
-  }),
-);
+  }));
 
 vi.mock("../../../services/evals/route-helpers.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("../../../services/evals/route-helpers.js")>(
-      "../../../services/evals/route-helpers.js",
-    );
+  const actual = await importOriginal<
+    typeof import("../../../services/evals/route-helpers.js")
+  >("../../../services/evals/route-helpers.js");
   return {
     ...actual,
     createConvexClient: createConvexClientMock,

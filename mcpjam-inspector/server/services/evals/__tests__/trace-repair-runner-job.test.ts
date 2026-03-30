@@ -32,7 +32,8 @@ vi.mock("../route-helpers.js", () => ({
   fetchReplayConfig: (...args: unknown[]) => fetchReplayConfigMock(...args),
   buildReplayManager: (...args: unknown[]) => buildReplayManagerMock(...args),
   connectReplayManagerServers: (...args: unknown[]) => connectMock(...args),
-  captureToolSnapshotForEvalAuthoring: (...args: unknown[]) => captureMock(...args),
+  captureToolSnapshotForEvalAuthoring: (...args: unknown[]) =>
+    captureMock(...args),
 }));
 
 vi.mock("../../routes/shared/evals.js", () => ({
@@ -43,7 +44,10 @@ vi.mock("../replay-suite-run.js", () => ({
   executeSuiteReplayFromRun: (...args: unknown[]) => executeReplayMock(...args),
 }));
 
-import { CANDIDATE_TIMEOUT_MS, runTraceRepairJob } from "../trace-repair-runner.js";
+import {
+  CANDIDATE_TIMEOUT_MS,
+  runTraceRepairJob,
+} from "../trace-repair-runner.js";
 
 const CASE_JOB = {
   testSuiteId: "suite-1",
@@ -194,31 +198,33 @@ describe("runTraceRepairJob (case scope integration stubs)", () => {
   it("uses targetSourceIterationId for requestTraceRepairCandidate", async () => {
     let sourceIterationId: unknown;
     const { convexClient, mutation } = createConvexStubs({});
-    mutation.mockImplementation(async (mn: string, ma?: Record<string, unknown>) => {
-      if (mn === "traceRepair:claimTraceRepairJobLease") {
+    mutation.mockImplementation(
+      async (mn: string, ma?: Record<string, unknown>) => {
+        if (mn === "traceRepair:claimTraceRepairJobLease") {
+          return {};
+        }
+        if (mn === "traceRepair:heartbeatTraceRepairJob") {
+          return {};
+        }
+        if (mn === "traceRepair:advanceTraceRepairJob") {
+          return {};
+        }
+        if (mn === "traceRepair:finalizeTraceRepairJob") {
+          return {};
+        }
+        if (mn === "traceRepair:cancelTraceRepairJobForSuiteChange") {
+          return {};
+        }
+        if (mn === "traceRepair:recordTraceRepairToolSnapshot") {
+          return {};
+        }
+        if (mn === "testSuites:requestTraceRepairCandidate") {
+          sourceIterationId = ma?.sourceIterationId;
+          throw new Error("stop-after-candidate-request");
+        }
         return {};
-      }
-      if (mn === "traceRepair:heartbeatTraceRepairJob") {
-        return {};
-      }
-      if (mn === "traceRepair:advanceTraceRepairJob") {
-        return {};
-      }
-      if (mn === "traceRepair:finalizeTraceRepairJob") {
-        return {};
-      }
-      if (mn === "traceRepair:cancelTraceRepairJobForSuiteChange") {
-        return {};
-      }
-      if (mn === "traceRepair:recordTraceRepairToolSnapshot") {
-        return {};
-      }
-      if (mn === "testSuites:requestTraceRepairCandidate") {
-        sourceIterationId = ma?.sourceIterationId;
-        throw new Error("stop-after-candidate-request");
-      }
-      return {};
-    });
+      },
+    );
 
     await runTraceRepairJob({
       convexClient,
@@ -247,49 +253,51 @@ describe("runTraceRepairJob (case scope integration stubs)", () => {
       },
     });
 
-    mutation.mockImplementation(async (mn: string, ma?: Record<string, unknown>) => {
-      if (mn === "traceRepair:claimTraceRepairJobLease") {
+    mutation.mockImplementation(
+      async (mn: string, ma?: Record<string, unknown>) => {
+        if (mn === "traceRepair:claimTraceRepairJobLease") {
+          return {};
+        }
+        if (mn === "traceRepair:heartbeatTraceRepairJob") {
+          return {};
+        }
+        if (mn === "traceRepair:advanceTraceRepairJob") {
+          return {};
+        }
+        if (mn === "traceRepair:finalizeTraceRepairJob") {
+          return {};
+        }
+        if (mn === "traceRepair:cancelTraceRepairJobForSuiteChange") {
+          return {};
+        }
+        if (mn === "traceRepair:recordTraceRepairToolSnapshot") {
+          return {};
+        }
+        if (mn === "testSuites:requestTraceRepairCandidate") {
+          return { sessionId: "sess-1" };
+        }
+        if (mn === "testSuites:beginRefinementVerification") {
+          beginCalls += 1;
+          throw new Error("stop-after-begin-verification");
+        }
+        if (mn === "testSuites:recordTraceRepairVerificationPlan") {
+          return {};
+        }
+        if (mn === "testSuites:recordRefinementVerificationRun") {
+          return {};
+        }
+        if (mn === "testSuites:promoteRefinementCandidate") {
+          return {};
+        }
+        if (mn === "traceRepair:syncTraceRepairJobConfigAfterPromote") {
+          return {};
+        }
+        if (mn === "testSuites:finalizeTraceRepairAttemptFailure") {
+          return {};
+        }
         return {};
-      }
-      if (mn === "traceRepair:heartbeatTraceRepairJob") {
-        return {};
-      }
-      if (mn === "traceRepair:advanceTraceRepairJob") {
-        return {};
-      }
-      if (mn === "traceRepair:finalizeTraceRepairJob") {
-        return {};
-      }
-      if (mn === "traceRepair:cancelTraceRepairJobForSuiteChange") {
-        return {};
-      }
-      if (mn === "traceRepair:recordTraceRepairToolSnapshot") {
-        return {};
-      }
-      if (mn === "testSuites:requestTraceRepairCandidate") {
-        return { sessionId: "sess-1" };
-      }
-      if (mn === "testSuites:beginRefinementVerification") {
-        beginCalls += 1;
-        throw new Error("stop-after-begin-verification");
-      }
-      if (mn === "testSuites:recordTraceRepairVerificationPlan") {
-        return {};
-      }
-      if (mn === "testSuites:recordRefinementVerificationRun") {
-        return {};
-      }
-      if (mn === "testSuites:promoteRefinementCandidate") {
-        return {};
-      }
-      if (mn === "traceRepair:syncTraceRepairJobConfigAfterPromote") {
-        return {};
-      }
-      if (mn === "testSuites:finalizeTraceRepairAttemptFailure") {
-        return {};
-      }
-      return {};
-    });
+      },
+    );
 
     const jobPromise = runTraceRepairJob({
       convexClient,

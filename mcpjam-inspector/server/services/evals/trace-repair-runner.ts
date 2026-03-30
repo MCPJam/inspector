@@ -393,9 +393,12 @@ export async function runTraceRepairJob(
           "Trace repair case job is missing targetSourceIterationId; restart repair from the inspector.",
         );
       }
-      const iteration = await convexClient.query("testSuites:getTestIteration" as any, {
-        iterationId: job.targetSourceIterationId,
-      });
+      const iteration = await convexClient.query(
+        "testSuites:getTestIteration" as any,
+        {
+          iterationId: job.targetSourceIterationId,
+        },
+      );
       const itTc = iteration?.testCaseId as string | undefined;
       if (!itTc) {
         throw new Error("Trace repair source iteration has no test case");
@@ -405,8 +408,7 @@ export async function runTraceRepairJob(
           "Trace repair job target test case does not match source iteration",
         );
       }
-      const caseKey =
-        iteration.testCaseSnapshot?.caseKey ?? `ui:${itTc}`;
+      const caseKey = iteration.testCaseSnapshot?.caseKey ?? `ui:${itTc}`;
       failedCases = [
         {
           sourceIterationId: String(iteration._id),

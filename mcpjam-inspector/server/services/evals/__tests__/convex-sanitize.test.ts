@@ -42,8 +42,8 @@ describe("sanitizeForConvexTransport", () => {
       nested: { $ref: "#/x" },
       plain: 1,
     };
-    expect(desanitizeFromConvexTransport(sanitizeForConvexTransport(original))).toEqual(
-      original,
-    );
+    expect(
+      desanitizeFromConvexTransport(sanitizeForConvexTransport(original)),
+    ).toEqual(original);
   });
 });
