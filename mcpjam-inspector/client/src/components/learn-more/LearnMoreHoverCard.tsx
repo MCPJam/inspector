@@ -39,6 +39,8 @@ interface LearnMoreHoverCardProps {
   onExpand: (tabId: string, sourceRect: DOMRect | null) => void;
   triggerTooltip?: string;
   triggerTooltipDelayMs?: number;
+  /** Message shown inside the hover card for disabled items (e.g. "Available locally") */
+  disabledMessage?: string;
 }
 
 export function LearnMoreHoverCard({
@@ -47,6 +49,7 @@ export function LearnMoreHoverCard({
   onExpand,
   triggerTooltip,
   triggerTooltipDelayMs,
+  disabledMessage,
 }: LearnMoreHoverCardProps) {
   const entry = learnMoreContent[tabId];
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -193,6 +196,12 @@ export function LearnMoreHoverCard({
               aria-label={`Open ${entry.title} learn more`}
             />
           </div>
+
+          {disabledMessage && (
+            <p className="text-xs text-muted-foreground/80 italic mb-2">
+              {disabledMessage}
+            </p>
+          )}
 
           <div className="flex items-end justify-between gap-2">
             <p className="text-sm text-muted-foreground">{entry.description}</p>
