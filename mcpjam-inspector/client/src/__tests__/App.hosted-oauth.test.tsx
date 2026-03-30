@@ -677,6 +677,8 @@ describe("App hosted OAuth callback handling", () => {
     mockHostedShellGateState.value = "ready";
     rerender(<App />);
 
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+
     await waitFor(() => {
       expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
     });

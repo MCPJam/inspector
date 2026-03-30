@@ -747,7 +747,7 @@ export default function App() {
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isHostedChatRoute) {
       return;
     }
