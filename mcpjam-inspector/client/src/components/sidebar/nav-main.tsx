@@ -106,8 +106,7 @@ export function NavMain({
             const button = (
               <SidebarMenuButton
                 tooltip={
-                  !item.disabled &&
-                  (!shouldShowHoverCard(item) || sidebarOpen)
+                  !item.disabled && (!shouldShowHoverCard(item) || sidebarOpen)
                     ? item.title
                     : undefined
                 }
@@ -140,9 +139,7 @@ export function NavMain({
                 <SidebarMenuItem key={item.title}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="w-full cursor-not-allowed">
-                        {button}
-                      </div>
+                      <div className="w-full cursor-not-allowed">{button}</div>
                     </TooltipTrigger>
                     {item.disabledTooltip && (
                       <TooltipContent side="right" align="center">

@@ -16,7 +16,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Footprints,
   GitBranch,
   Loader2,
   RotateCw,
@@ -76,11 +75,6 @@ interface SuiteHeaderProps {
   readOnlyConfig?: boolean;
   onEditSuite?: () => void;
   onSetupCi?: () => void;
-  /** Playground suite overview: trace-guided repair from a failing run with replay config. */
-  onTraceRepairSuite?: () => void | Promise<void>;
-  traceRepairEligible?: boolean;
-  traceRepairStarting?: boolean;
-  traceRepairSuiteJobActive?: boolean;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -106,10 +100,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     readOnlyConfig = false,
     onEditSuite,
     onSetupCi,
-    onTraceRepairSuite,
-    traceRepairEligible = false,
-    traceRepairStarting = false,
-    traceRepairSuiteJobActive = false,
   } = props;
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -647,37 +637,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           </DropdownMenu>
         )}
 
-        {onTraceRepairSuite && suite.source !== "sdk" ? (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void onTraceRepairSuite()}
-                  disabled={
-                    !traceRepairEligible ||
-                    traceRepairSuiteJobActive ||
-                    traceRepairStarting
-                  }
-                  className="gap-2"
-                >
-                  {traceRepairStarting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Footprints className="h-4 w-4" />
-                  )}
-                  Auto fix
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              Auto fix rewrites failing cases from execution traces, verifies
-              with two same-model runs, then replays the suite once when a
-              change is promoted.
-            </TooltipContent>
-          </Tooltip>
-        ) : null}
         {/* Action buttons */}
         {(replayableLatestRun || !readOnlyConfig) && (
           <Tooltip>

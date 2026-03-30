@@ -1,8 +1,7 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { toast } from "sonner";
 import { SuiteHeader } from "./suite-header";
-import { TraceRepairBanner } from "./trace-repair-banner";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
 import { RunDetailView } from "./run-detail-view";
@@ -19,7 +18,6 @@ import type {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
-import { useTraceRepairState } from "./use-trace-repair-state";
 import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
@@ -312,33 +310,6 @@ export function SuiteIterationsView({
     [replayingRunId, runs],
   );
 
-  const {
-    traceRepairEligible,
-    traceRepairStarting,
-    traceRepairSuiteJobActive,
-    traceRepairActiveBannerView,
-    latestTraceRepairOutcomeBanner,
-    traceRepairRunHighlight,
-    handleStartTraceRepair: handleStartTraceRepairSuite,
-    handleStopTraceRepair: handleStopTraceRepairSuite,
-  } = useTraceRepairState({
-    mode: "suite-overview",
-    suite,
-    runs,
-  });
-
-  const loopCaseTitleByKeySuite = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const iter of allIterations) {
-      const key = iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
-      const title = iter.testCaseSnapshot?.title;
-      if (title) {
-        m[key] = title;
-      }
-    }
-    return m;
-  }, [allIterations]);
-
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
@@ -369,29 +340,8 @@ export function SuiteIterationsView({
           onUpdateModels={handleUpdateTests}
           onEditSuite={() => navigation.toSuiteEdit(suite._id)}
           onSetupCi={onSetupCi}
-          onTraceRepairSuite={() => void handleStartTraceRepairSuite()}
-          traceRepairEligible={traceRepairEligible}
-          traceRepairStarting={traceRepairStarting}
-          traceRepairSuiteJobActive={traceRepairSuiteJobActive}
         />
       </div>
-
-      {viewMode === "overview" && suite.source !== "sdk" ? (
-        <div className="shrink-0 space-y-2 px-0.5">
-          <TraceRepairBanner
-            scope="suite"
-            activeView={traceRepairActiveBannerView}
-            caseTitleByKey={loopCaseTitleByKeySuite}
-            onStop={handleStopTraceRepairSuite}
-            latestOutcome={
-              latestTraceRepairOutcomeBanner?.scope === "suite"
-                ? latestTraceRepairOutcomeBanner
-                : null
-            }
-            showTerminalOutcome
-          />
-        </div>
-      ) : null}
 
       {/* Content */}
       {!isEditMode && (
@@ -418,7 +368,6 @@ export function SuiteIterationsView({
                 <div className="min-h-0 flex-1 overflow-y-auto">
                   <TestCaseDetailView
                     testCase={selectedCase}
-                    suiteId={suite._id}
                     runs={runs}
                     iterations={caseIterations}
                     serverNames={(suite.environment?.servers || []).filter(
@@ -459,7 +408,6 @@ export function SuiteIterationsView({
                   }
                   userMap={userMap}
                   canDeleteRuns={canDeleteRuns}
-                  traceRepairRunHighlight={traceRepairRunHighlight}
                 />
               </div>
             ) : (

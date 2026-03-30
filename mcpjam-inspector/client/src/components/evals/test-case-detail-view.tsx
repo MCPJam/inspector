@@ -1,19 +1,7 @@
-import { useCallback, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
-import {
-  X,
-  ChevronDown,
-  ChevronRight,
-  Footprints,
-  Loader2,
-} from "lucide-react";
+import { useMemo, useState } from "react";
+import { X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import {
@@ -24,10 +12,7 @@ import {
 import { useRunInsights } from "./use-run-insights";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { IterationDetails } from "./iteration-details";
-import { TraceRepairBanner } from "./trace-repair-banner";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
-import { pickTraceRepairCaseSourceIteration } from "@/lib/evals/pick-trace-repair-case-iteration";
-import { startTraceRepair, stopTraceRepair } from "@/lib/apis/evals-api";
 
 interface TestCaseDetailViewProps {
   testCase: EvalCase;
@@ -37,10 +22,7 @@ interface TestCaseDetailViewProps {
   serverNames?: string[];
   suiteName?: string;
   onNavigateToSuite?: () => void;
-  /** Playground-only: enables per-case Auto fix when set with `runs`. */
-  suiteId?: string;
   runs?: EvalSuiteRun[];
-  suiteSource?: "ui" | "sdk";
 }
 
 export function TestCaseDetailView({
@@ -51,125 +33,9 @@ export function TestCaseDetailView({
   serverNames = [],
   suiteName,
   onNavigateToSuite,
-  suiteId,
   runs = [],
-  suiteSource = "ui",
 }: TestCaseDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
-  const [traceRepairStarting, setTraceRepairStarting] = useState(false);
-
-  const traceSourceIteration = useMemo(
-    () =>
-      suiteId && suiteSource === "ui"
-        ? pickTraceRepairCaseSourceIteration(testCase._id, iterations, runs)
-        : null,
-    [suiteId, suiteSource, testCase._id, iterations, runs],
-  );
-
-  const traceRepairCaseJobView = useQuery(
-    "traceRepair:getTraceRepairJobView" as any,
-    suiteId && suiteSource === "ui"
-      ? { testSuiteId: suiteId, testCaseId: testCase._id }
-      : "skip",
-  );
-
-  const latestTraceRepairCaseOutcome = useQuery(
-    "traceRepair:getLatestTraceRepairOutcome" as any,
-    suiteId && suiteSource === "ui"
-      ? { testSuiteId: suiteId, testCaseId: testCase._id }
-      : "skip",
-  );
-
-  const traceRepairCaseJobActive =
-    traceRepairCaseJobView != null &&
-    typeof traceRepairCaseJobView === "object" &&
-    traceRepairCaseJobView.scope === "case" &&
-    ["queued", "running", "stopping"].includes(
-      String(traceRepairCaseJobView.status),
-    );
-
-  const traceRepairCaseEligible =
-    suiteId != null &&
-    suiteSource === "ui" &&
-    traceSourceIteration != null &&
-    !traceRepairCaseJobActive;
-
-  const handleStartTraceRepairCase = useCallback(async () => {
-    if (!suiteId || !traceSourceIteration?.suiteRunId) {
-      return;
-    }
-    setTraceRepairStarting(true);
-    try {
-      await startTraceRepair({
-        scope: "case",
-        suiteId,
-        sourceRunId: traceSourceIteration.suiteRunId,
-        sourceIterationId: traceSourceIteration._id,
-        testCaseId: testCase._id,
-      });
-    } finally {
-      setTraceRepairStarting(false);
-    }
-  }, [suiteId, traceSourceIteration, testCase._id]);
-
-  const handleStopTraceRepairCase = useCallback(async () => {
-    if (
-      !traceRepairCaseJobView ||
-      typeof traceRepairCaseJobView !== "object" ||
-      !traceRepairCaseJobView.jobId
-    ) {
-      return;
-    }
-    await stopTraceRepair(String(traceRepairCaseJobView.jobId));
-  }, [traceRepairCaseJobView]);
-
-  const caseTitleByKey = useMemo(
-    () => ({
-      [testCase.caseKey ?? testCase._id]: testCase.title,
-    }),
-    [testCase.caseKey, testCase._id, testCase.title],
-  );
-
-  const traceRepairActiveBannerView =
-    traceRepairCaseJobActive &&
-    traceRepairCaseJobView &&
-    typeof traceRepairCaseJobView === "object"
-      ? {
-          jobId: String(traceRepairCaseJobView.jobId),
-          status: String(traceRepairCaseJobView.status),
-          phase: String(traceRepairCaseJobView.phase),
-          scope: "case" as const,
-          currentCaseKey: traceRepairCaseJobView.currentCaseKey ?? undefined,
-          activeCaseKeys: traceRepairCaseJobView.activeCaseKeys ?? [],
-          attemptLimit: traceRepairCaseJobView.attemptLimit,
-          provisionalAppliedCount:
-            traceRepairCaseJobView.provisionalAppliedCount,
-          durableFixCount: traceRepairCaseJobView.durableFixCount,
-          regressedCount: traceRepairCaseJobView.regressedCount,
-          serverLikelyCount: traceRepairCaseJobView.serverLikelyCount,
-          exhaustedCount: traceRepairCaseJobView.exhaustedCount,
-          promisingCount: traceRepairCaseJobView.promisingCount,
-          accuracyBefore: traceRepairCaseJobView.accuracyBefore ?? null,
-          accuracyAfter: traceRepairCaseJobView.accuracyAfter ?? null,
-        }
-      : null;
-
-  const latestTraceCaseOutcomeBanner =
-    latestTraceRepairCaseOutcome &&
-    typeof latestTraceRepairCaseOutcome === "object" &&
-    latestTraceRepairCaseOutcome.scope === "case"
-      ? {
-          ...latestTraceRepairCaseOutcome,
-          jobId: String(latestTraceRepairCaseOutcome.jobId),
-          status: String(latestTraceRepairCaseOutcome.status),
-          phase: String(latestTraceRepairCaseOutcome.phase),
-          scope: "case" as const,
-          stopReason: latestTraceRepairCaseOutcome.stopReason,
-          lastError: latestTraceRepairCaseOutcome.lastError,
-          completedAt: latestTraceRepairCaseOutcome.completedAt,
-          updatedAt: latestTraceRepairCaseOutcome.updatedAt,
-        }
-      : null;
 
   const latestCompletedRun = useMemo(
     () => pickLatestCompletedRun(runs),
@@ -304,54 +170,11 @@ export function TestCaseDetailView({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {suiteId && suiteSource === "ui" ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="gap-1.5"
-                    disabled={
-                      !traceRepairCaseEligible ||
-                      traceRepairStarting ||
-                      traceRepairCaseJobActive
-                    }
-                    onClick={() => void handleStartTraceRepairCase()}
-                  >
-                    {traceRepairStarting ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Footprints className="h-3.5 w-3.5" />
-                    )}
-                    Auto fix case
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>
-                {traceSourceIteration
-                  ? "Repair this case using its latest failed traced suite iteration."
-                  : "Needs a failed traced run"}
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
           <Button variant="ghost" size="icon" onClick={onBack}>
             <X className="h-4 w-4" />
           </Button>
         </div>
       </div>
-
-      {suiteId && suiteSource === "ui" ? (
-        <TraceRepairBanner
-          scope="case"
-          activeView={traceRepairActiveBannerView}
-          caseTitleByKey={caseTitleByKey}
-          onStop={handleStopTraceRepairCase}
-          latestOutcome={latestTraceCaseOutcomeBanner}
-          showTerminalOutcome
-        />
-      ) : null}
 
       {latestCompletedRun ? (
         <div className="rounded-lg border bg-card text-card-foreground p-3">

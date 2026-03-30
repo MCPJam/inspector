@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { useMemo } from "react";
 import {
   ChartContainer,
   ChartTooltip,
@@ -23,11 +23,8 @@ import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
 import { RunCaseInsightBlock } from "./run-case-insight-block";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
-import { TraceRepairBanner } from "./trace-repair-banner";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import { useTraceRepairState } from "./use-trace-repair-state";
-import { Button } from "@/components/ui/button";
-import { ExternalLink, Loader2 } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -360,44 +357,6 @@ export function RunDetailView({
   const hasRunBarCharts =
     selectedRunChartData.durationData.length > 0 || hasTokenData;
 
-  const failedTestTitleToCaseId = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const iter of caseGroupsForSelectedRun) {
-      if (computeIterationPassed(iter)) continue;
-      const id = iter.testCaseId;
-      const title = iter.testCaseSnapshot?.title;
-      if (id && title) m[title] = id;
-    }
-    return m;
-  }, [caseGroupsForSelectedRun]);
-
-  const loopCaseTitleByKey = useMemo(() => {
-    const m: Record<string, string> = {};
-    for (const iter of caseGroupsForSelectedRun) {
-      const key = iter.testCaseSnapshot?.caseKey ?? iter.testCaseId ?? iter._id;
-      const title = iter.testCaseSnapshot?.title;
-      if (title) m[key] = title;
-    }
-    return m;
-  }, [caseGroupsForSelectedRun]);
-
-  const {
-    traceRepairEligible,
-    traceRepairStarting,
-    traceRepairActiveBannerView,
-    latestTraceRepairOutcomeBanner,
-    handleStartTraceRepair,
-    handleStopTraceRepair,
-  } = useTraceRepairState({
-    mode: "run-detail",
-    suiteId: selectedRunDetails.suiteId,
-    sourceRunId: selectedRunDetails._id,
-    source: selectedRunDetails.source,
-    runStatus: selectedRunDetails.status,
-    failedIterationCount: computedStats.failed,
-    hasServerReplayConfig: selectedRunDetails.hasServerReplayConfig,
-  });
-
   return (
     <div
       className={cn(
@@ -421,11 +380,6 @@ export function RunDetailView({
             className="mb-4 text-xs text-muted-foreground"
             title={selectedRunDetails.replayedFromRunId}
           >
-            {selectedRunDetails.traceRepairJobId ? (
-              <span className="mr-2 rounded border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium text-foreground/90">
-                Auto fix
-              </span>
-            ) : null}
             Replay of{" "}
             <span className="font-mono text-foreground/90">
               Run {formatRunId(selectedRunDetails.replayedFromRunId)}
@@ -456,25 +410,8 @@ export function RunDetailView({
               </div>
               <div className="min-w-0 space-y-0.5">
                 <div className="text-xs text-muted-foreground">Failed</div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <div className="text-sm font-semibold tabular-nums">
-                    {computedStats.failed.toLocaleString()}
-                  </div>
-                  {traceRepairEligible ? (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-7 gap-1 text-[10px]"
-                      disabled={traceRepairStarting}
-                      onClick={() => void handleStartTraceRepair()}
-                    >
-                      {traceRepairStarting ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                      ) : null}
-                      Auto fix
-                    </Button>
-                  ) : null}
+                <div className="text-sm font-semibold tabular-nums">
+                  {computedStats.failed.toLocaleString()}
                 </div>
               </div>
               <div className="min-w-0 space-y-0.5">
@@ -623,20 +560,6 @@ export function RunDetailView({
           )}
         </div>
       </div>
-
-      <TraceRepairBanner
-        scope="suite"
-        className="mt-3"
-        activeView={traceRepairActiveBannerView}
-        caseTitleByKey={loopCaseTitleByKey}
-        onStop={handleStopTraceRepair}
-        latestOutcome={
-          latestTraceRepairOutcomeBanner?.scope === "suite"
-            ? latestTraceRepairOutcomeBanner
-            : null
-        }
-        showTerminalOutcome={false}
-      />
 
       {selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
         <RunInsightsPrimaryBlock
