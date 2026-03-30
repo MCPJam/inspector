@@ -39,6 +39,7 @@ import {
   CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
   getEffectiveServerClientCapabilities,
 } from "@/lib/client-config";
+import { buildPersistedServerPayload } from "@/lib/persisted-server-payload";
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
@@ -317,27 +318,7 @@ export function useServerState({
         (s) => s.name === serverName,
       );
 
-      const config = serverEntry.config as any;
-      const transportType = config?.command ? "stdio" : "http";
-      const url =
-        config?.url instanceof URL ? config.url.href : config?.url || undefined;
-      const headers = config?.requestInit?.headers || undefined;
-
-      const payload = {
-        name: serverName,
-        enabled: serverEntry.enabled ?? false,
-        transportType,
-        command: config?.command,
-        args: config?.args,
-        url,
-        headers,
-        timeout: config?.timeout,
-        useOAuth: serverEntry.useOAuth,
-        oauthScopes: serverEntry.oauthFlowProfile?.scopes
-          ? serverEntry.oauthFlowProfile.scopes.split(",").filter(Boolean)
-          : undefined,
-        clientId: serverEntry.oauthFlowProfile?.clientId,
-      } as const;
+      const payload = buildPersistedServerPayload(serverName, serverEntry);
 
       try {
         if (existingServer) {
