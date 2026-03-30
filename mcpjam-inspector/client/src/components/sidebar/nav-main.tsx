@@ -91,6 +91,7 @@ export function NavMain({
         onExpand={learnMore.onExpand}
         triggerTooltip={!sidebarOpen ? item.title : undefined}
         triggerTooltipDelayMs={!sidebarOpen ? 1000 : undefined}
+        disabledMessage={item.disabled ? item.disabledTooltip : undefined}
       >
         {child}
       </LearnMoreHoverCard>
@@ -124,14 +125,22 @@ export function NavMain({
             );
 
             if (item.disabled) {
+              if (shouldShowHoverCard(item)) {
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    {wrapWithHoverCard(
+                      item,
+                      <div className="w-full cursor-not-allowed">{button}</div>,
+                    )}
+                  </SidebarMenuItem>
+                );
+              }
+
               return (
                 <SidebarMenuItem key={item.title}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div
-                        className="w-full cursor-not-allowed"
-                        title={item.disabledTooltip}
-                      >
+                      <div className="w-full cursor-not-allowed">
                         {button}
                       </div>
                     </TooltipTrigger>
