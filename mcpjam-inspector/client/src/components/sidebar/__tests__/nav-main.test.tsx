@@ -27,8 +27,13 @@ vi.mock("@/components/ui/tooltip", () => ({
 }));
 
 vi.mock("@/components/learn-more/LearnMoreHoverCard", () => ({
-  LearnMoreHoverCard: ({ tabId, children }: any) => (
-    <div data-testid={`learn-more-${tabId}`}>{children}</div>
+  LearnMoreHoverCard: ({ tabId, children, disabledMessage }: any) => (
+    <div data-testid={`learn-more-${tabId}`}>
+      {disabledMessage && (
+        <span data-testid="disabled-message">{disabledMessage}</span>
+      )}
+      {children}
+    </div>
   ),
 }));
 
@@ -41,7 +46,7 @@ describe("NavMain", () => {
     mockSidebarOpen = true;
   });
 
-  it("keeps disabled items visible without allowing navigation", () => {
+  it("shows learn-more hover card for disabled items with learn-more content", () => {
     const onItemClick = vi.fn();
 
     render(
@@ -56,17 +61,67 @@ describe("NavMain", () => {
           },
         ]}
         onItemClick={onItemClick}
+        learnMore={{ onExpand: vi.fn() }}
       />,
     );
 
-    expect(screen.getByTitle(HOSTED_LOCAL_ONLY_TOOLTIP)).toBeInTheDocument();
-    expect(screen.getByText(HOSTED_LOCAL_ONLY_TOOLTIP)).toBeInTheDocument();
+    // Should show learn-more hover card with disabled message
+    expect(screen.getByTestId("learn-more-skills")).toBeInTheDocument();
+    expect(screen.getByTestId("disabled-message")).toHaveTextContent(
+      HOSTED_LOCAL_ONLY_TOOLTIP,
+    );
+    // No native title attribute (double tooltip fix)
+    expect(
+      screen.queryByTitle(HOSTED_LOCAL_ONLY_TOOLTIP),
+    ).not.toBeInTheDocument();
 
     const button = screen.getByRole("button", { name: "Skills" });
     expect(button).toHaveAttribute("aria-disabled", "true");
 
     fireEvent.click(button);
     expect(onItemClick).not.toHaveBeenCalled();
+  });
+
+  it("shows plain tooltip for disabled items without learn-more content", () => {
+    render(
+      <NavMain
+        items={[
+          {
+            title: "SomeDisabled",
+            url: "#no-learn-more",
+            icon: FakeIcon,
+            disabled: true,
+            disabledTooltip: "Not available",
+          },
+        ]}
+        learnMore={{ onExpand: vi.fn() }}
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("learn-more-no-learn-more"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Not available")).toBeInTheDocument();
+    expect(screen.queryByTitle("Not available")).not.toBeInTheDocument();
+  });
+
+  it("falls back to tooltip for disabled items when learnMore is not provided", () => {
+    render(
+      <NavMain
+        items={[
+          {
+            title: "Skills",
+            url: "#skills",
+            icon: FakeIcon,
+            disabled: true,
+            disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.queryByTestId("learn-more-skills")).not.toBeInTheDocument();
+    expect(screen.getByText(HOSTED_LOCAL_ONLY_TOOLTIP)).toBeInTheDocument();
   });
 
   it("still handles clicks for enabled items", () => {
