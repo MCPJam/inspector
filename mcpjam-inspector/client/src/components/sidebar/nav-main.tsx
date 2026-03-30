@@ -6,6 +6,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import {
   Tooltip,
@@ -13,6 +14,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { learnMoreContent } from "@/lib/learn-more-content";
+import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
 
 interface GuideBubble {
   message: string;
@@ -29,18 +32,27 @@ interface NavMainItem {
   disabledTooltip?: string;
 }
 
+interface LearnMoreProps {
+  onExpand: (tabId: string, sourceRect?: DOMRect | null) => void;
+}
+
 interface NavMainProps {
   items: NavMainItem[];
   onItemClick?: (url: string) => void;
   /** Show a guide bubble on the App Builder item */
   appBuilderBubble?: GuideBubble | null;
+  /** Learn more hover card integration */
+  learnMore?: LearnMoreProps | null;
 }
 
 export function NavMain({
   items,
   onItemClick,
   appBuilderBubble,
+  learnMore,
 }: NavMainProps) {
+  const { open: sidebarOpen } = useSidebar();
+
   const handleClick = (url: string) => {
     if (onItemClick) {
       onItemClick(url);
@@ -62,6 +74,30 @@ export function NavMain({
           : "cursor-pointer",
     );
 
+  const shouldShowHoverCard = (item: NavMainItem): boolean => {
+    if (!learnMore) return false;
+    if (shouldShowBubble(item)) return false;
+    const tabId = item.url.replace("#", "");
+    const entry = learnMoreContent[tabId];
+    return !!entry?.previewVideoUrl;
+  };
+
+  const wrapWithHoverCard = (item: NavMainItem, child: React.ReactNode) => {
+    if (!shouldShowHoverCard(item) || !learnMore) return child;
+    const tabId = item.url.replace("#", "");
+    return (
+      <LearnMoreHoverCard
+        tabId={tabId}
+        onExpand={learnMore.onExpand}
+        triggerTooltip={!sidebarOpen ? item.title : undefined}
+        triggerTooltipDelayMs={!sidebarOpen ? 1000 : undefined}
+        disabledMessage={item.disabled ? item.disabledTooltip : undefined}
+      >
+        {child}
+      </LearnMoreHoverCard>
+    );
+  };
+
   return (
     <SidebarGroup>
       <SidebarGroupContent>
@@ -69,7 +105,12 @@ export function NavMain({
           {items.map((item) => {
             const button = (
               <SidebarMenuButton
-                tooltip={!item.disabled ? item.title : undefined}
+                tooltip={
+                  !item.disabled &&
+                  (!shouldShowHoverCard(item) || sidebarOpen)
+                    ? item.title
+                    : undefined
+                }
                 isActive={!item.disabled && isItemActive(item)}
                 onClick={
                   item.disabled ? undefined : () => handleClick(item.url)
@@ -84,14 +125,22 @@ export function NavMain({
             );
 
             if (item.disabled) {
+              if (shouldShowHoverCard(item)) {
+                return (
+                  <SidebarMenuItem key={item.title}>
+                    {wrapWithHoverCard(
+                      item,
+                      <div className="w-full cursor-not-allowed">{button}</div>,
+                    )}
+                  </SidebarMenuItem>
+                );
+              }
+
               return (
                 <SidebarMenuItem key={item.title}>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div
-                        className="w-full cursor-not-allowed"
-                        title={item.disabledTooltip}
-                      >
+                      <div className="w-full cursor-not-allowed">
                         {button}
                       </div>
                     </TooltipTrigger>
@@ -109,10 +158,10 @@ export function NavMain({
               <SidebarMenuItem key={item.title}>
                 {shouldShowBubble(item) ? (
                   <GuideBubbleWrapper guideBubble={appBuilderBubble!}>
-                    {button}
+                    {wrapWithHoverCard(item, button)}
                   </GuideBubbleWrapper>
                 ) : (
-                  button
+                  wrapWithHoverCard(item, button)
                 )}
               </SidebarMenuItem>
             );
