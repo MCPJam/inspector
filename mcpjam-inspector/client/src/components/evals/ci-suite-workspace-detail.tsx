@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { cn } from "@/lib/utils";
 import {
   navigateToCiEvalsRoute,
   type CiEvalsRoute,
@@ -109,40 +110,46 @@ export function CiSuiteWorkspaceDetail({
     [],
   );
 
+  const isRunDetailView = route.type === "run-detail";
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 pb-6 pt-6">
-        <SuiteIterationsView
-          suite={suite}
-          cases={cases}
-          iterations={iterations}
-          allIterations={allIterations}
-          runs={runs}
-          runsLoading={runsLoading}
-          aggregate={aggregate}
-          runDetailSortByOverride={runDetailSortByOverride}
-          onRunDetailSortByChange={onRunDetailSortByChange}
-          omitRunIterationList={omitRunIterationList}
-          onRerun={onRerun}
-          onReplayRun={onReplayRun}
-          onCancelRun={onCancelRun}
-          onDelete={onDelete}
-          onDeleteRun={onDeleteRun}
-          onDirectDeleteRun={onDirectDeleteRun}
-          connectedServerNames={connectedServerNames}
-          rerunningSuiteId={rerunningSuiteId}
-          replayingRunId={replayingRunId}
-          cancellingRunId={cancellingRunId}
-          deletingSuiteId={deletingSuiteId}
-          deletingRunId={deletingRunId}
-          availableModels={availableModels}
-          route={route}
-          userMap={userMap}
-          navigation={navigation}
-          canDeleteRuns={canDeleteRuns}
-          readOnlyConfig={readOnlyConfig}
-        />
-      </div>
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+        isRunDetailView ? "px-4 pb-4 pt-4" : "px-6 pb-6 pt-6",
+      )}
+    >
+      <SuiteIterationsView
+        suite={suite}
+        cases={cases}
+        iterations={iterations}
+        allIterations={allIterations}
+        runs={runs}
+        runsLoading={runsLoading}
+        aggregate={aggregate}
+        runDetailSortByOverride={runDetailSortByOverride}
+        onRunDetailSortByChange={onRunDetailSortByChange}
+        omitRunIterationList={omitRunIterationList}
+        onRerun={onRerun}
+        onReplayRun={onReplayRun}
+        onCancelRun={onCancelRun}
+        onDelete={onDelete}
+        onDeleteRun={onDeleteRun}
+        onDirectDeleteRun={onDirectDeleteRun}
+        connectedServerNames={connectedServerNames}
+        rerunningSuiteId={rerunningSuiteId}
+        replayingRunId={replayingRunId}
+        cancellingRunId={cancellingRunId}
+        deletingSuiteId={deletingSuiteId}
+        deletingRunId={deletingRunId}
+        availableModels={availableModels}
+        route={route}
+        userMap={userMap}
+        navigation={navigation}
+        canDeleteRuns={canDeleteRuns}
+        readOnlyConfig={readOnlyConfig}
+        omitSuiteHeader
+      />
     </div>
   );
 }

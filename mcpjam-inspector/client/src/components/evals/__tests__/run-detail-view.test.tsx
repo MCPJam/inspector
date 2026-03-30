@@ -214,7 +214,9 @@ describe("RunDetailView", () => {
         onSelectIteration={() => {}}
       />,
     );
-    expect(screen.getByText("Case insight")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("run-case-insight-trace-caption"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Matched case summary text")).toBeVisible();
   });
 
@@ -259,10 +261,12 @@ describe("RunDetailView", () => {
         onSelectIteration={() => {}}
       />,
     );
-    expect(screen.getByText("Case insight")).toBeInTheDocument();
     expect(
-      screen.getByText("No notable change in the last two runs."),
-    ).toBeVisible();
+      screen.queryByTestId("run-case-insight-trace-caption"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("No notable change in the last two runs."),
+    ).not.toBeInTheDocument();
   });
 
   it("shows generating state when run insights are pending", () => {
@@ -283,11 +287,9 @@ describe("RunDetailView", () => {
         onSelectIteration={() => {}}
       />,
     );
-    const caseCard =
-      screen.getByText("Case insight").parentElement?.parentElement;
-    expect(caseCard).toBeTruthy();
+    const caption = screen.getByTestId("run-case-insight-trace-caption");
     expect(
-      within(caseCard as HTMLElement).getByText("Generating insights…"),
+      within(caption).getByText("Generating insights…"),
     ).toBeVisible();
   });
 
@@ -348,6 +350,8 @@ describe("RunDetailView", () => {
         onSelectIteration={() => {}}
       />,
     );
-    expect(screen.queryByText("Case insight")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("run-case-insight-trace-caption"),
+    ).not.toBeInTheDocument();
   });
 });

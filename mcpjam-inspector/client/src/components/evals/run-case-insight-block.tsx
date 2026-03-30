@@ -1,12 +1,38 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { EvalCaseInsightRow } from "./run-insight-helpers";
-import { formatRunInsightStatusLabel } from "./run-insight-helpers";
 import type { EvalSuiteRun } from "./types";
 
-export function RunCaseInsightBlock({
+const CAPTION_TEST_ID = "run-case-insight-trace-caption";
+
+export function shouldOmitRunCaseInsightCaption({
+  runStatus,
+  caseInsight,
+  pending,
+  requested,
+  failedGeneration,
+  error,
+}: {
+  runStatus: EvalSuiteRun["status"];
+  caseInsight: EvalCaseInsightRow | null;
+  pending: boolean;
+  requested: boolean;
+  failedGeneration: boolean;
+  error: string | null;
+}) {
+  return (
+    runStatus === "completed" &&
+    !pending &&
+    !requested &&
+    !error &&
+    !failedGeneration &&
+    caseInsight == null
+  );
+}
+
+/** Plain caption for under the trace toolbar (no card). Returns null when there is nothing notable to show. */
+export function RunCaseInsightTraceCaption({
   runStatus,
   caseInsight,
   pending,
@@ -14,7 +40,6 @@ export function RunCaseInsightBlock({
   failedGeneration,
   error,
   className,
-  prominent = false,
 }: {
   runStatus: EvalSuiteRun["status"];
   caseInsight: EvalCaseInsightRow | null;
@@ -23,11 +48,9 @@ export function RunCaseInsightBlock({
   failedGeneration: boolean;
   error: string | null;
   className?: string;
-  /** Stronger visual hierarchy when showing a selected iteration’s insight. */
-  prominent?: boolean;
 }) {
-  const bodyMuted = prominent ? "text-sm text-muted-foreground" : "text-xs text-muted-foreground";
-  const bodyDestructive = prominent ? "text-sm text-destructive" : "text-xs text-destructive";
+  const bodyMuted = "text-xs text-muted-foreground";
+  const bodyDestructive = "text-xs text-destructive";
 
   let body: ReactNode;
   if (runStatus !== "completed") {
@@ -38,12 +61,7 @@ export function RunCaseInsightBlock({
     );
   } else if (requested || pending) {
     body = (
-      <span
-        className={cn(
-          "flex items-center gap-2 text-muted-foreground",
-          prominent ? "text-sm" : "text-xs",
-        )}
-      >
+      <span className={cn("flex items-center gap-2 text-xs text-muted-foreground")}>
         <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
         Generating insights…
       </span>
@@ -58,53 +76,16 @@ export function RunCaseInsightBlock({
     );
   } else if (caseInsight) {
     body = (
-      <div className="space-y-2">
-        {caseInsight.status ? (
-          <Badge variant="outline" className="text-[10px] font-normal">
-            {formatRunInsightStatusLabel(caseInsight.status)}
-          </Badge>
-        ) : null}
-        <p
-          className={cn(
-            "leading-relaxed text-foreground",
-            prominent ? "text-sm" : "text-xs",
-          )}
-        >
-          {caseInsight.summary}
-        </p>
-      </div>
-    );
-  } else {
-    body = (
-      <p
-        className={cn(
-          "text-muted-foreground",
-          prominent ? "text-sm" : "text-xs",
-        )}
-      >
-        No notable change in the last two runs.
+      <p className="text-xs leading-relaxed text-foreground">
+        {caseInsight.summary}
       </p>
     );
+  } else {
+    return null;
   }
 
   return (
-    <div
-      className={cn(
-        "rounded-md border px-3 py-2",
-        prominent
-          ? "border-primary/25 bg-primary/[0.06] py-3 shadow-sm dark:bg-primary/10"
-          : "border-border/80 bg-card/50",
-        className,
-      )}
-    >
-      <div
-        className={cn(
-          "mb-1.5 text-foreground",
-          prominent ? "text-sm font-semibold" : "text-xs font-medium",
-        )}
-      >
-        Case insight
-      </div>
+    <div className={cn(className)} data-testid={CAPTION_TEST_ID}>
       {body}
     </div>
   );

@@ -1,30 +1,50 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import {
   AlertCircle,
   Brain,
   ChevronDown,
   ChevronRight,
-  Expand,
+  Copy,
   Layers,
   ListTree,
+  Maximize2,
   MessageSquareQuote,
-  Shrink,
+  Minus,
+  Plus,
   Wrench,
 } from "lucide-react";
+import { toast } from "sonner";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
+import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { JsonEditor } from "@/components/ui/json-editor";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
+import { RecordedTraceToolbar, type TimelineFilter } from "./recorded-trace-toolbar";
 
-const LABEL_W = 320;
-const TIMELINE_W = 780;
 const TICKS = [0, 25, 50, 75, 100];
-const FILTERS = ["all", "llm", "tool", "error"] as const;
 
-type TimelineFilter = (typeof FILTERS)[number];
+export type { TimelineFilter };
 
 type TranscriptMessage = {
   role: string;
@@ -370,7 +390,54 @@ function getCategoryClasses(category: EvalTraceSpanCategory): {
   }
 }
 
-function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
+function getCategoryIconClass(
+  category: EvalTraceSpanCategory | "prompt",
+): string {
+  switch (category) {
+    case "prompt":
+      return "text-violet-600 dark:text-violet-400";
+    case "step":
+      return "text-slate-600 dark:text-slate-300";
+    case "llm":
+      return "text-blue-600 dark:text-blue-400";
+    case "tool":
+      return "text-amber-600 dark:text-amber-400";
+    case "error":
+      return "text-red-600 dark:text-red-400";
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function getRowBorderAccentClass(
+  row: TimelineRow,
+  spanShowsFailure: boolean,
+): string {
+  if (row.kind === "prompt") {
+    return "border-l-violet-500";
+  }
+  const cat = spanShowsFailure ? "error" : row.span.category;
+  switch (cat) {
+    case "llm":
+      return "border-l-blue-500";
+    case "tool":
+      return "border-l-amber-500";
+    case "error":
+      return "border-l-red-500";
+    case "step":
+      return "border-l-slate-500";
+    default:
+      return "border-l-muted-foreground";
+  }
+}
+
+function truncateIdForBadge(id: string, maxLen = 22): string {
+  if (id.length <= maxLen) return id;
+  const keep = maxLen - 1;
+  return `${id.slice(0, keep)}…`;
+}
+
+export function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
   const spansByPrompt = new Map<number, EvalTraceSpan[]>();
   for (const span of spans) {
     const promptIndex =
@@ -454,7 +521,9 @@ function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
     });
 }
 
-function collectStepSpanIdsWithChildren(groups: PromptGroup[]): Set<string> {
+export function collectStepSpanIdsWithChildren(
+  groups: PromptGroup[],
+): Set<string> {
   const ids = new Set<string>();
   function walk(nodes: TraceNode[]) {
     for (const node of nodes) {
@@ -628,10 +697,15 @@ function toolSubtitleFromTranscript(
 
 function CategoryGlyph({
   category,
+  size = "sm",
 }: {
   category: EvalTraceSpanCategory | "prompt";
+  size?: "sm" | "lg";
 }) {
-  const iconClass = "h-3.5 w-3.5 shrink-0 text-muted-foreground";
+  const iconClass = cn(
+    size === "lg" ? "h-5 w-5 shrink-0" : "h-3.5 w-3.5 shrink-0",
+    getCategoryIconClass(category),
+  );
   switch (category) {
     case "prompt":
       return <Layers className={iconClass} aria-hidden />;
@@ -674,12 +748,23 @@ function deriveSpanLabel(
   const modelHint = span.modelId?.trim()
     ? truncateRowSubtitle(span.modelId.trim(), 56)
     : undefined;
+  const rawName = span.name?.trim() ?? "";
 
   if (span.category === "step") {
     const stepNumber =
-      typeof span.stepIndex === "number" ? span.stepIndex + 1 : span.name;
+      typeof span.stepIndex === "number" ? span.stepIndex + 1 : undefined;
+    const defaultTitle =
+      typeof stepNumber === "number"
+        ? `Step ${stepNumber}`
+        : rawName || "Step";
+    const genericName =
+      typeof stepNumber === "number" &&
+      (rawName === `Step ${stepNumber}` ||
+        rawName.toLowerCase() === `step ${stepNumber}`);
     const title =
-      typeof stepNumber === "number" ? `Step ${stepNumber}` : String(span.name);
+      rawName && !genericName
+        ? truncateRowSubtitle(rawName, 64)
+        : defaultTitle;
     const preview = promptPreviewForLlmSpan(transcriptMessages, span);
     if (preview) {
       return { title, subtitle: preview };
@@ -692,14 +777,23 @@ function deriveSpanLabel(
 
   if (span.category === "llm") {
     const preview = promptPreviewForLlmSpan(transcriptMessages, span);
+    const genericLlmName =
+      !rawName ||
+      /^assistant$/i.test(rawName) ||
+      /^llm$/i.test(rawName) ||
+      /^model$/i.test(rawName) ||
+      rawName === "Model response";
+    const title = genericLlmName
+      ? "Model response"
+      : truncateRowSubtitle(rawName, 64);
     if (preview) {
       return {
-        title: "Model response",
+        title,
         subtitle: modelHint ? `${preview} · ${modelHint}` : preview,
       };
     }
     return {
-      title: "Model response",
+      title,
       subtitle: modelHint ?? `Prompt ${promptIndex + 1}`,
     };
   }
@@ -748,6 +842,54 @@ function getRowTiming(row: TimelineRow): {
   };
 }
 
+type PayloadVisualFormat = "tree" | "plain" | "markdown";
+
+function PayloadFormatToggles({
+  valueKind,
+  format,
+  onFormatChange,
+}: {
+  valueKind: "string" | "json";
+  format: PayloadVisualFormat;
+  onFormatChange: (next: PayloadVisualFormat) => void;
+}) {
+  if (valueKind === "string") {
+    return (
+      <div className="flex flex-wrap gap-1">
+        {(["plain", "markdown"] as const).map((key) => (
+          <Button
+            key={key}
+            type="button"
+            size="sm"
+            variant={format === key ? "secondary" : "outline"}
+            className="h-7 text-[10px] capitalize"
+            onClick={() => onFormatChange(key)}
+          >
+            {key === "plain" ? "Plain" : "Markdown"}
+          </Button>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap gap-1">
+      {(["tree", "plain"] as const).map((key) => (
+        <Button
+          key={key}
+          type="button"
+          size="sm"
+          variant={format === key ? "secondary" : "outline"}
+          className="h-7 text-[10px] capitalize"
+          onClick={() => onFormatChange(key)}
+        >
+          {key === "tree" ? "JSON" : "Plain"}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 function PayloadPreview({
   value,
   height = "180px",
@@ -755,6 +897,15 @@ function PayloadPreview({
   value: unknown;
   height?: string;
 }) {
+  const valueKind = typeof value === "string" ? "string" : "json";
+  const [format, setFormat] = useState<PayloadVisualFormat>(() =>
+    valueKind === "string" ? "plain" : "tree",
+  );
+
+  useEffect(() => {
+    setFormat(valueKind === "string" ? "plain" : "tree");
+  }, [value, valueKind]);
+
   if (value == null) {
     return (
       <div className="rounded-md border border-dashed border-border/60 px-3 py-2 text-xs text-muted-foreground">
@@ -764,16 +915,55 @@ function PayloadPreview({
   }
 
   if (typeof value === "string") {
+    const body =
+      format === "markdown" ? (
+        <div className="max-h-44 overflow-auto rounded-md border border-border/60 bg-muted/10 p-3 text-xs leading-relaxed text-foreground">
+          <MemoizedMarkdown content={value} />
+        </div>
+      ) : (
+        <pre className="max-h-44 overflow-auto rounded-md border border-border/60 bg-muted/20 p-3 text-xs whitespace-pre-wrap break-words">
+          {value}
+        </pre>
+      );
+
     return (
-      <pre className="max-h-44 overflow-auto rounded-md border border-border/60 bg-muted/20 p-3 text-xs whitespace-pre-wrap break-words">
-        {value}
-      </pre>
+      <div className="space-y-2">
+        <PayloadFormatToggles
+          valueKind="string"
+          format={format === "markdown" ? "markdown" : "plain"}
+          onFormatChange={setFormat}
+        />
+        {body}
+      </div>
     );
   }
 
+  const plainText = (() => {
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
+  })();
+
   return (
-    <div className="overflow-hidden rounded-md border border-border/60 bg-background">
-      <JsonEditor height={height} viewOnly value={value} />
+    <div className="space-y-2">
+      <PayloadFormatToggles
+        valueKind="json"
+        format={format === "plain" ? "plain" : "tree"}
+        onFormatChange={(next) =>
+          setFormat(next === "plain" ? "plain" : "tree")
+        }
+      />
+      {format === "plain" ? (
+        <pre className="max-h-44 overflow-auto rounded-md border border-border/60 bg-muted/20 p-3 text-xs whitespace-pre-wrap break-words">
+          {plainText}
+        </pre>
+      ) : (
+        <div className="overflow-hidden rounded-md border border-border/60 bg-background">
+          <JsonEditor height={height} viewOnly value={value} />
+        </div>
+      )}
     </div>
   );
 }
@@ -789,9 +979,22 @@ function TimelineDetailPane({
 }) {
   if (!row) {
     return (
-      <div className="rounded-lg border border-border/50 bg-muted/10 p-4 text-xs text-muted-foreground">
-        Select a prompt, step, or child row to inspect timing and transcript
-        context.
+      <div
+        data-testid="trace-detail-pane"
+        className="flex min-h-[280px] flex-col items-center justify-center gap-3 rounded-lg bg-muted/5 px-6 py-12 text-center"
+      >
+        <div className="flex h-14 w-14 items-center justify-center rounded-full border border-border/50 bg-background shadow-sm">
+          <Layers
+            className="h-7 w-7 text-muted-foreground"
+            aria-hidden
+          />
+        </div>
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-foreground">No span selected</p>
+          <p className="text-xs text-muted-foreground">
+            Click a row or use arrow keys
+          </p>
+        </div>
       </div>
     );
   }
@@ -883,138 +1086,155 @@ function TimelineDetailPane({
 
   const showIoTabs = row.kind === "span";
 
-  return (
-    <div
-      data-testid="trace-detail-pane"
-      className="space-y-4 rounded-lg border border-border/50 bg-background p-4"
-    >
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          {row.kind === "prompt" ? (
-            <CategoryGlyph category="prompt" />
-          ) : (
-            <CategoryGlyph category={detailGlyphCategory} />
-          )}
-          {status === "error" ? (
-            <span
-              className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
-              title="Error"
-              aria-label="Error"
-            />
-          ) : null}
-        </div>
-        <div>
-          <h3 className="text-sm font-semibold text-foreground">{label}</h3>
-          {subtitle ? (
-            <p className="text-xs text-muted-foreground">{subtitle}</p>
-          ) : null}
-        </div>
-      </div>
+  async function handleCopySpanId(spanId: string) {
+    try {
+      await navigator.clipboard.writeText(spanId);
+      toast.success("Span id copied");
+    } catch {
+      toast.error("Could not copy span id");
+    }
+  }
 
-      <div className="flex flex-col gap-3 text-xs">
-        <div className="rounded-md border border-border/50 bg-muted/10 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Duration
+  const hasTokenStats =
+    row.kind === "span" &&
+    (typeof row.span.inputTokens === "number" ||
+      typeof row.span.outputTokens === "number" ||
+      typeof row.span.totalTokens === "number");
+
+  return (
+    <div data-testid="trace-detail-pane" className="space-y-4 bg-background p-4">
+      <div className="space-y-3 border-b border-border/40 pb-3">
+        <div className="flex gap-3">
+          <div className="shrink-0 pt-0.5">
+            {row.kind === "prompt" ? (
+              <CategoryGlyph category="prompt" size="lg" />
+            ) : (
+              <CategoryGlyph category={detailGlyphCategory} size="lg" />
+            )}
           </div>
-          <div className="mt-1 font-medium text-foreground">
-            {formatDuration(durationMs)}
-          </div>
-          <div className="mt-1 text-muted-foreground">
-            {formatOffset(startMs)} to {formatOffset(endMs)}
-          </div>
-        </div>
-        <div className="rounded-md border border-border/50 bg-muted/10 p-3">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Transcript indices
-          </div>
-          <div className="mt-1 font-medium text-foreground">
-            {transcriptRange
-              ? `${transcriptRange.startIndex} to ${transcriptRange.endIndex}`
-              : "No message range"}
-          </div>
-          <div className="mt-1 text-muted-foreground">
-            Prompt {promptIndex + 1}
-          </div>
-        </div>
-        {row.kind === "span" && row.span.modelId ? (
-          <div className="rounded-md border border-border/50 bg-muted/10 p-3">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Model
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <h3 className="text-sm font-bold leading-tight text-foreground">
+                {label}
+              </h3>
+              {status === "error" ? (
+                <span
+                  className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                  title="Error"
+                  aria-label="Error"
+                />
+              ) : null}
+              {row.kind === "span" && row.span.modelId ? (
+                <Badge
+                  variant="outline"
+                  className="max-w-[min(100%,14rem)] truncate text-[10px] font-medium text-foreground"
+                  title={row.span.modelId}
+                >
+                  {row.span.modelId}
+                </Badge>
+              ) : null}
+              {row.kind === "span" && row.span.toolName ? (
+                <span className="inline-flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
+                  <Wrench className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
+                  <span className="font-medium text-foreground">
+                    {row.span.toolName}
+                  </span>
+                  {row.span.serverId ? (
+                    <span className="text-muted-foreground">
+                      · {row.span.serverId}
+                    </span>
+                  ) : null}
+                </span>
+              ) : null}
             </div>
-            <div className="mt-1 font-medium text-foreground">
-              {row.span.modelId}
+            {subtitle ? (
+              <p className="text-xs text-muted-foreground">{subtitle}</p>
+            ) : null}
+
+            <div className="flex flex-wrap items-center gap-1.5">
+              <Badge variant="secondary" className="tabular-nums font-normal">
+                <span className="font-medium">{formatDuration(durationMs)}</span>
+                <span className="text-muted-foreground">
+                  {" "}
+                  · {formatOffset(startMs)} – {formatOffset(endMs)}
+                </span>
+              </Badge>
+              {row.kind === "prompt" ? (
+                <>
+                  <Badge
+                    variant="outline"
+                    className="border-slate-400/50 bg-slate-500/5 text-[10px] font-normal text-slate-800 dark:text-slate-200"
+                  >
+                    {row.counts.step} step{row.counts.step === 1 ? "" : "s"}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="border-blue-400/50 bg-blue-500/5 text-[10px] font-normal text-blue-800 dark:text-blue-200"
+                  >
+                    {row.counts.llm} LLM
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="border-amber-400/50 bg-amber-500/5 text-[10px] font-normal text-amber-900 dark:text-amber-200"
+                  >
+                    {row.counts.tool} tool{row.counts.tool === 1 ? "" : "s"}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="border-red-400/50 bg-red-500/5 text-[10px] font-normal text-red-800 dark:text-red-200"
+                  >
+                    {row.counts.error} error{row.counts.error === 1 ? "" : "s"}
+                  </Badge>
+                </>
+              ) : hasTokenStats ? (
+                <>
+                  {typeof row.span.inputTokens === "number" ? (
+                    <Badge variant="outline" className="tabular-nums text-[10px] font-normal">
+                      {row.span.inputTokens} in
+                    </Badge>
+                  ) : null}
+                  {typeof row.span.outputTokens === "number" ? (
+                    <Badge variant="outline" className="tabular-nums text-[10px] font-normal">
+                      {row.span.outputTokens} out
+                    </Badge>
+                  ) : null}
+                  {typeof row.span.totalTokens === "number" ? (
+                    <Badge variant="outline" className="tabular-nums text-[10px] font-normal">
+                      {row.span.totalTokens} total
+                    </Badge>
+                  ) : null}
+                </>
+              ) : null}
             </div>
-          </div>
-        ) : null}
-        {row.kind === "span" && row.span.toolName ? (
-          <div className="rounded-md border border-border/50 bg-muted/10 p-3">
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Tool
-            </div>
-            <div className="mt-1 font-medium text-foreground">
-              {row.span.toolName}
-            </div>
-            {row.span.serverId ? (
-              <div className="mt-1 text-muted-foreground">
-                Server {row.span.serverId}
-              </div>
+
+            {row.kind === "span" ? (
+              <Badge
+                variant="outline"
+                data-testid="trace-detail-copy-span-id"
+                className="max-w-full cursor-pointer gap-1 font-mono text-[10px] font-normal"
+                title={row.span.id}
+                onClick={() => void handleCopySpanId(row.span.id)}
+              >
+                <Copy className="size-3 shrink-0" aria-hidden />
+                <span className="min-w-0 truncate">
+                  {truncateIdForBadge(row.span.id)}
+                </span>
+              </Badge>
             ) : null}
           </div>
-        ) : null}
+        </div>
       </div>
-
-      {row.kind === "prompt" ? (
-        <div className="rounded-md border border-border/50 bg-muted/10 p-3 text-xs text-muted-foreground">
-          {row.counts.step} step{row.counts.step === 1 ? "" : "s"} ·{" "}
-          {row.counts.llm} LLM · {row.counts.tool} tool
-          {row.counts.tool === 1 ? "" : "s"} · {row.counts.error} error
-          {row.counts.error === 1 ? "" : "s"}
-        </div>
-      ) : null}
-
-      {row.kind === "span" &&
-      (typeof row.span.inputTokens === "number" ||
-        typeof row.span.outputTokens === "number" ||
-        typeof row.span.totalTokens === "number") ? (
-        <div className="rounded-md border border-border/50 bg-muted/10 p-3 text-xs">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Tokens
-          </div>
-          <div className="mt-1 text-foreground">
-            {typeof row.span.inputTokens === "number"
-              ? `${row.span.inputTokens} in`
-              : "no input"}{" "}
-            ·{" "}
-            {typeof row.span.outputTokens === "number"
-              ? `${row.span.outputTokens} out`
-              : "no output"}{" "}
-            ·{" "}
-            {typeof row.span.totalTokens === "number"
-              ? `${row.span.totalTokens} total`
-              : "no total"}
-          </div>
-        </div>
-      ) : null}
 
       {showIoTabs ? (
         <Tabs defaultValue="input" className="w-full gap-3">
-          <TabsList className="flex h-auto w-full flex-col items-stretch gap-1 p-1">
-            <TabsTrigger
-              value="input"
-              className="h-8 w-full flex-none justify-start px-3 text-xs"
-            >
+          <TabsList className="grid h-9 w-full grid-cols-3 p-1">
+            <TabsTrigger value="input" className="text-xs">
               Input
             </TabsTrigger>
-            <TabsTrigger
-              value="output"
-              className="h-8 w-full flex-none justify-start px-3 text-xs"
-            >
+            <TabsTrigger value="output" className="text-xs">
               Output
             </TabsTrigger>
-            <TabsTrigger
-              value="transcript"
-              className="h-8 w-full flex-none justify-start px-3 text-xs"
-            >
+            <TabsTrigger value="transcript" className="text-xs">
               Transcript
             </TabsTrigger>
           </TabsList>
@@ -1102,6 +1322,26 @@ function TimelineDetailPane({
         </>
       )}
 
+      <Collapsible className="group rounded-md border border-border/50 bg-muted/5">
+        <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-foreground hover:bg-muted/20">
+          Advanced
+          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-2 border-t border-border/40 px-3 py-3 text-xs">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Transcript indices
+            </div>
+            <div className="mt-0.5 font-medium text-foreground">
+              {transcriptRange
+                ? `${transcriptRange.startIndex}–${transcriptRange.endIndex}`
+                : "No message range"}
+            </div>
+          </div>
+          <div className="text-muted-foreground">Prompt {promptIndex + 1}</div>
+        </CollapsibleContent>
+      </Collapsible>
+
       {row.kind === "span" &&
       (row.span.category === "error" || toolData.errorText) ? (
         <div className="space-y-2">
@@ -1123,6 +1363,18 @@ export interface TraceTimelineProps {
   transcriptMessageCount?: number;
   transcriptMessages?: TranscriptMessage[];
   onRevealInTranscript?: (range: TranscriptRange) => void;
+  /** When true, timeline does not render the recorded toolbar (host provides it). */
+  hideToolbar?: boolean;
+  timelineFilter?: TimelineFilter;
+  onTimelineFilterChange?: (filter: TimelineFilter) => void;
+  expandedPromptIds?: Set<string>;
+  onExpandedPromptIdsChange?: (next: Set<string>) => void;
+  expandedStepIds?: Set<string>;
+  onExpandedStepIdsChange?: (next: Set<string>) => void;
+  /** Timeline axis ends at this many ms (≥ max span end); used for zoom. */
+  viewportMaxMs?: number;
+  /** Increment from host to clear selection (e.g. Reset). */
+  resetVersion?: number;
 }
 
 export function TraceTimeline({
@@ -1131,6 +1383,15 @@ export function TraceTimeline({
   transcriptMessageCount = 0,
   transcriptMessages = [],
   onRevealInTranscript,
+  hideToolbar = false,
+  timelineFilter: timelineFilterProp,
+  onTimelineFilterChange,
+  expandedPromptIds: expandedPromptIdsProp,
+  onExpandedPromptIdsChange,
+  expandedStepIds: expandedStepIdsProp,
+  onExpandedStepIdsChange,
+  viewportMaxMs: viewportMaxMsProp,
+  resetVersion = 0,
 }: TraceTimelineProps) {
   const mode =
     recordedSpans && recordedSpans.length > 0
@@ -1153,20 +1414,60 @@ export function TraceTimeline({
     [mode, recordedSpans],
   );
 
-  const [filter, setFilter] = useState<TimelineFilter>("all");
-  const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(
-    new Set(),
+  const [internalViewportMaxMs, setInternalViewportMaxMs] = useState(1);
+  useEffect(() => {
+    if (viewportMaxMsProp === undefined) {
+      setInternalViewportMaxMs(maxEndMs);
+    }
+  }, [maxEndMs, traceIdentity, viewportMaxMsProp]);
+
+  const axisMaxMs = Math.max(
+    1,
+    viewportMaxMsProp !== undefined
+      ? viewportMaxMsProp
+      : internalViewportMaxMs,
   );
-  const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
-    new Set(),
-  );
+
+  const timelineZoomMinMs = Math.max(1, Math.round(maxEndMs / 50));
+
+  const [internalFilter, setInternalFilter] = useState<TimelineFilter>("all");
+  const filter =
+    timelineFilterProp !== undefined ? timelineFilterProp : internalFilter;
+  const setFilter = onTimelineFilterChange ?? setInternalFilter;
+
+  const [internalExpandedPromptIds, setInternalExpandedPromptIds] = useState<
+    Set<string>
+  >(new Set());
+  const [internalExpandedStepIds, setInternalExpandedStepIds] = useState<
+    Set<string>
+  >(new Set());
+  const expandedPromptIds =
+    expandedPromptIdsProp !== undefined
+      ? expandedPromptIdsProp
+      : internalExpandedPromptIds;
+  const setExpandedPromptIds =
+    onExpandedPromptIdsChange ?? setInternalExpandedPromptIds;
+  const expandedStepIds =
+    expandedStepIdsProp !== undefined
+      ? expandedStepIdsProp
+      : internalExpandedStepIds;
+  const setExpandedStepIds =
+    onExpandedStepIdsChange ?? setInternalExpandedStepIds;
+
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
 
   useEffect(() => {
-    setExpandedPromptIds(new Set(groups.map((group) => group.key)));
-    setExpandedStepIds(collectStepSpanIdsWithChildren(groups));
+    if (resetVersion === 0) return;
     setSelectedRowKey(null);
-  }, [traceIdentity, groups]);
+  }, [resetVersion]);
+
+  useEffect(() => {
+    if (!hideToolbar) {
+      setInternalExpandedPromptIds(new Set(groups.map((group) => group.key)));
+      setInternalExpandedStepIds(collectStepSpanIdsWithChildren(groups));
+    }
+    setSelectedRowKey(null);
+  }, [hideToolbar, traceIdentity, groups]);
 
   const rows = useMemo(() => {
     if (mode !== "recorded") {
@@ -1300,6 +1601,69 @@ export function TraceTimeline({
 
   const selectedRow = rows.find((row) => row.key === selectedRowKey);
 
+  const handleInternalReset = useCallback(() => {
+    setFilter("all");
+    setExpandedPromptIds(new Set(groups.map((group) => group.key)));
+    setExpandedStepIds(new Set(fullyExpandedStepIds));
+    setInternalViewportMaxMs(maxEndMs);
+    setSelectedRowKey(null);
+  }, [
+    fullyExpandedStepIds,
+    groups,
+    maxEndMs,
+    setExpandedPromptIds,
+    setExpandedStepIds,
+    setFilter,
+  ]);
+
+  const handleWaterfallKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLDivElement>) => {
+      if (rows.length === 0) return;
+      const idx = rows.findIndex((r) => r.key === selectedRowKey);
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        const next = idx < 0 ? 0 : Math.min(rows.length - 1, idx + 1);
+        setSelectedRowKey(rows[next]!.key);
+        return;
+      }
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        const next = idx <= 0 ? 0 : idx - 1;
+        setSelectedRowKey(rows[next]!.key);
+        return;
+      }
+      if (event.key === "Enter" && idx >= 0) {
+        const r = rows[idx]!;
+        if (r.kind === "prompt") {
+          event.preventDefault();
+          setExpandedPromptIds((current) => {
+            const next = new Set(current);
+            if (next.has(r.key)) next.delete(r.key);
+            else next.add(r.key);
+            return next;
+          });
+          return;
+        }
+        if (r.kind === "span" && r.hasChildren) {
+          event.preventDefault();
+          setExpandedStepIds((current) => {
+            const next = new Set(current);
+            if (next.has(r.key)) next.delete(r.key);
+            else next.add(r.key);
+            return next;
+          });
+        }
+      }
+    },
+    [
+      rows,
+      selectedRowKey,
+      setExpandedPromptIds,
+      setExpandedStepIds,
+    ],
+  );
+
   if (mode === "none") {
     return (
       <div className="text-xs text-muted-foreground">
@@ -1338,51 +1702,68 @@ export function TraceTimeline({
     );
   }
 
-  return (
-    <div className="space-y-2">
-      <div className="flex min-h-8 items-center gap-2 overflow-x-auto border-b border-border/30 pb-2 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-          <span className="font-medium text-foreground/90">Recorded</span>
-          <span className="mx-1.5 text-muted-foreground/50">·</span>
-          {groups.length} prompt{groups.length === 1 ? "" : "s"}
-          <span className="mx-1.5 text-muted-foreground/50">·</span>
-          {formatDuration(maxEndMs)}
-        </span>
-        <span
-          className="bg-border hidden h-3 w-px shrink-0 sm:block"
-          aria-hidden
-        />
-        <div className="flex shrink-0 items-center gap-0.5 rounded-md border border-border/50 bg-background p-0.5">
-          {FILTERS.map((entry) => (
-            <button
-              key={entry}
-              type="button"
-              className={cn(
-                "rounded px-1.5 py-0.5 text-[10px] transition-colors",
-                filter === entry
-                  ? "bg-primary/10 font-medium text-foreground"
-                  : "text-muted-foreground hover:text-foreground",
-              )}
-              onClick={() => setFilter(entry)}
-            >
-              {entry === "all" ? "All" : entry.toUpperCase()}
-            </button>
-          ))}
-        </div>
-        <span
-          className="bg-border hidden h-3 w-px shrink-0 md:block"
-          aria-hidden
-        />
+  const internalZoomCluster =
+    viewportMaxMsProp === undefined ? (
+      <>
         <Button
           type="button"
           variant="outline"
           size="icon"
-          disabled={groups.length === 0}
-          className="h-7 w-7 shrink-0 border-border/50 text-muted-foreground hover:text-foreground disabled:opacity-40"
-          title={isFullyExpanded ? "Collapse all" : "Expand all"}
-          aria-label={isFullyExpanded ? "Collapse all" : "Expand all"}
-          aria-pressed={isFullyExpanded}
-          onClick={() => {
+          className="h-7 w-7 border-border/50"
+          title="Zoom in timeline"
+          aria-label="Zoom in timeline"
+          disabled={internalViewportMaxMs <= timelineZoomMinMs}
+          onClick={() =>
+            setInternalViewportMaxMs((v) =>
+              Math.max(timelineZoomMinMs, Math.round(v * 0.8)),
+            )
+          }
+        >
+          <Plus className="size-3.5" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-7 w-7 border-border/50"
+          title="Fit timeline to trace duration"
+          aria-label="Fit timeline"
+          onClick={() => setInternalViewportMaxMs(maxEndMs)}
+        >
+          <Maximize2 className="size-3.5" aria-hidden />
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="icon"
+          className="h-7 w-7 border-border/50"
+          title="Zoom out timeline"
+          aria-label="Zoom out timeline"
+          disabled={internalViewportMaxMs >= maxEndMs * 4}
+          onClick={() =>
+            setInternalViewportMaxMs((v) =>
+              Math.min(maxEndMs * 4, Math.round(v * 1.25)),
+            )
+          }
+        >
+          <Minus className="size-3.5" aria-hidden />
+        </Button>
+      </>
+    ) : null;
+
+  return (
+    <div className="space-y-2">
+      {!hideToolbar ? (
+        <RecordedTraceToolbar
+          promptCount={groups.length}
+          maxEndMs={maxEndMs}
+          filter={filter}
+          onFilterChange={setFilter}
+          isFullyExpanded={isFullyExpanded}
+          expandDisabled={groups.length === 0}
+          onReset={handleInternalReset}
+          zoomControls={internalZoomCluster}
+          onToggleExpandAll={() => {
             if (isFullyExpanded) {
               setExpandedPromptIds(new Set());
               setExpandedStepIds(new Set());
@@ -1391,24 +1772,35 @@ export function TraceTimeline({
               setExpandedStepIds(new Set(fullyExpandedStepIds));
             }
           }}
-        >
-          {isFullyExpanded ? (
-            <Shrink className="size-3.5" strokeWidth={2} aria-hidden />
-          ) : (
-            <Expand className="size-3.5" strokeWidth={2} aria-hidden />
-          )}
-        </Button>
-      </div>
+        />
+      ) : null}
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-start">
-        <div className="min-h-0 overflow-auto rounded-lg border border-border/50 bg-background xl:max-h-[calc(100vh-8rem)]">
-          <div
-            className="grid min-w-[1100px]"
-            style={{
-              gridTemplateColumns: `${LABEL_W}px ${TIMELINE_W}px`,
-              gridTemplateRows: `auto repeat(${rows.length}, minmax(56px, auto))`,
-            }}
+      <div className="@container/trace-timeline min-w-0">
+        <ResizablePanelGroup
+          direction="horizontal"
+          className="rounded-lg border border-border/50 bg-background"
+          style={{ height: "auto", minHeight: 400 }}
+        >
+          <ResizablePanel
+            defaultSize={65}
+            minSize={40}
+            className="min-h-0 min-w-0 overflow-hidden"
           >
+            <ScrollArea className="max-h-[calc(100vh-8rem)] min-h-0 pr-2">
+              <div
+                tabIndex={0}
+                role="region"
+                aria-label="Trace waterfall. Use arrow keys to change selection, Enter to expand."
+                onKeyDown={handleWaterfallKeyDown}
+                className="min-h-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                <div
+                  className="grid min-w-[600px]"
+                  style={{
+                    gridTemplateColumns: "minmax(200px, 280px) minmax(0, 1fr)",
+                    gridTemplateRows: `auto repeat(${rows.length}, minmax(48px, auto))`,
+                  }}
+                >
             <div
               className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur"
               style={{ gridColumn: 1, gridRow: 1 }}
@@ -1434,7 +1826,7 @@ export function TraceTimeline({
                       style={{ left }}
                     >
                       <div className="absolute -translate-x-1/2 text-[10px] text-muted-foreground">
-                        {formatAxisLabel((maxEndMs * tick) / 100)}
+                        {formatAxisLabel((axisMaxMs * tick) / 100)}
                       </div>
                     </div>
                   );
@@ -1463,11 +1855,12 @@ export function TraceTimeline({
             {rows.map((row, rowIndex) => {
               const isSelected = row.key === selectedRowKey;
               const { startMs, endMs, durationMs } = getRowTiming(row);
-              const leftPercent = (startMs / maxEndMs) * 100;
+              const leftPercent = (startMs / axisMaxMs) * 100;
               const widthPercent = Math.max(
-                ((endMs - startMs) / maxEndMs) * 100,
+                ((endMs - startMs) / axisMaxMs) * 100,
                 0.45,
               );
+              const barIsWide = widthPercent >= 10;
               const spanShowsFailure =
                 row.kind === "span" &&
                 spanIndicatesTranscriptFailure(row.span, transcriptMessages);
@@ -1500,17 +1893,22 @@ export function TraceTimeline({
               const gridRow = rowIndex + 2;
               const tokenHint =
                 row.kind === "span" ? formatInlineTokenHint(row.span) : null;
+              const borderAccent = getRowBorderAccentClass(
+                row,
+                spanShowsFailure,
+              );
 
               return (
                 <Fragment key={row.key}>
                   <div
                     data-testid="trace-row"
+                    data-state={isSelected ? "selected" : undefined}
                     style={{ gridColumn: 1, gridRow }}
                     className={cn(
-                      "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-colors",
+                      "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
                       isSelected
-                        ? "bg-primary/5"
-                        : "bg-background hover:bg-muted/20",
+                        ? cn("bg-primary/10", borderAccent)
+                        : "border-l-transparent bg-background hover:bg-muted/20",
                     )}
                   >
                     <div
@@ -1559,6 +1957,7 @@ export function TraceTimeline({
                     </div>
                     <button
                       type="button"
+                      data-testid="trace-row-label-button"
                       className="min-w-0 flex-1 text-left"
                       onClick={() => setSelectedRowKey(row.key)}
                     >
@@ -1603,13 +2002,16 @@ export function TraceTimeline({
                   </div>
                   <button
                     type="button"
+                    data-testid="trace-row-bar-hit"
+                    data-state={isSelected ? "selected" : undefined}
                     style={{ gridColumn: 2, gridRow }}
                     className={cn(
-                      "relative z-[1] h-full min-h-[56px] w-full border-b border-border/40 px-4 py-2 text-left transition-colors",
+                      "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 px-4 py-2 text-left transition-all duration-150 border-l-2",
                       isSelected
-                        ? "bg-primary/5"
-                        : "bg-background hover:bg-muted/20",
+                        ? cn("bg-primary/10", borderAccent)
+                        : "border-l-transparent bg-background hover:bg-muted/20",
                     )}
+                    aria-label={`Select on timeline (${formatDuration(durationMs)})`}
                     onClick={() => setSelectedRowKey(row.key)}
                     title={`${label} · ${formatDuration(durationMs)}`}
                   >
@@ -1620,34 +2022,71 @@ export function TraceTimeline({
                           : "trace-row-bar"
                       }
                       className={cn(
-                        "absolute top-1/2 z-[1] h-6 -translate-y-1/2 rounded-sm shadow-sm",
+                        "absolute top-1/2 z-[1] h-8 min-w-0 -translate-y-1/2 rounded-md shadow-sm transition-[left,width] duration-150",
                         categoryClasses.bar,
+                        barIsWide &&
+                          "flex items-center gap-1 overflow-hidden px-2",
                       )}
                       style={{
                         left: `${leftPercent}%`,
                         width: `max(${widthPercent}%, 3px)`,
                       }}
-                    />
-                    <div className="relative z-[1] flex h-full items-center pl-4 text-[11px] text-muted-foreground">
-                      {formatDuration(durationMs)}
+                    >
+                      {barIsWide ? (
+                        <>
+                          <span
+                            aria-hidden
+                            className="min-w-0 truncate text-[11px] font-medium text-white mix-blend-difference"
+                          >
+                            {label}
+                          </span>
+                          <span
+                            aria-hidden
+                            className="ml-auto shrink-0 text-[10px] text-white/80"
+                          >
+                            {formatDuration(durationMs)}
+                          </span>
+                        </>
+                      ) : null}
                     </div>
+                    {!barIsWide ? (
+                      <span
+                        aria-hidden
+                        className="pointer-events-none absolute top-1/2 z-[2] -translate-y-1/2 text-[11px] text-muted-foreground"
+                        style={{
+                          left: `calc(${leftPercent + widthPercent}% + 8px)`,
+                        }}
+                      >
+                        {formatDuration(durationMs)}
+                      </span>
+                    ) : null}
                   </button>
                 </Fragment>
               );
             })}
-          </div>
-        </div>
-
-        <div
-          data-testid="trace-timeline-detail-sticky"
-          className="min-w-0 xl:sticky xl:top-3 xl:max-h-[calc(100vh-8rem)] xl:self-start xl:overflow-y-auto"
-        >
-          <TimelineDetailPane
-            row={selectedRow}
-            transcriptMessages={transcriptMessages}
-            onRevealInTranscript={onRevealInTranscript}
-          />
-        </div>
+                </div>
+              </div>
+            </ScrollArea>
+          </ResizablePanel>
+          <ResizableHandle withHandle />
+          <ResizablePanel
+            defaultSize={35}
+            minSize={20}
+            maxSize={50}
+            className="min-h-0 min-w-0 overflow-hidden"
+          >
+            <div
+              data-testid="trace-timeline-detail-sticky"
+              className="min-h-0 min-w-0 overflow-y-auto lg:sticky lg:top-3 lg:max-h-[calc(100vh-8rem)]"
+            >
+              <TimelineDetailPane
+                row={selectedRow}
+                transcriptMessages={transcriptMessages}
+                onRevealInTranscript={onRevealInTranscript}
+              />
+            </div>
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
     </div>
   );

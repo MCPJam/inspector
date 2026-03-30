@@ -6,8 +6,18 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react";
-import { AlignLeft, Code2, Loader2, MessageSquare } from "lucide-react";
+import {
+  AlignLeft,
+  Code2,
+  Loader2,
+  Maximize2,
+  MessageSquare,
+  Minus,
+  Plus,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
@@ -18,6 +28,14 @@ import {
   type TraceEnvelope,
   type TraceMessage,
 } from "./trace-viewer-adapter";
+import {
+  buildPromptGroups,
+  collectStepSpanIdsWithChildren,
+} from "./trace-timeline";
+import {
+  RecordedTraceToolbar,
+  type TimelineFilter,
+} from "./recorded-trace-toolbar";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
@@ -38,6 +56,8 @@ interface TraceViewerProps {
   connectedServerIds?: string[];
   /** Fallback when the blob has no recorded spans (Convex wall-clock only). */
   estimatedDurationMs?: number | null;
+  /** Shown under the toolbar row (e.g. run case insight caption). */
+  traceInsight?: ReactNode;
 }
 
 function getTraceMessages(
@@ -88,13 +108,23 @@ export function TraceViewer({
   toolServerMap = {},
   connectedServerIds = [],
   estimatedDurationMs = null,
+  traceInsight,
 }: TraceViewerProps) {
   const [viewMode, setViewMode] = useState<"timeline" | "chat" | "raw">(
     "timeline",
   );
+  const [timelineFilter, setTimelineFilter] = useState<TimelineFilter>("all");
+  const [expandedPromptIds, setExpandedPromptIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [highlightedMessageIds, setHighlightedMessageIds] = useState<string[]>(
     [],
   );
+  const [timelineResetVersion, setTimelineResetVersion] = useState(0);
+  const [timelineViewportMaxMs, setTimelineViewportMaxMs] = useState(1);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const resolvedModel: ModelDefinition = model ?? {
     id: "unknown",
@@ -103,6 +133,69 @@ export function TraceViewer({
   };
   const traceMessages = getTraceMessages(trace);
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
+  const promptGroups = useMemo(
+    () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
+    [recordedSpans],
+  );
+  const traceIdentityForToolbar = useMemo(
+    () =>
+      recordedSpans
+        ?.map((span) => `${span.id}:${span.startMs}:${span.endMs}`)
+        .join("|") ?? "no-spans",
+    [recordedSpans],
+  );
+  const maxEndMsForToolbar = useMemo(
+    () =>
+      recordedSpans?.length
+        ? recordedSpans.reduce((max, span) => Math.max(max, span.endMs), 1)
+        : 1,
+    [recordedSpans],
+  );
+  const fullyExpandedStepIds = useMemo(
+    () => collectStepSpanIdsWithChildren(promptGroups),
+    [promptGroups],
+  );
+  const isTimelineFullyExpanded = useMemo(() => {
+    if (promptGroups.length === 0) return false;
+    for (const group of promptGroups) {
+      if (!expandedPromptIds.has(group.key)) return false;
+    }
+    for (const id of fullyExpandedStepIds) {
+      if (!expandedStepIds.has(id)) return false;
+    }
+    return true;
+  }, [
+    promptGroups,
+    expandedPromptIds,
+    expandedStepIds,
+    fullyExpandedStepIds,
+  ]);
+
+  useEffect(() => {
+    setTimelineViewportMaxMs(maxEndMsForToolbar);
+  }, [maxEndMsForToolbar, traceIdentityForToolbar]);
+
+  function handleRecordedTraceReset() {
+    setTimelineFilter("all");
+    if (recordedSpans?.length) {
+      setExpandedPromptIds(new Set(promptGroups.map((g) => g.key)));
+      setExpandedStepIds(collectStepSpanIdsWithChildren(promptGroups));
+      setTimelineViewportMaxMs(maxEndMsForToolbar);
+    }
+    setTimelineResetVersion((v) => v + 1);
+  }
+
+  useEffect(() => {
+    setTimelineFilter("all");
+    if (!recordedSpans?.length) {
+      setExpandedPromptIds(new Set());
+      setExpandedStepIds(new Set());
+      return;
+    }
+    setExpandedPromptIds(new Set(promptGroups.map((g) => g.key)));
+    setExpandedStepIds(collectStepSpanIdsWithChildren(promptGroups));
+  }, [traceIdentityForToolbar, promptGroups, recordedSpans?.length]);
+
   const adaptedTrace = useMemo(
     () =>
       adaptTraceToUiMessages({
@@ -167,55 +260,152 @@ export function TraceViewer({
     );
   }
 
+  const hasRecordedSpans = Boolean(recordedSpans?.length);
+  const showRecordedChrome =
+    viewMode === "timeline" && hasRecordedSpans;
+  const timelineZoomMinMs = Math.max(1, Math.round(maxEndMsForToolbar / 50));
+
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 pb-2">
-        <div className="text-xs font-medium text-muted-foreground">
-          {traceMessages.length > 0
-            ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
-            : "Trace"}
+      <div className="rounded-lg border border-border/50 bg-muted/15 px-2 py-2 sm:px-3">
+        <div className="flex min-h-9 flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            {showRecordedChrome ? (
+              <RecordedTraceToolbar
+                promptCount={promptGroups.length}
+                maxEndMs={maxEndMsForToolbar}
+                filter={timelineFilter}
+                onFilterChange={setTimelineFilter}
+                isFullyExpanded={isTimelineFullyExpanded}
+                expandDisabled={promptGroups.length === 0}
+                showBottomBorder={false}
+                onReset={handleRecordedTraceReset}
+                zoomControls={
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7 border-border/50"
+                      title="Zoom in timeline"
+                      aria-label="Zoom in timeline"
+                      disabled={timelineViewportMaxMs <= timelineZoomMinMs}
+                      onClick={() =>
+                        setTimelineViewportMaxMs((v) =>
+                          Math.max(timelineZoomMinMs, Math.round(v * 0.8)),
+                        )
+                      }
+                    >
+                      <Plus className="size-3.5" aria-hidden />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7 border-border/50"
+                      title="Fit timeline to trace duration"
+                      aria-label="Fit timeline"
+                      onClick={() =>
+                        setTimelineViewportMaxMs(maxEndMsForToolbar)
+                      }
+                    >
+                      <Maximize2 className="size-3.5" aria-hidden />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="h-7 w-7 border-border/50"
+                      title="Zoom out timeline"
+                      aria-label="Zoom out timeline"
+                      disabled={
+                        timelineViewportMaxMs >= maxEndMsForToolbar * 4
+                      }
+                      onClick={() =>
+                        setTimelineViewportMaxMs((v) =>
+                          Math.min(
+                            maxEndMsForToolbar * 4,
+                            Math.round(v * 1.25),
+                          ),
+                        )
+                      }
+                    >
+                      <Minus className="size-3.5" aria-hidden />
+                    </Button>
+                  </>
+                }
+                onToggleExpandAll={() => {
+                  if (isTimelineFullyExpanded) {
+                    setExpandedPromptIds(new Set());
+                    setExpandedStepIds(new Set());
+                  } else {
+                    setExpandedPromptIds(
+                      new Set(promptGroups.map((group) => group.key)),
+                    );
+                    setExpandedStepIds(new Set(fullyExpandedStepIds));
+                  }
+                }}
+              />
+            ) : (
+              <div className="text-xs font-medium text-muted-foreground">
+                {viewMode === "raw"
+                  ? "Trace JSON"
+                  : traceMessages.length > 0
+                    ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
+                    : "Trace"}
+              </div>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
+            <button
+              type="button"
+              onClick={() => setViewMode("timeline")}
+              className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                viewMode === "timeline"
+                  ? "bg-primary/10 text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Timeline"
+            >
+              <AlignLeft className="h-3 w-3" />
+              Timeline
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("chat")}
+              className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                viewMode === "chat"
+                  ? "bg-primary/10 text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Chat view"
+            >
+              <MessageSquare className="h-3 w-3" />
+              Chat
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("raw")}
+              className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                viewMode === "raw"
+                  ? "bg-primary/10 text-foreground font-medium"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+              title="Raw JSON"
+            >
+              <Code2 className="h-3 w-3" />
+              Raw
+            </button>
+          </div>
         </div>
-        <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
-          <button
-            type="button"
-            onClick={() => setViewMode("timeline")}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-              viewMode === "timeline"
-                ? "bg-primary/10 text-foreground font-medium"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title="Timeline"
+        {traceInsight ? (
+          <div
+            className="mt-2 border-t border-border/40 pt-2"
+            data-testid="trace-viewer-insight-slot"
           >
-            <AlignLeft className="h-3 w-3" />
-            Timeline
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("chat")}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-              viewMode === "chat"
-                ? "bg-primary/10 text-foreground font-medium"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title="Chat view"
-          >
-            <MessageSquare className="h-3 w-3" />
-            Chat
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode("raw")}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-              viewMode === "raw"
-                ? "bg-primary/10 text-foreground font-medium"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-            title="Raw JSON"
-          >
-            <Code2 className="h-3 w-3" />
-            Raw
-          </button>
-        </div>
+            {traceInsight}
+          </div>
+        ) : null}
       </div>
 
       {viewMode === "raw" && (
@@ -240,6 +430,23 @@ export function TraceViewer({
             }
             transcriptMessages={traceMessages}
             onRevealInTranscript={handleRevealInTranscript}
+            hideToolbar={hasRecordedSpans}
+            timelineFilter={hasRecordedSpans ? timelineFilter : undefined}
+            onTimelineFilterChange={
+              hasRecordedSpans ? setTimelineFilter : undefined
+            }
+            expandedPromptIds={hasRecordedSpans ? expandedPromptIds : undefined}
+            onExpandedPromptIdsChange={
+              hasRecordedSpans ? setExpandedPromptIds : undefined
+            }
+            expandedStepIds={hasRecordedSpans ? expandedStepIds : undefined}
+            onExpandedStepIdsChange={
+              hasRecordedSpans ? setExpandedStepIds : undefined
+            }
+            viewportMaxMs={
+              hasRecordedSpans ? timelineViewportMaxMs : undefined
+            }
+            resetVersion={hasRecordedSpans ? timelineResetVersion : undefined}
           />
         </Suspense>
       )}

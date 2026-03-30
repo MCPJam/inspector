@@ -1,7 +1,19 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
 import { render, screen, fireEvent, within } from "@testing-library/react";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { TraceTimeline } from "../trace-timeline";
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
 
 vi.mock("@/components/ui/json-editor", () => ({
   JsonEditor: ({ value }: { value: unknown }) => (
@@ -58,8 +70,7 @@ describe("TraceTimeline detail pane", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes("read_me"));
     expect(toolRow).toBeTruthy();
-    // Selection is bound to the label button / bar, not the outer row div.
-    fireEvent.click(within(toolRow!).getByRole("button"));
+    fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
 
     const pane = screen.getByTestId("trace-detail-pane");
     expect(within(pane).getByTestId("json-editor").textContent).toContain(
@@ -104,13 +115,15 @@ describe("TraceTimeline detail pane", () => {
     );
 
     const stepRow = screen
-      .getByText("Step 1")
-      .closest("[data-testid='trace-row']");
-    expect(stepRow?.textContent).toContain("Need docs");
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("Need docs"));
+    expect(stepRow).toBeTruthy();
+    expect(stepRow!.textContent).toContain("Need docs");
     expect(stepRow?.textContent).not.toContain("Prompt 1");
   });
 
-  it("marks tool spans as failed from transcript when persisted status is ok", () => {
+  it("marks tool spans as failed from transcript when persisted status is ok", async () => {
+    const user = userEvent.setup();
     const spans: EvalTraceSpan[] = [
       {
         id: "step-root",
@@ -184,11 +197,96 @@ describe("TraceTimeline detail pane", () => {
     const pane = screen.getByTestId("trace-detail-pane");
     expect(within(pane).getByLabelText("Error")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "ERROR" }));
+    await user.click(
+      screen.getByRole("button", { name: /Filter timeline rows/ }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Error" }),
+    );
     expect(
       screen
         .getAllByTestId("trace-row")
         .some((el) => el.textContent?.includes("create_view")),
     ).toBe(true);
+  });
+
+  it("Reset on embedded toolbar restores filter to All", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "a",
+        name: "Step 1",
+        category: "step",
+        startMs: 0,
+        endMs: 50,
+      },
+      {
+        id: "b",
+        parentId: "a",
+        name: "t",
+        category: "tool",
+        startMs: 10,
+        endMs: 20,
+        toolName: "t",
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /Filter timeline rows/ }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Tool" }),
+    );
+    expect(
+      screen.getByRole("button", { name: /Filter timeline rows: Tool/ }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reset trace view" }));
+    expect(
+      screen.getByRole("button", { name: /Filter timeline rows: All/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders horizontal IO tabs on span selection", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 20,
+        toolName: "read_me",
+      },
+    ];
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolName: "read_me",
+                input: { x: 1 },
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Tool · read_me/i }));
+    const tablist = screen.getByRole("tablist");
+    expect(tablist).toHaveClass("grid-cols-3");
+    expect(within(tablist).getByRole("tab", { name: "Input" })).toBeInTheDocument();
   });
 });

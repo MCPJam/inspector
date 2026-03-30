@@ -1,7 +1,18 @@
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
+
+vi.mock("@/components/ui/resizable", () => ({
+  ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
+    <div data-testid="resizable-panel-group">{children}</div>
+  ),
+  ResizablePanel: ({ children }: { children: ReactNode }) => (
+    <div data-testid="resizable-panel">{children}</div>
+  ),
+  ResizableHandle: () => <div data-testid="resizable-handle" />,
+}));
 
 const { mockMessageView } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
@@ -14,6 +25,13 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
 
 vi.mock("@/lib/provider-logos", () => ({
   getProviderLogo: () => null,
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+  },
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({
@@ -260,6 +278,12 @@ function openChatTab() {
   fireEvent.click(screen.getByTitle("Chat view"));
 }
 
+async function getTraceWaterfallRegion() {
+  return screen.findByRole("region", {
+    name: /Trace waterfall/i,
+  });
+}
+
 describe("TraceViewer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -311,6 +335,32 @@ describe("TraceViewer", () => {
     expect(screen.queryByText("Estimated total only")).not.toBeInTheDocument();
   });
 
+  it("renders traceInsight under the toolbar when provided", async () => {
+    render(
+      <TraceViewer
+        trace={{
+          traceVersion: 1,
+          messages: simpleTextTrace.messages,
+          spans: [
+            {
+              id: "a",
+              name: "Step 1",
+              category: "step",
+              startMs: 0,
+              endMs: 50,
+            },
+          ],
+        }}
+        traceInsight={<span>Insight caption text</span>}
+      />,
+    );
+    expect(await screen.findByText(/Recorded/)).toBeInTheDocument();
+    const slot = screen.getByTestId("trace-viewer-insight-slot");
+    expect(
+      within(slot).getByText("Insight caption text"),
+    ).toBeInTheDocument();
+  });
+
   it("renders prompt-grouped waterfall rows with detail pane", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
 
@@ -318,36 +368,112 @@ describe("TraceViewer", () => {
     expect(screen.getAllByText("Prompt 2").length).toBeGreaterThan(0);
     expect(screen.getByTestId("trace-detail-pane")).toBeInTheDocument();
 
-    expect(screen.getByText(/Tool · read_docs/)).toBeInTheDocument();
+    const waterfall = await getTraceWaterfallRegion();
+    expect(
+      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
+    ).toBeInTheDocument();
     expect(screen.getAllByText("Model response").length).toBeGreaterThanOrEqual(
       2,
     );
     expect(screen.getAllByText("Prompt 2 · Step 1").length).toBeGreaterThan(0);
 
-    fireEvent.click(screen.getByText(/Tool · read_docs/));
+    fireEvent.click(
+      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
+    );
     expect(screen.getByRole("tab", { name: "Input" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Output" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
   });
 
   it("filters the waterfall to tool rows while preserving step context", async () => {
+    const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
 
     expect(await screen.findByText("Generation error")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "TOOL" }));
+    await user.click(
+      screen.getByRole("button", { name: /Filter timeline rows/ }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Tool" }),
+    );
 
-    expect(screen.getByText(/Tool · read_docs/)).toBeInTheDocument();
+    const waterfall = await getTraceWaterfallRegion();
+    expect(
+      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
     expect(screen.getAllByText("Prompt 1").length).toBeGreaterThan(0);
+  });
+
+  it("Reset restores timeline filter to All and shows hidden rows again", async () => {
+    const user = userEvent.setup();
+    render(<TraceViewer trace={waterfallTrace} />);
+
+    expect(await screen.findByText("Generation error")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /Filter timeline rows/ }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Tool" }),
+    );
+    expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Reset trace view" }));
+
+    expect(
+      screen.getByRole("button", { name: /Filter timeline rows: All/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Generation error")).toBeInTheDocument();
+  });
+
+  it("detail pane exposes span id copy for tool rows", async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    vi.stubGlobal("navigator", {
+      ...navigator,
+      clipboard: { writeText },
+    });
+    render(<TraceViewer trace={waterfallTrace} />);
+    const waterfall = await getTraceWaterfallRegion();
+    await user.click(
+      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
+    );
+    await user.click(screen.getByTestId("trace-detail-copy-span-id"));
+    expect(writeText).toHaveBeenCalledWith("p0-tool0");
+    vi.unstubAllGlobals();
+  });
+
+  it("selects waterfall rows with arrow keys on the timeline region", async () => {
+    render(<TraceViewer trace={waterfallTrace} />);
+    const region = await getTraceWaterfallRegion();
+    await within(region).findByRole("button", { name: /Tool · read_docs/i });
+    region.focus();
+
+    const selectedLabel = () =>
+      screen
+        .getAllByTestId("trace-row")
+        .find((el) => el.getAttribute("data-state") === "selected")
+        ?.textContent ?? "";
+
+    const first = selectedLabel();
+    expect(first).toContain("Prompt 1");
+
+    fireEvent.keyDown(region, { key: "ArrowDown" });
+    expect(selectedLabel()).not.toBe(first);
+
+    fireEvent.keyDown(region, { key: "ArrowUp" });
+    expect(selectedLabel()).toBe(first);
   });
 
   it("reveals a selected timeline row in chat view", async () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
 
-    await screen.findAllByText(/Tool · read_docs/);
-    await user.click(screen.getAllByText(/Tool · read_docs/)[0]!);
+    const waterfall = await getTraceWaterfallRegion();
+    await user.click(
+      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
+    );
     await user.click(screen.getByRole("tab", { name: "Transcript" }));
     await user.click(
       screen.getByRole("button", { name: "Reveal in transcript" }),

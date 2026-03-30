@@ -8,12 +8,14 @@ vi.mock("../suite-iterations-view", () => ({
     readOnlyConfig?: boolean;
     caseListInSidebar?: boolean;
     omitRunIterationList?: boolean;
+    omitSuiteHeader?: boolean;
   }) => (
     <div
       data-testid="suite-iterations-mock"
       data-read-only={String(!!props.readOnlyConfig)}
       data-case-list-in-sidebar={String(!!props.caseListInSidebar)}
       data-omit-run-iteration-list={String(!!props.omitRunIterationList)}
+      data-omit-suite-header={String(!!props.omitSuiteHeader)}
     />
   ),
 }));
@@ -79,6 +81,10 @@ describe("CiSuiteWorkspaceDetail", () => {
     expect(screen.getByTestId("suite-iterations-mock")).toHaveAttribute(
       "data-omit-run-iteration-list",
       "false",
+    );
+    expect(screen.getByTestId("suite-iterations-mock")).toHaveAttribute(
+      "data-omit-suite-header",
+      "true",
     );
   });
 

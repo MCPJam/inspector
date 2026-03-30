@@ -20,7 +20,10 @@ import {
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
-import { RunCaseInsightBlock } from "./run-case-insight-block";
+import {
+  RunCaseInsightTraceCaption,
+  shouldOmitRunCaseInsightCaption,
+} from "./run-case-insight-block";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
@@ -385,6 +388,42 @@ export function RunDetailView({
     });
   }, [selectedIteration, selectedRunDetails]);
 
+  const selectedIterationCaseInsightSlot = useMemo(() => {
+    if (!selectedIteration) {
+      return null;
+    }
+    if (
+      shouldOmitRunCaseInsightCaption({
+        runStatus: selectedRunDetails.status,
+        caseInsight: caseInsightForSelectedIteration,
+        pending: runInsightsPending,
+        requested: runInsightsRequested,
+        failedGeneration: runInsightsFailedGeneration,
+        error: runInsightsError,
+      })
+    ) {
+      return null;
+    }
+    return (
+      <RunCaseInsightTraceCaption
+        runStatus={selectedRunDetails.status}
+        caseInsight={caseInsightForSelectedIteration}
+        pending={runInsightsPending}
+        requested={runInsightsRequested}
+        failedGeneration={runInsightsFailedGeneration}
+        error={runInsightsError}
+      />
+    );
+  }, [
+    selectedIteration,
+    selectedRunDetails.status,
+    caseInsightForSelectedIteration,
+    runInsightsPending,
+    runInsightsRequested,
+    runInsightsFailedGeneration,
+    runInsightsError,
+  ]);
+
   const hasTokenData = useMemo(
     () =>
       selectedRunChartData.tokensData.length > 0 &&
@@ -640,13 +679,16 @@ export function RunDetailView({
       {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
         className={cn(
-          "mt-4 flex gap-0 overflow-hidden rounded-xl border bg-card text-card-foreground",
-          omitIterationList ? "min-h-0 flex-1 flex-col" : "",
+          "mt-4 flex gap-0 overflow-hidden",
+          omitIterationList
+            ? "min-h-0 flex-1 flex-col"
+            : "rounded-xl border bg-card text-card-foreground min-h-[400px] h-[calc(100vh-200px)] max-h-[calc(100vh-200px)]",
         )}
-        style={{
-          height: "calc(100vh - 200px)",
-          minHeight: "400px",
-        }}
+        style={
+          omitIterationList
+            ? { minHeight: 400 }
+            : undefined
+        }
       >
         {!omitIterationList ? (
           <div className="flex w-[280px] shrink-0 flex-col border-r">
@@ -672,22 +714,17 @@ export function RunDetailView({
           {selectedIteration ? (
             <div
               key={selectedIterationId}
-              className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4"
+              className={cn(
+                "flex-1 min-h-0 overflow-y-auto space-y-4",
+                !omitIterationList && "px-4",
+              )}
             >
-              <RunCaseInsightBlock
-                runStatus={selectedRunDetails.status}
-                caseInsight={caseInsightForSelectedIteration}
-                pending={runInsightsPending}
-                requested={runInsightsRequested}
-                failedGeneration={runInsightsFailedGeneration}
-                error={runInsightsError}
-                prominent
-              />
               <IterationDetails
                 iteration={selectedIteration}
                 testCase={null}
                 serverNames={serverNames}
                 layoutMode="full"
+                caseInsightSlot={selectedIterationCaseInsightSlot}
               />
             </div>
           ) : (

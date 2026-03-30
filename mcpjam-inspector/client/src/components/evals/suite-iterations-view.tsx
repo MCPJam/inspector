@@ -93,6 +93,7 @@ export function SuiteIterationsView({
   readOnlyConfig = false,
   casesSidebarHidden,
   onShowCasesSidebar,
+  omitSuiteHeader = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -132,6 +133,8 @@ export function SuiteIterationsView({
   readOnlyConfig?: boolean;
   casesSidebarHidden?: boolean;
   onShowCasesSidebar?: () => void;
+  /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
+  omitSuiteHeader?: boolean;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit";
@@ -332,9 +335,13 @@ export function SuiteIterationsView({
     [replayingRunId, runs],
   );
 
+  const showSuiteHeader =
+    !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
+      {showSuiteHeader ? (
       <div className="shrink-0">
         <SuiteHeader
           suite={suite}
@@ -367,6 +374,7 @@ export function SuiteIterationsView({
           onShowCasesSidebar={onShowCasesSidebar}
         />
       </div>
+      ) : null}
 
       {/* Content */}
       {!isEditMode && (

@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import {
@@ -7,8 +7,6 @@ import {
   Code2,
   ChevronDown,
   ChevronRight,
-  ShieldCheck,
-  ShieldX,
 } from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -168,11 +166,14 @@ export function IterationDetails({
   testCase,
   serverNames = EMPTY_SERVER_NAMES,
   layoutMode = "compact",
+  caseInsightSlot,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
   serverNames?: string[];
   layoutMode?: "compact" | "full";
+  /** Run-level case insight caption; shown under the trace toolbar or at top when no trace blob. */
+  caseInsightSlot?: ReactNode;
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -447,11 +448,6 @@ export function IterationDetails({
   const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
 
-  const isNegativeTest =
-    iteration.testCaseSnapshot?.isNegativeTest || testCase?.isNegativeTest;
-  const negativeTestScenario =
-    iteration.testCaseSnapshot?.scenario || testCase?.scenario;
-
   const hasToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const traceFirst = layoutMode === "full" && Boolean(iteration.blob);
@@ -635,47 +631,22 @@ export function IterationDetails({
             toolServerMap={toolServerMap}
             connectedServerIds={connectedServerIds}
             estimatedDurationMs={estimatedDurationMs}
+            traceInsight={caseInsightSlot}
           />
         )}
       </div>
     </div>
   ) : null;
 
+  const caseInsightFallback =
+    caseInsightSlot && !iteration.blob ? (
+      <div className="min-w-0" data-testid="iteration-case-insight-fallback">
+        {caseInsightSlot}
+      </div>
+    ) : null;
+
   return (
     <div className="space-y-4 py-2">
-      {/* Negative Test Summary */}
-      {isNegativeTest && (
-        <div
-          className={`rounded-md border p-3 space-y-1 ${
-            iteration.result === "passed"
-              ? "border-emerald-500/30 bg-emerald-500/10"
-              : "border-destructive/30 bg-destructive/10"
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {iteration.result === "passed" ? (
-              <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0" />
-            ) : (
-              <ShieldX className="h-4 w-4 text-destructive shrink-0" />
-            )}
-            <span className="text-xs font-semibold">
-              Negative Test{" "}
-              {iteration.result === "passed" ? "Passed" : "Failed"}
-            </span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {iteration.result === "passed"
-              ? "No tools were called, which is the expected behavior for this test."
-              : "Tools were unexpectedly called during this negative test."}
-          </p>
-          {negativeTestScenario && (
-            <p className="text-xs text-muted-foreground/80 italic mt-1">
-              Scenario: {negativeTestScenario}
-            </p>
-          )}
-        </div>
-      )}
-
       {/* Error Display */}
       {iteration.error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
@@ -718,6 +689,8 @@ export function IterationDetails({
           )}
         </div>
       )}
+
+      {caseInsightFallback}
 
       {traceFirst ? (
         <>

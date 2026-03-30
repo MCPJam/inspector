@@ -43,6 +43,7 @@ import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
+import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 
 interface ModelInfo {
   model: string;
@@ -305,37 +306,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   }
 
   if (viewMode === "run-detail" && selectedRunDetails) {
-    const isCancelling = cancellingRunId === selectedRunDetails._id;
-    const isRunInProgress =
-      selectedRunDetails.status === "running" ||
-      selectedRunDetails.status === "pending";
-    const showAsRunning =
-      isRunInProgress ||
-      rerunningSuiteId === suite._id ||
-      replayingRunId === selectedRunDetails._id;
-    const replayableSelectedRun = selectedRunDetails.hasServerReplayConfig
-      ? selectedRunDetails
-      : null;
-    const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
-    const isReplayAction = Boolean(replayableSelectedRun);
-    const runActionDisabled = isReplayAction
-      ? showAsRunning || !onReplayRun
-      : !canRerun || showAsRunning;
-    const runActionLabel = showAsRunning
-      ? isReplayAction
-        ? "Replaying..."
-        : "Running..."
-      : isReplayAction
-        ? "Replay this run"
-        : "Rerun";
-    const runActionTooltip = isReplayAction
-      ? "Replay this CI run in the playground"
-      : !hasServersConfigured
-        ? "No connected MCP servers are configured for this suite"
-        : !canRerun
-          ? `Connect the following servers: ${missingServers.join(", ")}`
-          : "Run all cases";
-
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
         <div className="flex min-w-0 flex-1 flex-col gap-1">
@@ -362,69 +332,22 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           </div>
           <RunHeaderCompactStats run={selectedRunDetails} />
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {!readOnlyConfig &&
-            (isRunInProgress ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onCancelRun(selectedRunDetails._id)}
-                    disabled={isCancelling}
-                    className="gap-2"
-                  >
-                    {isCancelling ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Cancelling...
-                      </>
-                    ) : (
-                      <>
-                        <X className="h-4 w-4" />
-                        Cancel run
-                      </>
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Cancel the current evaluation run
-                </TooltipContent>
-              </Tooltip>
-            ) : null)}
-          {showRunAction && !isRunInProgress ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      isReplayAction
-                        ? onReplayRun?.(suite, replayableSelectedRun)
-                        : onRerun(suite)
-                    }
-                    disabled={runActionDisabled}
-                    className="gap-2"
-                  >
-                    <RotateCw
-                      className={`h-4 w-4 ${showAsRunning ? "animate-spin" : ""}`}
-                    />
-                    {runActionLabel}
-                  </Button>
-                </span>
-              </TooltipTrigger>
-              <TooltipContent>{runActionTooltip}</TooltipContent>
-            </Tooltip>
-          ) : null}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => onViewModeChange("overview")}
-          >
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
+        <RunDetailPlaygroundActions
+          suite={suite}
+          selectedRun={selectedRunDetails}
+          readOnlyConfig={readOnlyConfig}
+          onReplayRun={onReplayRun}
+          onRerun={onRerun}
+          onCancelRun={onCancelRun}
+          rerunningSuiteId={rerunningSuiteId}
+          replayingRunId={replayingRunId}
+          cancellingRunId={cancellingRunId}
+          canRerun={canRerun}
+          hasServersConfigured={hasServersConfigured}
+          missingServers={missingServers}
+          showCloseButton
+          onBackToOverview={() => onViewModeChange("overview")}
+        />
       </div>
     );
   }
