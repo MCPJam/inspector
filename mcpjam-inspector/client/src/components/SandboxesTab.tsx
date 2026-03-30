@@ -9,6 +9,10 @@ interface SandboxesTabProps {
   workspaceId: string | null;
 }
 
+/**
+ * Billing-related Convex failures from sandbox mutations use getBillingErrorMessage
+ * in CreateSandboxDialog, SandboxEditor, and SandboxBuilderView.
+ */
 export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   if (!workspaceId) {
     return (

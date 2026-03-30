@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  annotateBillingNavLockHints,
   applyBillingGateNavState,
   filterByFeatureFlags,
   getHostedNavigationSections,
@@ -146,6 +147,60 @@ describe("applyBillingGateNavState", () => {
     const servers = result[0].items.find((i) => i.title === "Servers");
     expect(evalItem?.disabled).toBe(true);
     expect(servers?.disabled).not.toBe(true);
+  });
+});
+
+describe("annotateBillingNavLockHints", () => {
+  it("does not mark items when enforcement is inactive", () => {
+    const sections = [
+      {
+        id: "main",
+        items: [
+          {
+            title: "Generate Evals",
+            url: "#evals",
+            icon: FakeIcon,
+            billingFeature: "evals" as const,
+          },
+        ],
+      },
+    ];
+    const result = annotateBillingNavLockHints(sections, {
+      billingUiEnabled: true,
+      gateDenied: { evals: true },
+      enforcementActive: false,
+    });
+    expect(result[0].items[0].billingLocked).not.toBe(true);
+  });
+
+  it("sets billingLocked when enforcement is active and gate denies", () => {
+    const sections = [
+      {
+        id: "main",
+        items: [
+          {
+            title: "Generate Evals",
+            url: "#evals",
+            icon: FakeIcon,
+            billingFeature: "evals" as const,
+          },
+          {
+            title: "Servers",
+            url: "#servers",
+            icon: FakeIcon,
+          },
+        ],
+      },
+    ];
+    const result = annotateBillingNavLockHints(sections, {
+      billingUiEnabled: true,
+      gateDenied: { evals: true },
+      enforcementActive: true,
+    });
+    const evalItem = result[0].items.find((i) => i.title === "Generate Evals");
+    const servers = result[0].items.find((i) => i.title === "Servers");
+    expect(evalItem?.billingLocked).toBe(true);
+    expect(servers?.billingLocked).not.toBe(true);
   });
 });
 

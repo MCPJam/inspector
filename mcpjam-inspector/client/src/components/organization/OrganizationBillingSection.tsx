@@ -320,6 +320,12 @@ const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
       "Seats don't need to be filled by a member. To add a new member, you'll need to have one empty seat.",
     contentClassName: "max-w-[18rem]",
   },
+  "SSO / SAML": {
+    ariaLabel: "About SSO",
+    content:
+      "Single sign-on with SAML for your organization is available on Enterprise.",
+    contentClassName: "max-w-[20rem]",
+  },
   "Role-based access control (RBAC)": {
     ariaLabel: "About RBAC",
     content:

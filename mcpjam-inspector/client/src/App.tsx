@@ -25,7 +25,7 @@ import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { ProfileTab } from "./components/ProfileTab";
-import { PremiumnessLockedPanel } from "./components/billing/PremiumnessLockedPanel";
+import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
@@ -1071,11 +1071,16 @@ export default function App() {
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (
-              <PremiumnessLockedPanel
+              <BillingUpsellGate
                 feature={activeTabBillingFeature}
+                currentPlan={
+                  shellBillingStatus?.effectivePlan ??
+                  shellBillingStatus?.plan ??
+                  "free"
+                }
                 upgradePlan={upgradePlanForActiveTab}
                 canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onViewBilling={() => {
+                onNavigateToBilling={() => {
                   if (billingOrganizationId) {
                     applyNavigation(
                       `organizations/${billingOrganizationId}/billing`,
@@ -1094,11 +1099,16 @@ export default function App() {
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (
-              <PremiumnessLockedPanel
+              <BillingUpsellGate
                 feature={activeTabBillingFeature}
+                currentPlan={
+                  shellBillingStatus?.effectivePlan ??
+                  shellBillingStatus?.plan ??
+                  "free"
+                }
                 upgradePlan={upgradePlanForActiveTab}
                 canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onViewBilling={() => {
+                onNavigateToBilling={() => {
                   if (billingOrganizationId) {
                     applyNavigation(
                       `organizations/${billingOrganizationId}/billing`,
@@ -1117,11 +1127,16 @@ export default function App() {
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (
-              <PremiumnessLockedPanel
+              <BillingUpsellGate
                 feature={activeTabBillingFeature}
+                currentPlan={
+                  shellBillingStatus?.effectivePlan ??
+                  shellBillingStatus?.plan ??
+                  "free"
+                }
                 upgradePlan={upgradePlanForActiveTab}
                 canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onViewBilling={() => {
+                onNavigateToBilling={() => {
                   if (billingOrganizationId) {
                     applyNavigation(
                       `organizations/${billingOrganizationId}/billing`,

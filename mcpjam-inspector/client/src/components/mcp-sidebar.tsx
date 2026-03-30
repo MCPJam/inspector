@@ -65,6 +65,8 @@ interface NavItem {
   hiddenByFlag?: string;
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
+  /** Set when enforcement is on and this billed feature is locked (nav still enabled). */
+  billingLocked?: boolean;
 }
 
 interface NavSection {
@@ -96,6 +98,9 @@ export function filterByFeatureFlags(
 /**
  * Keeps billed nav items visible; marks them disabled when the gate denies access
  * and enforcement is enabled (not soft/disabled).
+ *
+ * Not used in the main sidebar pipeline — items stay clickable so the shell can
+ * show the billing upsell gate. Retained for tests and optional future use.
  */
 export function applyBillingGateNavState(
   sections: NavSection[],
@@ -126,6 +131,38 @@ export function applyBillingGateNavState(
         disabled: true,
         disabledTooltip: `${item.title} requires a plan upgrade.`,
       };
+    }),
+  }));
+}
+
+/**
+ * When billing enforcement is active, flags nav items that are locked so the UI can
+ * show a lock hint without disabling navigation.
+ */
+export function annotateBillingNavLockHints(
+  sections: NavSection[],
+  options: {
+    billingUiEnabled: boolean;
+    gateDenied: Partial<Record<BillingFeatureName, boolean>>;
+    enforcementActive: boolean;
+  },
+): NavSection[] {
+  const { billingUiEnabled, gateDenied, enforcementActive } = options;
+  if (!billingUiEnabled || !enforcementActive) {
+    return sections;
+  }
+
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) => {
+      if (!item.billingFeature) {
+        return item;
+      }
+      const locked = gateDenied[item.billingFeature] === true;
+      if (!locked) {
+        return item;
+      }
+      return { ...item, billingLocked: true };
     }),
   }));
 }
@@ -464,7 +501,7 @@ export function MCPSidebar({
       isAuthenticated,
     ],
   );
-  const visibleNavigationSections = applyBillingGateNavState(
+  const visibleNavigationSections = annotateBillingNavLockHints(
     filterByFeatureFlags(
       HOSTED_MODE ? hostedNavigationSections : navigationSections,
       featureFlags,

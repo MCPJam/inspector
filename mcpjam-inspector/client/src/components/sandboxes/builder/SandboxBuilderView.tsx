@@ -80,6 +80,7 @@ import {
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useServerMutations, type RemoteServer } from "@/hooks/useWorkspaces";
 import { copyToClipboard } from "@/lib/clipboard";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   getSandboxHostLabel,
   getSandboxHostLogo,
@@ -1321,9 +1322,7 @@ export function SandboxBuilderView({
       });
       toast.success("Sandbox updated");
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to save sandbox",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to save sandbox"));
     } finally {
       setIsSaving(false);
     }
@@ -1408,9 +1407,7 @@ export function SandboxBuilderView({
         setIsSettingsOpen(true);
         toast.success(`Server "${formData.name}" added`);
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Failed to add server",
-        );
+        toast.error(getBillingErrorMessage(error, "Failed to add server"));
       }
     },
     [createServer, workspaceId],

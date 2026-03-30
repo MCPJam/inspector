@@ -266,7 +266,7 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" />);
 
     expect(
-      screen.getByRole("button", { name: "Plans & billing" }),
+      screen.getByRole("button", { name: "Billing" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Billing cycle")).toBeInTheDocument();
     expect(screen.queryByText("Subscription status")).not.toBeInTheDocument();

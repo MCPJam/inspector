@@ -616,7 +616,7 @@ function OrganizationPage({
                     : "border-transparent text-muted-foreground hover:text-foreground",
                 )}
               >
-                Plans & billing
+                Billing
               </button>
             </nav>
           ) : null}
