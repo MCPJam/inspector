@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 
 const mockUseAuth = vi.fn();
 const mockUseConvexAuth = vi.fn();
@@ -160,6 +162,43 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     selectFreeAfterTrial: vi.fn(),
     ...overrides,
   };
+}
+
+function renderAutoCheckoutTab(options?: {
+  checkoutIntent?: CheckoutIntentWithOrganization;
+  onCheckoutIntentConsumed?: () => void;
+  onCheckoutIntentNavigationStarted?: () => void;
+  navigateBillingInSameTab?: (url: string) => void;
+}) {
+  const initialCheckoutIntent: CheckoutIntentWithOrganization =
+    options?.checkoutIntent ?? {
+      organizationId: "org-1",
+      plan: "starter",
+      interval: "annual",
+    };
+
+  function Harness() {
+    const [checkoutIntent, setCheckoutIntent] =
+      useState<CheckoutIntentWithOrganization | null>(initialCheckoutIntent);
+
+    return (
+      <OrganizationsTab
+        organizationId="org-1"
+        section="billing"
+        checkoutIntent={checkoutIntent}
+        onCheckoutIntentConsumed={() => {
+          options?.onCheckoutIntentConsumed?.();
+          setCheckoutIntent(null);
+        }}
+        onCheckoutIntentNavigationStarted={
+          options?.onCheckoutIntentNavigationStarted
+        }
+        navigateBillingInSameTab={options?.navigateBillingInSameTab}
+      />
+    );
+  }
+
+  return render(<Harness />);
 }
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -469,6 +508,153 @@ describe("OrganizationsTab billing", () => {
       "noopener,noreferrer",
     );
     openSpy.mockRestore();
+  });
+
+  it("auto-checks out billing deep links in the same tab", async () => {
+    const startCheckout = vi
+      .fn()
+      .mockResolvedValue("https://stripe.test/checkout");
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startCheckout,
+      }),
+    );
+
+    const openSpy = vi.spyOn(window, "open").mockImplementation(() => null);
+    const navigateBillingInSameTab = vi.fn();
+    const onCheckoutIntentConsumed = vi.fn();
+    const onCheckoutIntentNavigationStarted = vi.fn();
+
+    renderAutoCheckoutTab({
+      onCheckoutIntentConsumed,
+      onCheckoutIntentNavigationStarted,
+      navigateBillingInSameTab,
+    });
+
+    expect(
+      screen.getByTestId("billing-deep-link-redirect"),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(startCheckout).toHaveBeenCalledWith(
+        expect.stringContaining("#organizations/org-1/billing"),
+        "starter",
+        "annual",
+      );
+    });
+    expect(onCheckoutIntentNavigationStarted).toHaveBeenCalled();
+    expect(onCheckoutIntentConsumed).not.toHaveBeenCalled();
+    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
+      "https://stripe.test/checkout",
+    );
+    expect(openSpy).not.toHaveBeenCalled();
+    expect(screen.getByTestId("billing-deep-link-redirect")).toBeInTheDocument();
+
+    openSpy.mockRestore();
+  });
+
+  it("consumes billing deep-link checkout intent when billing is unavailable", async () => {
+    const startCheckout = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          billingConfigured: false,
+          canManageBilling: false,
+        }),
+        startCheckout,
+      }),
+    );
+
+    const onCheckoutIntentConsumed = vi.fn();
+
+    renderAutoCheckoutTab({ onCheckoutIntentConsumed });
+
+    await waitFor(() => {
+      expect(onCheckoutIntentConsumed).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("billing-deep-link-redirect"),
+      ).not.toBeInTheDocument();
+    });
+    expect(startCheckout).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(
+        "Billing is not configured in this environment. Plans are visible, but purchase actions are unavailable.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("consumes billing deep-link checkout intent and shows the existing notice for lower-plan links", async () => {
+    const startCheckout = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "annual",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team",
+        }),
+        startCheckout,
+      }),
+    );
+
+    const onCheckoutIntentConsumed = vi.fn();
+
+    renderAutoCheckoutTab({ onCheckoutIntentConsumed });
+
+    await waitFor(() => {
+      expect(onCheckoutIntentConsumed).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("billing-deep-link-redirect"),
+      ).not.toBeInTheDocument();
+    });
+    expect(startCheckout).not.toHaveBeenCalled();
+    expect(
+      screen.getByText("You’re already on a higher plan"),
+    ).toBeInTheDocument();
+  });
+
+  it("consumes billing deep-link checkout intent when auto-checkout startup fails", async () => {
+    const startCheckout = vi
+      .fn()
+      .mockRejectedValue(new Error("Failed to start checkout flow"));
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        startCheckout,
+      }),
+    );
+
+    const navigateBillingInSameTab = vi.fn();
+    const onCheckoutIntentConsumed = vi.fn();
+
+    renderAutoCheckoutTab({
+      onCheckoutIntentConsumed,
+      navigateBillingInSameTab,
+    });
+
+    await waitFor(() => {
+      expect(startCheckout).toHaveBeenCalledWith(
+        expect.stringContaining("#organizations/org-1/billing"),
+        "starter",
+        "annual",
+      );
+    });
+    await waitFor(() => {
+      expect(onCheckoutIntentConsumed).toHaveBeenCalled();
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("billing-deep-link-redirect"),
+      ).not.toBeInTheDocument();
+    });
+    expect(navigateBillingInSameTab).not.toHaveBeenCalled();
   });
 
   it("opens the billing portal from the overview current plan card for paid owners", async () => {

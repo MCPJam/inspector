@@ -13,6 +13,7 @@ export type CheckoutIntentWithOrganization = CheckoutIntent & {
 };
 
 const STORAGE_KEY = "mcpjam:checkout-intent";
+const SIGN_IN_RETURN_PATH_STORAGE_KEY = "mcpjam:billing-signin-return-path";
 
 const VALID_PLANS = new Set<CheckoutPlanTier>(["starter", "team"]);
 const VALID_INTERVALS = new Set<BillingInterval>(["monthly", "annual"]);
@@ -167,6 +168,57 @@ export function clearPersistedCheckoutIntent(): void {
     sessionStorage.removeItem(STORAGE_KEY);
   } catch {
     // ignore
+  }
+}
+
+export function writeBillingSignInReturnPath(path: string): void {
+  if (typeof sessionStorage === "undefined") {
+    return;
+  }
+
+  const normalizedPath = path.trim();
+  if (!isBillingEntryPathname(normalizedPath)) {
+    return;
+  }
+
+  try {
+    sessionStorage.setItem(SIGN_IN_RETURN_PATH_STORAGE_KEY, normalizedPath);
+  } catch {
+    // ignore quota / private mode
+  }
+}
+
+export function readBillingSignInReturnPath(): string | null {
+  if (typeof sessionStorage === "undefined") {
+    return null;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(SIGN_IN_RETURN_PATH_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const normalizedPath = raw.trim();
+    if (!isBillingEntryPathname(normalizedPath)) {
+      return null;
+    }
+
+    return normalizedPath;
+  } catch {
+    return null;
+  }
+}
+
+export function clearBillingSignInReturnPath(): void {
+  if (typeof sessionStorage === "undefined") {
+    return;
+  }
+
+  try {
+    sessionStorage.removeItem(SIGN_IN_RETURN_PATH_STORAGE_KEY);
+  } catch {
+    // ignore quota / private mode
   }
 }
 

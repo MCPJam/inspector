@@ -476,6 +476,10 @@ interface OrganizationBillingSectionProps {
     plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
+  onStartAutoCheckout?: (
+    plan: "starter" | "team",
+    billingInterval: BillingInterval,
+  ) => Promise<void>;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
 }
@@ -490,6 +494,7 @@ export function OrganizationBillingSection({
   isOpeningPortal,
   onManageBilling,
   onStartCheckout,
+  onStartAutoCheckout,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
@@ -574,10 +579,10 @@ export function OrganizationBillingSection({
       autoCheckoutStartedForKeyRef.current = intentKey;
 
       try {
-        await onStartCheckout(checkoutIntent.plan, checkoutIntent.interval);
-        if (!cancelled) {
-          onCheckoutIntentConsumed?.();
-        }
+        await (onStartAutoCheckout ?? onStartCheckout)(
+          checkoutIntent.plan,
+          checkoutIntent.interval,
+        );
       } catch {
         if (!cancelled) {
           onCheckoutIntentConsumed?.();
@@ -596,6 +601,7 @@ export function OrganizationBillingSection({
     isLoadingBilling,
     isLoadingPlanCatalog,
     onCheckoutIntentConsumed,
+    onStartAutoCheckout,
     onStartCheckout,
     planCatalog,
   ]);

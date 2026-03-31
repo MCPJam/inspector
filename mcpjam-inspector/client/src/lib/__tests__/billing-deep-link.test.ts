@@ -1,14 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  clearBillingSignInReturnPath,
   clearPersistedCheckoutIntent,
   hashMatchesOrganizationBilling,
   hasInvalidCheckoutIntervalParam,
   hasInvalidCheckoutQueryParams,
   isBillingEntryPathname,
   persistCheckoutIntent,
+  readBillingSignInReturnPath,
   readCheckoutIntentFromSearch,
   readPersistedCheckoutIntent,
   resolveCheckoutOrganizationId,
+  writeBillingSignInReturnPath,
 } from "../billing-deep-link";
 
 describe("readCheckoutIntentFromSearch", () => {
@@ -58,6 +61,7 @@ describe("hasInvalidCheckoutIntervalParam", () => {
 
 describe("sessionStorage persistence", () => {
   afterEach(() => {
+    clearBillingSignInReturnPath();
     clearPersistedCheckoutIntent();
   });
 
@@ -67,6 +71,18 @@ describe("sessionStorage persistence", () => {
       plan: "starter",
       interval: "annual",
     });
+  });
+
+  it("round-trips the billing sign-in return path", () => {
+    writeBillingSignInReturnPath("/billing");
+    expect(readBillingSignInReturnPath()).toBe("/billing");
+    clearBillingSignInReturnPath();
+    expect(readBillingSignInReturnPath()).toBeNull();
+  });
+
+  it("ignores invalid billing sign-in return paths", () => {
+    writeBillingSignInReturnPath("/servers");
+    expect(readBillingSignInReturnPath()).toBeNull();
   });
 });
 

@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -58,6 +58,8 @@ interface OrganizationsTabProps {
   section?: OrganizationRouteSection;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
+  onCheckoutIntentNavigationStarted?: () => void;
+  navigateBillingInSameTab?: (url: string) => void;
 }
 
 function getOrganizationRouteHash(
@@ -74,6 +76,8 @@ export function OrganizationsTab({
   section = "overview",
   checkoutIntent = null,
   onCheckoutIntentConsumed,
+  onCheckoutIntentNavigationStarted,
+  navigateBillingInSameTab,
 }: OrganizationsTabProps) {
   const { user, signIn } = useAuth();
   const { isAuthenticated } = useConvexAuth();
@@ -162,6 +166,8 @@ export function OrganizationsTab({
           : null
       }
       onCheckoutIntentConsumed={onCheckoutIntentConsumed}
+      onCheckoutIntentNavigationStarted={onCheckoutIntentNavigationStarted}
+      navigateBillingInSameTab={navigateBillingInSameTab}
     />
   );
 }
@@ -171,6 +177,13 @@ interface OrganizationPageProps {
   section: OrganizationRouteSection;
   checkoutIntent?: CheckoutIntentWithOrganization | null;
   onCheckoutIntentConsumed?: () => void;
+  onCheckoutIntentNavigationStarted?: () => void;
+  navigateBillingInSameTab?: (url: string) => void;
+}
+
+interface CheckoutNavigationOptions {
+  navigation?: "new-tab" | "same-tab";
+  onBeforeNavigate?: () => void;
 }
 
 function OrganizationPage({
@@ -178,6 +191,8 @@ function OrganizationPage({
   section,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
+  onCheckoutIntentNavigationStarted,
+  navigateBillingInSameTab,
 }: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -479,15 +494,27 @@ function OrganizationPage({
   };
   const handleViewBilling = () => navigateToSection("billing");
 
-  const openBillingUrl = (url: string) => {
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
+  const openBillingUrl = useCallback(
+    (url: string, navigation: "new-tab" | "same-tab" = "new-tab") => {
+      if (navigation === "same-tab") {
+        (navigateBillingInSameTab ??
+          ((nextUrl: string) => window.location.assign(nextUrl)))(url);
+        return;
+      }
 
-  const getBillingReturnUrl = () =>
-    `${window.location.origin}${window.location.pathname}#${getOrganizationRouteHash(
-      organization._id,
-      "billing",
-    )}`;
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [navigateBillingInSameTab],
+  );
+
+  const getBillingReturnUrl = useCallback(
+    () =>
+      `${window.location.origin}${window.location.pathname}#${getOrganizationRouteHash(
+        organization._id,
+        "billing",
+      )}`,
+    [organization._id],
+  );
 
   const handleManageBilling = async () => {
     try {
@@ -505,6 +532,7 @@ function OrganizationPage({
   const handlePlanCheckout = async (
     tier: "starter" | "team",
     billingInterval: "monthly" | "annual",
+    options: CheckoutNavigationOptions = {},
   ) => {
     try {
       const billingUrl = await startCheckout(
@@ -512,7 +540,8 @@ function OrganizationPage({
         tier,
         billingInterval,
       );
-      openBillingUrl(billingUrl);
+      options.onBeforeNavigate?.();
+      openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -521,6 +550,33 @@ function OrganizationPage({
       );
     }
   };
+
+  const handleAutoPlanCheckout = useCallback(
+    async (tier: "starter" | "team", billingInterval: "monthly" | "annual") => {
+      try {
+        const billingUrl = await startCheckout(
+          getBillingReturnUrl(),
+          tier,
+          billingInterval,
+        );
+        onCheckoutIntentNavigationStarted?.();
+        openBillingUrl(billingUrl, "same-tab");
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to start checkout flow",
+        );
+        throw error;
+      }
+    },
+    [
+      getBillingReturnUrl,
+      onCheckoutIntentNavigationStarted,
+      openBillingUrl,
+      startCheckout,
+    ],
+  );
 
   return (
     <div className="h-full overflow-y-auto">
@@ -634,6 +690,7 @@ function OrganizationPage({
               isOpeningPortal={isOpeningPortal}
               onManageBilling={handleManageBilling}
               onStartCheckout={handlePlanCheckout}
+              onStartAutoCheckout={handleAutoPlanCheckout}
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
             />

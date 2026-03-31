@@ -1,7 +1,7 @@
 import { useConvexAuth } from "convex/react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -82,6 +82,7 @@ import {
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import {
+  clearBillingSignInReturnPath,
   clearCheckoutIntentFromUrl,
   clearPersistedCheckoutIntent,
   hasInvalidCheckoutIntervalParam,
@@ -89,10 +90,13 @@ import {
   hashMatchesOrganizationBilling,
   isBillingEntryPathname,
   persistCheckoutIntent,
+  type CheckoutIntent,
+  readBillingSignInReturnPath,
   readCheckoutIntentFromSearch,
   readPersistedCheckoutIntent,
   resolveCheckoutOrganizationId,
   type CheckoutIntentWithOrganization,
+  writeBillingSignInReturnPath,
 } from "./lib/billing-deep-link";
 import {
   getInvalidOrganizationRouteNavigationTarget,
@@ -151,6 +155,51 @@ function getHostedOAuthCallbackErrorMessage(): string {
   );
 }
 
+function BillingHandoffLoading({
+  overlay = false,
+}: {
+  overlay?: boolean;
+}) {
+  return (
+    <div
+      className={
+        overlay
+          ? "fixed inset-0 z-[100] flex items-center justify-center bg-background"
+          : "min-h-screen bg-background flex items-center justify-center"
+      }
+      data-testid={overlay ? "billing-handoff-overlay" : "billing-handoff-loading"}
+    >
+      <div className="text-center">
+        <Loader2 className="mx-auto size-12 animate-spin text-muted-foreground" />
+        <p className="mt-4 text-muted-foreground">Preparing checkout...</p>
+      </div>
+    </div>
+  );
+}
+
+function getInitialPendingCheckoutIntent(): CheckoutIntent | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  if (isBillingEntryPathname(window.location.pathname)) {
+    const search = window.location.search;
+    const invalid =
+      hasInvalidCheckoutQueryParams(search) ||
+      hasInvalidCheckoutIntervalParam(search);
+    if (invalid) {
+      return null;
+    }
+
+    const fromUrl = readCheckoutIntentFromSearch(search);
+    if (fromUrl) {
+      return fromUrl;
+    }
+  }
+
+  return readPersistedCheckoutIntent();
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [activeOrganizationSection, setActiveOrganizationSection] =
@@ -161,6 +210,8 @@ export default function App() {
   const billingDeepLinkNavRef = useRef(false);
   /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
   const billingCheckoutQueryConsumedRef = useRef(false);
+  const [pendingCheckoutIntent, setPendingCheckoutIntent] =
+    useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
   const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
@@ -346,12 +397,17 @@ export default function App() {
     if (!isAuthLoading && isAuthenticated) {
       const sandboxReturnPath = readSandboxSignInReturnPath();
       const sharedReturnPath = readSharedSignInReturnPath();
+      const persistedCheckoutIntent = readPersistedCheckoutIntent();
+      const billingReturnPath = persistedCheckoutIntent
+        ? readBillingSignInReturnPath()
+        : null;
       clearSandboxSignInReturnPath();
       clearSharedSignInReturnPath();
+      clearBillingSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        sandboxReturnPath ?? sharedReturnPath ?? "/",
+        sandboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/",
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -681,6 +737,22 @@ export default function App() {
     return () => window.removeEventListener("hashchange", applyHash);
   }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
 
+  const consumeCheckoutIntent = useCallback(() => {
+    clearPersistedCheckoutIntent();
+    clearBillingSignInReturnPath();
+    clearCheckoutIntentFromUrl();
+    setPendingCheckoutIntent(null);
+    billingDeepLinkNavRef.current = false;
+    billingCheckoutQueryConsumedRef.current = false;
+  }, []);
+
+  const handleCheckoutIntentNavigationStarted = useCallback(() => {
+    clearPersistedCheckoutIntent();
+    clearBillingSignInReturnPath();
+    clearCheckoutIntentFromUrl();
+    billingCheckoutQueryConsumedRef.current = false;
+  }, []);
+
   // `/billing?plan=&interval=` → auth (if needed) → org billing hash → auto-checkout when intent is valid.
   useEffect(() => {
     if (isDebugCallback) return;
@@ -704,15 +776,29 @@ export default function App() {
 
       if (invalid) {
         clearPersistedCheckoutIntent();
+        clearBillingSignInReturnPath();
+        setPendingCheckoutIntent(null);
         billingCheckoutQueryConsumedRef.current = false;
       } else {
         const fromUrl = readCheckoutIntentFromSearch(search);
         if (fromUrl) {
           persistCheckoutIntent(fromUrl);
+          setPendingCheckoutIntent(fromUrl);
           billingCheckoutQueryConsumedRef.current = true;
         } else if (!new URLSearchParams(search).has("plan")) {
-          if (!billingCheckoutQueryConsumedRef.current) {
+          const persistedIntent = readPersistedCheckoutIntent();
+          if (persistedIntent) {
+            billingCheckoutQueryConsumedRef.current = true;
+            if (
+              pendingCheckoutIntent?.plan !== persistedIntent.plan ||
+              pendingCheckoutIntent?.interval !== persistedIntent.interval
+            ) {
+              setPendingCheckoutIntent(persistedIntent);
+            }
+          } else if (!billingCheckoutQueryConsumedRef.current) {
             clearPersistedCheckoutIntent();
+            clearBillingSignInReturnPath();
+            setPendingCheckoutIntent(null);
           }
         }
       }
@@ -721,6 +807,7 @@ export default function App() {
 
       if (!isAuthenticated) {
         if (!isAuthLoading) {
+          writeBillingSignInReturnPath(path);
           void signIn();
         }
         return;
@@ -743,8 +830,7 @@ export default function App() {
       return;
     }
 
-    const persisted = readPersistedCheckoutIntent();
-    if (!persisted) {
+    if (!pendingCheckoutIntent) {
       billingDeepLinkNavRef.current = false;
       return;
     }
@@ -758,8 +844,7 @@ export default function App() {
 
     if (!orgId) {
       toast.error("Create or join an organization to continue with checkout.");
-      clearPersistedCheckoutIntent();
-      billingDeepLinkNavRef.current = false;
+      consumeCheckoutIntent();
       return;
     }
 
@@ -780,11 +865,13 @@ export default function App() {
     applyNavigation,
     billingEntitlementsUiEnabled,
     billingPathSync,
+    consumeCheckoutIntent,
     isAuthLoading,
     isAuthenticated,
     isDebugCallback,
     isHostedChatRoute,
     isLoadingOrganizations,
+    pendingCheckoutIntent,
     signIn,
     sortedOrganizations,
     workOsUser?.id,
@@ -873,20 +960,23 @@ export default function App() {
     ],
   );
 
-  const persistedCheckout = readPersistedCheckoutIntent();
+  const isBillingEntryHandoff =
+    !isHostedChatRoute &&
+    isBillingEntryPathname(window.location.pathname) &&
+    pendingCheckoutIntent !== null;
   const checkoutIntentForBilling = useMemo((): CheckoutIntentWithOrganization | null => {
     if (
       !billingUiEnabled ||
       activeTab !== "organizations" ||
       !currentHashRoute.organizationId ||
       currentHashRoute.organizationSection !== "billing" ||
-      !persistedCheckout
+      !pendingCheckoutIntent
     ) {
       return null;
     }
     return {
-      plan: persistedCheckout.plan,
-      interval: persistedCheckout.interval,
+      plan: pendingCheckoutIntent.plan,
+      interval: pendingCheckoutIntent.interval,
       organizationId: currentHashRoute.organizationId,
     };
   }, [
@@ -894,8 +984,8 @@ export default function App() {
     activeTab,
     currentHashRoute.organizationId,
     currentHashRoute.organizationSection,
-    persistedCheckout?.plan,
-    persistedCheckout?.interval,
+    pendingCheckoutIntent?.interval,
+    pendingCheckoutIntent?.plan,
   ]);
 
   if (isDebugCallback) {
@@ -939,9 +1029,19 @@ export default function App() {
     return <CompletingSignInLoading />;
   }
 
+  if (isBillingEntryHandoff) {
+    return <BillingHandoffLoading />;
+  }
+
   if (isLoading && !isHostedChatRoute) {
     return <LoadingScreen />;
   }
+
+  const shouldShowBillingHandoffOverlay =
+    !isHostedChatRoute &&
+    !isOAuthCallback &&
+    billingEntitlementsUiEnabled !== false &&
+    pendingCheckoutIntent !== null;
 
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
@@ -1256,10 +1356,10 @@ export default function App() {
                 activeOrganizationSection
               }
               checkoutIntent={checkoutIntentForBilling}
-              onCheckoutIntentConsumed={() => {
-                clearPersistedCheckoutIntent();
-                billingDeepLinkNavRef.current = false;
-              }}
+              onCheckoutIntentConsumed={consumeCheckoutIntent}
+              onCheckoutIntentNavigationStarted={
+                handleCheckoutIntentNavigationStarted
+              }
             />
           )}
         </div>
@@ -1325,34 +1425,45 @@ export default function App() {
       />
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
-        <HostedShellGate
-          state={
-            isHostedChatRoute ? hostedChatShellGateState : hostedShellGateState
+        <div
+          aria-hidden={shouldShowBillingHandoffOverlay || undefined}
+          className={
+            shouldShowBillingHandoffOverlay
+              ? "pointer-events-none opacity-0"
+              : undefined
           }
-          onSignIn={() => {
-            if (sharedPathToken) {
-              writeSharedSignInReturnPath(window.location.pathname);
-            }
-            if (sandboxPathToken) {
-              writeSandboxSignInReturnPath(window.location.pathname);
-            }
-            signIn();
-          }}
+          inert={shouldShowBillingHandoffOverlay || undefined}
         >
-          {isSharedChatRoute ? (
-            <SharedServerChatPage
-              pathToken={sharedPathToken}
-              onExitSharedChat={() => setExitedSharedChat(true)}
-            />
-          ) : isSandboxChatRoute ? (
-            <SandboxChatPage
-              pathToken={sandboxPathToken}
-              onExitSandboxChat={() => setExitedSandboxChat(true)}
-            />
-          ) : (
-            appContent
-          )}
-        </HostedShellGate>
+          <HostedShellGate
+            state={
+              isHostedChatRoute ? hostedChatShellGateState : hostedShellGateState
+            }
+            onSignIn={() => {
+              if (sharedPathToken) {
+                writeSharedSignInReturnPath(window.location.pathname);
+              }
+              if (sandboxPathToken) {
+                writeSandboxSignInReturnPath(window.location.pathname);
+              }
+              signIn();
+            }}
+          >
+            {isSharedChatRoute ? (
+              <SharedServerChatPage
+                pathToken={sharedPathToken}
+                onExitSharedChat={() => setExitedSharedChat(true)}
+              />
+            ) : isSandboxChatRoute ? (
+              <SandboxChatPage
+                pathToken={sandboxPathToken}
+                onExitSandboxChat={() => setExitedSandboxChat(true)}
+              />
+            ) : (
+              appContent
+            )}
+          </HostedShellGate>
+        </div>
+        {shouldShowBillingHandoffOverlay ? <BillingHandoffLoading overlay /> : null}
       </AppStateProvider>
     </PreferencesStoreProvider>
   );
