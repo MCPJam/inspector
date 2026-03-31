@@ -30,6 +30,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { Accordion as AccordionRx } from "radix-ui";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Collapsible,
@@ -68,7 +69,7 @@ const ENV_TAIL_DOTENV = `MCP_SERVER_URL=${LEARN_MCP_URL}
 # EVAL_MODEL = <provider>/<model-id>. TestAgent providers: ${SDK_TEST_AGENT_PROVIDERS}
 # Examples: openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
 EVAL_MODEL=<provider/model-id>
-# Match your provider's usual env var name; sync with apiKey in the Vitest file below.
+# Match your provider's usual env var name; sync with apiKey in the sample test below.
 LLM_API_KEY=<your-llm-api-key>`;
 
 function escapeDoubleQuotes(value: string): string {
@@ -96,7 +97,7 @@ export function buildDotEnvSnippet(
 }
 
 /** Snippet strings exported for tests and consistency with copy targets. */
-export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk vitest";
+export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 
 /** Placeholder shell env (no workspace key injected). */
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
@@ -613,10 +614,10 @@ export function SdkEvalQuickstart({
 
   return (
     <div className="w-full max-w-3xl text-left">
-      <Collapsible defaultOpen={false} className="group mb-4">
+      <Collapsible defaultOpen className="group mb-4">
         <CollapsibleTrigger
           className="flex w-full cursor-pointer items-baseline justify-between rounded-md px-3 pb-1.5 pt-2 hover:bg-muted/50"
-          aria-label="SDK eval quickstart — expand checklist"
+          aria-label="SDK eval quickstart — toggle checklist"
         >
           <div className="flex items-center gap-2">
             <ChevronDown
@@ -629,7 +630,7 @@ export function SdkEvalQuickstart({
               </h2>
               <p className="text-xs text-muted-foreground">
                 Add <span className="font-medium text-foreground/90">@mcpjam/sdk</span>,
-                set env, run Vitest — evals show up here.
+                set env, run your tests — evals show up here.
               </p>
             </div>
           </div>
@@ -652,13 +653,9 @@ export function SdkEvalQuickstart({
                   value={step.id}
                   className="border-b border-border/40 last:border-b-0"
                 >
-                  <AccordionTrigger
-                    className={cn(
-                      "group/trigger flex w-full items-center gap-3 rounded-md py-2.5 pr-3 pl-0 text-left transition-colors hover:bg-muted/50 hover:no-underline [&>svg:last-child]:hidden",
-                    )}
-                  >
+                  <div className="flex w-full items-stretch">
                     <div
-                      className="flex shrink-0 items-center pl-2 pr-1"
+                      className="flex shrink-0 items-center self-center pl-2 pr-1"
                       onPointerDown={(e) => e.stopPropagation()}
                       onClick={(e) => e.stopPropagation()}
                     >
@@ -669,39 +666,60 @@ export function SdkEvalQuickstart({
                         }}
                       />
                     </div>
-                    <span
-                      className={cn(
-                        "w-5 shrink-0 text-sm tabular-nums",
-                        done
-                          ? "text-muted-foreground/60"
-                          : "text-muted-foreground",
-                      )}
-                    >
-                      {n}.
-                    </span>
-                    <h3
-                      className={cn(
-                        "min-w-0 flex-1 text-base font-semibold tracking-tight",
-                        done
-                          ? "text-muted-foreground/60"
-                          : "text-foreground",
-                      )}
-                    >
-                      {step.title}
-                    </h3>
-                    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
-                      <Clock className="h-3 w-3" />~{step.minutes} min
-                    </span>
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover/trigger:text-muted-foreground" />
-                  </AccordionTrigger>
+                    <AccordionRx.Header className="m-0 flex flex-1 p-0">
+                      <AccordionRx.Trigger
+                        className={cn(
+                          "group/trigger flex flex-1 items-center gap-3 rounded-md py-2.5 pr-3 pl-0 text-left transition-colors hover:bg-muted/50 hover:no-underline",
+                          "focus-visible:border-ring focus-visible:ring-ring/50 outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50",
+                        )}
+                      >
+                        <span
+                          className={cn(
+                            "w-5 shrink-0 text-sm tabular-nums",
+                            done
+                              ? "text-muted-foreground/60"
+                              : "text-muted-foreground",
+                          )}
+                        >
+                          {n}.
+                        </span>
+                        <span
+                          role="heading"
+                          aria-level={3}
+                          className={cn(
+                            "min-w-0 flex-1 text-base font-semibold tracking-tight",
+                            done
+                              ? "text-muted-foreground/60"
+                              : "text-foreground",
+                          )}
+                        >
+                          {step.title}
+                        </span>
+                        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
+                          <Clock className="h-3 w-3" />~{step.minutes} min
+                        </span>
+                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover/trigger:text-muted-foreground" />
+                      </AccordionRx.Trigger>
+                    </AccordionRx.Header>
+                  </div>
                   <AccordionContent className="pb-4 pt-0">
                     <div className="space-y-4 border-l-2 border-border/60 pl-4 sm:pl-5">
                       {step.id === "install" ? (
-                        <QuickstartCodeBlock
-                          code={SDK_EVAL_QUICKSTART_INSTALL}
-                          copyLabel="Copy install command"
-                          toolbarLabel="bash"
-                        />
+                        <>
+                          <QuickstartCodeBlock
+                            code={SDK_EVAL_QUICKSTART_INSTALL}
+                            copyLabel="Copy install command"
+                            toolbarLabel="bash"
+                          />
+                          <p className="text-sm text-muted-foreground">
+                            The runnable example in step 3 uses Vitest APIs—add{" "}
+                            <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
+                              vitest
+                            </code>{" "}
+                            as a dev dependency if you paste it as-is, or adapt
+                            the file to your test runner.
+                          </p>
+                        </>
                       ) : null}
 
                       {step.id === "configure" ? (
@@ -820,7 +838,7 @@ export function SdkEvalQuickstart({
                                   <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
                                     LLM_API_KEY
                                   </code>{" "}
-                                  and use the same name in the Vitest file (
+                                  and use the same name in the sample test file (
                                   <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
                                     apiKey
                                   </code>
@@ -878,8 +896,8 @@ export function SdkEvalQuickstart({
                       {step.id === "run" ? (
                         <>
                           <p className="text-sm text-muted-foreground">
-                            Save the sample test, run Vitest once, and your suite
-                            and run show up here.
+                            Save the sample test, run it once with your test runner,
+                            and your suite and run show up here.
                           </p>
                           <p className="text-sm text-muted-foreground">
                             Save as{" "}
@@ -894,7 +912,9 @@ export function SdkEvalQuickstart({
                             toolbarLabel="TypeScript"
                           />
                           <p className="text-sm text-muted-foreground">
-                            Run{" "}
+                            <span className="font-medium text-foreground/90">
+                              Example (Vitest):
+                            </span>{" "}
                             <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
                               npx vitest mcp-eval.quickstart.test.ts
                             </code>

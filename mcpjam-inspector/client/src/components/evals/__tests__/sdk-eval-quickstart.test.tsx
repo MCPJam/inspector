@@ -38,14 +38,6 @@ vi.mock("sonner", () => ({
   },
 }));
 
-async function expandQuickstartShell(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(
-    screen.getByRole("button", {
-      name: /SDK eval quickstart — expand checklist/i,
-    }),
-  );
-}
-
 async function expandQuickstartAccordionItem(
   user: ReturnType<typeof userEvent.setup>,
   name: RegExp,
@@ -67,6 +59,19 @@ describe("SdkEvalQuickstart", () => {
     });
   });
 
+  it("updates checklist progress when a step checkbox is toggled", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
+
+    expect(screen.getByText("0/3")).toBeTruthy();
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes.length).toBeGreaterThanOrEqual(1);
+    await user.click(checkboxes[0]);
+
+    expect(screen.getByText("1/3")).toBeTruthy();
+  });
+
   it("renders install, environment, and run sections", async () => {
     const user = userEvent.setup();
     const { copyToClipboard } = await import("@/lib/clipboard");
@@ -75,8 +80,6 @@ describe("SdkEvalQuickstart", () => {
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
     expect(screen.getByText("0/3")).toBeTruthy();
-
-    await expandQuickstartShell(user);
 
     expect(screen.getByRole("heading", { name: "Install" })).toBeTruthy();
     expect(
@@ -115,7 +118,6 @@ describe("SdkEvalQuickstart", () => {
     const user = userEvent.setup();
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    await expandQuickstartShell(user);
     await expandQuickstartAccordionItem(user, /Configure environment/);
     await user.click(
       screen.getByRole("button", { name: "Supported TestAgent providers" }),
@@ -129,7 +131,6 @@ describe("SdkEvalQuickstart", () => {
     const user = userEvent.setup();
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    await expandQuickstartShell(user);
     await expandQuickstartAccordionItem(user, /Configure environment/);
     await user.click(
       screen.getByRole("button", { name: "Custom MCP server URL" }),
@@ -148,7 +149,6 @@ describe("SdkEvalQuickstart", () => {
 
     renderWithProviders(<SdkEvalQuickstart />);
 
-    await expandQuickstartShell(user);
     await expandQuickstartAccordionItem(user, /Install/);
 
     const installCopy = screen.getByRole("button", {
@@ -166,7 +166,6 @@ describe("SdkEvalQuickstart", () => {
 
     renderWithProviders(<SdkEvalQuickstart />);
 
-    await expandQuickstartShell(user);
     await expandQuickstartAccordionItem(user, /Run the quickstart/);
 
     const runCopy = screen.getByRole("button", {
@@ -185,7 +184,6 @@ describe("SdkEvalQuickstart", () => {
 
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    await expandQuickstartShell(user);
     await expandQuickstartAccordionItem(user, /Configure environment/);
 
     await user.click(
@@ -215,7 +213,6 @@ describe("SdkEvalQuickstart", () => {
 
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    await expandQuickstartShell(user);
     await expandQuickstartAccordionItem(user, /Configure environment/);
 
     await user.click(screen.getByRole("button", { name: "Generate API key" }));

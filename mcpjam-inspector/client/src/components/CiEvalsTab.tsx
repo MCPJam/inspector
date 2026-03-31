@@ -609,7 +609,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                     <span className="font-medium text-foreground">
                       @mcpjam/sdk
                     </span>{" "}
-                    so Vitest can push a suite and run to this view. Prefer
+                    so your CI tests can report a suite and run to this view. Prefer
                     designing cases in the UI first? Use Explore, then come back
                     for CI.
                   </p>

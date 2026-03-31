@@ -183,6 +183,13 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
 
+  /** Runs dashboard only: no Explore case sidebar (toggle + breadcrumbs still in header). */
+  const isPlaygroundRunsTableOnly =
+    exploreSuite != null &&
+    route.type === "suite-overview" &&
+    route.suiteId === exploreSuite._id &&
+    route.view !== "test-cases";
+
   const showPlaygroundSurfaceBar = useMemo(() => {
     if (!selectedServer || !exploreSuite) return false;
     switch (route.type) {
@@ -484,18 +491,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                   {playgroundSurface === "runs" ? (
                     <Breadcrumb className="min-w-0 flex-1 sm:pt-0">
                       <BreadcrumbList className="min-w-0 flex-nowrap sm:justify-end">
-                        <BreadcrumbItem>
-                          <BreadcrumbLink asChild>
-                            <button
-                              type="button"
-                              onClick={goPlaygroundExplore}
-                              className="inline-flex border-0 bg-transparent p-0 font-medium"
-                            >
-                              Explore
-                            </button>
-                          </BreadcrumbLink>
-                        </BreadcrumbItem>
-                        <BreadcrumbSeparator />
                         {route.type === "run-detail" ? (
                           <>
                             <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
@@ -533,101 +528,104 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                 </div>
               </div>
             ) : null}
-            <ResizablePanelGroup
-              direction="horizontal"
-              className="min-h-0 flex-1"
-            >
-            <ResizablePanel
-              defaultSize={28}
-              minSize={18}
-              maxSize={40}
-              className="flex min-h-0 flex-col border-r bg-muted/30"
-            >
-              {route.type === "run-detail" ? (
-                <RunIterationsSidebar
-                  caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-                  runDetailSortBy={runDetailSidebarSortBy}
-                  onSortChange={setRunDetailSidebarSortBy}
-                  selectedIterationId={route.iteration ?? null}
-                  onSelectIteration={(iterationId) => {
-                    navigatePlaygroundEvalsRoute({
-                      type: "run-detail",
-                      suiteId: route.suiteId,
-                      runId: route.runId,
-                      iteration: iterationId,
-                    });
-                  }}
-                  runForOverview={selectedRunForSidebar}
-                  onOpenRunInsights={() =>
-                    navigatePlaygroundEvalsRoute({
-                      type: "run-detail",
-                      suiteId: route.suiteId,
-                      runId: route.runId,
-                      insightsFocus: true,
-                    })
-                  }
-                  runInsightsSelected={Boolean(
-                    route.insightsFocus && !route.iteration,
+            {isPlaygroundRunsTableOnly ? (
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {renderExploreMainPanel()}
+              </div>
+            ) : (
+              <ResizablePanelGroup
+                direction="horizontal"
+                className="min-h-0 flex-1"
+              >
+                <ResizablePanel
+                  defaultSize={28}
+                  minSize={18}
+                  maxSize={40}
+                  className="flex min-h-0 flex-col border-r bg-muted/30"
+                >
+                  {route.type === "run-detail" ? (
+                    <RunIterationsSidebar
+                      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                      runDetailSortBy={runDetailSidebarSortBy}
+                      onSortChange={setRunDetailSidebarSortBy}
+                      selectedIterationId={route.iteration ?? null}
+                      onSelectIteration={(iterationId) => {
+                        navigatePlaygroundEvalsRoute({
+                          type: "run-detail",
+                          suiteId: route.suiteId,
+                          runId: route.runId,
+                          iteration: iterationId,
+                        });
+                      }}
+                      runForOverview={selectedRunForSidebar}
+                      onOpenRunInsights={() =>
+                        navigatePlaygroundEvalsRoute({
+                          type: "run-detail",
+                          suiteId: route.suiteId,
+                          runId: route.runId,
+                          insightsFocus: true,
+                        })
+                      }
+                      runInsightsSelected={Boolean(
+                        route.insightsFocus && !route.iteration,
+                      )}
+                      onEditTestCase={(testCaseId) =>
+                        playgroundNavigation.toTestEdit(
+                          route.suiteId,
+                          testCaseId,
+                        )
+                      }
+                      alwaysShowEditIterationRows
+                    />
+                  ) : (
+                    <TestCaseListSidebar
+                      heading="Explore"
+                      emptyLabel="No cases yet"
+                      testCases={exploreCases}
+                      suiteId={exploreSuite._id}
+                      selectedTestId={selectedTestId}
+                      isLoading={queries.isSuiteDetailsLoading}
+                      onCreateTestCase={async () =>
+                        handlers.handleCreateTestCase(exploreSuite._id)
+                      }
+                      onDeleteTestCase={handlers.handleDeleteTestCase}
+                      onDuplicateTestCase={(testCaseId) =>
+                        handlers.handleDuplicateTestCase(
+                          testCaseId,
+                          exploreSuite._id,
+                        )
+                      }
+                      onGenerateTests={() => void handleGenerateMore()}
+                      onCopySdkEvalBrief={() =>
+                        void handleCopyExploreSdkEvalBrief()
+                      }
+                      isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
+                      deletingTestCaseId={handlers.deletingTestCaseId}
+                      duplicatingTestCaseId={handlers.duplicatingTestCaseId}
+                      isGeneratingTests={handlers.isGeneratingTests}
+                      showingOverview={!selectedTestId}
+                      noServerSelected={!isServerConnected}
+                      selectedServer={selectedServer}
+                      suite={exploreSuite}
+                      latestRun={latestRunForSidebar}
+                      onRerun={handlers.handleRerun}
+                      rerunningSuiteId={handlers.rerunningSuiteId}
+                      connectedServerNames={connectedServerNames}
+                      showSelection={false}
+                      hideRunInsightsRow
+                    />
                   )}
-                  onEditTestCase={(testCaseId) =>
-                    playgroundNavigation.toTestEdit(
-                      route.suiteId,
-                      testCaseId,
-                    )
-                  }
-                  alwaysShowEditIterationRows
-                />
-              ) : (
-                <TestCaseListSidebar
-                  heading="Explore"
-                  insightsNavLabel="Runs"
-                  emptyLabel="No cases yet"
-                  testCases={exploreCases}
-                  suiteId={exploreSuite._id}
-                  selectedTestId={selectedTestId}
-                  isLoading={queries.isSuiteDetailsLoading}
-                  onCreateTestCase={async () =>
-                    handlers.handleCreateTestCase(exploreSuite._id)
-                  }
-                  onDeleteTestCase={handlers.handleDeleteTestCase}
-                  onDuplicateTestCase={(testCaseId) =>
-                    handlers.handleDuplicateTestCase(
-                      testCaseId,
-                      exploreSuite._id,
-                    )
-                  }
-                  onGenerateTests={() => void handleGenerateMore()}
-                  onCopySdkEvalBrief={() =>
-                    void handleCopyExploreSdkEvalBrief()
-                  }
-                  isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
-                  deletingTestCaseId={handlers.deletingTestCaseId}
-                  duplicatingTestCaseId={handlers.duplicatingTestCaseId}
-                  isGeneratingTests={handlers.isGeneratingTests}
-                  showingOverview={!selectedTestId}
-                  noServerSelected={!isServerConnected}
-                  selectedServer={selectedServer}
-                  suite={exploreSuite}
-                  latestRun={latestRunForSidebar}
-                  onRerun={handlers.handleRerun}
-                  rerunningSuiteId={handlers.rerunningSuiteId}
-                  connectedServerNames={connectedServerNames}
-                  showSelection={false}
-                  onNavigateToOverview={() => {
-                    goPlaygroundRuns();
-                  }}
-                />
-              )}
-            </ResizablePanel>
-            <ResizableHandle withHandle />
-            <ResizablePanel
-              defaultSize={72}
-              minSize={isRunDetailView ? 42 : 15}
-              className="flex min-h-0 flex-col overflow-hidden"
-            >
-              {renderExploreMainPanel()}
-            </ResizablePanel>
-          </ResizablePanelGroup>
+                </ResizablePanel>
+                <ResizableHandle withHandle />
+                <ResizablePanel
+                  defaultSize={72}
+                  minSize={isRunDetailView ? 42 : 15}
+                  className="flex min-h-0 flex-col overflow-hidden"
+                >
+                  {renderExploreMainPanel()}
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            )}
           </div>
         )}
       </div>

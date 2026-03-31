@@ -1781,7 +1781,7 @@ export function TraceTimeline({
             minSize={40}
             className="min-h-0 min-w-0 overflow-hidden"
           >
-            <ScrollArea className="max-h-[calc(100vh-8rem)] min-h-0 pr-2">
+            <ScrollArea className="max-h-[calc(100vh-8rem)] min-h-0 pr-3">
               <div
                 tabIndex={0}
                 role="region"
@@ -1790,10 +1790,10 @@ export function TraceTimeline({
                 className="min-h-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <div
-                  className="grid min-w-[600px]"
+                  className="grid"
                   style={{
                     gridTemplateColumns:
-                      "minmax(200px, 280px) minmax(0, 1fr) auto",
+                      "minmax(140px, 260px) minmax(0, 1fr) auto",
                     gridTemplateRows: `auto repeat(${rows.length}, minmax(48px, auto))`,
                   }}
                 >
@@ -1913,7 +1913,7 @@ export function TraceTimeline({
                         gridColumn: "1 / 4",
                         gridRow,
                         gridTemplateColumns:
-                          "minmax(200px, 280px) minmax(0, 1fr) auto",
+                          "minmax(140px, 260px) minmax(0, 1fr) auto",
                       }}
                       className={cn(
                         "group grid min-w-0",
