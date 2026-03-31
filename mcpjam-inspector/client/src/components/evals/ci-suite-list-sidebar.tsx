@@ -8,6 +8,10 @@ import {
   evalOverviewEntrySelectedRowClass,
 } from "./helpers";
 import { CommitListSidebar } from "./commit-list-sidebar";
+import {
+  EvalSidebarNestedRow,
+  EvalSidebarParentRow,
+} from "./eval-sidebar-rows";
 
 /** Force a re-render every `intervalMs` so relative timestamps stay fresh. */
 function useTick(intervalMs = 60_000) {
@@ -186,10 +190,13 @@ function SuiteGroupItem({
   // For single-entry groups, render directly
   if (!hasMultiple) {
     return (
-      <SuiteEntryButton
-        entry={primary}
+      <EvalSidebarParentRow
+        leftBorderClassName={evalOverviewEntryLeftBorderClass(primary)}
         isSelected={selectedSuiteId === primary.suite._id}
-        onSelect={() => onSelectSuite(primary.suite._id)}
+        rowTitle={evalOverviewEntryOutcomeTitle(primary)}
+        title={primary.suite.name || "Untitled suite"}
+        subtitle={formatLastRunRelativeTime(primary)}
+        onClick={() => onSelectSuite(primary.suite._id)}
       />
     );
   }
@@ -250,39 +257,28 @@ function SuiteGroupItem({
       {(expanded || isAnySelected) && entries.length > 1 && (
         <div className="border-l-2 border-muted ml-6">
           {entries.map((entry) => (
-            <div
+            <EvalSidebarNestedRow
               key={entry.suite._id}
-              className="flex w-full items-stretch gap-2 border-b border-border/40 last:border-b-0"
+              miniBarClassName={evalOverviewEntryMiniBarClass(entry)}
+              isSelected={selectedSuiteId === entry.suite._id}
+              selectedClassName={
+                selectedSuiteId === entry.suite._id
+                  ? evalOverviewEntrySelectedRowClass(entry)
+                  : undefined
+              }
+              rowTitle={evalOverviewEntryOutcomeTitle(entry)}
+              onClick={() => onSelectSuite(entry.suite._id)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  onSelectSuite(entry.suite._id);
+                }
+              }}
             >
-              <div
-                className={cn(
-                  "my-2 ml-2 w-0.5 shrink-0 self-stretch rounded-full",
-                  evalOverviewEntryMiniBarClass(entry),
-                )}
-                aria-hidden
-              />
-              <div
-                role="button"
-                tabIndex={0}
-                title={evalOverviewEntryOutcomeTitle(entry)}
-                onClick={() => onSelectSuite(entry.suite._id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    onSelectSuite(entry.suite._id);
-                  }
-                }}
-                className={cn(
-                  "min-w-0 flex-1 cursor-pointer py-1.5 pl-1 pr-3 text-left transition-colors hover:bg-accent/50",
-                  selectedSuiteId === entry.suite._id &&
-                    evalOverviewEntrySelectedRowClass(entry),
-                )}
-              >
-                <div className="text-[11px] text-muted-foreground tabular-nums">
-                  {formatLastRunRelativeTime(entry)}
-                </div>
+              <div className="text-[11px] text-muted-foreground tabular-nums">
+                {formatLastRunRelativeTime(entry)}
               </div>
-            </div>
+            </EvalSidebarNestedRow>
           ))}
         </div>
       )}
@@ -290,50 +286,3 @@ function SuiteGroupItem({
   );
 }
 
-function SuiteEntryButton({
-  entry,
-  isSelected,
-  onSelect,
-}: {
-  entry: EvalSuiteOverviewEntry;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <div
-      className={cn(
-        "group flex w-full items-center border-l-2 py-2.5 pl-[15px] pr-4 transition-colors hover:bg-accent/50",
-        evalOverviewEntryLeftBorderClass(entry),
-        isSelected && "bg-accent shadow-sm",
-      )}
-    >
-      <div
-        role="button"
-        tabIndex={0}
-        title={evalOverviewEntryOutcomeTitle(entry)}
-        onClick={onSelect}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onSelect();
-          }
-        }}
-        className="flex min-w-0 flex-1 cursor-pointer items-center text-left"
-      >
-        <div className="min-w-0 flex-1">
-          <div
-            className={cn(
-              "truncate text-sm font-medium",
-              isSelected && "font-semibold",
-            )}
-          >
-            {entry.suite.name || "Untitled suite"}
-          </div>
-          <div className="mt-0.5 text-[11px] text-muted-foreground tabular-nums">
-            {formatLastRunRelativeTime(entry)}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}

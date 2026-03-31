@@ -369,4 +369,133 @@ describe("TraceTimeline detail pane", () => {
     expect(promptRow!.textContent).toMatch(/1 LLM/);
     expect(promptRow!.textContent).toMatch(/1 tool/);
   });
+
+  it("LLM span INPUT includes full prior conversation (system + users), not just messages inside messageStartIndex", async () => {
+    const user = userEvent.setup();
+    const transcriptMessages = [
+      { role: "system" as const, content: "You are a helpful assistant." },
+      { role: "user" as const, content: "first turn" },
+      { role: "assistant" as const, content: "ack" },
+      { role: "user" as const, content: "second turn" },
+      { role: "assistant" as const, content: "final answer" },
+    ];
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-2",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 200,
+        promptIndex: 0,
+        stepIndex: 1,
+        messageStartIndex: 4,
+        messageEndIndex: 4,
+        modelId: "anthropic/claude-3-haiku",
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: /LLM call:/i }),
+    );
+    const pane = screen.getByTestId("trace-detail-pane");
+    const inputPreview = within(pane).getAllByTestId("json-editor")[0];
+    const inputJson = inputPreview.textContent ?? "";
+    expect(inputJson).toContain("You are a helpful assistant.");
+    expect(inputJson).toContain("first turn");
+    expect(inputJson).toContain("second turn");
+    expect(inputJson).toContain("ack");
+    expect(inputJson).not.toContain("final answer");
+  });
+
+  it("LLM span INPUT shows None when the span begins at assistant message index 0", async () => {
+    const user = userEvent.setup();
+    const transcriptMessages = [
+      { role: "assistant" as const, content: "no prior context" },
+    ];
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-0",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 100,
+        messageStartIndex: 0,
+        messageEndIndex: 0,
+        modelId: "openai/gpt-4",
+      },
+    ];
+
+    render(
+      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /LLM call:/i }));
+    const pane = screen.getByTestId("trace-detail-pane");
+    const inputSection = within(pane).getByText("Input").closest("div")
+      ?.parentElement;
+    expect(inputSection).toBeTruthy();
+    expect(within(inputSection!).getByText("None")).toBeInTheDocument();
+  });
+
+  it("LLM span INPUT includes tool results and prior assistant tool calls when range is only the final assistant", async () => {
+    const user = userEvent.setup();
+    const transcriptMessages = [
+      { role: "user" as const, content: "please invoke the tool" },
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool-call" as const,
+            toolCallId: "call-1",
+            toolName: "lookup",
+            input: { q: "x" },
+          },
+        ],
+      },
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "call-1",
+            toolName: "lookup",
+            result: { content: [{ type: "text" as const, text: "lookup ok" }] },
+          },
+        ],
+      },
+      { role: "assistant" as const, content: "here is the summary" },
+    ];
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-after-tool",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 300,
+        messageStartIndex: 3,
+        messageEndIndex: 3,
+        modelId: "anthropic/claude-3-haiku",
+      },
+    ];
+
+    render(
+      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /LLM call:/i }));
+    const pane = screen.getByTestId("trace-detail-pane");
+    const inputPreview = within(pane).getAllByTestId("json-editor")[0];
+    const inputJson = inputPreview.textContent ?? "";
+    expect(inputJson).toContain("please invoke the tool");
+    expect(inputJson).toContain("lookup");
+    expect(inputJson).toContain("lookup ok");
+    expect(inputJson).not.toContain("here is the summary");
+  });
 });

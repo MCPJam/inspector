@@ -619,7 +619,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             </TooltipTrigger>
             <TooltipContent>
               {replayableLatestRun
-                ? "Replay the latest CI run in the playground"
+                ? "Replay the latest CI run"
                 : !hasServersConfigured
                   ? "No connected MCP servers are configured for this suite"
                   : !canRerun

@@ -550,8 +550,10 @@ function toPlainTranscriptMessage(
 }
 
 /**
- * Messages the model sees before its assistant reply within this span's transcript range
- * (user, system, tool results, …). If there is no assistant in-range, returns the full slice.
+ * Full conversation context sent to the model before the assistant reply for this span:
+ * all transcript messages from index 0 up to (but not including) the first assistant
+ * message within the span's message range. If there is no assistant in-range, returns
+ * messages through `endIndex` (inclusive).
  */
 function getLlmInputMessages(
   messages: TranscriptMessage[],
@@ -563,23 +565,21 @@ function getLlmInputMessages(
   const slice = messages.slice(range.startIndex, range.endIndex + 1);
   if (slice.length === 0) return [];
 
-  let lastAssistant = -1;
-  for (let i = slice.length - 1; i >= 0; i -= 1) {
+  let firstAssistantInSlice = -1;
+  for (let i = 0; i < slice.length; i++) {
     if (slice[i]!.role === "assistant") {
-      lastAssistant = i;
+      firstAssistantInSlice = i;
       break;
     }
   }
 
-  if (lastAssistant < 0) return slice;
-  const inputSlice = slice.slice(0, lastAssistant);
-  if (inputSlice.length === 0 && lastAssistant === 0 && range.startIndex > 0) {
-    const prev = messages[range.startIndex - 1];
-    if (prev?.role === "user" || prev?.role === "system") {
-      return [prev];
-    }
+  if (firstAssistantInSlice < 0) {
+    return messages.slice(0, range.endIndex + 1);
   }
-  return inputSlice;
+
+  const absoluteFirstAssistant = range.startIndex + firstAssistantInSlice;
+  if (absoluteFirstAssistant === 0) return [];
+  return messages.slice(0, absoluteFirstAssistant);
 }
 
 /** Split transcript slice into model input messages vs last assistant output (same range as LLM span). */

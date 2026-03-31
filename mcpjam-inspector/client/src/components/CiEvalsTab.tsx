@@ -507,7 +507,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                           type="button"
                           onClick={handleCiBreadcrumbToCommit}
                           title="Back to commit"
-                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate font-mono text-xs"
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
                         >
                           {commitBreadcrumbContext.label}
                         </button>
@@ -532,7 +532,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                     </BreadcrumbItem>
                     <BreadcrumbSeparator />
                     <BreadcrumbItem>
-                      <BreadcrumbPage className="font-mono text-xs tabular-nums">
+                      <BreadcrumbPage className="truncate font-medium">
                         Run {formatRunId(route.runId)}
                       </BreadcrumbPage>
                     </BreadcrumbItem>
