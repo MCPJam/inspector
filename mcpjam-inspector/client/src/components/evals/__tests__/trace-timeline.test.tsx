@@ -190,7 +190,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     const errorBar = screen.getByTestId("trace-row-bar-error");
-    expect(errorBar.className).toContain("bg-primary");
+    expect(errorBar.className).toContain("trace-waterfall-bar-error");
 
     const pane = screen.getByTestId("trace-detail-pane");
     expect(within(pane).getByLabelText("Error")).toBeInTheDocument();

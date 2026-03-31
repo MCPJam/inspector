@@ -107,6 +107,19 @@
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
+  /* Eval trace waterfall — pastel bar fills (light) */
+  --trace-waterfall-bar-prompt: oklch(0.91 0.045 290);
+  --trace-waterfall-bar-llm: oklch(0.91 0.04 255);
+  --trace-waterfall-bar-tool: oklch(0.93 0.06 85);
+  --trace-waterfall-bar-step: oklch(0.9 0.02 250);
+  --trace-waterfall-bar-error: oklch(0.9 0.07 25);
+  --trace-waterfall-row-selected: oklch(0.55 0.07 285 / 0.07);
+  /* Glyph + row border accents (light): muted hues matching bars */
+  --trace-waterfall-accent-prompt: oklch(0.5 0.09 290);
+  --trace-waterfall-accent-llm: oklch(0.48 0.08 255);
+  --trace-waterfall-accent-tool: oklch(0.52 0.09 75);
+  --trace-waterfall-accent-step: oklch(0.46 0.035 250);
+  --trace-waterfall-accent-error: oklch(0.5 0.1 25);
 }
 
 .app-theme-scope {
@@ -137,6 +150,17 @@
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.769 0.188 85.3);
   --pending-foreground: oklch(0.239 0.06 60);
+  --trace-waterfall-bar-prompt: oklch(0.91 0.045 290);
+  --trace-waterfall-bar-llm: oklch(0.91 0.04 255);
+  --trace-waterfall-bar-tool: oklch(0.93 0.06 85);
+  --trace-waterfall-bar-step: oklch(0.9 0.02 250);
+  --trace-waterfall-bar-error: oklch(0.9 0.07 25);
+  --trace-waterfall-row-selected: oklch(0.55 0.07 285 / 0.07);
+  --trace-waterfall-accent-prompt: oklch(0.5 0.09 290);
+  --trace-waterfall-accent-llm: oklch(0.48 0.08 255);
+  --trace-waterfall-accent-tool: oklch(0.52 0.09 75);
+  --trace-waterfall-accent-step: oklch(0.46 0.035 250);
+  --trace-waterfall-accent-error: oklch(0.5 0.1 25);
 }
 
 .dark {
@@ -218,6 +242,18 @@
   --shadow-xl:
     0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* Eval trace waterfall — translucent pastels on dark */
+  --trace-waterfall-bar-prompt: oklch(0.72 0.09 290 / 0.42);
+  --trace-waterfall-bar-llm: oklch(0.72 0.08 250 / 0.45);
+  --trace-waterfall-bar-tool: oklch(0.76 0.1 85 / 0.4);
+  --trace-waterfall-bar-step: oklch(0.7 0.04 250 / 0.38);
+  --trace-waterfall-bar-error: oklch(0.7 0.12 25 / 0.45);
+  --trace-waterfall-row-selected: oklch(0.72 0.06 285 / 0.14);
+  --trace-waterfall-accent-prompt: oklch(0.76 0.075 290);
+  --trace-waterfall-accent-llm: oklch(0.76 0.07 255);
+  --trace-waterfall-accent-tool: oklch(0.8 0.085 85);
+  --trace-waterfall-accent-step: oklch(0.7 0.045 250);
+  --trace-waterfall-accent-error: oklch(0.76 0.09 25);
 }
 
 .app-theme-scope.dark {
@@ -248,6 +284,17 @@
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.75 0.183 55);
   --pending-foreground: oklch(0.95 0.06 70);
+  --trace-waterfall-bar-prompt: oklch(0.72 0.09 290 / 0.42);
+  --trace-waterfall-bar-llm: oklch(0.72 0.08 250 / 0.45);
+  --trace-waterfall-bar-tool: oklch(0.76 0.1 85 / 0.4);
+  --trace-waterfall-bar-step: oklch(0.7 0.04 250 / 0.38);
+  --trace-waterfall-bar-error: oklch(0.7 0.12 25 / 0.45);
+  --trace-waterfall-row-selected: oklch(0.72 0.06 285 / 0.14);
+  --trace-waterfall-accent-prompt: oklch(0.76 0.075 290);
+  --trace-waterfall-accent-llm: oklch(0.76 0.07 255);
+  --trace-waterfall-accent-tool: oklch(0.8 0.085 85);
+  --trace-waterfall-accent-step: oklch(0.7 0.045 250);
+  --trace-waterfall-accent-error: oklch(0.76 0.09 25);
 }
 
 @theme inline {
@@ -372,6 +419,60 @@
 
   .scrollbar-hidden::-webkit-scrollbar {
     display: none;
+  }
+
+  /* Trace timeline waterfall — category bar fills */
+  .trace-waterfall-bar-prompt {
+    background-color: var(--trace-waterfall-bar-prompt);
+  }
+  .trace-waterfall-bar-llm {
+    background-color: var(--trace-waterfall-bar-llm);
+  }
+  .trace-waterfall-bar-tool {
+    background-color: var(--trace-waterfall-bar-tool);
+  }
+  .trace-waterfall-bar-step {
+    background-color: var(--trace-waterfall-bar-step);
+  }
+  .trace-waterfall-bar-error {
+    background-color: var(--trace-waterfall-bar-error);
+  }
+  .trace-waterfall-row-selected {
+    background-color: var(--trace-waterfall-row-selected);
+  }
+
+  /* Trace timeline — pastel icons (CategoryGlyph) */
+  .trace-waterfall-glyph-prompt {
+    color: var(--trace-waterfall-accent-prompt);
+  }
+  .trace-waterfall-glyph-llm {
+    color: var(--trace-waterfall-accent-llm);
+  }
+  .trace-waterfall-glyph-tool {
+    color: var(--trace-waterfall-accent-tool);
+  }
+  .trace-waterfall-glyph-step {
+    color: var(--trace-waterfall-accent-step);
+  }
+  .trace-waterfall-glyph-error {
+    color: var(--trace-waterfall-accent-error);
+  }
+
+  /* Trace timeline — left border accent on rows */
+  .trace-waterfall-row-accent-prompt {
+    border-left-color: var(--trace-waterfall-accent-prompt);
+  }
+  .trace-waterfall-row-accent-llm {
+    border-left-color: var(--trace-waterfall-accent-llm);
+  }
+  .trace-waterfall-row-accent-tool {
+    border-left-color: var(--trace-waterfall-accent-tool);
+  }
+  .trace-waterfall-row-accent-step {
+    border-left-color: var(--trace-waterfall-accent-step);
+  }
+  .trace-waterfall-row-accent-error {
+    border-left-color: var(--trace-waterfall-accent-error);
   }
 }
 

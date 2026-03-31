@@ -394,23 +394,43 @@ function getSpanRowTranscriptRange(row: SpanRow): TranscriptRange | undefined {
   );
 }
 
-/** Unified fill for waterfall timeline segments (category hue stays on glyphs/borders). Uses `--primary` from theme. */
-const TRACE_WATERFALL_BAR_CLASS = "bg-primary/70";
+function getWaterfallBarClass(
+  row: TimelineRow,
+  spanShowsFailure: boolean,
+): string {
+  if (row.kind === "prompt") return "trace-waterfall-bar-prompt";
+  if (row.kind === "span" && spanShowsFailure) {
+    return "trace-waterfall-bar-error";
+  }
+  if (row.kind !== "span") return "trace-waterfall-bar-step";
+  switch (row.span.category) {
+    case "llm":
+      return "trace-waterfall-bar-llm";
+    case "tool":
+      return "trace-waterfall-bar-tool";
+    case "step":
+      return "trace-waterfall-bar-step";
+    case "error":
+      return "trace-waterfall-bar-error";
+    default:
+      return "trace-waterfall-bar-step";
+  }
+}
 
 function getCategoryIconClass(
   category: EvalTraceSpanCategory | "prompt",
 ): string {
   switch (category) {
     case "prompt":
-      return "text-violet-600 dark:text-violet-400";
+      return "trace-waterfall-glyph-prompt";
     case "step":
-      return "text-slate-600 dark:text-slate-300";
+      return "trace-waterfall-glyph-step";
     case "llm":
-      return "text-blue-600 dark:text-blue-400";
+      return "trace-waterfall-glyph-llm";
     case "tool":
-      return "text-amber-600 dark:text-amber-400";
+      return "trace-waterfall-glyph-tool";
     case "error":
-      return "text-red-600 dark:text-red-400";
+      return "trace-waterfall-glyph-error";
     default:
       return "text-muted-foreground";
   }
@@ -421,18 +441,18 @@ function getRowBorderAccentClass(
   spanShowsFailure: boolean,
 ): string {
   if (row.kind === "prompt") {
-    return "border-l-violet-500";
+    return "trace-waterfall-row-accent-prompt";
   }
   const cat = spanShowsFailure ? "error" : row.span.category;
   switch (cat) {
     case "llm":
-      return "border-l-blue-500";
+      return "trace-waterfall-row-accent-llm";
     case "tool":
-      return "border-l-amber-500";
+      return "trace-waterfall-row-accent-tool";
     case "error":
-      return "border-l-red-500";
+      return "trace-waterfall-row-accent-error";
     case "step":
-      return "border-l-slate-500";
+      return "trace-waterfall-row-accent-step";
     default:
       return "border-l-muted-foreground";
   }
@@ -1831,7 +1851,6 @@ export function TraceTimeline({
                 ((endMs - startMs) / axisMaxMs) * 100,
                 0.45,
               );
-              const barIsWide = widthPercent >= 10;
               const spanShowsFailure =
                 row.kind === "span" &&
                 spanIndicatesTranscriptFailure(row.span, transcriptMessages);
@@ -1863,6 +1882,10 @@ export function TraceTimeline({
                 row,
                 spanShowsFailure,
               );
+              const waterfallBarClass = getWaterfallBarClass(
+                row,
+                spanShowsFailure,
+              );
 
               return (
                 <Fragment key={row.key}>
@@ -1873,7 +1896,7 @@ export function TraceTimeline({
                     className={cn(
                       "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
                       isSelected
-                        ? cn("bg-primary/10", borderAccent)
+                        ? cn("trace-waterfall-row-selected", borderAccent)
                         : "border-l-transparent bg-background hover:bg-muted/20",
                     )}
                   >
@@ -1979,7 +2002,7 @@ export function TraceTimeline({
                     className={cn(
                       "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
                       isSelected
-                        ? "bg-primary/10"
+                        ? "trace-waterfall-row-selected"
                         : "bg-background hover:bg-muted/20",
                     )}
                     aria-label={`Select on timeline (${formatDuration(durationMs)})`}
@@ -1994,43 +2017,13 @@ export function TraceTimeline({
                       }
                       className={cn(
                         "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] shadow-sm transition-[left,width] duration-150",
-                        TRACE_WATERFALL_BAR_CLASS,
-                        barIsWide &&
-                          "flex items-center gap-0.5 overflow-hidden px-1.5",
+                        waterfallBarClass,
                       )}
                       style={{
                         left: `${leftPercent}%`,
                         width: `max(${widthPercent}%, 3px)`,
                       }}
-                    >
-                      {barIsWide ? (
-                        <>
-                          <span
-                            aria-hidden
-                            className="min-w-0 truncate text-[10px] font-medium leading-none text-primary-foreground"
-                          >
-                            {subtitle || label}
-                          </span>
-                          <span
-                            aria-hidden
-                            className="ml-auto shrink-0 text-[9px] leading-none text-primary-foreground/85 tabular-nums"
-                          >
-                            {formatDuration(durationMs)}
-                          </span>
-                        </>
-                      ) : null}
-                    </div>
-                    {!barIsWide ? (
-                      <span
-                        aria-hidden
-                        className="pointer-events-none absolute top-1/2 z-[2] -translate-y-1/2 text-[10px] leading-none text-muted-foreground tabular-nums"
-                        style={{
-                          left: `calc(${leftPercent + widthPercent}% + 8px)`,
-                        }}
-                      >
-                        {formatDuration(durationMs)}
-                      </span>
-                    ) : null}
+                    />
                   </button>
                 </Fragment>
               );
