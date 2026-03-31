@@ -558,23 +558,44 @@ export function RunDetailView({
     });
   }, [selectedIteration, selectedRunDetails]);
 
+  const workflowInsightForSelectedIteration = useMemo(() => {
+    if (!selectedIteration || !selectedRunDetails.serverQuality?.workflowInsights) {
+      return null;
+    }
+    const caseKey = selectedIteration.testCaseSnapshot?.caseKey;
+    if (!caseKey) return null;
+    return selectedRunDetails.serverQuality.workflowInsights.find(
+      (w) => w.caseKey === caseKey,
+    ) ?? null;
+  }, [selectedIteration, selectedRunDetails]);
+
+  const toolInsightsForSelectedIteration = useMemo(() => {
+    if (!selectedIteration || !selectedRunDetails.serverQuality?.toolInsights) {
+      return [];
+    }
+    const calledTools = new Set(
+      (selectedIteration.actualToolCalls ?? []).map((c) => c.toolName),
+    );
+    return selectedRunDetails.serverQuality.toolInsights.filter((t) =>
+      calledTools.has(t.toolName),
+    );
+  }, [selectedIteration, selectedRunDetails]);
+
   const selectedIterationCaseInsightSlot = useMemo(() => {
     if (!selectedIteration) {
       return null;
     }
-    if (
-      shouldOmitRunCaseInsightCaption({
-        runStatus: selectedRunDetails.status,
-        caseInsight: caseInsightForSelectedIteration,
-        pending: runInsightsPending,
-        requested: runInsightsRequested,
-        failedGeneration: runInsightsFailedGeneration,
-        error: runInsightsError,
-      })
-    ) {
-      return null;
-    }
-    return (
+
+    // Regression insight caption (existing)
+    const showRegression = !shouldOmitRunCaseInsightCaption({
+      runStatus: selectedRunDetails.status,
+      caseInsight: caseInsightForSelectedIteration,
+      pending: runInsightsPending,
+      requested: runInsightsRequested,
+      failedGeneration: runInsightsFailedGeneration,
+      error: runInsightsError,
+    });
+    const regressionCaption = showRegression ? (
       <RunCaseInsightTraceCaption
         runStatus={selectedRunDetails.status}
         caseInsight={caseInsightForSelectedIteration}
@@ -583,6 +604,68 @@ export function RunDetailView({
         failedGeneration={runInsightsFailedGeneration}
         error={runInsightsError}
       />
+    ) : null;
+
+    // Server quality workflow caption
+    const wf = workflowInsightForSelectedIteration;
+    const problemTools = toolInsightsForSelectedIteration.filter(
+      (t) => t.rating !== "good",
+    );
+    const isCompleted = selectedRunDetails.status === "completed";
+
+    const workflowCaption =
+      wf && isCompleted ? (
+        <div className="text-xs leading-relaxed">
+          <div className="flex items-baseline gap-1.5">
+            <span className={cn(
+              "font-medium",
+              wf.efficiency === "optimal" || wf.efficiency === "acceptable"
+                ? "text-muted-foreground"
+                : "text-orange-500",
+            )}>
+              Workflow: {wf.efficiency}
+            </span>
+            {wf.toolCallCount > 0 && (
+              <span className="text-muted-foreground">
+                · {wf.toolCallCount} call{wf.toolCallCount !== 1 ? "s" : ""}
+                {wf.optimalCallCount != null && wf.optimalCallCount !== wf.toolCallCount
+                  ? ` (optimal: ~${wf.optimalCallCount})`
+                  : ""}
+              </span>
+            )}
+          </div>
+          {wf.issues.length > 0 && (
+            <p className="mt-0.5 text-foreground">{wf.issues[0]}</p>
+          )}
+          {wf.suggestions.length > 0 && (
+            <p className="mt-0.5 text-muted-foreground">{wf.suggestions[0]}</p>
+          )}
+          {problemTools.length > 0 && (
+            <div className="mt-1 space-y-0.5">
+              {problemTools.map((t) => (
+                <p key={t.toolName} className="text-muted-foreground">
+                  <span className="font-medium text-orange-500">{t.toolName}</span>
+                  {t.suggestions.length > 0 ? `: ${t.suggestions[0]}` : ""}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (serverQualityPending || serverQualityRequested) && isCompleted ? (
+        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          Analyzing workflow quality…
+        </span>
+      ) : null;
+
+    if (!regressionCaption && !workflowCaption) {
+      return null;
+    }
+
+    return (
+      <div className="space-y-2">
+        {regressionCaption}
+        {workflowCaption}
+      </div>
     );
   }, [
     selectedIteration,
@@ -592,6 +675,10 @@ export function RunDetailView({
     runInsightsRequested,
     runInsightsFailedGeneration,
     runInsightsError,
+    workflowInsightForSelectedIteration,
+    toolInsightsForSelectedIteration,
+    serverQualityPending,
+    serverQualityRequested,
   ]);
 
   const hasTokenData = useMemo(

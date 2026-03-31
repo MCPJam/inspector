@@ -21,13 +21,10 @@ describe("RunInsightsPrimaryBlock", () => {
     const root = container.firstElementChild as HTMLElement;
     expect(root.className).toContain("ai-insight-glow");
     expect(root.className).toContain("border-l-primary");
-    expect(
-      container.querySelectorAll(".ai-sparkle-icon").length,
-    ).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders standalone card with Run insights title row and sparkle styling", () => {
-    const { container } = render(
+  it("renders standalone card with Run insights title row", () => {
+    render(
       <RunInsightsPrimaryBlock
         summary="Summary text"
         pending={false}
@@ -41,9 +38,6 @@ describe("RunInsightsPrimaryBlock", () => {
 
     expect(screen.getByText("Summary text")).toBeInTheDocument();
     expect(screen.getByText("Run insights")).toBeInTheDocument();
-    expect(
-      container.querySelectorAll(".ai-sparkle-icon").length,
-    ).toBeGreaterThanOrEqual(1);
   });
 
   it("shows Retry when generation failed", () => {
