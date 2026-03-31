@@ -54,7 +54,9 @@ describe("WelcomeOverlay", () => {
       screen.getByText("Your playground for MCP servers"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Inspect tools, test prompts, and build AI powered apps."),
+      screen.getByText(
+        "Inspect tools, test prompts, and build AI powered apps.",
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText("Try a demo server")).toBeInTheDocument();
     expect(
