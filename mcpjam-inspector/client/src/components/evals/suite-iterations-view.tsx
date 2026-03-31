@@ -18,9 +18,7 @@ import type {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
-import type { EvalsRoute } from "@/lib/evals-router";
-import { navigateToEvalsRoute } from "@/lib/evals-router";
-import type { CiEvalsRoute } from "@/lib/ci-evals-router";
+import type { EvalRoute } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
@@ -30,39 +28,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2 } from "lucide-react";
 
-type SuiteRoute = EvalsRoute | CiEvalsRoute;
-
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
   toRunDetail: (
     suiteId: string,
     runId: string,
     iteration?: string,
-    options?: { insightsFocus?: boolean },
+    options?: { insightsFocus?: boolean; replace?: boolean },
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (suiteId: string, testId: string) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
-
-const defaultNavigation: SuiteNavigation = {
-  toSuiteOverview: (suiteId, view) =>
-    navigateToEvalsRoute({ type: "suite-overview", suiteId, view }),
-  toRunDetail: (suiteId, runId, iteration, options) =>
-    navigateToEvalsRoute({
-      type: "run-detail",
-      suiteId,
-      runId,
-      iteration,
-      insightsFocus: options?.insightsFocus,
-    }),
-  toTestDetail: (suiteId, testId, iteration) =>
-    navigateToEvalsRoute({ type: "test-detail", suiteId, testId, iteration }),
-  toTestEdit: (suiteId, testId) =>
-    navigateToEvalsRoute({ type: "test-edit", suiteId, testId }),
-  toSuiteEdit: (suiteId) =>
-    navigateToEvalsRoute({ type: "suite-edit", suiteId }),
-};
 
 export function SuiteIterationsView({
   suite,
@@ -88,7 +65,7 @@ export function SuiteIterationsView({
   route,
   userMap,
   workspaceId = null,
-  navigation = defaultNavigation,
+  navigation,
   onSetupCi,
   caseListInSidebar = false,
   runDetailSortByOverride,
@@ -99,6 +76,8 @@ export function SuiteIterationsView({
   casesSidebarHidden,
   onShowCasesSidebar,
   omitSuiteHeader = false,
+  alwaysShowEditIterationRows = false,
+  onEditTestCase,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -120,10 +99,10 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
-  route: SuiteRoute;
+  route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   workspaceId?: string | null;
-  navigation?: SuiteNavigation;
+  navigation: SuiteNavigation;
   onSetupCi?: () => void;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
@@ -140,6 +119,10 @@ export function SuiteIterationsView({
   onShowCasesSidebar?: () => void;
   /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
   omitSuiteHeader?: boolean;
+  /** Playground run detail: show edit affordance on every row that has a test case id. */
+  alwaysShowEditIterationRows?: boolean;
+  /** Override default test edit navigation (e.g. playground hash navigation). */
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
@@ -548,7 +531,7 @@ export function SuiteIterationsView({
                 hideReplayLineage
                 omitIterationList={omitRunIterationList}
                 onOpenRunInsights={
-                  route.type === "run-detail"
+                  !omitRunIterationList && route.type === "run-detail"
                     ? () =>
                         navigation.toRunDetail(
                           route.suiteId,
@@ -559,10 +542,12 @@ export function SuiteIterationsView({
                     : undefined
                 }
                 runInsightsSelected={
-                  route.type === "run-detail"
-                    ? Boolean(route.insightsFocus && !route.iteration)
-                    : false
+                  !omitRunIterationList &&
+                  route.type === "run-detail" &&
+                  Boolean(route.insightsFocus && !route.iteration)
                 }
+                onEditTestCase={onEditTestCase}
+                alwaysShowEditIterationRows={alwaysShowEditIterationRows}
               />
             </div>
           ) : null}

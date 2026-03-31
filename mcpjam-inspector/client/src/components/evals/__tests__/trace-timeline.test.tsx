@@ -70,6 +70,13 @@ describe("TraceTimeline detail pane", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes("read_me"));
     expect(toolRow).toBeTruthy();
+    expect(toolRow!.textContent).not.toContain("120ms");
+    expect(
+      screen
+        .getAllByTestId("trace-row-duration-hit")
+        .some((el) => el.textContent?.includes("120ms")),
+    ).toBe(true);
+    expect(toolRow!.textContent).not.toContain("README.md");
     fireEvent.click(within(toolRow!).getByTestId("trace-row-label-button"));
 
     const pane = screen.getByTestId("trace-detail-pane");
@@ -214,7 +221,7 @@ describe("TraceTimeline detail pane", () => {
     ).toBe(true);
   });
 
-  it("Reset on embedded toolbar restores filter to All", async () => {
+  it("does not render a reset button in the embedded toolbar", async () => {
     const user = userEvent.setup();
     const spans: EvalTraceSpan[] = [
       {
@@ -252,10 +259,9 @@ describe("TraceTimeline detail pane", () => {
       screen.getByRole("button", { name: /Filter timeline rows: Tool/ }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Reset trace view" }));
     expect(
-      screen.getByRole("button", { name: /Filter timeline rows: All/ }),
-    ).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Reset trace view" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders stacked input and output on span selection", async () => {
@@ -295,7 +301,46 @@ describe("TraceTimeline detail pane", () => {
     expect(within(pane).getByText("Output")).toBeInTheDocument();
   });
 
-  it("labels generic LLM spans as LLM · short model (not Model response)", () => {
+  it("selects a row from the trailing duration cell", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 20,
+        toolName: "read_me",
+      },
+    ];
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[
+          {
+            role: "assistant",
+            content: [
+              {
+                type: "tool-call",
+                toolName: "read_me",
+                input: { x: 1 },
+              },
+            ],
+          },
+        ]}
+      />,
+    );
+
+    const toolDurationButton = screen
+      .getAllByTestId("trace-row-duration-hit")
+      .find((el) => el.getAttribute("title")?.includes("Tool · read_me"));
+    expect(toolDurationButton).toBeTruthy();
+    await user.click(toolDurationButton!);
+    const pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).getByText("Tool · read_me")).toBeInTheDocument();
+  });
+
+  it("labels generic LLM spans as Model and renders latency in the trailing cell", () => {
     const spans: EvalTraceSpan[] = [
       {
         id: "llm-a",
@@ -330,12 +375,28 @@ describe("TraceTimeline detail pane", () => {
 
     const rows = screen.getAllByTestId("trace-row");
     const llmRows = rows.filter((el) =>
-      el.textContent?.includes("LLM call"),
+      el.textContent?.includes("Model"),
     );
     expect(llmRows.length).toBeGreaterThanOrEqual(2);
+    expect(llmRows.some((el) => el.textContent?.includes("100 tok"))).toBe(true);
+    const firstLlmRow = llmRows.find(
+      (el) => el.textContent?.includes("100 tok"),
+    );
+    expect(firstLlmRow).toBeTruthy();
+    const firstLlmLabelButton = within(firstLlmRow!).getByTestId(
+      "trace-row-label-button",
+    );
+    expect(within(firstLlmLabelButton).getByText("100 tok")).toBeInTheDocument();
+    expect(firstLlmLabelButton).not.toHaveTextContent(/500ms/);
+    const firstLlmDuration = screen
+      .getAllByTestId("trace-row-duration-hit")
+      .find((el) => el.textContent?.includes("500ms"));
+    expect(firstLlmDuration).toBeTruthy();
+    expect(firstLlmDuration).toHaveTextContent("500ms");
+    expect(rows.some((el) => el.textContent?.includes("openai/gpt-5.4-nano"))).toBe(false);
   });
 
-  it("shows user message as prompt row label with stats subtitle", () => {
+  it("shows user message as prompt row label with tokens and trailing latency", () => {
     const spans: EvalTraceSpan[] = [
       {
         id: "llm-1",
@@ -370,10 +431,16 @@ describe("TraceTimeline detail pane", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes('User: "find it"'));
     expect(promptRow).toBeTruthy();
-    // Stats subtitle should include prompt number and counts
-    expect(promptRow!.textContent).toMatch(/Prompt 1/);
-    expect(promptRow!.textContent).toMatch(/1 LLM/);
-    expect(promptRow!.textContent).toMatch(/1 tool/);
+    const promptLabelButton = within(promptRow!).getByTestId("trace-row-label-button");
+    expect(promptLabelButton).toHaveTextContent(/50 tok/);
+    expect(promptLabelButton).not.toHaveTextContent(/800ms/);
+    const promptDuration = screen
+      .getAllByTestId("trace-row-duration-hit")
+      .find((el) => el.textContent?.includes("800ms"));
+    expect(promptDuration).toBeTruthy();
+    expect(promptDuration).toHaveTextContent("800ms");
+    expect(promptRow!.textContent).not.toMatch(/1 LLM/);
+    expect(promptRow!.textContent).not.toMatch(/1 tool/);
   });
 
   it("LLM span INPUT includes full prior conversation (system + users), not just messages inside messageStartIndex", async () => {
@@ -408,7 +475,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: /LLM call:/i }),
+      screen.getByRole("button", { name: /Model:/i }),
     );
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
@@ -442,7 +509,7 @@ describe("TraceTimeline detail pane", () => {
       <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
     );
 
-    await user.click(screen.getByRole("button", { name: /LLM call:/i }));
+    await user.click(screen.getByRole("button", { name: /Model:/i }));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputSection = within(pane).getByText("Input").closest("div")
       ?.parentElement;
@@ -495,7 +562,7 @@ describe("TraceTimeline detail pane", () => {
       <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
     );
 
-    await user.click(screen.getByRole("button", { name: /LLM call:/i }));
+    await user.click(screen.getByRole("button", { name: /Model:/i }));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
     const inputJson = inputPreview.textContent ?? "";

@@ -164,10 +164,6 @@ function formatAxisLabel(ms: number): string {
   return `${Math.round(ms)}ms`;
 }
 
-function formatOffset(ms: number): string {
-  return `+${formatAxisLabel(ms)}`;
-}
-
 /** Hover hint: waterfall "steps" are span categories, not chat bubbles. */
 const TRACE_PROMPT_STEPS_TITLE =
   "Trace step spans for this turn (recorder metadata). Transcript message count in Chat can differ.";
@@ -823,20 +819,41 @@ function CategoryGlyph({
   }
 }
 
-function formatInlineTokenHint(span: EvalTraceSpan): string | null {
-  if (span.category !== "llm") return null;
-  if (typeof span.totalTokens === "number") {
-    return `${span.totalTokens} tok`;
+function formatTokenHint({
+  inputTokens,
+  outputTokens,
+  totalTokens,
+}: {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}): string | null {
+  if (typeof totalTokens === "number") {
+    return `${totalTokens} tok`;
   }
   if (
-    typeof span.inputTokens === "number" ||
-    typeof span.outputTokens === "number"
+    typeof inputTokens === "number" ||
+    typeof outputTokens === "number"
   ) {
-    const a = typeof span.inputTokens === "number" ? span.inputTokens : "—";
-    const b = typeof span.outputTokens === "number" ? span.outputTokens : "—";
-    return `${a}→${b} tok`;
+    const input = typeof inputTokens === "number" ? inputTokens : "—";
+    const output = typeof outputTokens === "number" ? outputTokens : "—";
+    return `${input}→${output} tok`;
   }
   return null;
+}
+
+function formatRowTokenHint(row: TimelineRow): string | null {
+  return row.kind === "prompt"
+    ? formatTokenHint({
+        inputTokens: row.aggregatedInputTokens,
+        outputTokens: row.aggregatedOutputTokens,
+        totalTokens: row.aggregatedTotalTokens,
+      })
+    : formatTokenHint({
+        inputTokens: row.span.inputTokens,
+        outputTokens: row.span.outputTokens,
+        totalTokens: row.span.totalTokens,
+      });
 }
 
 function deriveSpanLabel(
@@ -887,7 +904,7 @@ function deriveSpanLabel(
       rawName === "Model response" ||
       /·\s*response$/i.test(rawName);
     const baseName = genericLlmName
-      ? "LLM call"
+      ? "Model"
       : truncateRowSubtitle(rawName, 64);
     if (responsePreview) {
       return {
@@ -1293,8 +1310,6 @@ export interface TraceTimelineProps {
   onExpandedStepIdsChange?: (next: Set<string>) => void;
   /** Timeline axis ends at this many ms (≥ max span end); used for zoom. */
   viewportMaxMs?: number;
-  /** Increment from host to clear selection (e.g. Reset). */
-  resetVersion?: number;
 }
 
 export function TraceTimeline({
@@ -1311,7 +1326,6 @@ export function TraceTimeline({
   expandedStepIds: expandedStepIdsProp,
   onExpandedStepIdsChange,
   viewportMaxMs: viewportMaxMsProp,
-  resetVersion = 0,
 }: TraceTimelineProps) {
   const mode =
     recordedSpans && recordedSpans.length > 0
@@ -1375,11 +1389,6 @@ export function TraceTimeline({
     onExpandedStepIdsChange ?? setInternalExpandedStepIds;
 
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (resetVersion === 0) return;
-    setSelectedRowKey(null);
-  }, [resetVersion]);
 
   useEffect(() => {
     if (!hideToolbar) {
@@ -1556,21 +1565,6 @@ export function TraceTimeline({
 
   const selectedRow = rows.find((row) => row.key === selectedRowKey);
 
-  const handleInternalReset = useCallback(() => {
-    setFilter("all");
-    setExpandedPromptIds(new Set(groups.map((group) => group.key)));
-    setExpandedStepIds(new Set(fullyExpandedStepIds));
-    setInternalViewportMaxMs(maxEndMs);
-    setSelectedRowKey(null);
-  }, [
-    fullyExpandedStepIds,
-    groups,
-    maxEndMs,
-    setExpandedPromptIds,
-    setExpandedStepIds,
-    setFilter,
-  ]);
-
   const handleWaterfallKeyDown = useCallback(
     (event: KeyboardEvent<HTMLDivElement>) => {
       if (rows.length === 0) return;
@@ -1703,7 +1697,6 @@ export function TraceTimeline({
           onFilterChange={setFilter}
           isFullyExpanded={isFullyExpanded}
           expandDisabled={groups.length === 0}
-          onReset={handleInternalReset}
           zoomControls={internalZoomCluster}
           onToggleExpandAll={() => {
             if (isFullyExpanded) {
@@ -1739,7 +1732,8 @@ export function TraceTimeline({
                 <div
                   className="grid min-w-[600px]"
                   style={{
-                    gridTemplateColumns: "minmax(200px, 280px) minmax(0, 1fr)",
+                    gridTemplateColumns:
+                      "minmax(200px, 280px) minmax(0, 1fr) auto",
                     gridTemplateRows: `auto repeat(${rows.length}, minmax(48px, auto))`,
                   }}
                 >
@@ -1774,6 +1768,12 @@ export function TraceTimeline({
                   );
                 })}
               </div>
+            </div>
+            <div
+              className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-3 py-3 backdrop-blur"
+              style={{ gridColumn: 3, gridRow: 1 }}
+            >
+              <span className="sr-only">Duration</span>
             </div>
 
             {rows.length > 0 ? (
@@ -1819,16 +1819,10 @@ export function TraceTimeline({
                 row.kind === "prompt"
                   ? (row.conversationLabel ?? row.label)
                   : derivedLabel!.title;
-              const subtitle =
-                row.kind === "prompt"
-                  ? row.conversationLabel
-                    ? `${row.label} · ${row.counts.llm} LLM · ${row.counts.tool} tool${row.counts.tool === 1 ? "" : "s"} · ${formatDuration(row.endMs - row.startMs)}`
-                    : `${formatOffset(row.startMs)} · ${row.counts.llm} LLM · ${row.counts.tool} tool${row.counts.tool === 1 ? "" : "s"}`
-                  : derivedLabel!.subtitle;
+              const durationLabel = formatDuration(durationMs);
+              const tokenHint = formatRowTokenHint(row);
               const canToggle = row.kind === "prompt" ? true : row.hasChildren;
               const gridRow = rowIndex + 2;
-              const tokenHint =
-                row.kind === "span" ? formatInlineTokenHint(row.span) : null;
               const borderAccent = getRowBorderAccentClass(
                 row,
                 spanShowsFailure,
@@ -1837,6 +1831,14 @@ export function TraceTimeline({
                 row,
                 spanShowsFailure,
               );
+              const selectRow = () => setSelectedRowKey(row.key);
+              const rowSelectionTitle = `${label} · ${durationLabel}`;
+              const leftCellClass = isSelected
+                ? cn("trace-waterfall-row-selected", borderAccent)
+                : "border-l-transparent bg-background hover:bg-muted/20";
+              const sharedCellClass = isSelected
+                ? "trace-waterfall-row-selected"
+                : "bg-background hover:bg-muted/20";
 
               return (
                 <Fragment key={row.key}>
@@ -1846,9 +1848,7 @@ export function TraceTimeline({
                     style={{ gridColumn: 1, gridRow }}
                     className={cn(
                       "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
-                      isSelected
-                        ? cn("trace-waterfall-row-selected", borderAccent)
-                        : "border-l-transparent bg-background hover:bg-muted/20",
+                      leftCellClass,
                     )}
                   >
                     <div
@@ -1904,25 +1904,17 @@ export function TraceTimeline({
                           ? TRACE_PROMPT_STEPS_TITLE
                           : undefined
                       }
-                      onClick={() => setSelectedRowKey(row.key)}
+                      onClick={selectRow}
                     >
-                      <div className="flex flex-wrap items-center gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
                         {row.kind === "prompt" ? (
                           <CategoryGlyph category="prompt" />
                         ) : (
                           <CategoryGlyph category={rowGlyphCategory} />
                         )}
-                        <span className="truncate text-sm font-medium text-foreground">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                           {label}
                         </span>
-                        {tokenHint ? (
-                          <span
-                            className="text-[10px] tabular-nums text-muted-foreground"
-                            title="Tokens"
-                          >
-                            {tokenHint}
-                          </span>
-                        ) : null}
                         {row.kind === "prompt" && row.hasAnyFailure ? (
                           <span
                             className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
@@ -1938,9 +1930,9 @@ export function TraceTimeline({
                           />
                         ) : null}
                       </div>
-                      {subtitle ? (
-                        <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                          {subtitle}
+                      {tokenHint ? (
+                        <div className="mt-1 truncate text-[11px] tabular-nums text-muted-foreground">
+                          {tokenHint}
                         </div>
                       ) : null}
                     </button>
@@ -1952,13 +1944,11 @@ export function TraceTimeline({
                     style={{ gridColumn: 2, gridRow }}
                     className={cn(
                       "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
-                      isSelected
-                        ? "trace-waterfall-row-selected"
-                        : "bg-background hover:bg-muted/20",
+                      sharedCellClass,
                     )}
                     aria-label={`Select on timeline (${formatDuration(durationMs)})`}
-                    onClick={() => setSelectedRowKey(row.key)}
-                    title={`${label} · ${formatDuration(durationMs)}`}
+                    onClick={selectRow}
+                    title={rowSelectionTitle}
                   >
                     <div
                       data-testid={
@@ -1975,6 +1965,21 @@ export function TraceTimeline({
                         width: `max(${widthPercent}%, 3px)`,
                       }}
                     />
+                  </button>
+                  <button
+                    type="button"
+                    data-testid="trace-row-duration-hit"
+                    data-state={isSelected ? "selected" : undefined}
+                    style={{ gridColumn: 3, gridRow }}
+                    className={cn(
+                      "flex h-full min-h-[48px] items-center justify-end whitespace-nowrap border-b border-border/40 px-3 py-2 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
+                      sharedCellClass,
+                    )}
+                    aria-label={`Select row duration (${durationLabel})`}
+                    onClick={selectRow}
+                    title={rowSelectionTitle}
+                  >
+                    {durationLabel}
                   </button>
                 </Fragment>
               );

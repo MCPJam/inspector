@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Expand, ListFilter, RotateCcw, Shrink } from "lucide-react";
+import { Expand, ListFilter, Shrink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -34,7 +34,6 @@ export function RecordedTraceToolbar({
   isFullyExpanded,
   expandDisabled,
   onToggleExpandAll,
-  onReset,
   zoomControls,
   showBottomBorder = true,
 }: {
@@ -43,8 +42,6 @@ export function RecordedTraceToolbar({
   isFullyExpanded: boolean;
   expandDisabled: boolean;
   onToggleExpandAll: () => void;
-  /** Reset filter, expansion, timeline zoom, and row selection to defaults. */
-  onReset?: () => void;
   /** Optional zoom cluster (+ / fit / −) rendered after expand control. */
   zoomControls?: ReactNode;
   /** Timeline embed hides this; TraceViewer outer row supplies the divider. */
@@ -111,26 +108,6 @@ export function RecordedTraceToolbar({
             aria-hidden
           />
           <div className="flex shrink-0 items-center gap-0.5">{zoomControls}</div>
-        </>
-      ) : null}
-      {onReset ? (
-        <>
-          <span
-            className="bg-border hidden h-3 w-px shrink-0 md:block"
-            aria-hidden
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="h-7 shrink-0 gap-1 border-border/50 px-2 text-[10px] font-medium text-foreground"
-            title="Reset filter, expansion, zoom, and selection"
-            aria-label="Reset trace view"
-            onClick={onReset}
-          >
-            <RotateCcw className="size-3.5 shrink-0 opacity-80" aria-hidden />
-            Reset
-          </Button>
         </>
       ) : null}
     </div>

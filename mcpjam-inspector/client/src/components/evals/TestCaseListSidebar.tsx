@@ -66,6 +66,8 @@ interface TestCaseListSidebarProps {
   onToggleSelection?: (testCaseId: string, selected: boolean) => void;
   selectedCaseIds?: string[];
   showSelection?: boolean;
+  /** Playground: hide suite-level Run Insights row (replaced by breadcrumbs + run-detail sidebar). */
+  hideRunInsightsRow?: boolean;
 }
 
 export function TestCaseListSidebar({
@@ -97,6 +99,7 @@ export function TestCaseListSidebar({
   onToggleSelection,
   selectedCaseIds = [],
   showSelection = false,
+  hideRunInsightsRow = false,
 }: TestCaseListSidebarProps) {
   // Calculate rerun availability
   const rerunEligibility = getSuiteReplayEligibility({
@@ -274,12 +277,12 @@ export function TestCaseListSidebar({
       </div>
 
       {/* Run Insights — opens latest completed run detail with metrics + vs-prior narrative when available */}
-      {suiteId && (
+      {suiteId && !hideRunInsightsRow ? (
         <RunInsightsNavRow
           selected={showingOverview}
           onClick={handleNavigateToOverview}
         />
-      )}
+      ) : null}
 
       {/* Cases List */}
       <div className="flex-1 overflow-y-auto">

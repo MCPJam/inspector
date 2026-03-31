@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 
 vi.mock("../use-run-insights", () => ({
@@ -7,7 +8,7 @@ vi.mock("../use-run-insights", () => ({
 }));
 
 import { useRunInsights } from "../use-run-insights";
-import { RunDetailView } from "../run-detail-view";
+import { RunDetailView, RunIterationsSidebar } from "../run-detail-view";
 
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn().mockResolvedValue(undefined),
@@ -352,5 +353,29 @@ describe("RunDetailView", () => {
     expect(
       screen.queryByTestId("run-case-insight-trace-caption"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows iteration sort options from an icon dropdown", async () => {
+    const user = userEvent.setup();
+    const onSortChange = vi.fn();
+
+    render(
+      <RunIterationsSidebar
+        caseGroupsForSelectedRun={[makeIteration()]}
+        runDetailSortBy="test"
+        onSortChange={onSortChange}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Sort iterations: Test" }),
+    );
+    await user.click(
+      await screen.findByRole("menuitemradio", { name: "Result" }),
+    );
+
+    expect(onSortChange).toHaveBeenCalledWith("result");
   });
 });

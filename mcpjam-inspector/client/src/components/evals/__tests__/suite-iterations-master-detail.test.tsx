@@ -44,6 +44,14 @@ vi.mock("../test-cases-overview", () => ({
   ),
 }));
 
+const noopNav = {
+  toSuiteOverview: vi.fn(),
+  toRunDetail: vi.fn(),
+  toTestDetail: vi.fn(),
+  toTestEdit: vi.fn(),
+  toSuiteEdit: vi.fn(),
+};
+
 const baseSuite: EvalSuite = {
   _id: "suite-1",
   createdBy: "u",
@@ -94,6 +102,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
           suiteId: "suite-1",
           view: "test-cases",
         }}
+        navigation={noopNav}
         caseListInSidebar
       />,
     );
@@ -131,6 +140,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
           suiteId: "suite-1",
           view: "test-cases",
         }}
+        navigation={noopNav}
       />,
     );
 

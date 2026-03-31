@@ -1,4 +1,4 @@
-import { useMemo, useCallback, useEffect, useState } from "react";
+import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
@@ -6,25 +6,36 @@ import posthog from "posthog-js";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
+import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { buildEvalsHash, useEvalsRoute } from "@/lib/evals-router";
-import { withTestingSurface } from "@/lib/testing-surface";
-import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
-import { aggregateSuite } from "./evals/helpers";
+import { useEvalsRoute } from "@/lib/evals-router";
+import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
+import { aggregateSuite, formatRunId } from "./evals/helpers";
+import { formatCaseTitleForSidebar } from "./evals/case-name-utils";
+import { EvalTabGate } from "./evals/EvalTabGate";
 import {
-  SuiteIterationsView,
-  type SuiteNavigation,
-} from "./evals/suite-iterations-view";
+  createPlaygroundSuiteNavigation,
+  navigatePlaygroundEvalsRoute,
+} from "./evals/create-suite-navigation";
+import { RunIterationsSidebar } from "./evals/run-detail-view";
+import { useRunDetailData } from "./evals/use-suite-data";
+import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import { TestCaseListSidebar } from "./evals/TestCaseListSidebar";
 import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -52,53 +63,34 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { user } = useAuth();
   const route = useEvalsRoute();
   const appState = useSharedAppState();
-  const { availableModels } = useAvailableEvalModels();
+  const {
+    connectedServerNames,
+    userMap,
+    canDeleteRuns,
+    availableModels,
+  } = useEvalTabContext({
+    isAuthenticated,
+    workspaceId: workspaceId ?? null,
+  });
   const updateSuiteMutation = useMutation("testSuites:updateTestSuite" as any);
   const mutations = useEvalMutations();
 
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
   const [isCopyingExploreSdkBrief, setIsCopyingExploreSdkBrief] =
     useState(false);
+  const [runDetailSidebarSortBy, setRunDetailSidebarSortBy] = useState<
+    "model" | "test" | "result"
+  >("result");
+  const playgroundAutoNavForSuiteRef = useRef<string | null>(null);
 
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-  const connectedServerNames = useMemo(
-    () =>
-      new Set(
-        Object.entries(appState.servers)
-          .filter(([, server]) => server.connectionStatus === "connected")
-          .map(([name]) => name),
-      ),
-    [appState.servers],
-  );
-
   const isServerConnected =
     selectedServer &&
     selectedServer !== "none" &&
     appState.servers[selectedServer]?.connectionStatus === "connected";
-
-  const { members, canManageMembers } = useWorkspaceMembers({
-    isAuthenticated,
-    workspaceId: workspaceId ?? null,
-  });
-
-  const canDeleteRuns = !workspaceId || canManageMembers;
-
-  const userMap = useMemo(() => {
-    if (!members) return undefined;
-    const map = new Map<string, { name: string; imageUrl?: string }>();
-    for (const member of members) {
-      if (member.userId && member.user) {
-        map.set(member.userId, {
-          name: member.user.name,
-          imageUrl: member.user.imageUrl,
-        });
-      }
-    }
-    return map;
-  }, [members]);
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(workspaceId),
@@ -156,6 +148,21 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const sortedIterations = queries.sortedIterations;
   const runsForSelectedSuite = queries.runsForSelectedSuite;
 
+  const isRunDetailView = route.type === "run-detail";
+  const selectedRunIdForSidebar =
+    route.type === "run-detail" ? route.runId : null;
+  const { caseGroupsForSelectedRun } = useRunDetailData(
+    selectedRunIdForSidebar,
+    sortedIterations,
+    runDetailSidebarSortBy,
+  );
+  const selectedRunForSidebar = useMemo(() => {
+    if (route.type !== "run-detail") return null;
+    return (
+      runsForSelectedSuite.find((r) => r._id === route.runId) ?? null
+    );
+  }, [route, runsForSelectedSuite]);
+
   const suiteAggregate = useMemo(() => {
     if (!selectedSuite || !suiteDetails) return null;
     return aggregateSuite(
@@ -175,6 +182,30 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
+
+  const showPlaygroundBreadcrumbs = useMemo(() => {
+    if (!selectedServer || !exploreSuite) return false;
+    switch (route.type) {
+      case "suite-overview":
+      case "run-detail":
+      case "test-detail":
+      case "test-edit":
+        return route.suiteId === exploreSuite._id;
+      default:
+        return false;
+    }
+  }, [selectedServer, exploreSuite, route]);
+
+  const playgroundBreadcrumbCaseTitle = useMemo(() => {
+    if (route.type !== "test-edit" && route.type !== "test-detail") {
+      return "";
+    }
+    if (!exploreSuite || route.suiteId !== exploreSuite._id) {
+      return "";
+    }
+    const c = exploreCases.find((t) => t._id === route.testId);
+    return formatCaseTitleForSidebar(c?.title ?? "").fullTitle;
+  }, [route, exploreCases, exploreSuite]);
 
   const handleCopyExploreSdkEvalBrief = useCallback(async () => {
     if (!selectedServer || exploreCases.length === 0) return;
@@ -264,89 +295,101 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     workspaceId,
   ]);
 
-  const exploreNavigation = useMemo((): SuiteNavigation => {
-    const toExploreList = () => {
-      window.location.hash = withTestingSurface(
-        buildEvalsHash({ type: "list" }),
+  const playgroundNavigation = useMemo(
+    () => createPlaygroundSuiteNavigation(),
+    [],
+  );
+
+  const handlePlaygroundBreadcrumbCasesClick = useCallback(() => {
+    if (!exploreSuite || !selectedServer) return;
+    if (route.type === "run-detail") {
+      const first = exploreCases[0];
+      if (first) {
+        playgroundNavigation.toTestEdit(exploreSuite._id, first._id);
+      } else {
+        navigatePlaygroundEvalsRoute({
+          type: "suite-overview",
+          suiteId: exploreSuite._id,
+        });
+      }
+      return;
+    }
+    if (route.type === "test-edit" || route.type === "test-detail") {
+      const completed = runsForSelectedSuite.filter(
+        (r) => r.status === "completed",
       );
-    };
-    return {
-      toSuiteOverview: (_suiteId, _view) => {
-        toExploreList();
-      },
-      toRunDetail: (suiteId, runId, iteration, options) => {
-        window.location.hash = withTestingSurface(
-          buildEvalsHash({
-            type: "run-detail",
-            suiteId,
-            runId,
-            iteration,
-            insightsFocus: options?.insightsFocus,
-          }),
-        );
-      },
-      toTestDetail: (suiteId, testId, iteration) => {
-        window.location.hash = withTestingSurface(
-          buildEvalsHash({ type: "test-detail", suiteId, testId, iteration }),
-        );
-      },
-      toTestEdit: (suiteId, testId) => {
-        window.location.hash = withTestingSurface(
-          buildEvalsHash({ type: "test-edit", suiteId, testId }),
-        );
-      },
-      toSuiteEdit: (suiteId) => {
-        window.location.hash = withTestingSurface(
-          buildEvalsHash({ type: "suite-edit", suiteId }),
-        );
-      },
-    };
-  }, []);
+      const sorted = [...completed].sort((a, b) => {
+        const aTime = a.completedAt ?? a.createdAt ?? 0;
+        const bTime = b.completedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      });
+      const latest = sorted[0];
+      if (latest) {
+        navigatePlaygroundEvalsRoute({
+          type: "run-detail",
+          suiteId: exploreSuite._id,
+          runId: latest._id,
+          insightsFocus: true,
+        });
+      } else {
+        navigatePlaygroundEvalsRoute({
+          type: "suite-overview",
+          suiteId: exploreSuite._id,
+        });
+      }
+    }
+  }, [
+    exploreSuite,
+    selectedServer,
+    route.type,
+    exploreCases,
+    runsForSelectedSuite,
+    playgroundNavigation,
+  ]);
+
+  useEffect(() => {
+    if (route.type !== "run-detail") {
+      setRunDetailSidebarSortBy("result");
+    }
+  }, [route.type]);
+
+  useEffect(() => {
+    playgroundAutoNavForSuiteRef.current = null;
+  }, [exploreSuite?._id, selectedServer]);
+
+  useEffect(() => {
+    if (!exploreSuite) return;
+    if (route.type !== "list" && route.type !== "suite-overview") return;
+    if (route.type === "suite-overview" && route.suiteId !== exploreSuite._id) {
+      return;
+    }
+
+    const completed = runsForSelectedSuite.filter(
+      (r) => r.status === "completed",
+    );
+    const sorted = [...completed].sort((a, b) => {
+      const aTime = a.completedAt ?? a.createdAt ?? 0;
+      const bTime = b.completedAt ?? b.createdAt ?? 0;
+      return bTime - aTime;
+    });
+    const latest = sorted[0];
+    if (!latest) return;
+    if (playgroundAutoNavForSuiteRef.current === exploreSuite._id) return;
+
+    playgroundAutoNavForSuiteRef.current = exploreSuite._id;
+    navigatePlaygroundEvalsRoute({
+      type: "run-detail",
+      suiteId: exploreSuite._id,
+      runId: latest._id,
+      insightsFocus: true,
+    });
+  }, [exploreSuite, route, runsForSelectedSuite]);
 
   const handleGenerateMore = useCallback(async () => {
     if (!exploreSuite || !selectedServer) return;
     await handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
     await handlers.handleRerun(exploreSuite);
   }, [exploreSuite, handlers, selectedServer]);
-
-  if (isLoading) {
-    return (
-      <div className="p-6">
-        <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">Loading testing...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated || !user) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={FlaskConical}
-          title="Sign in to use Testing"
-          description="Create an account or sign in to explore cases and investigate runs."
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
-
-  if (!workspaceId) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={FlaskConical}
-          title="Select a workspace"
-          description="Choose a workspace before creating or viewing workspace-bound testing suites."
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
 
   const showExploreLoading =
     isPreparingExplore ||
@@ -380,6 +423,18 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           runsLoading={queries.isSuiteRunsLoading}
           aggregate={suiteAggregate}
           caseListInSidebar
+          omitRunIterationList={isRunDetailView}
+          runDetailSortByOverride={
+            isRunDetailView ? runDetailSidebarSortBy : undefined
+          }
+          onRunDetailSortByChange={
+            isRunDetailView ? setRunDetailSidebarSortBy : undefined
+          }
+          omitSuiteHeader={isRunDetailView}
+          alwaysShowEditIterationRows
+          onEditTestCase={(testCaseId) =>
+            playgroundNavigation.toTestEdit(exploreSuite._id, testCaseId)
+          }
           onRerun={handlers.handleRerun}
           onCancelRun={handlers.handleCancelRun}
           onDelete={handlers.handleDelete}
@@ -394,7 +449,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           route={route}
           userMap={userMap}
           workspaceId={workspaceId}
-          navigation={exploreNavigation}
+          navigation={playgroundNavigation}
           canDeleteRuns={canDeleteRuns}
         />
       </div>
@@ -402,7 +457,14 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   };
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <EvalTabGate
+      variant="playground"
+      isLoading={isLoading}
+      isAuthenticated={isAuthenticated}
+      user={user}
+      workspaceId={workspaceId}
+    >
+      <div className="h-full flex flex-col overflow-hidden">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {!isServerConnected ? (
           <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
@@ -430,80 +492,175 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
             />
           </div>
         ) : (
-          <ResizablePanelGroup
-            direction="horizontal"
-            className="min-h-0 flex-1"
-          >
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {showPlaygroundBreadcrumbs ? (
+              <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+                <Breadcrumb className="min-w-0 flex-1">
+                  <BreadcrumbList className="min-w-0 flex-nowrap">
+                    {route.type === "suite-overview" ? (
+                      <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                        <BreadcrumbPage
+                          className="truncate font-medium"
+                          title={`Cases [${selectedServer}]`}
+                        >
+                          Cases [{selectedServer}]
+                        </BreadcrumbPage>
+                      </BreadcrumbItem>
+                    ) : (
+                      <>
+                        <BreadcrumbItem>
+                          <BreadcrumbLink asChild>
+                            <button
+                              type="button"
+                              onClick={handlePlaygroundBreadcrumbCasesClick}
+                              className="inline-flex border-0 bg-transparent p-0 font-medium"
+                            >
+                              Cases [{selectedServer}]
+                            </button>
+                          </BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                          <BreadcrumbPage
+                            className="truncate font-medium"
+                            title={
+                              route.type === "run-detail"
+                                ? `Run ${formatRunId(route.runId)}`
+                                : route.type === "test-edit"
+                                  ? `Edit: ${playgroundBreadcrumbCaseTitle}`
+                                  : playgroundBreadcrumbCaseTitle
+                            }
+                          >
+                            {route.type === "run-detail"
+                              ? `Run ${formatRunId(route.runId)}`
+                              : route.type === "test-edit"
+                                ? `Edit: ${playgroundBreadcrumbCaseTitle}`
+                                : playgroundBreadcrumbCaseTitle}
+                          </BreadcrumbPage>
+                        </BreadcrumbItem>
+                      </>
+                    )}
+                  </BreadcrumbList>
+                </Breadcrumb>
+              </div>
+            ) : null}
+            <ResizablePanelGroup
+              direction="horizontal"
+              className="min-h-0 flex-1"
+            >
             <ResizablePanel
               defaultSize={28}
               minSize={18}
               maxSize={40}
               className="flex min-h-0 flex-col border-r bg-muted/30"
             >
-              <TestCaseListSidebar
-                heading="Cases"
-                emptyLabel="No cases yet"
-                testCases={exploreCases}
-                suiteId={exploreSuite._id}
-                selectedTestId={selectedTestId}
-                isLoading={queries.isSuiteDetailsLoading}
-                onCreateTestCase={async () =>
-                  handlers.handleCreateTestCase(exploreSuite._id)
-                }
-                onDeleteTestCase={handlers.handleDeleteTestCase}
-                onDuplicateTestCase={(testCaseId) =>
-                  handlers.handleDuplicateTestCase(testCaseId, exploreSuite._id)
-                }
-                onGenerateTests={() => void handleGenerateMore()}
-                onCopySdkEvalBrief={() => void handleCopyExploreSdkEvalBrief()}
-                isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
-                deletingTestCaseId={handlers.deletingTestCaseId}
-                duplicatingTestCaseId={handlers.duplicatingTestCaseId}
-                isGeneratingTests={handlers.isGeneratingTests}
-                showingOverview={!selectedTestId}
-                noServerSelected={!isServerConnected}
-                selectedServer={selectedServer}
-                suite={exploreSuite}
-                latestRun={latestRunForSidebar}
-                onRerun={handlers.handleRerun}
-                rerunningSuiteId={handlers.rerunningSuiteId}
-                connectedServerNames={connectedServerNames}
-                showSelection={false}
-                onNavigateToOverview={(suiteId) => {
-                  const completed = runsForSelectedSuite.filter(
-                    (r) => r.status === "completed",
-                  );
-                  const sorted = [...completed].sort((a, b) => {
-                    const aTime = a.completedAt ?? a.createdAt ?? 0;
-                    const bTime = b.completedAt ?? b.createdAt ?? 0;
-                    return bTime - aTime;
-                  });
-                  const latest = sorted[0];
-                  if (latest) {
-                    window.location.hash = withTestingSurface(
-                      buildEvalsHash({
+              {route.type === "run-detail" ? (
+                <RunIterationsSidebar
+                  caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                  runDetailSortBy={runDetailSidebarSortBy}
+                  onSortChange={setRunDetailSidebarSortBy}
+                  selectedIterationId={route.iteration ?? null}
+                  onSelectIteration={(iterationId) => {
+                    navigatePlaygroundEvalsRoute({
+                      type: "run-detail",
+                      suiteId: route.suiteId,
+                      runId: route.runId,
+                      iteration: iterationId,
+                    });
+                  }}
+                  runForOverview={selectedRunForSidebar}
+                  onOpenRunInsights={() =>
+                    navigatePlaygroundEvalsRoute({
+                      type: "run-detail",
+                      suiteId: route.suiteId,
+                      runId: route.runId,
+                      insightsFocus: true,
+                    })
+                  }
+                  runInsightsSelected={Boolean(
+                    route.insightsFocus && !route.iteration,
+                  )}
+                  onEditTestCase={(testCaseId) =>
+                    playgroundNavigation.toTestEdit(
+                      route.suiteId,
+                      testCaseId,
+                    )
+                  }
+                  alwaysShowEditIterationRows
+                />
+              ) : (
+                <TestCaseListSidebar
+                  heading="Cases"
+                  emptyLabel="No cases yet"
+                  testCases={exploreCases}
+                  suiteId={exploreSuite._id}
+                  selectedTestId={selectedTestId}
+                  isLoading={queries.isSuiteDetailsLoading}
+                  onCreateTestCase={async () =>
+                    handlers.handleCreateTestCase(exploreSuite._id)
+                  }
+                  onDeleteTestCase={handlers.handleDeleteTestCase}
+                  onDuplicateTestCase={(testCaseId) =>
+                    handlers.handleDuplicateTestCase(
+                      testCaseId,
+                      exploreSuite._id,
+                    )
+                  }
+                  onGenerateTests={() => void handleGenerateMore()}
+                  onCopySdkEvalBrief={() =>
+                    void handleCopyExploreSdkEvalBrief()
+                  }
+                  isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
+                  deletingTestCaseId={handlers.deletingTestCaseId}
+                  duplicatingTestCaseId={handlers.duplicatingTestCaseId}
+                  isGeneratingTests={handlers.isGeneratingTests}
+                  showingOverview={!selectedTestId}
+                  noServerSelected={!isServerConnected}
+                  selectedServer={selectedServer}
+                  suite={exploreSuite}
+                  latestRun={latestRunForSidebar}
+                  onRerun={handlers.handleRerun}
+                  rerunningSuiteId={handlers.rerunningSuiteId}
+                  connectedServerNames={connectedServerNames}
+                  showSelection={false}
+                  hideRunInsightsRow
+                  onNavigateToOverview={(suiteId) => {
+                    const completed = runsForSelectedSuite.filter(
+                      (r) => r.status === "completed",
+                    );
+                    const sorted = [...completed].sort((a, b) => {
+                      const aTime = a.completedAt ?? a.createdAt ?? 0;
+                      const bTime = b.completedAt ?? b.createdAt ?? 0;
+                      return bTime - aTime;
+                    });
+                    const latest = sorted[0];
+                    if (latest) {
+                      navigatePlaygroundEvalsRoute({
                         type: "run-detail",
                         suiteId,
                         runId: latest._id,
                         insightsFocus: true,
-                      }),
-                    );
-                  } else {
-                    window.location.hash = withTestingSurface(
-                      buildEvalsHash({ type: "suite-overview", suiteId }),
-                    );
-                  }
-                }}
-              />
+                      });
+                    } else {
+                      navigatePlaygroundEvalsRoute({
+                        type: "suite-overview",
+                        suiteId,
+                      });
+                    }
+                  }}
+                />
+              )}
             </ResizablePanel>
             <ResizableHandle withHandle />
             <ResizablePanel
               defaultSize={72}
+              minSize={isRunDetailView ? 42 : 15}
               className="flex min-h-0 flex-col overflow-hidden"
             >
               {renderExploreMainPanel()}
             </ResizablePanel>
           </ResizablePanelGroup>
+          </div>
         )}
       </div>
 
@@ -522,5 +679,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
       />
     </div>
+    </EvalTabGate>
   );
 }

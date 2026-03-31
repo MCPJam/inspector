@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
+import { RUN_INSIGHTS_SIDEBAR_LABEL } from "../run-insights-sidebar";
 import { TestCaseListSidebar } from "../TestCaseListSidebar";
 
 describe("TestCaseListSidebar", () => {
@@ -96,6 +97,39 @@ describe("TestCaseListSidebar", () => {
       screen.getByRole("button", { name: "Copy SDK eval agent brief" }),
     );
     expect(onCopy).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides Run Insights row when hideRunInsightsRow is true", () => {
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[
+          {
+            _id: "case-1",
+            testSuiteId: "suite-1",
+            createdBy: "user-1",
+            title: "Test case",
+            query: "Run a test",
+            models: [{ model: "gpt-4o", provider: "openai" }],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ]}
+        suiteId="suite-1"
+        selectedTestId={null}
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        hideRunInsightsRow
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: RUN_INSIGHTS_SIDEBAR_LABEL }),
+    ).toBeNull();
   });
 
   it("disables Copy SDK eval agent brief when there are no cases", () => {

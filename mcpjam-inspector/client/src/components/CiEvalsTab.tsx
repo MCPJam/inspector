@@ -11,17 +11,17 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
-import { EmptyState } from "@/components/ui/empty-state";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { cn } from "@/lib/utils";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { buildEvalsHash } from "@/lib/evals-router";
 import { withTestingSurface } from "@/lib/testing-surface";
-import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
+import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import {
   aggregateSuite,
   formatRunId,
@@ -37,8 +37,9 @@ import {
   type SidebarMode,
 } from "./evals/ci-suite-list-sidebar";
 import { CommitDetailView } from "./evals/commit-detail-view";
-import { CiSuiteWorkspaceDetail } from "./evals/ci-suite-workspace-detail";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
+import { EvalTabGate } from "./evals/EvalTabGate";
+import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import type { EvalSuite } from "./evals/types";
 import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
 import { isExploreSuite } from "./evals/constants";
@@ -74,38 +75,21 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-  const { availableModels } = useAvailableEvalModels();
 
-  const connectedServerNames = useMemo(
-    () =>
-      new Set(
-        Object.entries(appState.servers)
-          .filter(([, server]) => server.connectionStatus === "connected")
-          .map(([name]) => name),
-      ),
-    [appState.servers],
-  );
-
-  const { members, canManageMembers } = useWorkspaceMembers({
+  const {
+    connectedServerNames,
+    userMap,
+    canDeleteRuns,
+    availableModels,
+  } = useEvalTabContext({
     isAuthenticated,
     workspaceId: convexWorkspaceId,
   });
 
-  const canDeleteRuns = !convexWorkspaceId || canManageMembers;
-
-  const userMap = useMemo(() => {
-    if (!members) return undefined;
-    const map = new Map<string, { name: string; imageUrl?: string }>();
-    for (const m of members) {
-      if (m.userId && m.user) {
-        map.set(m.userId, {
-          name: m.user.name,
-          imageUrl: m.user.imageUrl,
-        });
-      }
-    }
-    return map;
-  }, [members]);
+  const ciNavigation = useMemo(
+    () => createCiSuiteNavigation(route),
+    [route],
+  );
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(convexWorkspaceId),
@@ -441,47 +425,17 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     });
   }, [commitBreadcrumbContext]);
 
-  if (isLoading) {
-    return (
-      <div className="p-6">
-        <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">Loading...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!isAuthenticated || !user) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={GitBranch}
-          title="Sign in to view CI runs"
-          description="Create an account or sign in to view SDK-ingested evaluation runs."
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
-
-  if (!convexWorkspaceId) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={GitBranch}
-          title="Select a workspace"
-          description="Choose a workspace to view shared CI evaluation runs."
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
+  const isRunDetailView = route.type === "run-detail";
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
+    <EvalTabGate
+      variant="ci"
+      isLoading={isLoading}
+      isAuthenticated={isAuthenticated}
+      user={user}
+      workspaceId={convexWorkspaceId}
+    >
+      <div className="h-full flex flex-col overflow-hidden">
       {showCiSuiteDrilldownSidebar && selectedSuite ? (
         <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
           <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
@@ -677,43 +631,52 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               </div>
             </div>
           ) : (
-            <CiSuiteWorkspaceDetail
-              suite={selectedSuite}
-              cases={queries.suiteDetails?.testCases || []}
-              iterations={queries.activeIterations}
-              allIterations={queries.sortedIterations}
-              runs={queries.runsForSelectedSuite}
-              runsLoading={queries.isSuiteRunsLoading}
-              aggregate={suiteAggregate}
-              route={route}
-              connectedServerNames={connectedServerNames}
-              availableModels={availableModels}
-              onRerun={handlers.handleRerun}
-              onReplayRun={handlers.handleReplayRun}
-              onCancelRun={handlers.handleCancelRun}
-              onDelete={handleDeleteSuite}
-              onDeleteRun={handleDeleteRun}
-              onDirectDeleteRun={handlers.directDeleteRun}
-              rerunningSuiteId={handlers.rerunningSuiteId}
-              replayingRunId={handlers.replayingRunId}
-              cancellingRunId={handlers.cancellingRunId}
-              deletingSuiteId={deletingSuiteId}
-              deletingRunId={deletingRunId}
-              userMap={userMap}
-              runDetailSortByOverride={
-                route.type === "run-detail" ? runDetailSidebarSortBy : undefined
-              }
-              onRunDetailSortByChange={
-                route.type === "run-detail"
-                  ? setRunDetailSidebarSortBy
-                  : undefined
-              }
-              omitRunIterationList={route.type === "run-detail"}
-              canDeleteRuns={canDeleteRuns}
-            />
+            <div
+              className={cn(
+                "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+                isRunDetailView ? "px-4 pb-3 pt-3" : "px-6 pb-6 pt-6",
+              )}
+            >
+              <SuiteIterationsView
+                suite={selectedSuite}
+                cases={queries.suiteDetails?.testCases || []}
+                iterations={queries.activeIterations}
+                allIterations={queries.sortedIterations}
+                runs={queries.runsForSelectedSuite}
+                runsLoading={queries.isSuiteRunsLoading}
+                aggregate={suiteAggregate}
+                runDetailSortByOverride={
+                  isRunDetailView ? runDetailSidebarSortBy : undefined
+                }
+                onRunDetailSortByChange={
+                  isRunDetailView ? setRunDetailSidebarSortBy : undefined
+                }
+                omitRunIterationList={isRunDetailView}
+                onRerun={handlers.handleRerun}
+                onReplayRun={handlers.handleReplayRun}
+                onCancelRun={handlers.handleCancelRun}
+                onDelete={handleDeleteSuite}
+                onDeleteRun={handleDeleteRun}
+                onDirectDeleteRun={handlers.directDeleteRun}
+                connectedServerNames={connectedServerNames}
+                rerunningSuiteId={handlers.rerunningSuiteId}
+                replayingRunId={handlers.replayingRunId}
+                cancellingRunId={handlers.cancellingRunId}
+                deletingSuiteId={deletingSuiteId}
+                deletingRunId={deletingRunId}
+                availableModels={availableModels}
+                route={route}
+                userMap={userMap}
+                navigation={ciNavigation}
+                canDeleteRuns={canDeleteRuns}
+                readOnlyConfig
+                omitSuiteHeader
+              />
+            </div>
           )}
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
+    </EvalTabGate>
   );
 }

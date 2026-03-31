@@ -14,8 +14,9 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
 
-const { mockMessageView } = vi.hoisted(() => ({
+const { mockMessageView, mockJsonEditor } = vi.hoisted(() => ({
   mockMessageView: vi.fn(),
+  mockJsonEditor: vi.fn(),
 }));
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
@@ -35,9 +36,10 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({
-  JsonEditor: ({ value }: { value: unknown }) => (
-    <div data-testid="json-editor">{JSON.stringify(value)}</div>
-  ),
+  JsonEditor: (props: { value: unknown; height?: string; viewOnly?: boolean }) => {
+    mockJsonEditor(props);
+    return <div data-testid="json-editor">{JSON.stringify(props.value)}</div>;
+  },
 }));
 
 vi.mock("@/components/chat-v2/thread/message-view", () => ({
@@ -207,7 +209,7 @@ const waterfallTrace = {
       name: "LLM",
       category: "llm" as const,
       startMs: 0,
-      endMs: 40,
+      endMs: 50,
       promptIndex: 0,
       stepIndex: 0,
       status: "ok" as const,
@@ -401,7 +403,8 @@ describe("TraceViewer", () => {
     ).toBeInTheDocument();
     await waitFor(() => {
       const rows = screen.getAllByTestId("trace-row");
-      const llmRows = rows.filter((el) => el.textContent?.includes("LLM ·"));
+      // Generic span name "LLM" renders as label "Model" (not "LLM ·")
+      const llmRows = rows.filter((el) => el.textContent?.includes("Model"));
       expect(llmRows.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -435,7 +438,7 @@ describe("TraceViewer", () => {
     expect(screen.getAllByText(/User: "Need docs"/).length).toBeGreaterThan(0);
   });
 
-  it("Reset restores timeline filter to All and shows hidden rows again", async () => {
+  it("does not render a reset button in the recorded trace toolbar", async () => {
     const user = userEvent.setup();
     render(<TraceViewer trace={waterfallTrace} />);
 
@@ -448,12 +451,9 @@ describe("TraceViewer", () => {
     );
     expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Reset trace view" }));
-
     expect(
-      screen.getByRole("button", { name: /Filter timeline rows: All/ }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Generation error")).toBeInTheDocument();
+      screen.queryByRole("button", { name: "Reset trace view" }),
+    ).not.toBeInTheDocument();
   });
 
   it("selects waterfall rows with arrow keys on the timeline region", async () => {
@@ -469,7 +469,7 @@ describe("TraceViewer", () => {
         ?.textContent ?? "";
 
     const first = selectedLabel();
-    expect(first).toContain("Prompt 1");
+    expect(first).toContain('User: "Need docs"');
 
     fireEvent.keyDown(region, { key: "ArrowDown" });
     expect(selectedLabel()).not.toBe(first);
@@ -612,6 +612,20 @@ describe("TraceViewer", () => {
     fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("json-editor")).toBeDefined();
     expect(screen.getByTestId("json-editor").textContent).toContain("Hello");
+  });
+
+  it("raw mode uses auto-height JSON so the parent pane scrolls", () => {
+    render(<TraceViewer trace={simpleTextTrace} />);
+
+    fireEvent.click(screen.getByTitle("Raw JSON"));
+
+    expect(mockJsonEditor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        height: "auto",
+        viewOnly: true,
+        value: simpleTextTrace,
+      }),
+    );
   });
 
   // --- Props pass-through ---

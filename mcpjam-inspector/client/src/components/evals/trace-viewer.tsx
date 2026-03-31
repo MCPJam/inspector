@@ -1,6 +1,5 @@
 import {
   lazy,
-  startTransition,
   Suspense,
   useEffect,
   useMemo,
@@ -138,7 +137,6 @@ export function TraceViewer({
   const [highlightedMessageIds, setHighlightedMessageIds] = useState<string[]>(
     [],
   );
-  const [timelineResetVersion, setTimelineResetVersion] = useState(0);
   const [timelineViewportMaxMs, setTimelineViewportMaxMs] = useState(1);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const resolvedModel: ModelDefinition = model ?? {
@@ -192,16 +190,6 @@ export function TraceViewer({
     setTimelineViewportMaxMs(maxEndMsForToolbar);
   }, [maxEndMsForToolbar, traceIdentityForToolbar]);
 
-  function handleRecordedTraceReset() {
-    setTimelineFilter("all");
-    if (recordedSpans?.length) {
-      setExpandedPromptIds(new Set(promptGroups.map((g) => g.key)));
-      setExpandedStepIds(collectStepSpanIdsWithChildren(promptGroups));
-      setTimelineViewportMaxMs(maxEndMsForToolbar);
-    }
-    setTimelineResetVersion((v) => v + 1);
-  }
-
   useEffect(() => {
     setTimelineFilter("all");
     if (!recordedSpans?.length) {
@@ -239,13 +227,47 @@ export function TraceViewer({
       return;
     }
 
-    const focusedMessage = messageRefs.current[highlightedMessageIds[0] ?? ""];
-    if (typeof focusedMessage?.scrollIntoView === "function") {
-      focusedMessage.scrollIntoView({
-        block: "center",
-        behavior: "smooth",
+    let cancelled = false;
+    const rafId = requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (cancelled) return;
+        const el =
+          messageRefs.current[
+            highlightedMessageIds[highlightedMessageIds.length - 1] ?? ""
+          ];
+        if (!el) return;
+        // Find the nearest scrollable ancestor and scroll manually so we only
+        // move *that* container rather than every ancestor (scrollIntoView
+        // can misbehave in deeply nested flex/overflow layouts).
+        let container: HTMLElement | null = el.parentElement;
+        while (container) {
+          const { overflowY } = getComputedStyle(container);
+          if (
+            (overflowY === "auto" || overflowY === "scroll") &&
+            container.scrollHeight > container.clientHeight
+          ) {
+            break;
+          }
+          container = container.parentElement;
+        }
+        if (container) {
+          const elRect = el.getBoundingClientRect();
+          const containerRect = container.getBoundingClientRect();
+          const relativeTop =
+            elRect.top - containerRect.top + container.scrollTop;
+          container.scrollTo({
+            top: relativeTop - container.clientHeight / 2,
+            behavior: "smooth",
+          });
+        } else {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+        }
       });
-    }
+    });
+    return () => {
+      cancelled = true;
+      cancelAnimationFrame(rafId);
+    };
   }, [highlightedMessageIds, viewMode]);
 
   function handleRevealInTranscript(range: TranscriptRange) {
@@ -270,9 +292,7 @@ export function TraceViewer({
     }
 
     setHighlightedMessageIds(orderedIds);
-    startTransition(() => {
-      setViewMode("chat");
-    });
+    setViewMode("chat");
   }
 
   if (!trace) {
@@ -289,9 +309,7 @@ export function TraceViewer({
   const timelineZoomMinMs = Math.max(1, Math.round(maxEndMsForToolbar / 50));
   const compactChrome = chromeDensity === "compact";
 
-  const flexFillChrome =
-    viewMode === "raw" ||
-    (viewMode === "tools" && hasEvalToolCalls);
+  const flexFillChrome = viewMode === "tools" && hasEvalToolCalls;
 
   return (
     <div
@@ -321,7 +339,6 @@ export function TraceViewer({
                 isFullyExpanded={isTimelineFullyExpanded}
                 expandDisabled={promptGroups.length === 0}
                 showBottomBorder={false}
-                onReset={handleRecordedTraceReset}
                 zoomControls={
                   <>
                     <Button
@@ -460,9 +477,9 @@ export function TraceViewer({
       </div>
 
       {viewMode === "raw" && (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+        <div className="min-w-0 overflow-hidden rounded-md border border-border/30 bg-background/50">
           <JsonEditor
-            height="100%"
+            height="auto"
             viewOnly
             value={trace}
             className="min-h-0"
@@ -504,7 +521,6 @@ export function TraceViewer({
             viewportMaxMs={
               hasRecordedSpans ? timelineViewportMaxMs : undefined
             }
-            resetVersion={hasRecordedSpans ? timelineResetVersion : undefined}
           />
         </Suspense>
       )}

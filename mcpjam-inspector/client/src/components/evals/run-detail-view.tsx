@@ -4,6 +4,14 @@ import {
   ChartTooltip,
   ChartTooltipContent,
 } from "@/components/ui/chart";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { PieChart, Pie, Label } from "recharts";
 import { cn } from "@/lib/utils";
 import { IterationDetails } from "./iteration-details";
@@ -27,7 +35,7 @@ import {
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import { ExternalLink } from "lucide-react";
+import { ArrowUpDown, ExternalLink } from "lucide-react";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 
@@ -64,6 +72,25 @@ interface RunDetailViewProps {
   hideReplayLineage?: boolean;
   /** When true, only the iteration detail pane is shown (list lives in a parent sidebar). */
   omitIterationList?: boolean;
+  onOpenRunInsights?: () => void;
+  runInsightsSelected?: boolean;
+  /** Overrides default navigation to test-edit for iteration row edit actions. */
+  onEditTestCase?: (testCaseId: string) => void;
+  /** When true, every iteration with testCaseId shows Edit / Edit in Playground. */
+  alwaysShowEditIterationRows?: boolean;
+}
+
+function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
+  switch (sortBy) {
+    case "model":
+      return "Model";
+    case "test":
+      return "Test";
+    case "result":
+      return "Result";
+    default:
+      return sortBy;
+  }
 }
 
 function IterationListItem({
@@ -71,12 +98,14 @@ function IterationListItem({
   isSelected,
   onSelect,
   onEditTestCase,
+  alwaysShowEditIterationRows = false,
 }: {
   iteration: EvalIteration;
   isSelected: boolean;
   onSelect: () => void;
   /** When set, failed iterations with a testCaseId show an editor link. */
   onEditTestCase?: (testCaseId: string) => void;
+  alwaysShowEditIterationRows?: boolean;
 }) {
   const isPending =
     iteration.status === "pending" || iteration.status === "running";
@@ -85,9 +114,10 @@ function IterationListItem({
   const modelName = testInfo?.model || "—";
 
   const computedResult = computeIterationResult(iteration);
-  const canEditInPlayground =
+  const isFailed = computedResult === "failed";
+  const showEditLink =
     Boolean(onEditTestCase && iteration.testCaseId) &&
-    computedResult === "failed";
+    (alwaysShowEditIterationRows || isFailed);
 
   return (
     <div
@@ -123,7 +153,7 @@ function IterationListItem({
           {modelName}
         </span>
       </button>
-      {canEditInPlayground && iteration.testCaseId ? (
+      {showEditLink && iteration.testCaseId ? (
         <div className="px-3 pb-2 -mt-0.5">
           <button
             type="button"
@@ -133,7 +163,7 @@ function IterationListItem({
               onEditTestCase!(iteration.testCaseId!);
             }}
           >
-            Edit in Playground
+            {isFailed ? "Edit in Playground" : "Edit"}
             <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-80" />
           </button>
         </div>
@@ -148,12 +178,14 @@ function IterationListWithSections({
   selectedIterationId,
   onSelectIteration,
   onEditTestCase,
+  alwaysShowEditIterationRows = false,
 }: {
   iterations: EvalIteration[];
   sortBy: "model" | "test" | "result";
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
   onEditTestCase?: (testCaseId: string) => void;
+  alwaysShowEditIterationRows?: boolean;
 }) {
   if (sortBy !== "result") {
     return (
@@ -165,6 +197,7 @@ function IterationListWithSections({
             isSelected={selectedIterationId === iteration._id}
             onSelect={() => onSelectIteration(iteration._id)}
             onEditTestCase={onEditTestCase}
+            alwaysShowEditIterationRows={alwaysShowEditIterationRows}
           />
         ))}
       </>
@@ -193,6 +226,7 @@ function IterationListWithSections({
           isSelected={selectedIterationId === iteration._id}
           onSelect={() => onSelectIteration(iteration._id)}
           onEditTestCase={onEditTestCase}
+          alwaysShowEditIterationRows={alwaysShowEditIterationRows}
         />
       ))}
     </>
@@ -209,6 +243,9 @@ export function RunIterationsSidebar({
   onEditTestCase,
   runForOverview = null,
   runOverviewExtra = null,
+  onOpenRunInsights,
+  runInsightsSelected = false,
+  alwaysShowEditIterationRows = false,
 }: {
   caseGroupsForSelectedRun: EvalIteration[];
   runDetailSortBy: "model" | "test" | "result";
@@ -220,6 +257,10 @@ export function RunIterationsSidebar({
   runForOverview?: EvalSuiteRun | null;
   /** Optional row below compact stats (e.g. link to full runs table). */
   runOverviewExtra?: ReactNode;
+  /** Opens run-level insights in the main pane (no iteration). */
+  onOpenRunInsights?: () => void;
+  runInsightsSelected?: boolean;
+  alwaysShowEditIterationRows?: boolean;
 }) {
   const overviewStatsOverride = useMemo(() => {
     if (!runForOverview) return undefined;
@@ -247,26 +288,57 @@ export function RunIterationsSidebar({
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {runForOverview ? (
-        <RunInsightsSidebarSummary
-          run={runForOverview}
-          statsOverride={overviewStatsOverride}
-          footer={runOverviewExtra}
-        />
+        <div className="shrink-0 border-b bg-muted/25">
+          <RunInsightsSidebarSummary
+            onClick={onOpenRunInsights}
+            selected={runInsightsSelected}
+          />
+          <div className="px-4 pb-2">
+            <RunHeaderCompactStats
+              run={runForOverview}
+              statsOverride={overviewStatsOverride}
+              className="justify-end text-right text-xs"
+            />
+          </div>
+          {runOverviewExtra ? (
+            <div className="px-4 pb-2">{runOverviewExtra}</div>
+          ) : null}
+        </div>
       ) : null}
       <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
         <div className="text-xs font-semibold">Iterations</div>
-        <select
-          value={runDetailSortBy}
-          onChange={(e) =>
-            onSortChange(e.target.value as "model" | "test" | "result")
-          }
-          className="rounded border bg-background px-1.5 py-0.5 text-[10px]"
-          aria-label="Sort iterations"
-        >
-          <option value="model">Model</option>
-          <option value="test">Test</option>
-          <option value="result">Result</option>
-        </select>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-7 w-7 border-border/50 text-muted-foreground hover:text-foreground"
+              aria-label={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+              title={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+            >
+              <ArrowUpDown className="size-3.5" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[8rem]">
+            <DropdownMenuRadioGroup
+              value={runDetailSortBy}
+              onValueChange={(value) =>
+                onSortChange(value as "model" | "test" | "result")
+              }
+            >
+              <DropdownMenuRadioItem value="model" className="text-xs">
+                {runDetailSortLabel("model")}
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="test" className="text-xs">
+                {runDetailSortLabel("test")}
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="result" className="text-xs">
+                {runDetailSortLabel("result")}
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="divide-y">
@@ -281,6 +353,7 @@ export function RunIterationsSidebar({
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
               onEditTestCase={onEditTestCase}
+              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
             />
           )}
         </div>
@@ -302,7 +375,19 @@ export function RunDetailView({
   hideCiMetadata,
   hideReplayLineage,
   omitIterationList = false,
+  onOpenRunInsights,
+  runInsightsSelected = false,
+  onEditTestCase: onEditTestCaseProp,
+  alwaysShowEditIterationRows = false,
 }: RunDetailViewProps) {
+  const handleEditTestCase =
+    onEditTestCaseProp ??
+    ((testCaseId: string) =>
+      navigateToEvalsRoute({
+        type: "test-edit",
+        suiteId: selectedRunDetails.suiteId,
+        testId: testCaseId,
+      }));
   const {
     summary: runInsightsSummary,
     pending: runInsightsPending,
@@ -700,13 +785,10 @@ export function RunDetailView({
               selectedIterationId={selectedIterationId}
               onSelectIteration={onSelectIteration}
               runForOverview={selectedRunDetails}
-              onEditTestCase={(testCaseId) =>
-                navigateToEvalsRoute({
-                  type: "test-edit",
-                  suiteId: selectedRunDetails.suiteId,
-                  testId: testCaseId,
-                })
-              }
+              onEditTestCase={handleEditTestCase}
+              onOpenRunInsights={onOpenRunInsights}
+              runInsightsSelected={runInsightsSelected}
+              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
             />
           </div>
         ) : null}
