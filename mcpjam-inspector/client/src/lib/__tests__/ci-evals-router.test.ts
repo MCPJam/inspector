@@ -76,7 +76,9 @@ describe("ci-evals-router", () => {
       runId: "r_def",
       insightsFocus: true,
     });
-    expect(window.location.hash).toBe("#/ci-evals/suite/s_abc/runs/r_def?insights=1");
+    expect(window.location.hash).toBe(
+      "#/ci-evals/suite/s_abc/runs/r_def?insights=1",
+    );
   });
 
   it("parses test detail route with iteration query", () => {
@@ -121,8 +123,7 @@ describe("ci-evals-router", () => {
   });
 
   it("parses suite overview with fromCommit query", () => {
-    window.location.hash =
-      "#/ci-evals/suite/s_123?fromCommit=manual-abc-123";
+    window.location.hash = "#/ci-evals/suite/s_123?fromCommit=manual-abc-123";
     expect(parseCiEvalsRoute()).toEqual({
       type: "suite-overview",
       suiteId: "s_123",

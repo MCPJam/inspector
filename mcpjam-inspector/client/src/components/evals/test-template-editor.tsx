@@ -29,9 +29,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  useAiProviderKeys,
-} from "@/hooks/use-ai-provider-keys";
+import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
 import {

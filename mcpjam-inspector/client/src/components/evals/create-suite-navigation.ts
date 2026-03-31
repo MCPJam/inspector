@@ -9,10 +9,7 @@ function applyPlaygroundEvalsHash(
   options?: { replace?: boolean },
 ) {
   const hash = withTestingSurface(buildEvalsHash(route));
-  if (
-    options?.replace &&
-    typeof window !== "undefined"
-  ) {
+  if (options?.replace && typeof window !== "undefined") {
     history.replaceState({}, "", `/${hash}`);
     window.dispatchEvent(new HashChangeEvent("hashchange"));
     return;

@@ -466,9 +466,7 @@ export function useEvalHandlers({
           const startedAt = iteration.startedAt ?? iteration.createdAt;
           const completedAt = iteration.updatedAt ?? iteration.createdAt;
           const durationMs =
-            startedAt && completedAt
-              ? Math.max(completedAt - startedAt, 0)
-              : 0;
+            startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
 
           posthog.capture("eval_test_case_run_completed", {
             location: options?.location ?? "test_case_list_sidebar",

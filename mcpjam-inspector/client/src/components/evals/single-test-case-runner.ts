@@ -1,8 +1,5 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
-import {
-  isMCPJamProvidedModel,
-  type ModelDefinition,
-} from "@/shared/types";
+import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
 
 type TestCaseRunOverrides = Pick<

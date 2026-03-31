@@ -111,7 +111,9 @@ export function CommitListSidebar({
                     ) : (
                       <span className="flex min-w-0 items-center gap-1">
                         <GitCommit className="h-3 w-3 shrink-0 text-muted-foreground" />
-                        <span className="truncate font-mono">{group.shortSha}</span>
+                        <span className="truncate font-mono">
+                          {group.shortSha}
+                        </span>
                       </span>
                     )
                   }

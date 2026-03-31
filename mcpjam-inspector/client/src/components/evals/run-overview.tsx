@@ -660,7 +660,9 @@ export function RunOverview({
                     <motion.div
                       key={run._id}
                       custom={runIndex}
-                      variants={shouldReduceMotion ? undefined : runItemVariants}
+                      variants={
+                        shouldReduceMotion ? undefined : runItemVariants
+                      }
                       className={cn("relative border-l-2", runAccent)}
                     >
                       {runButton}

@@ -185,12 +185,7 @@ export function TraceViewer({
       if (!expandedStepIds.has(id)) return false;
     }
     return true;
-  }, [
-    promptGroups,
-    expandedPromptIds,
-    expandedStepIds,
-    fullyExpandedStepIds,
-  ]);
+  }, [promptGroups, expandedPromptIds, expandedStepIds, fullyExpandedStepIds]);
 
   useEffect(() => {
     setTimelineViewportMaxMs(maxEndMsForToolbar);
@@ -278,8 +273,7 @@ export function TraceViewer({
   }
 
   const hasRecordedSpans = Boolean(recordedSpans?.length);
-  const showRecordedChrome =
-    viewMode === "timeline" && hasRecordedSpans;
+  const showRecordedChrome = viewMode === "timeline" && hasRecordedSpans;
   const timelineZoomMinMs = Math.max(1, Math.round(maxEndMsForToolbar / 50));
   const compactChrome = chromeDensity === "compact";
 
@@ -338,9 +332,7 @@ export function TraceViewer({
                       className="h-7 w-7 border-border/50"
                       title="Zoom out timeline"
                       aria-label="Zoom out timeline"
-                      disabled={
-                        timelineViewportMaxMs >= maxEndMsForToolbar * 4
-                      }
+                      disabled={timelineViewportMaxMs >= maxEndMsForToolbar * 4}
                       onClick={() =>
                         setTimelineViewportMaxMs((v) =>
                           Math.min(
@@ -494,9 +486,7 @@ export function TraceViewer({
             onExpandedStepIdsChange={
               hasRecordedSpans ? setExpandedStepIds : undefined
             }
-            viewportMaxMs={
-              hasRecordedSpans ? timelineViewportMaxMs : undefined
-            }
+            viewportMaxMs={hasRecordedSpans ? timelineViewportMaxMs : undefined}
           />
         </Suspense>
       )}
@@ -523,7 +513,8 @@ export function TraceViewer({
             navigationKey={transcriptNavigation.navigationKey}
             contentClassName="max-w-4xl space-y-8 px-4 pt-2"
             getMessageWrapperProps={({ message }) => {
-              const sourceRange = adaptedTrace.uiMessageSourceRanges[message.id];
+              const sourceRange =
+                adaptedTrace.uiMessageSourceRanges[message.id];
               return {
                 "data-source-range": sourceRange
                   ? `${sourceRange.startIndex}-${sourceRange.endIndex}`

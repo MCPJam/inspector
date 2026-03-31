@@ -101,4 +101,28 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
     );
     expect(onReconnect).not.toHaveBeenCalled();
   });
+
+  it("hides the share CTA even for share-eligible hosted servers", () => {
+    const server = createServer({
+      name: "shareable-server",
+      connectionStatus: "connected",
+      config: {
+        transportType: "streamableHttp",
+        url: "https://example.com/mcp",
+      },
+    });
+
+    render(
+      <ServerConnectionCard
+        server={server}
+        hostedServerId="hosted-server-1"
+        onDisconnect={vi.fn()}
+        onReconnect={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Share" }),
+    ).not.toBeInTheDocument();
+  });
 });

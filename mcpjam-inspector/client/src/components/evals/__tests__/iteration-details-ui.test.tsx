@@ -238,12 +238,14 @@ describe("IterationDetails trace blob load error", () => {
         /We lost contact with the server while loading this trace/i,
       ),
     ).toBeInTheDocument();
-    expect(screen.queryByText(convexConnectionLostMessage)).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(convexConnectionLostMessage),
+    ).not.toBeInTheDocument();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /technical details/i }),
-    );
-    expect(await screen.findByText(convexConnectionLostMessage)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /technical details/i }));
+    expect(
+      await screen.findByText(convexConnectionLostMessage),
+    ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /try again/i }));
 

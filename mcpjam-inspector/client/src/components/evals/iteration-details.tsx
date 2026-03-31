@@ -635,51 +635,56 @@ export function IterationDetails({
 
   const toolCallsSection =
     hasToolCalls && !iteration.blob ? (
-    layoutMode === "full" ? (
-      <Collapsible
-        open={toolCallsSectionOpen}
-        onOpenChange={setToolCallsSectionOpen}
-      >
-        <div className="space-y-2" data-testid="iteration-tool-calls-section">
-          <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/40 pb-2">
-            <CollapsibleTrigger
-              type="button"
-              className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-            >
-              {toolCallsSectionOpen ? (
-                <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              ) : (
-                <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-              )}
-              <span className="shrink-0 text-xs font-semibold">Tool Calls</span>
-              {!toolCallsSectionOpen && (
-                <span
-                  className="min-w-0 truncate text-xs text-muted-foreground"
-                  title={toolCallsSummary}
-                >
-                  {toolCallsSummary}
+      layoutMode === "full" ? (
+        <Collapsible
+          open={toolCallsSectionOpen}
+          onOpenChange={setToolCallsSectionOpen}
+        >
+          <div className="space-y-2" data-testid="iteration-tool-calls-section">
+            <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/40 pb-2">
+              <CollapsibleTrigger
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+              >
+                {toolCallsSectionOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="shrink-0 text-xs font-semibold">
+                  Tool Calls
                 </span>
-              )}
-            </CollapsibleTrigger>
-            {toolCallsSectionOpen ? formattedRawToggle : null}
-          </div>
-          <CollapsibleContent>
-            <div className="space-y-2" data-testid="iteration-tool-calls-grid">
-              {toolCallsGrids}
+                {!toolCallsSectionOpen && (
+                  <span
+                    className="min-w-0 truncate text-xs text-muted-foreground"
+                    title={toolCallsSummary}
+                  >
+                    {toolCallsSummary}
+                  </span>
+                )}
+              </CollapsibleTrigger>
+              {toolCallsSectionOpen ? formattedRawToggle : null}
             </div>
-          </CollapsibleContent>
+            <CollapsibleContent>
+              <div
+                className="space-y-2"
+                data-testid="iteration-tool-calls-grid"
+              >
+                {toolCallsGrids}
+              </div>
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
+      ) : (
+        <div className="space-y-2" data-testid="iteration-tool-calls-section">
+          <div className="flex items-center justify-between border-b border-border/40 pb-2">
+            <div className="text-xs font-semibold">Tool Calls</div>
+            {formattedRawToggle}
+          </div>
+          <div data-testid="iteration-tool-calls-grid">{toolCallsGrids}</div>
         </div>
-      </Collapsible>
-    ) : (
-      <div className="space-y-2" data-testid="iteration-tool-calls-section">
-        <div className="flex items-center justify-between border-b border-border/40 pb-2">
-          <div className="text-xs font-semibold">Tool Calls</div>
-          {formattedRawToggle}
-        </div>
-        <div data-testid="iteration-tool-calls-grid">{toolCallsGrids}</div>
-      </div>
-    )
-  ) : null;
+      )
+    ) : null;
 
   const traceSection = iteration.blob ? (
     <div
@@ -730,9 +735,7 @@ export function IterationDetails({
             traceEndedAtMs={traceEndedAtMs}
             estimatedDurationMs={estimatedDurationMs}
             traceInsight={caseInsightSlot}
-            chromeDensity={
-              layoutMode === "full" ? "compact" : "default"
-            }
+            chromeDensity={layoutMode === "full" ? "compact" : "default"}
             expectedToolCalls={expectedToolCalls}
             actualToolCalls={actualToolCalls}
           />

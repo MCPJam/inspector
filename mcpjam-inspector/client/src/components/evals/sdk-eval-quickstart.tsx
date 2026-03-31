@@ -1,11 +1,5 @@
 import { useCallback, useState } from "react";
-import {
-  Check,
-  Copy,
-  ExternalLink,
-  Loader2,
-  RefreshCw,
-} from "lucide-react";
+import { Check, Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -329,7 +323,13 @@ function ApiKeyRow({
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
-        <Button type="button" size="sm" variant="outline" className="text-xs" onClick={onSignIn}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="text-xs"
+          onClick={onSignIn}
+        >
           Sign in
         </Button>
       </div>
@@ -453,7 +453,9 @@ function ApiKeyRow({
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isGenerating}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isGenerating}>
+              Cancel
+            </AlertDialogCancel>
             <AlertDialogAction
               disabled={isGenerating}
               onClick={async (e) => {
@@ -594,7 +596,9 @@ export function SdkEvalQuickstart({
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
           <span>
             Providers:{" "}
-            <span className="text-foreground/80">{SDK_TEST_AGENT_PROVIDERS}</span>
+            <span className="text-foreground/80">
+              {SDK_TEST_AGENT_PROVIDERS}
+            </span>
           </span>
           <a
             className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"

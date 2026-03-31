@@ -414,9 +414,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        {casesSidebarHidden &&
-        onShowCasesSidebar &&
-        runsViewMode === "runs" ? (
+        {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
           <Button
             type="button"
             size="sm"

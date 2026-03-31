@@ -18,6 +18,12 @@ export interface SharedChatThread {
   startedAt: number;
   lastActivityAt: number;
   messagesBlobUrl?: string;
+  /** Set when sandbox feedback was recorded for this session. */
+  feedbackRating?: number | null;
+  feedbackComment?: string | null;
+  toolCallCount?: number;
+  /** OAuth or permission flow interrupted the session. */
+  authInterrupted?: boolean;
 }
 
 export interface SharedChatWidgetSnapshot {

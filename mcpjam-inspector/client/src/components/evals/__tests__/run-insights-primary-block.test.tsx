@@ -53,8 +53,6 @@ describe("RunInsightsPrimaryBlock", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("button", { name: /retry/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /retry/i })).toBeInTheDocument();
   });
 });

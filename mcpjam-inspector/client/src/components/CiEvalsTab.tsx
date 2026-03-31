@@ -91,20 +91,13 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
       ? route.testId
       : null;
 
-  const {
-    connectedServerNames,
-    userMap,
-    canDeleteRuns,
-    availableModels,
-  } = useEvalTabContext({
-    isAuthenticated,
-    workspaceId: convexWorkspaceId,
-  });
+  const { connectedServerNames, userMap, canDeleteRuns, availableModels } =
+    useEvalTabContext({
+      isAuthenticated,
+      workspaceId: convexWorkspaceId,
+    });
 
-  const ciNavigation = useMemo(
-    () => createCiSuiteNavigation(route),
-    [route],
-  );
+  const ciNavigation = useMemo(() => createCiSuiteNavigation(route), [route]);
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(convexWorkspaceId),
@@ -451,286 +444,293 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
       workspaceId={convexWorkspaceId}
     >
       <>
-      <div className="h-full flex flex-col overflow-hidden">
-      {showCiSuiteDrilldownSidebar && selectedSuite ? (
-        <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-            <Breadcrumb className="min-w-0 flex-1">
-              <BreadcrumbList className="min-w-0 flex-nowrap">
-                <BreadcrumbItem>
-                  <BreadcrumbLink asChild>
-                    <button
-                      type="button"
-                      onClick={handleCiBreadcrumbToSuiteList}
-                      className="inline-flex border-0 bg-transparent p-0 font-medium"
-                    >
-                      Suites
-                    </button>
-                  </BreadcrumbLink>
-                </BreadcrumbItem>
-                <BreadcrumbSeparator />
-                {commitBreadcrumbContext ? (
-                  <>
-                    <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
+        <div className="h-full flex flex-col overflow-hidden">
+          {showCiSuiteDrilldownSidebar && selectedSuite ? (
+            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                <Breadcrumb className="min-w-0 flex-1">
+                  <BreadcrumbList className="min-w-0 flex-nowrap">
+                    <BreadcrumbItem>
                       <BreadcrumbLink asChild>
                         <button
                           type="button"
-                          onClick={handleCiBreadcrumbToCommit}
-                          title="Back to commit"
-                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                          onClick={handleCiBreadcrumbToSuiteList}
+                          className="inline-flex border-0 bg-transparent p-0 font-medium"
                         >
-                          {commitBreadcrumbContext.label}
+                          Suites
                         </button>
                       </BreadcrumbLink>
                     </BreadcrumbItem>
                     <BreadcrumbSeparator />
-                  </>
-                ) : null}
-                {route.type === "run-detail" ? (
-                  <>
-                    <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
-                      <BreadcrumbLink asChild>
-                        <button
-                          type="button"
-                          onClick={handleCiBreadcrumbToSuiteOverview}
+                    {commitBreadcrumbContext ? (
+                      <>
+                        <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
+                          <BreadcrumbLink asChild>
+                            <button
+                              type="button"
+                              onClick={handleCiBreadcrumbToCommit}
+                              title="Back to commit"
+                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                            >
+                              {commitBreadcrumbContext.label}
+                            </button>
+                          </BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator />
+                      </>
+                    ) : null}
+                    {route.type === "run-detail" ? (
+                      <>
+                        <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+                          <BreadcrumbLink asChild>
+                            <button
+                              type="button"
+                              onClick={handleCiBreadcrumbToSuiteOverview}
+                              title={selectedSuite.name}
+                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                            >
+                              {selectedSuite.name}
+                            </button>
+                          </BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem>
+                          <BreadcrumbPage className="truncate font-medium">
+                            Run {formatRunId(route.runId)}
+                          </BreadcrumbPage>
+                        </BreadcrumbItem>
+                      </>
+                    ) : (
+                      <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                        <BreadcrumbPage
+                          className="truncate font-medium"
                           title={selectedSuite.name}
-                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
                         >
                           {selectedSuite.name}
-                        </button>
-                      </BreadcrumbLink>
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage className="truncate font-medium">
-                        Run {formatRunId(route.runId)}
-                      </BreadcrumbPage>
-                    </BreadcrumbItem>
-                  </>
-                ) : (
-                  <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
-                    <BreadcrumbPage
-                      className="truncate font-medium"
-                      title={selectedSuite.name}
-                    >
-                      {selectedSuite.name}
-                    </BreadcrumbPage>
-                  </BreadcrumbItem>
-                )}
-              </BreadcrumbList>
-            </Breadcrumb>
-          </div>
-        </div>
-      ) : null}
-      <ResizablePanelGroup
-        direction="horizontal"
-        className="flex-1 overflow-hidden"
-      >
-        <ResizablePanel
-          defaultSize={28}
-          minSize={20}
-          maxSize={35}
-          className="flex min-h-0 flex-col border-r bg-muted/30"
-        >
-          {showCiSuiteDrilldownSidebar && route.type === "run-detail" ? (
-            <RunIterationsSidebar
-              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-              runDetailSortBy={runDetailSidebarSortBy}
-              onSortChange={setRunDetailSidebarSortBy}
-              selectedIterationId={route.iteration ?? null}
-              onSelectIteration={(iterationId) => {
-                navigateToCiEvalsRoute({
-                  type: "run-detail",
-                  suiteId: route.suiteId,
-                  runId: route.runId,
-                  iteration: iterationId,
-                });
-              }}
-              runForOverview={selectedRunForSidebar}
-              onOpenRunInsights={
-                route.type === "run-detail"
-                  ? () =>
-                      navigateToCiEvalsRoute({
-                        type: "run-detail",
-                        suiteId: route.suiteId,
-                        runId: route.runId,
-                        insightsFocus: true,
-                      })
-                  : undefined
-              }
-              runInsightsSelected={
-                route.type === "run-detail"
-                  ? Boolean(route.insightsFocus && !route.iteration)
-                  : false
-              }
-            />
-          ) : (
-            <CiSuiteListSidebar
-              suites={visibleSuites}
-              selectedSuiteId={selectedSuiteId}
-              onSelectSuite={handleSelectSuite}
-              isLoading={queries.isOverviewLoading}
-              sidebarMode={sidebarMode}
-              onSidebarModeChange={setSidebarMode}
-              commitGroups={commitGroups}
-              selectedCommitSha={selectedCommitSha}
-              onSelectCommit={handleSelectCommit}
-              selectedSuiteIdInCommit={selectedSuiteIdInCommit}
-              onSelectSuiteInCommit={handleSelectSuiteInCommit}
-            />
-          )}
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel
-          defaultSize={72}
-          minSize={route.type === "run-detail" ? 42 : 15}
-          className="flex flex-col overflow-hidden"
-        >
-          {route.type === "create" ? (
-            <div className="flex flex-1 items-center justify-center">
-              <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            </div>
-          ) : route.type === "commit-detail" && selectedCommitGroup ? (
-            <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
-          ) : !hasVisibleSuites ? (
-            <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-              <div className="mx-auto w-full max-w-3xl px-6 py-8 pb-12">
-                <div className="mb-6 text-center">
-                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
-                    <GitBranch className="h-6 w-6 text-primary" />
-                  </div>
-                  <h2 className="mb-1 text-lg font-semibold tracking-tight text-foreground">
-                    Run your first eval from code
-                  </h2>
-                  <p className="mb-4 text-sm text-muted-foreground">
-                    See what a completed eval looks like before you start.
-                  </p>
-                  <motion.button
-                    type="button"
-                    onClick={() => setShowSampleTrace(true)}
-                    className="group relative mx-auto inline-flex items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/5 px-5 py-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/10"
-                    initial={{ opacity: 0, y: 8 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.2, duration: 0.4, ease: "easeOut" }}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
-                  >
-                    <motion.span
-                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
-                      animate={{ scale: [1, 1.08, 1] }}
-                      transition={{
-                        duration: 2.4,
-                        repeat: Infinity,
-                        ease: "easeInOut",
-                      }}
-                    >
-                      <Play className="size-4 fill-current" />
-                    </motion.span>
-                    <span className="flex flex-col items-start">
-                      <span>View sample trace</span>
-                      <span className="text-xs font-normal text-muted-foreground">
-                        Timeline, chat &amp; raw data
-                      </span>
-                    </span>
-                    <Eye className="size-4 text-muted-foreground transition-colors group-hover:text-primary" />
-                  </motion.button>
-                </div>
-                <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
+                        </BreadcrumbPage>
+                      </BreadcrumbItem>
+                    )}
+                  </BreadcrumbList>
+                </Breadcrumb>
               </div>
             </div>
-          ) : route.type === "list" || !selectedSuite ? (
-            <div className="flex flex-1 items-center justify-center">
-              <div className="mx-auto max-w-md p-6 text-center">
-                <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                  <GitBranch className="h-7 w-7 text-muted-foreground" />
-                </div>
-                <h2 className="mb-2 text-lg font-semibold text-foreground">
-                  Select a suite or commit
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  Choose a suite to inspect regressions and failures, or switch
-                  to commits when you want a run-by-run timeline.
-                </p>
-              </div>
-            </div>
-          ) : queries.isSuiteDetailsLoading ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="text-center">
-                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                <p className="mt-4 text-muted-foreground">
-                  Loading suite data...
-                </p>
-              </div>
-            </div>
-          ) : (
-            <div
-              className={cn(
-                "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
-                isRunDetailView ? "px-4 pb-3 pt-3" : "px-6 pb-6 pt-6",
-              )}
+          ) : null}
+          <ResizablePanelGroup
+            direction="horizontal"
+            className="flex-1 overflow-hidden"
+          >
+            <ResizablePanel
+              defaultSize={28}
+              minSize={20}
+              maxSize={35}
+              className="flex min-h-0 flex-col border-r bg-muted/30"
             >
-              <SuiteIterationsView
-                suite={selectedSuite}
-                cases={queries.suiteDetails?.testCases || []}
-                iterations={queries.activeIterations}
-                allIterations={queries.sortedIterations}
-                runs={queries.runsForSelectedSuite}
-                runsLoading={queries.isSuiteRunsLoading}
-                aggregate={suiteAggregate}
-                runDetailSortByOverride={
-                  isRunDetailView ? runDetailSidebarSortBy : undefined
-                }
-                onRunDetailSortByChange={
-                  isRunDetailView ? setRunDetailSidebarSortBy : undefined
-                }
-                omitRunIterationList={isRunDetailView}
-                onRerun={handlers.handleRerun}
-                onReplayRun={handlers.handleReplayRun}
-                onCancelRun={handlers.handleCancelRun}
-                onDelete={handleDeleteSuite}
-                onDeleteRun={handleDeleteRun}
-                onDirectDeleteRun={handlers.directDeleteRun}
-                connectedServerNames={connectedServerNames}
-                rerunningSuiteId={handlers.rerunningSuiteId}
-                replayingRunId={handlers.replayingRunId}
-                cancellingRunId={handlers.cancellingRunId}
-                deletingSuiteId={deletingSuiteId}
-                deletingRunId={deletingRunId}
-                availableModels={availableModels}
-                route={route}
-                userMap={userMap}
-                navigation={ciNavigation}
-                canDeleteRuns={canDeleteRuns}
-                readOnlyConfig
-                omitSuiteHeader
+              {showCiSuiteDrilldownSidebar && route.type === "run-detail" ? (
+                <RunIterationsSidebar
+                  caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                  runDetailSortBy={runDetailSidebarSortBy}
+                  onSortChange={setRunDetailSidebarSortBy}
+                  selectedIterationId={route.iteration ?? null}
+                  onSelectIteration={(iterationId) => {
+                    navigateToCiEvalsRoute({
+                      type: "run-detail",
+                      suiteId: route.suiteId,
+                      runId: route.runId,
+                      iteration: iterationId,
+                    });
+                  }}
+                  runForOverview={selectedRunForSidebar}
+                  onOpenRunInsights={
+                    route.type === "run-detail"
+                      ? () =>
+                          navigateToCiEvalsRoute({
+                            type: "run-detail",
+                            suiteId: route.suiteId,
+                            runId: route.runId,
+                            insightsFocus: true,
+                          })
+                      : undefined
+                  }
+                  runInsightsSelected={
+                    route.type === "run-detail"
+                      ? Boolean(route.insightsFocus && !route.iteration)
+                      : false
+                  }
+                />
+              ) : (
+                <CiSuiteListSidebar
+                  suites={visibleSuites}
+                  selectedSuiteId={selectedSuiteId}
+                  onSelectSuite={handleSelectSuite}
+                  isLoading={queries.isOverviewLoading}
+                  sidebarMode={sidebarMode}
+                  onSidebarModeChange={setSidebarMode}
+                  commitGroups={commitGroups}
+                  selectedCommitSha={selectedCommitSha}
+                  onSelectCommit={handleSelectCommit}
+                  selectedSuiteIdInCommit={selectedSuiteIdInCommit}
+                  onSelectSuiteInCommit={handleSelectSuiteInCommit}
+                />
+              )}
+            </ResizablePanel>
+
+            <ResizableHandle withHandle />
+
+            <ResizablePanel
+              defaultSize={72}
+              minSize={route.type === "run-detail" ? 42 : 15}
+              className="flex flex-col overflow-hidden"
+            >
+              {route.type === "create" ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : route.type === "commit-detail" && selectedCommitGroup ? (
+                <CommitDetailView
+                  commitGroup={selectedCommitGroup}
+                  route={route}
+                />
+              ) : !hasVisibleSuites ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+                  <div className="mx-auto w-full max-w-3xl px-6 py-8 pb-12">
+                    <div className="mb-6 text-center">
+                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
+                        <GitBranch className="h-6 w-6 text-primary" />
+                      </div>
+                      <h2 className="mb-1 text-lg font-semibold tracking-tight text-foreground">
+                        Run your first eval from code
+                      </h2>
+                      <p className="mb-4 text-sm text-muted-foreground">
+                        See what a completed eval looks like before you start.
+                      </p>
+                      <motion.button
+                        type="button"
+                        onClick={() => setShowSampleTrace(true)}
+                        className="group relative mx-auto inline-flex items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/5 px-5 py-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/10"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          delay: 0.2,
+                          duration: 0.4,
+                          ease: "easeOut",
+                        }}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        <motion.span
+                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
+                          animate={{ scale: [1, 1.08, 1] }}
+                          transition={{
+                            duration: 2.4,
+                            repeat: Infinity,
+                            ease: "easeInOut",
+                          }}
+                        >
+                          <Play className="size-4 fill-current" />
+                        </motion.span>
+                        <span className="flex flex-col items-start">
+                          <span>View sample trace</span>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            Timeline, chat &amp; raw data
+                          </span>
+                        </span>
+                        <Eye className="size-4 text-muted-foreground transition-colors group-hover:text-primary" />
+                      </motion.button>
+                    </div>
+                    <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
+                  </div>
+                </div>
+              ) : route.type === "list" || !selectedSuite ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <div className="mx-auto max-w-md p-6 text-center">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                      <GitBranch className="h-7 w-7 text-muted-foreground" />
+                    </div>
+                    <h2 className="mb-2 text-lg font-semibold text-foreground">
+                      Select a suite or commit
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Choose a suite to inspect regressions and failures, or
+                      switch to commits when you want a run-by-run timeline.
+                    </p>
+                  </div>
+                </div>
+              ) : queries.isSuiteDetailsLoading ? (
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                    <p className="mt-4 text-muted-foreground">
+                      Loading suite data...
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className={cn(
+                    "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+                    isRunDetailView ? "px-4 pb-3 pt-3" : "px-6 pb-6 pt-6",
+                  )}
+                >
+                  <SuiteIterationsView
+                    suite={selectedSuite}
+                    cases={queries.suiteDetails?.testCases || []}
+                    iterations={queries.activeIterations}
+                    allIterations={queries.sortedIterations}
+                    runs={queries.runsForSelectedSuite}
+                    runsLoading={queries.isSuiteRunsLoading}
+                    aggregate={suiteAggregate}
+                    runDetailSortByOverride={
+                      isRunDetailView ? runDetailSidebarSortBy : undefined
+                    }
+                    onRunDetailSortByChange={
+                      isRunDetailView ? setRunDetailSidebarSortBy : undefined
+                    }
+                    omitRunIterationList={isRunDetailView}
+                    onRerun={handlers.handleRerun}
+                    onReplayRun={handlers.handleReplayRun}
+                    onCancelRun={handlers.handleCancelRun}
+                    onDelete={handleDeleteSuite}
+                    onDeleteRun={handleDeleteRun}
+                    onDirectDeleteRun={handlers.directDeleteRun}
+                    connectedServerNames={connectedServerNames}
+                    rerunningSuiteId={handlers.rerunningSuiteId}
+                    replayingRunId={handlers.replayingRunId}
+                    cancellingRunId={handlers.cancellingRunId}
+                    deletingSuiteId={deletingSuiteId}
+                    deletingRunId={deletingRunId}
+                    availableModels={availableModels}
+                    route={route}
+                    userMap={userMap}
+                    navigation={ciNavigation}
+                    canDeleteRuns={canDeleteRuns}
+                    readOnlyConfig
+                    omitSuiteHeader
+                  />
+                </div>
+              )}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+
+        <Dialog open={showSampleTrace} onOpenChange={setShowSampleTrace}>
+          <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4 overflow-hidden sm:max-w-5xl">
+            <DialogHeader>
+              <DialogTitle>Sample trace</DialogTitle>
+              <DialogDescription>
+                Example of an eval iteration with tool calls and timing — same
+                tabs as a real run (Timeline, Chat, Raw).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <TraceViewer
+                trace={SAMPLE_TRACE}
+                model={SAMPLE_TRACE_VIEWER_MODEL}
+                traceStartedAtMs={SAMPLE_TRACE_STARTED_AT_MS}
+                chromeDensity="compact"
               />
             </div>
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </div>
-
-      <Dialog open={showSampleTrace} onOpenChange={setShowSampleTrace}>
-        <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4 overflow-hidden sm:max-w-5xl">
-          <DialogHeader>
-            <DialogTitle>Sample trace</DialogTitle>
-            <DialogDescription>
-              Example of an eval iteration with tool calls and timing — same
-              tabs as a real run (Timeline, Chat, Raw).
-            </DialogDescription>
-          </DialogHeader>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            <TraceViewer
-              trace={SAMPLE_TRACE}
-              model={SAMPLE_TRACE_VIEWER_MODEL}
-              traceStartedAtMs={SAMPLE_TRACE_STARTED_AT_MS}
-              chromeDensity="compact"
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
+          </DialogContent>
+        </Dialog>
       </>
     </EvalTabGate>
   );

@@ -1,17 +1,41 @@
 import type { Edge, Node } from "@xyflow/react";
+import type { SandboxSettings } from "@/hooks/useSandboxes";
 import type {
   SandboxBuilderContext,
+  SandboxDraftConfig,
   SandboxBuilderNodeData,
   SandboxBuilderViewModel,
   SandboxFlowNode,
 } from "./types";
-import { getSandboxHostLabel } from "@/lib/sandbox-host-style";
 import { getModelById } from "@/shared/types";
+import {
+  SANDBOX_BUILDER_HOST_NODE_ID,
+  SANDBOX_BUILDER_NODE_WIDTH,
+} from "./sandbox-canvas-viewport";
 
 const SECTION_Y = {
   host: 0,
   servers: 220,
 } as const;
+
+/**
+ * Single source of truth for builder canvas vs Setup rail: prefer the in-memory draft
+ * when present so nodes match MCP server selection before save. `sandbox` is only
+ * used when there is no draft (e.g. hypothetical read-only callers).
+ */
+function getCanvasSource(
+  context: SandboxBuilderContext,
+): SandboxSettings | SandboxDraftConfig | null {
+  return context.draft ?? context.sandbox;
+}
+
+function optionalServerIdsFromSource(
+  source: SandboxSettings | SandboxDraftConfig | null,
+): string[] {
+  if (!source) return [];
+  if ("optionalServerIds" in source) return source.optionalServerIds;
+  return source.servers.filter((s) => s.optional).map((s) => s.serverId);
+}
 
 function createNode(
   id: string,
@@ -37,19 +61,19 @@ function chip(
 function resolveHostState(
   context: SandboxBuilderContext,
 ): SandboxBuilderNodeData {
-  const source = context.sandbox ?? context.draft;
+  const source = getCanvasSource(context);
   const modelName = source
     ? (getModelById(source.modelId)?.name ?? source.modelId)
     : "Model";
+  const hostStyle = source?.hostStyle ?? "claude";
   return {
     kind: "host",
-    title: "Host Context",
-    subtitle: source?.name || "New sandbox",
-    chips: [
-      chip(source ? getSandboxHostLabel(source.hostStyle) : "Claude"),
-      chip(modelName),
-      chip(source ? `Temp ${source.temperature.toFixed(2)}` : "Temp 0.70"),
-    ],
+    title: "Chat Interface",
+    eyebrow: "Isolated Environment",
+    subtitle: source?.name?.trim() || "Untitled sandbox",
+    detailLine: `Model · ${modelName}`,
+    hostStyle,
+    chips: [],
     state: source ? "ready" : "draft",
   };
 }
@@ -58,27 +82,33 @@ function resolveServerState(
   serverId: string,
   context: SandboxBuilderContext,
 ): SandboxBuilderNodeData {
-  const source = context.sandbox ?? context.draft;
+  const source = getCanvasSource(context);
   const selected = source
     ? "servers" in source
       ? source.servers.map((server) => server.serverId)
       : source.selectedServerIds
     : [];
+  const optionalIds = optionalServerIdsFromSource(source);
   const server =
     context.workspaceServers.find((item) => item._id === serverId) ?? null;
   const insecure = server?.url?.startsWith("http://") ?? false;
+
+  const chips: SandboxBuilderNodeData["chips"] = [
+    chip(server?.useOAuth ? "OAuth" : "Direct"),
+    chip(
+      insecure ? "Requires HTTPS" : "HTTPS",
+      insecure ? "warning" : "success",
+    ),
+  ];
+  if (optionalIds.includes(serverId)) {
+    chips.push(chip("Optional", "info"));
+  }
 
   return {
     kind: "server",
     title: server?.name ?? "Server",
     subtitle: server?.url ?? "Workspace server",
-    chips: [
-      chip(server?.useOAuth ? "OAuth" : "Direct"),
-      chip(
-        insecure ? "Requires HTTPS" : "HTTPS",
-        insecure ? "warning" : "success",
-      ),
-    ],
+    chips,
     state: !selected.includes(serverId)
       ? "draft"
       : insecure
@@ -88,9 +118,8 @@ function resolveServerState(
   };
 }
 
-const NODE_WIDTH = 220;
 const NODE_GAP = 40;
-const COL_PITCH = NODE_WIDTH + NODE_GAP; // 260
+const COL_PITCH = SANDBOX_BUILDER_NODE_WIDTH + NODE_GAP;
 
 function centerRow(rowCount: number, totalWidth: number): number {
   return (totalWidth - rowCount * COL_PITCH + NODE_GAP) / 2;
@@ -99,7 +128,7 @@ function centerRow(rowCount: number, totalWidth: number): number {
 export function buildSandboxCanvas(
   context: SandboxBuilderContext,
 ): SandboxBuilderViewModel {
-  const sandboxOrDraft = context.sandbox ?? context.draft;
+  const sandboxOrDraft = getCanvasSource(context);
   const selectedServerIds = sandboxOrDraft
     ? "servers" in sandboxOrDraft
       ? sandboxOrDraft.servers.map((server) => server.serverId)
@@ -107,17 +136,22 @@ export function buildSandboxCanvas(
     : [];
 
   const nodeMap: Record<string, SandboxBuilderNodeData> = {
-    host: resolveHostState(context),
+    [SANDBOX_BUILDER_HOST_NODE_ID]: resolveHostState(context),
   };
 
   const serverRowCount = Math.max(1, selectedServerIds.length);
   const totalWidth = Math.max(1, serverRowCount) * COL_PITCH - NODE_GAP;
 
-  const hostX = (totalWidth - NODE_WIDTH) / 2;
+  const hostX = (totalWidth - SANDBOX_BUILDER_NODE_WIDTH) / 2;
   const serverX = centerRow(serverRowCount, totalWidth);
 
   const nodes: SandboxFlowNode[] = [
-    createNode("host", hostX, SECTION_Y.host + 44, nodeMap.host),
+    createNode(
+      SANDBOX_BUILDER_HOST_NODE_ID,
+      hostX,
+      SECTION_Y.host + 44,
+      nodeMap[SANDBOX_BUILDER_HOST_NODE_ID],
+    ),
   ];
 
   selectedServerIds.forEach((serverId, index) => {
@@ -137,7 +171,7 @@ export function buildSandboxCanvas(
   const edges: Edge[] = [
     ...selectedServerIds.map((serverId) => ({
       id: `host-server-${serverId}`,
-      source: "host",
+      source: SANDBOX_BUILDER_HOST_NODE_ID,
       target: `server:${serverId}`,
       ...edgeDefaults,
     })),

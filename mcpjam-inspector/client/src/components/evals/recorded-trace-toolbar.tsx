@@ -107,7 +107,9 @@ export function RecordedTraceToolbar({
             className="bg-border hidden h-3 w-px shrink-0 md:block"
             aria-hidden
           />
-          <div className="flex shrink-0 items-center gap-0.5">{zoomControls}</div>
+          <div className="flex shrink-0 items-center gap-0.5">
+            {zoomControls}
+          </div>
         </>
       ) : null}
     </div>

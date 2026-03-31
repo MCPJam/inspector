@@ -171,7 +171,9 @@ describe("TestCaseListSidebar", () => {
       />,
     );
 
-    const row = screen.getByRole("button", { name: RUN_INSIGHTS_SIDEBAR_LABEL });
+    const row = screen.getByRole("button", {
+      name: RUN_INSIGHTS_SIDEBAR_LABEL,
+    });
     expect(row).toBeVisible();
     await user.click(row);
     expect(onNavigateToOverview).toHaveBeenCalledTimes(1);

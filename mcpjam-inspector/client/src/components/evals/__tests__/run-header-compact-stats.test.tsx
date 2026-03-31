@@ -36,7 +36,9 @@ describe("RunHeaderCompactStats", () => {
   it("uses statsOverride when provided", () => {
     render(
       <RunHeaderCompactStats
-        run={makeRun({ summary: { total: 1, passed: 1, failed: 0, passRate: 1 } })}
+        run={makeRun({
+          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+        })}
         statsOverride={{
           passed: 5,
           failed: 2,
@@ -91,7 +93,9 @@ describe("getSidebarRunInsightsPassRateLabel", () => {
   });
 
   it("returns null when summary is missing", () => {
-    expect(getSidebarRunInsightsPassRateLabel(makeRun({ summary: undefined }))).toBeNull();
+    expect(
+      getSidebarRunInsightsPassRateLabel(makeRun({ summary: undefined })),
+    ).toBeNull();
   });
 
   it("uses statsOverride when provided", () => {

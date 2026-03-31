@@ -171,7 +171,6 @@ const navigationSections: NavSection[] = [
         url: "#sandboxes",
         icon: Box,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "sandboxes",
       },
     ],
   },

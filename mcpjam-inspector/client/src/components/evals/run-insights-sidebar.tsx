@@ -39,7 +39,10 @@ export function RunInsightsNavRow({
         className,
       )}
     >
-      <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+      <BarChart3
+        className="h-4 w-4 shrink-0 text-muted-foreground"
+        aria-hidden
+      />
       <span>{label}</span>
     </div>
   );

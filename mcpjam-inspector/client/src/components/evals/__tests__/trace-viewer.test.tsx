@@ -1,12 +1,5 @@
 import type { ReactNode } from "react";
-import {
-  describe,
-  it,
-  expect,
-  vi,
-  beforeEach,
-  afterEach,
-} from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   act,
   render,
@@ -50,7 +43,11 @@ vi.mock("sonner", () => ({
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({
-  JsonEditor: (props: { value: unknown; height?: string; viewOnly?: boolean }) => {
+  JsonEditor: (props: {
+    value: unknown;
+    height?: string;
+    viewOnly?: boolean;
+  }) => {
     mockJsonEditor(props);
     return <div data-testid="json-editor">{JSON.stringify(props.value)}</div>;
   },
@@ -370,7 +367,12 @@ function installTimerBackedAnimationFrame() {
 
 function mockElementRect(
   element: Element,
-  { top, height, left = 0, width = 400 }: {
+  {
+    top,
+    height,
+    left = 0,
+    width = 400,
+  }: {
     top: number;
     height: number;
     left?: number;
@@ -477,9 +479,13 @@ describe("TraceViewer", () => {
         actualToolCalls={[{ toolName: "b", arguments: { x: 1 } }]}
       />,
     );
-    expect(await screen.findByTestId("trace-viewer-tools-tab")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("trace-viewer-tools-tab"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("trace-viewer-tools-tab"));
-    expect(screen.getByTestId("trace-viewer-tools-compare")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("trace-viewer-tools-compare"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Expected")).toBeInTheDocument();
     expect(screen.getByText("Actual")).toBeInTheDocument();
   });
@@ -487,7 +493,9 @@ describe("TraceViewer", () => {
   it("hides Tools tab when there are no expected or actual tool calls", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
-    expect(screen.queryByTestId("trace-viewer-tools-tab")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("trace-viewer-tools-tab"),
+    ).not.toBeInTheDocument();
   });
 
   it("recorded spans show timeline toolbar instead of estimated-only banner", async () => {
@@ -538,17 +546,19 @@ describe("TraceViewer", () => {
       await screen.findByRole("button", { name: /Filter timeline rows: All/ }),
     ).toBeInTheDocument();
     const slot = screen.getByTestId("trace-viewer-insight-slot");
-    expect(
-      within(slot).getByText("Insight caption text"),
-    ).toBeInTheDocument();
+    expect(within(slot).getByText("Insight caption text")).toBeInTheDocument();
   });
 
   it("renders prompt-grouped waterfall rows with detail pane", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
 
     // Prompt rows show user message as primary label, with "Prompt N" in subtitle
-    expect((await screen.findAllByText(/User: "Need docs"/)).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/User: "Summarize it"/).length).toBeGreaterThan(0);
+    expect(
+      (await screen.findAllByText(/User: "Need docs"/)).length,
+    ).toBeGreaterThan(0);
+    expect(screen.getAllByText(/User: "Summarize it"/).length).toBeGreaterThan(
+      0,
+    );
     expect(screen.getByTestId("trace-detail-pane")).toBeInTheDocument();
 
     const waterfall = await getTraceWaterfallRegion();
@@ -676,9 +686,7 @@ describe("TraceViewer", () => {
     fireEvent.click(
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Reveal in Chat" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in Chat" }));
 
     expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
     const focusedMessage = document.querySelector(

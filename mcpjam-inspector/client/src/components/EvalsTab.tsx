@@ -55,15 +55,11 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { user } = useAuth();
   const route = useEvalsRoute();
   const appState = useSharedAppState();
-  const {
-    connectedServerNames,
-    userMap,
-    canDeleteRuns,
-    availableModels,
-  } = useEvalTabContext({
-    isAuthenticated,
-    workspaceId: workspaceId ?? null,
-  });
+  const { connectedServerNames, userMap, canDeleteRuns, availableModels } =
+    useEvalTabContext({
+      isAuthenticated,
+      workspaceId: workspaceId ?? null,
+    });
   const updateSuiteMutation = useMutation("testSuites:updateTestSuite" as any);
   const mutations = useEvalMutations();
 
@@ -150,9 +146,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   );
   const selectedRunForSidebar = useMemo(() => {
     if (route.type !== "run-detail") return null;
-    return (
-      runsForSelectedSuite.find((r) => r._id === route.runId) ?? null
-    );
+    return runsForSelectedSuite.find((r) => r._id === route.runId) ?? null;
   }, [route, runsForSelectedSuite]);
 
   const suiteAggregate = useMemo(() => {
@@ -395,150 +389,150 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       workspaceId={workspaceId}
     >
       <div className="h-full flex flex-col overflow-hidden">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-        {!isServerConnected ? (
-          <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
-            <EmptyState
-              icon={FlaskConical}
-              title="Connect a server to start exploring"
-              description="MCPJam generates explore cases after you connect."
-              className="h-auto min-h-[240px]"
-            />
-          </div>
-        ) : showExploreLoading ? (
-          <div className="flex min-h-[240px] flex-1 flex-col items-center justify-center px-4 sm:px-6">
-            <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <p className="mt-4 text-sm text-muted-foreground">
-              Preparing the Explore workspace for {selectedServer}...
-            </p>
-          </div>
-        ) : !exploreSuite ? (
-          <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
-            <EmptyState
-              icon={FlaskConical}
-              title="Explore is waiting on a connected server"
-              description="Reconnect the server or pick another one from the header to start generating cases."
-              className="h-auto min-h-[240px]"
-            />
-          </div>
-        ) : (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {isPlaygroundRunsTableOnly ? (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                {renderExploreMainPanel()}
-              </div>
-            ) : (
-              <ResizablePanelGroup
-                direction="horizontal"
-                className="min-h-0 flex-1"
-              >
-                <ResizablePanel
-                  defaultSize={28}
-                  minSize={18}
-                  maxSize={40}
-                  className="flex min-h-0 flex-col border-r bg-muted/30"
-                >
-                  {route.type === "run-detail" ? (
-                    <RunIterationsSidebar
-                      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-                      runDetailSortBy={runDetailSidebarSortBy}
-                      onSortChange={setRunDetailSidebarSortBy}
-                      selectedIterationId={route.iteration ?? null}
-                      onSelectIteration={(iterationId) => {
-                        navigatePlaygroundEvalsRoute({
-                          type: "run-detail",
-                          suiteId: route.suiteId,
-                          runId: route.runId,
-                          iteration: iterationId,
-                        });
-                      }}
-                      runForOverview={selectedRunForSidebar}
-                      onOpenRunInsights={() =>
-                        navigatePlaygroundEvalsRoute({
-                          type: "run-detail",
-                          suiteId: route.suiteId,
-                          runId: route.runId,
-                          insightsFocus: true,
-                        })
-                      }
-                      runInsightsSelected={Boolean(
-                        route.insightsFocus && !route.iteration,
-                      )}
-                      onEditTestCase={(testCaseId) =>
-                        playgroundNavigation.toTestEdit(
-                          route.suiteId,
-                          testCaseId,
-                        )
-                      }
-                      alwaysShowEditIterationRows
-                    />
-                  ) : (
-                    <TestCaseListSidebar
-                      heading="Explore"
-                      emptyLabel="No cases yet"
-                      testCases={exploreCases}
-                      suiteId={exploreSuite._id}
-                      selectedTestId={selectedTestId}
-                      isLoading={queries.isSuiteDetailsLoading}
-                      onCreateTestCase={async () =>
-                        handlers.handleCreateTestCase(exploreSuite._id)
-                      }
-                      onDeleteTestCase={handlers.handleDeleteTestCase}
-                      onDuplicateTestCase={(testCaseId) =>
-                        handlers.handleDuplicateTestCase(
-                          testCaseId,
-                          exploreSuite._id,
-                        )
-                      }
-                      onGenerateTests={() => void handleGenerateMore()}
-                      onCopySdkEvalBrief={() =>
-                        void handleCopyExploreSdkEvalBrief()
-                      }
-                      isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
-                      deletingTestCaseId={handlers.deletingTestCaseId}
-                      duplicatingTestCaseId={handlers.duplicatingTestCaseId}
-                      isGeneratingTests={handlers.isGeneratingTests}
-                      showingOverview={!selectedTestId}
-                      noServerSelected={!isServerConnected}
-                      selectedServer={selectedServer}
-                      suite={exploreSuite}
-                      connectedServerNames={connectedServerNames}
-                      onRunTestCase={handleRunSelectedExploreCase}
-                      runningTestCaseId={handlers.runningTestCaseId}
-                      showSelection={false}
-                      hideRunInsightsRow
-                    />
-                  )}
-                </ResizablePanel>
-                <ResizableHandle withHandle />
-                <ResizablePanel
-                  defaultSize={72}
-                  minSize={isRunDetailView ? 42 : 15}
-                  className="flex min-h-0 flex-col overflow-hidden"
-                >
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          {!isServerConnected ? (
+            <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
+              <EmptyState
+                icon={FlaskConical}
+                title="Connect a server to start exploring"
+                description="MCPJam generates explore cases after you connect."
+                className="h-auto min-h-[240px]"
+              />
+            </div>
+          ) : showExploreLoading ? (
+            <div className="flex min-h-[240px] flex-1 flex-col items-center justify-center px-4 sm:px-6">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <p className="mt-4 text-sm text-muted-foreground">
+                Preparing the Explore workspace for {selectedServer}...
+              </p>
+            </div>
+          ) : !exploreSuite ? (
+            <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
+              <EmptyState
+                icon={FlaskConical}
+                title="Explore is waiting on a connected server"
+                description="Reconnect the server or pick another one from the header to start generating cases."
+                className="h-auto min-h-[240px]"
+              />
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {isPlaygroundRunsTableOnly ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                   {renderExploreMainPanel()}
-                </ResizablePanel>
-              </ResizablePanelGroup>
-            )}
-          </div>
-        )}
-      </div>
+                </div>
+              ) : (
+                <ResizablePanelGroup
+                  direction="horizontal"
+                  className="min-h-0 flex-1"
+                >
+                  <ResizablePanel
+                    defaultSize={28}
+                    minSize={18}
+                    maxSize={40}
+                    className="flex min-h-0 flex-col border-r bg-muted/30"
+                  >
+                    {route.type === "run-detail" ? (
+                      <RunIterationsSidebar
+                        caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                        runDetailSortBy={runDetailSidebarSortBy}
+                        onSortChange={setRunDetailSidebarSortBy}
+                        selectedIterationId={route.iteration ?? null}
+                        onSelectIteration={(iterationId) => {
+                          navigatePlaygroundEvalsRoute({
+                            type: "run-detail",
+                            suiteId: route.suiteId,
+                            runId: route.runId,
+                            iteration: iterationId,
+                          });
+                        }}
+                        runForOverview={selectedRunForSidebar}
+                        onOpenRunInsights={() =>
+                          navigatePlaygroundEvalsRoute({
+                            type: "run-detail",
+                            suiteId: route.suiteId,
+                            runId: route.runId,
+                            insightsFocus: true,
+                          })
+                        }
+                        runInsightsSelected={Boolean(
+                          route.insightsFocus && !route.iteration,
+                        )}
+                        onEditTestCase={(testCaseId) =>
+                          playgroundNavigation.toTestEdit(
+                            route.suiteId,
+                            testCaseId,
+                          )
+                        }
+                        alwaysShowEditIterationRows
+                      />
+                    ) : (
+                      <TestCaseListSidebar
+                        heading="Explore"
+                        emptyLabel="No cases yet"
+                        testCases={exploreCases}
+                        suiteId={exploreSuite._id}
+                        selectedTestId={selectedTestId}
+                        isLoading={queries.isSuiteDetailsLoading}
+                        onCreateTestCase={async () =>
+                          handlers.handleCreateTestCase(exploreSuite._id)
+                        }
+                        onDeleteTestCase={handlers.handleDeleteTestCase}
+                        onDuplicateTestCase={(testCaseId) =>
+                          handlers.handleDuplicateTestCase(
+                            testCaseId,
+                            exploreSuite._id,
+                          )
+                        }
+                        onGenerateTests={() => void handleGenerateMore()}
+                        onCopySdkEvalBrief={() =>
+                          void handleCopyExploreSdkEvalBrief()
+                        }
+                        isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
+                        deletingTestCaseId={handlers.deletingTestCaseId}
+                        duplicatingTestCaseId={handlers.duplicatingTestCaseId}
+                        isGeneratingTests={handlers.isGeneratingTests}
+                        showingOverview={!selectedTestId}
+                        noServerSelected={!isServerConnected}
+                        selectedServer={selectedServer}
+                        suite={exploreSuite}
+                        connectedServerNames={connectedServerNames}
+                        onRunTestCase={handleRunSelectedExploreCase}
+                        runningTestCaseId={handlers.runningTestCaseId}
+                        showSelection={false}
+                        hideRunInsightsRow
+                      />
+                    )}
+                  </ResizablePanel>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel
+                    defaultSize={72}
+                    minSize={isRunDetailView ? 42 : 15}
+                    className="flex min-h-0 flex-col overflow-hidden"
+                  >
+                    {renderExploreMainPanel()}
+                  </ResizablePanel>
+                </ResizablePanelGroup>
+              )}
+            </div>
+          )}
+        </div>
 
-      <ConfirmationDialogs
-        suiteToDelete={handlers.suiteToDelete}
-        setSuiteToDelete={handlers.setSuiteToDelete}
-        deletingSuiteId={handlers.deletingSuiteId}
-        onConfirmDeleteSuite={handlers.confirmDelete}
-        runToDelete={handlers.runToDelete}
-        setRunToDelete={handlers.setRunToDelete}
-        deletingRunId={handlers.deletingRunId}
-        onConfirmDeleteRun={handlers.confirmDeleteRun}
-        testCaseToDelete={handlers.testCaseToDelete}
-        setTestCaseToDelete={handlers.setTestCaseToDelete}
-        deletingTestCaseId={handlers.deletingTestCaseId}
-        onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
-      />
-    </div>
+        <ConfirmationDialogs
+          suiteToDelete={handlers.suiteToDelete}
+          setSuiteToDelete={handlers.setSuiteToDelete}
+          deletingSuiteId={handlers.deletingSuiteId}
+          onConfirmDeleteSuite={handlers.confirmDelete}
+          runToDelete={handlers.runToDelete}
+          setRunToDelete={handlers.setRunToDelete}
+          deletingRunId={handlers.deletingRunId}
+          onConfirmDeleteRun={handlers.confirmDeleteRun}
+          testCaseToDelete={handlers.testCaseToDelete}
+          setTestCaseToDelete={handlers.setTestCaseToDelete}
+          deletingTestCaseId={handlers.deletingTestCaseId}
+          onConfirmDeleteTestCase={handlers.confirmDeleteTestCase}
+        />
+      </div>
     </EvalTabGate>
   );
 }
