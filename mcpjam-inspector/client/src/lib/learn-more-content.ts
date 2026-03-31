@@ -13,9 +13,9 @@ export interface LearnMoreEntry {
 export const learnMoreContent: Record<string, LearnMoreEntry> = {
   workspaces: {
     title: "Workspaces",
-    videoUrl: "https://www.youtube.com/embed/iVLr4B_HOp0",
+    videoUrl: "https://www.youtube.com/embed/i2IjxWj-zI4",
     videoThumbnail:
-      "https://outstanding-fennec-304.convex.cloud/api/storage/76ac7303-6c9a-46c9-b84e-4556c9008d73",
+      "https://outstanding-fennec-304.convex.cloud/api/storage/364bd7dc-3757-4dda-ac2e-dea49143d61a",
     previewVideoUrl:
       "https://outstanding-fennec-304.convex.cloud/api/storage/f103041b-954b-49e3-83fb-bbeabdeaca03",
     description: "Organize your MCP servers into workspaces.",
@@ -25,15 +25,15 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
   },
   servers: {
     title: "Servers",
-    videoUrl: "https://www.youtube.com/embed/a5MKoPLTmXw",
+    videoUrl: "https://www.youtube.com/embed/uNn33JkyyLo",
     videoThumbnail:
       "https://outstanding-fennec-304.convex.cloud/api/storage/303425d5-a6cd-4225-a6fc-bea4889e3643",
     previewVideoUrl:
       "https://outstanding-fennec-304.convex.cloud/api/storage/f0f85991-19aa-423e-bbd8-757b466cabae",
     description: "Connect and manage your MCP servers.",
     expandedDescription:
-      "Connect to MCP servers using STDIO, SSE, or Streamable HTTP. Run multiple servers side by side, toggle them on or off, authenticate with OAuth when needed, and get a full overview of each server at a glance.",
-    docsUrl: "https://docs.mcpjam.com/servers",
+      "Connect MCP servers to your workspace, authorize with OAuth when a server requires it, and inspect each connection: status, tools, and configuration at a glance.",
+    docsUrl: "https://docs.mcpjam.com/inspector/connecting-servers",
   },
   "app-builder": {
     title: "App Builder",
@@ -45,7 +45,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "Build and test ChatGPT apps and MCP apps locally.",
     expandedDescription:
       "A local development environment for ChatGPT apps and MCP apps. Emulate widgets, test across devices, themes, and host styles, debug CSP, and chat with your server — no ngrok or paid subscription needed.",
-    docsUrl: "https://docs.mcpjam.com/app-builder",
+    docsUrl: "https://docs.mcpjam.com/inspector/app-builder",
   },
   skills: {
     title: "Skills",
@@ -57,7 +57,7 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "View, add, and manage your skills.",
     expandedDescription:
       "View your installed skills, upload new ones, and manage them all in one place. MCPJam discovers skills from your .claude/, .mcpjam/, and .agents/ directories automatically. Use them in the App Builder or Chat — skills load based on your prompt, or inject one directly with the / command.",
-    docsUrl: "https://docs.mcpjam.com/skills",
+    docsUrl: "https://docs.mcpjam.com/inspector/skills",
   },
   "oauth-flow": {
     title: "OAuth Debugger",
@@ -69,6 +69,6 @@ export const learnMoreContent: Record<string, LearnMoreEntry> = {
     description: "Debug your MCP server's OAuth implementation visually.",
     expandedDescription:
       "A visual, step-by-step interface for testing your MCP server's OAuth implementation. Walk through every step of the handshake with a live sequence diagram, inspect every network request, and validate against multiple spec versions and registration methods (CIMD, DCR, or pre-registration).",
-    docsUrl: "https://docs.mcpjam.com/oauth",
+    docsUrl: "https://docs.mcpjam.com/inspector/guided-oauth",
   },
 };
