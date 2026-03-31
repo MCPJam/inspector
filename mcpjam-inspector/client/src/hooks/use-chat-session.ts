@@ -674,8 +674,12 @@ export function useChatSession({
         setToolServerMap((previous) =>
           Object.keys(previous).length > 0 ? {} : previous,
         );
-        setMcpToolsTokenCount((previous) => (previous !== null ? null : previous));
-        setMcpToolsTokenCountLoading((previous) => (previous ? false : previous));
+        setMcpToolsTokenCount((previous) =>
+          previous !== null ? null : previous,
+        );
+        setMcpToolsTokenCountLoading((previous) =>
+          previous ? false : previous,
+        );
         return;
       }
 
