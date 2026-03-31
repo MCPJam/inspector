@@ -36,42 +36,32 @@ export function EvalTabGate({
     );
   }
 
-  if (!isAuthenticated || !user) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={Icon}
-          title={
-            variant === "playground"
-              ? "Sign in to use Testing"
-              : "Sign in to view CI runs"
-          }
-          description={
-            variant === "playground"
-              ? "Create an account or sign in to explore cases and investigate runs."
-              : "Create an account or sign in to view SDK-ingested evaluation runs."
-          }
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
+  if (variant === "playground") {
+    if (!isAuthenticated || !user) {
+      return (
+        <div className="p-6">
+          <EmptyState
+            icon={Icon}
+            title="Sign in to use Testing"
+            description="Create an account or sign in to explore cases and investigate runs."
+            className="h-[calc(100vh-200px)]"
+          />
+        </div>
+      );
+    }
 
-  if (!workspaceId) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={Icon}
-          title="Select a workspace"
-          description={
-            variant === "playground"
-              ? "Choose a workspace before creating or viewing workspace-bound testing suites."
-              : "Choose a workspace to view shared CI evaluation runs."
-          }
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
+    if (!workspaceId) {
+      return (
+        <div className="p-6">
+          <EmptyState
+            icon={Icon}
+            title="Select a workspace"
+            description="Choose a workspace before creating or viewing workspace-bound testing suites."
+            className="h-[calc(100vh-200px)]"
+          />
+        </div>
+      );
+    }
   }
 
   return <>{children}</>;
