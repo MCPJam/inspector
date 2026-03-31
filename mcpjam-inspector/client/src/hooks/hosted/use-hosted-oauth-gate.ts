@@ -46,6 +46,8 @@ export interface HostedOAuthServerDescriptor {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  /** When true, server was opted in after session start (copy / UX hints). */
+  optional?: boolean;
 }
 
 function buildHostedOAuthStateMap(
