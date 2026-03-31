@@ -2,9 +2,7 @@ import { Box, Loader2, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type {
-  BillingInterval,
   OrganizationBillingStatus,
-  OrganizationPlan,
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
@@ -40,36 +38,38 @@ export function getCurrentPlanRenewalLine(
 
 function formatCurrentPlanBillingDetailLine(
   billingStatus: OrganizationBillingStatus,
-  currency: string,
+  planCatalog: PlanCatalog,
 ): string | null {
+  if (billingStatus.source === "trial") {
+    return "7-day trial · no active subscription yet";
+  }
+
   const plan = billingStatus.plan ?? "free";
-  const interval = billingStatus.billingInterval;
-  if (plan === "free") {
+  const interval = billingStatus.billingInterval ?? "monthly";
+  const entry = planCatalog.plans[plan];
+  if (!entry) {
+    return null;
+  }
+  if (plan === "free" || entry.billingModel === "free") {
     return "No credit card required";
   }
   if (plan === "enterprise") {
     return "Annual commitment · Contact sales for pricing";
   }
-  if (
-    !billingStatus.billingOfferKey ||
-    !billingStatus.billingModel ||
-    billingStatus.unitAmountCents == null
-  ) {
+  const priceCents = entry.prices[interval];
+  if (priceCents == null) {
     return null;
   }
-  const effInterval: BillingInterval = interval ?? "monthly";
   const monthlyAmount =
-    effInterval === "annual"
-      ? billingStatus.unitAmountCents / 12 / 100
-      : billingStatus.unitAmountCents / 100;
-  const money = formatCurrency(monthlyAmount, currency, 2);
-  if (billingStatus.billingModel === "flat") {
-    return `${money} flat monthly rate, ${effInterval === "annual" ? "billed annually" : "billed monthly"}`;
+    interval === "annual" ? priceCents / 12 / 100 : priceCents / 100;
+  const money = formatCurrency(monthlyAmount, planCatalog.currency, 2);
+  if (entry.billingModel === "flat") {
+    return `${money} flat monthly rate, ${interval === "annual" ? "billed annually" : "billed monthly"}`;
   }
-  const seatMinimumSuffix = billingStatus.seatMinimum
-    ? ` · ${billingStatus.seatMinimum} seat minimum`
+  const seatMinimumSuffix = entry.seatMinimum
+    ? ` · ${entry.seatMinimum} seat minimum`
     : "";
-  return `${money} per seat/month, ${effInterval === "annual" ? "billed annually" : "billed monthly"}${seatMinimumSuffix}`;
+  return `${money} per seat/month, ${interval === "annual" ? "billed annually" : "billed monthly"}${seatMinimumSuffix}`;
 }
 
 export interface OrganizationCurrentPlanPanelProps {
@@ -88,8 +88,13 @@ export function OrganizationCurrentPlanPanel({
   isOpeningPortal,
 }: OrganizationCurrentPlanPanelProps) {
   const currentPlan = billingStatus.plan ?? "free";
+  const displayPlan =
+    billingStatus.source === "trial"
+      ? billingStatus.trialPlan ?? billingStatus.effectivePlan
+      : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = billingStatus.canManageBilling ?? false;
+  const isTrial = billingStatus.source === "trial";
   const formattedPeriodEnd =
     billingStatus.stripeCurrentPeriodEnd != null
       ? new Intl.DateTimeFormat(undefined, {
@@ -101,23 +106,44 @@ export function OrganizationCurrentPlanPanel({
   const subscriptionStatusLabel = billingStatus.subscriptionStatus
     ? billingStatus.subscriptionStatus.replace(/_/g, " ")
     : "Not subscribed";
+  const formattedTrialEnd =
+    billingStatus.trialEndsAt != null
+      ? new Intl.DateTimeFormat(undefined, {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        }).format(new Date(billingStatus.trialEndsAt))
+      : "Not available";
 
   const effectiveBillingInterval =
     billingStatus.billingInterval ?? "monthly";
   const billingDetailLine = planCatalog
-    ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog.currency)
+    ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
     : null;
 
   const showIntervalPortalLink =
     billingConfigured &&
     canManageBilling &&
+    !isTrial &&
     (currentPlan === "starter" || currentPlan === "team") &&
     billingStatus.billingInterval != null;
 
   return (
     <div className="flex flex-col gap-4 rounded-xl border border-border/70 bg-muted/20 p-5 md:p-6">
       <p className="text-xs text-muted-foreground">
-        {currentPlan === "free" ? (
+        {isTrial ? (
+          <>
+            <span className="font-medium text-foreground/80">
+              Trial status
+            </span>{" "}
+            <span className="capitalize">{billingStatus.trialStatus}</span>
+            <span className="text-muted-foreground/70"> · </span>
+            <span className="font-medium text-foreground/80">
+              Billing cycle
+            </span>{" "}
+            <span>No subscription</span>
+          </>
+        ) : currentPlan === "free" ? (
           <>
             <span className="font-medium text-foreground/80">
               Billing cycle
@@ -154,7 +180,9 @@ export function OrganizationCurrentPlanPanel({
           className="text-sm text-muted-foreground"
           data-testid="current-plan-renewal"
         >
-          {getCurrentPlanRenewalLine(billingStatus, formattedPeriodEnd)}
+          {isTrial
+            ? `Trial ends ${formattedTrialEnd}`
+            : getCurrentPlanRenewalLine(billingStatus, formattedPeriodEnd)}
         </span>
       </div>
 
@@ -168,9 +196,11 @@ export function OrganizationCurrentPlanPanel({
           </div>
           <div className="min-w-0 space-y-1.5">
             <p className="text-2xl font-semibold tracking-tight text-muted-foreground">
-              {formatPlanName(currentPlan)}
+              {isTrial
+                ? `${formatPlanName(displayPlan)} Trial`
+                : formatPlanName(displayPlan)}
             </p>
-            {currentPlan === "free" ? (
+            {currentPlan === "free" && !isTrial ? (
               <p className="text-xs text-muted-foreground/90">
                 Limited functionality
               </p>
@@ -198,7 +228,7 @@ export function OrganizationCurrentPlanPanel({
               <p className="text-sm text-muted-foreground">
                 Loading plan details…
               </p>
-            ) : currentPlan !== "free" ? (
+            ) : currentPlan !== "free" || isTrial ? (
               <p className="text-sm text-muted-foreground">
                 Billing details are updating…
               </p>

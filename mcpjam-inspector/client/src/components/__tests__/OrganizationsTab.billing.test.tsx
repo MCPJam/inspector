@@ -36,12 +36,14 @@ function createPlanCatalog() {
   return {
     catalogVersion: "mcpjam_pricing_page",
     currency: "usd",
+    appOrigin: "http://localhost:5173",
     plans: {
       free: {
         plan: "free",
         displayName: "Free",
+        billingModel: "free",
         isSelfServe: false,
-        prices: { monthly: null, annual: null },
+        prices: { monthly: 0, annual: 0 },
         features: {
           evals: false,
           sandboxes: false,
@@ -53,16 +55,19 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 1,
-          maxWorkspaces: null,
-          maxServersPerWorkspace: 0,
+          maxWorkspaces: 1,
+          maxServersPerWorkspace: 3,
           maxSandboxesPerWorkspace: 0,
           maxEvalRunsPerMonth: 5,
         },
-        auditLogRetentionLabel: "Not included",
+        includedSeats: null,
+        seatMinimum: null,
+        checkout: null,
       },
       starter: {
         plan: "starter",
         displayName: "Starter",
+        billingModel: "flat",
         isSelfServe: true,
         prices: { monthly: 6100, annual: 58800 },
         features: {
@@ -76,16 +81,22 @@ function createPlanCatalog() {
         },
         limits: {
           maxMembers: 3,
-          maxWorkspaces: null,
+          maxWorkspaces: 2,
           maxServersPerWorkspace: 10,
           maxSandboxesPerWorkspace: 1,
           maxEvalRunsPerMonth: 500,
         },
-        auditLogRetentionLabel: "Not included",
+        includedSeats: 3,
+        seatMinimum: null,
+        checkout: {
+          plan: "starter",
+          supportedIntervals: ["monthly", "annual"],
+        },
       },
       team: {
         plan: "team",
         displayName: "Team",
+        billingModel: "per_seat",
         isSelfServe: true,
         prices: { monthly: 7400, annual: 70800 },
         features: {
@@ -98,17 +109,23 @@ function createPlanCatalog() {
           prioritySupport: true,
         },
         limits: {
-          maxMembers: null,
-          maxWorkspaces: null,
-          maxServersPerWorkspace: 50,
-          maxSandboxesPerWorkspace: 5,
+          maxMembers: 100,
+          maxWorkspaces: 10,
+          maxServersPerWorkspace: null,
+          maxSandboxesPerWorkspace: 3,
           maxEvalRunsPerMonth: 5000,
         },
-        auditLogRetentionLabel: "Not included",
+        includedSeats: null,
+        seatMinimum: 4,
+        checkout: {
+          plan: "team",
+          supportedIntervals: ["monthly", "annual"],
+        },
       },
       enterprise: {
         plan: "enterprise",
         displayName: "Enterprise",
+        billingModel: "contact",
         isSelfServe: false,
         prices: { monthly: null, annual: null },
         features: {
@@ -127,7 +144,9 @@ function createPlanCatalog() {
           maxSandboxesPerWorkspace: null,
           maxEvalRunsPerMonth: null,
         },
-        auditLogRetentionLabel: "Included",
+        includedSeats: null,
+        seatMinimum: null,
+        checkout: null,
       },
     },
   };
@@ -345,6 +364,32 @@ describe("OrganizationsTab billing", () => {
     expect(
       screen.getByRole("button", { name: "View plans" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows trial messaging without paid Starter pricing copy for active trials", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "starter",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "starter",
+          trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(screen.getByText("Starter Trial")).toBeInTheDocument();
+    expect(screen.getByText("7-day trial · no active subscription yet")).toBeInTheDocument();
+    expect(screen.getByTestId("current-plan-renewal")).toHaveTextContent(
+      "Trial ends",
+    );
+    expect(
+      screen.queryByText(/flat monthly rate|per seat\/month/i),
+    ).not.toBeInTheDocument();
   });
 
   it("hides the overview billing card when the billing UI flag is off", () => {
