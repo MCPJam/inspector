@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -42,6 +42,15 @@ export function SandboxHostOnboardingOverlays({
   const [finishingTimedOut, setFinishingTimedOut] = useState(false);
   const [testConsentChecked, setTestConsentChecked] = useState(false);
 
+  /** When still "finishing", any change to which servers or statuses are in-flight restarts the slow-timeout timer. */
+  const finishingOAuthSignature = useMemo(() => {
+    if (!isFinishingOAuth) return "";
+    return [...pendingOAuthServers]
+      .map(({ server, state }) => `${server.serverId}:${state.status}`)
+      .sort()
+      .join("|");
+  }, [isFinishingOAuth, pendingOAuthServers]);
+
   useEffect(() => {
     if (showWelcome) {
       setTestConsentChecked(false);
@@ -53,12 +62,13 @@ export function SandboxHostOnboardingOverlays({
       setFinishingTimedOut(false);
       return;
     }
+    setFinishingTimedOut(false);
     const timer = window.setTimeout(
       () => setFinishingTimedOut(true),
       FINISHING_TIMEOUT_MS,
     );
     return () => window.clearTimeout(timer);
-  }, [isFinishingOAuth]);
+  }, [isFinishingOAuth, finishingOAuthSignature]);
 
   const welcomeText = welcomeBody?.trim()
     ? welcomeBody.trim()
