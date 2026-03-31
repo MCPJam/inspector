@@ -79,7 +79,7 @@
     "@ai-sdk/xai": "^2.0.29",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@openrouter/ai-sdk-provider": "^2.2.0",
-    "ai": "^6.0.50",
+    "ai": "^6.0.141",
     "ollama-ai-provider-v2": "^1.5.2",
     "posthog-node": "^5.24.10",
     "zod": "^4.1.12"

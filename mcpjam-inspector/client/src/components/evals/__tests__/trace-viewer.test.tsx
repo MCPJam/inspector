@@ -408,9 +408,10 @@ describe("TraceViewer", () => {
     fireEvent.click(
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
     );
-    expect(screen.getByRole("tab", { name: "Input" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Output" })).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "Transcript" })).toBeInTheDocument();
+    const detail = screen.getByTestId("trace-detail-pane");
+    expect(within(detail).queryByRole("tablist")).not.toBeInTheDocument();
+    expect(within(detail).getByText("Input")).toBeInTheDocument();
+    expect(within(detail).getByText("Output")).toBeInTheDocument();
   });
 
   it("filters the waterfall to tool rows while preserving step context", async () => {
@@ -455,30 +456,6 @@ describe("TraceViewer", () => {
     expect(screen.getByText("Generation error")).toBeInTheDocument();
   });
 
-  it("detail pane exposes span id copy for tool rows", async () => {
-    const user = userEvent.setup();
-    const writeText = vi.fn().mockResolvedValue(undefined);
-    vi.stubGlobal("navigator", {
-      ...navigator,
-      clipboard: { writeText },
-    });
-    render(<TraceViewer trace={waterfallTrace} />);
-    const waterfall = await getTraceWaterfallRegion();
-    await user.click(
-      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
-    );
-    const detail = screen.getByTestId("trace-detail-pane");
-    await user.click(
-      within(detail).getByRole("button", { name: /^Advanced$/i }),
-    );
-    const copyBtn = await within(detail).findByTestId(
-      "trace-detail-copy-span-id",
-    );
-    await user.click(copyBtn);
-    expect(writeText).toHaveBeenCalledWith("p0-tool0");
-    vi.unstubAllGlobals();
-  });
-
   it("selects waterfall rows with arrow keys on the timeline region", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
     const region = await getTraceWaterfallRegion();
@@ -509,9 +486,8 @@ describe("TraceViewer", () => {
     await user.click(
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
     );
-    await user.click(screen.getByRole("tab", { name: "Transcript" }));
     await user.click(
-      screen.getByRole("button", { name: "Reveal in transcript" }),
+      screen.getByRole("button", { name: "Reveal in Chat" }),
     );
 
     expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);

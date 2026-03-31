@@ -252,7 +252,7 @@ describe("TraceTimeline detail pane", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders horizontal IO tabs on span selection", async () => {
+  it("renders stacked input and output on span selection", async () => {
     const user = userEvent.setup();
     const spans: EvalTraceSpan[] = [
       {
@@ -283,9 +283,10 @@ describe("TraceTimeline detail pane", () => {
     );
 
     await user.click(screen.getByRole("button", { name: /Tool · read_me/i }));
-    const tablist = screen.getByRole("tablist");
-    expect(tablist).toHaveClass("grid-cols-3");
-    expect(within(tablist).getByRole("tab", { name: "Input" })).toBeInTheDocument();
+    const pane = screen.getByTestId("trace-detail-pane");
+    expect(within(pane).queryByRole("tablist")).not.toBeInTheDocument();
+    expect(within(pane).getByText("Input")).toBeInTheDocument();
+    expect(within(pane).getByText("Output")).toBeInTheDocument();
   });
 
   it("labels generic LLM spans as LLM · short model (not Model response)", () => {

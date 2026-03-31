@@ -11,7 +11,6 @@ import {
   Brain,
   ChevronDown,
   ChevronRight,
-  Copy,
   Layers,
   ListTree,
   MessageSquareQuote,
@@ -19,16 +18,10 @@ import {
   Plus,
   Wrench,
 } from "lucide-react";
-import { toast } from "sonner";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
   ResizableHandle,
@@ -36,7 +29,6 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { extractTextFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { cn } from "@/lib/utils";
 import { RecordedTraceToolbar, type TimelineFilter } from "./recorded-trace-toolbar";
@@ -83,6 +75,10 @@ type PromptRow = {
   /** Includes transcript-derived tool failures, not only category:error spans. */
   hasAnyFailure: boolean;
   isExpanded: boolean;
+  /** Sum of token fields across `category === "llm"` spans in this group, when recorded. */
+  aggregatedInputTokens?: number;
+  aggregatedOutputTokens?: number;
+  aggregatedTotalTokens?: number;
 };
 
 type SpanRow = {
@@ -96,6 +92,39 @@ type SpanRow = {
 };
 
 type TimelineRow = PromptRow | SpanRow;
+
+function aggregateLlmTokenTotals(spans: EvalTraceSpan[]): {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+} {
+  const llm = spans.filter((s) => s.category === "llm");
+  let inputSum = 0;
+  let inputN = 0;
+  let outputSum = 0;
+  let outputN = 0;
+  let totalSum = 0;
+  let totalN = 0;
+  for (const s of llm) {
+    if (typeof s.inputTokens === "number") {
+      inputSum += s.inputTokens;
+      inputN++;
+    }
+    if (typeof s.outputTokens === "number") {
+      outputSum += s.outputTokens;
+      outputN++;
+    }
+    if (typeof s.totalTokens === "number") {
+      totalSum += s.totalTokens;
+      totalN++;
+    }
+  }
+  return {
+    ...(inputN ? { inputTokens: inputSum } : {}),
+    ...(outputN ? { outputTokens: outputSum } : {}),
+    ...(totalN ? { totalTokens: totalSum } : {}),
+  };
+}
 
 type TranscriptRange = {
   startIndex: number;
@@ -407,12 +436,6 @@ function getRowBorderAccentClass(
     default:
       return "border-l-muted-foreground";
   }
-}
-
-function truncateIdForBadge(id: string, maxLen = 22): string {
-  if (id.length <= maxLen) return id;
-  const keep = maxLen - 1;
-  return `${id.slice(0, keep)}…`;
 }
 
 export function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
@@ -1078,16 +1101,6 @@ function TimelineDetailPane({
     row.kind === "prompt"
       ? getPromptRowTranscriptRange(row)
       : getSpanRowTranscriptRange(row);
-  const transcriptPreview = transcriptRange
-    ? transcriptMessages
-        .slice(transcriptRange.startIndex, transcriptRange.endIndex + 1)
-        .map((message, offset) => ({
-          index: transcriptRange.startIndex + offset,
-          role: message.role,
-          summary: formatMessageSummary(message),
-        }))
-        .slice(0, 4)
-    : [];
   const toolData =
     row.kind === "span"
       ? extractToolData(
@@ -1096,17 +1109,11 @@ function TimelineDetailPane({
           row.span.toolName ?? row.span.name,
         )
       : {};
-  const promptIndex = row.promptIndex;
-  const { startMs, endMs, durationMs } = getRowTiming(row);
+  const { durationMs } = getRowTiming(row);
   const spanLabel =
     row.kind === "span" ? deriveSpanLabel(row, transcriptMessages) : null;
-  const label = row.kind === "prompt" ? (row.conversationLabel ?? row.label) : spanLabel!.title;
-  const subtitle =
-    row.kind === "prompt"
-      ? row.conversationLabel
-        ? `${row.label} · ${formatOffset(row.startMs)}`
-        : formatOffset(row.startMs)
-      : spanLabel!.subtitle;
+  const title =
+    row.kind === "prompt" ? row.label : spanLabel!.title;
   const status =
     row.kind === "prompt"
       ? row.hasAnyFailure
@@ -1173,22 +1180,20 @@ function TimelineDetailPane({
         )
       : undefined;
 
-  const showIoTabs = row.kind === "span";
-
-  async function handleCopySpanId(spanId: string) {
-    try {
-      await navigator.clipboard.writeText(spanId);
-      toast.success("Span id copied");
-    } catch {
-      toast.error("Could not copy span id");
-    }
-  }
-
-  const hasTokenStats =
+  const hasSpanTokenStats =
     row.kind === "span" &&
     (typeof row.span.inputTokens === "number" ||
       typeof row.span.outputTokens === "number" ||
       typeof row.span.totalTokens === "number");
+
+  const hasPromptTokenStats =
+    row.kind === "prompt" &&
+    (typeof row.aggregatedInputTokens === "number" ||
+      typeof row.aggregatedOutputTokens === "number" ||
+      typeof row.aggregatedTotalTokens === "number");
+
+  const toolErrorExcerpt =
+    row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
   return (
     <div data-testid="trace-detail-pane" className="space-y-4 bg-background p-4">
@@ -1204,7 +1209,7 @@ function TimelineDetailPane({
           <div className="min-w-0 flex-1 space-y-2">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <h3 className="text-sm font-bold leading-tight text-foreground">
-                {label}
+                {title}
               </h3>
               {status === "error" ? (
                 <span
@@ -1213,37 +1218,33 @@ function TimelineDetailPane({
                   aria-label="Error"
                 />
               ) : null}
-              {row.kind === "span" && row.span.modelId && row.span.category !== "llm" ? (
-                <Badge
-                  variant="outline"
-                  className="max-w-[min(100%,14rem)] truncate text-[10px] font-medium text-foreground"
-                  title={row.span.modelId}
-                >
-                  {row.span.modelId}
-                </Badge>
-              ) : null}
-              {row.kind === "span" && row.span.category === "tool" && row.span.serverId ? (
-                <span className="text-[11px] text-muted-foreground">
-                  {row.span.serverId}
-                </span>
-              ) : null}
             </div>
-            {subtitle ? (
-              <p className="text-xs text-muted-foreground">{subtitle}</p>
-            ) : null}
 
             <div className="text-xs tabular-nums text-muted-foreground">
               <span className="font-medium text-foreground">{formatDuration(durationMs)}</span>
-              {" · "}{formatOffset(startMs)} – {formatOffset(endMs)}
-              {row.kind === "prompt" ? (
+              {row.kind === "prompt" && hasPromptTokenStats ? (
                 <>
-                  {" · "}{row.counts.llm} LLM · {row.counts.tool} tool{row.counts.tool === 1 ? "" : "s"}
+                  {typeof row.aggregatedInputTokens === "number"
+                    ? ` · ${row.aggregatedInputTokens} in`
+                    : ""}
+                  {typeof row.aggregatedOutputTokens === "number"
+                    ? ` → ${row.aggregatedOutputTokens} out`
+                    : ""}
+                  {typeof row.aggregatedTotalTokens === "number"
+                    ? ` (${row.aggregatedTotalTokens} total)`
+                    : ""}
                 </>
-              ) : hasTokenStats ? (
+              ) : row.kind === "span" && hasSpanTokenStats ? (
                 <>
-                  {typeof row.span.inputTokens === "number" ? ` · ${row.span.inputTokens} in` : ""}
-                  {typeof row.span.outputTokens === "number" ? ` → ${row.span.outputTokens} out` : ""}
-                  {typeof row.span.totalTokens === "number" ? ` (${row.span.totalTokens} total)` : ""}
+                  {typeof row.span.inputTokens === "number"
+                    ? ` · ${row.span.inputTokens} in`
+                    : ""}
+                  {typeof row.span.outputTokens === "number"
+                    ? ` → ${row.span.outputTokens} out`
+                    : ""}
+                  {typeof row.span.totalTokens === "number"
+                    ? ` (${row.span.totalTokens} total)`
+                    : ""}
                 </>
               ) : null}
             </div>
@@ -1251,162 +1252,54 @@ function TimelineDetailPane({
         </div>
       </div>
 
+      {transcriptRange && onRevealInTranscript ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="w-full justify-center"
+          onClick={() => onRevealInTranscript(transcriptRange)}
+        >
+          <MessageSquareQuote className="h-3.5 w-3.5" />
+          Reveal in Chat
+        </Button>
+      ) : null}
+
       {row.kind === "prompt" && promptUserMessage ? (
-        <div className="space-y-1.5">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            User prompt
-          </div>
-          <div className="max-h-36 overflow-auto rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs leading-relaxed text-foreground">
-            {promptUserMessage}
-          </div>
+        <div className="min-h-0 max-h-[min(60vh,28rem)] flex-1 overflow-auto rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs leading-relaxed text-foreground">
+          {promptUserMessage}
         </div>
       ) : null}
 
-      {showIoTabs ? (
-        <Tabs defaultValue="input" className="w-full gap-3">
-          <TabsList className="grid h-9 w-full grid-cols-3 p-1">
-            <TabsTrigger value="input" className="text-xs">
+      {row.kind === "span" ? (
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
               Input
-            </TabsTrigger>
-            <TabsTrigger value="output" className="text-xs">
-              Output
-            </TabsTrigger>
-            <TabsTrigger value="transcript" className="text-xs">
-              Transcript
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="input" className="mt-3 space-y-2">
+            </div>
             <PayloadPreview value={tabInputValue ?? undefined} height="220px" />
-          </TabsContent>
-          <TabsContent value="output" className="mt-3 space-y-2">
+          </div>
+          <div
+            className={cn(
+              "space-y-2",
+              row.span.category === "error" || toolErrorExcerpt
+                ? "rounded-md border border-red-500/25 bg-red-500/5 p-2"
+                : "",
+            )}
+          >
+            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Output
+            </div>
             <PayloadPreview
               value={tabOutputValue ?? undefined}
               height="220px"
             />
-          </TabsContent>
-          <TabsContent value="transcript" className="mt-3 space-y-3">
-            {transcriptRange && onRevealInTranscript ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="w-full justify-center"
-                onClick={() => onRevealInTranscript(transcriptRange)}
-              >
-                <MessageSquareQuote className="h-3.5 w-3.5" />
-                Reveal in transcript
-              </Button>
+            {toolErrorExcerpt ? (
+              <pre className="max-h-40 overflow-auto rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs whitespace-pre-wrap break-words text-red-900 dark:text-red-100">
+                {toolErrorExcerpt}
+              </pre>
             ) : null}
-            {transcriptPreview.length > 0 ? (
-              <div className="space-y-2">
-                {transcriptPreview.map((entry) => (
-                  <div
-                    key={`${entry.index}-${entry.role}`}
-                    className="rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs"
-                  >
-                    <div className="font-medium text-foreground">
-                      #{entry.index} · {entry.role}
-                    </div>
-                    <div className="mt-1 text-muted-foreground">
-                      {entry.summary}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-xs text-muted-foreground">
-                No transcript excerpts for this range.
-              </div>
-            )}
-          </TabsContent>
-        </Tabs>
-      ) : (
-        <>
-          {transcriptRange && onRevealInTranscript ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="w-full justify-center"
-              onClick={() => onRevealInTranscript(transcriptRange)}
-            >
-              <MessageSquareQuote className="h-3.5 w-3.5" />
-              Reveal in transcript
-            </Button>
-          ) : null}
-          {transcriptPreview.length > 0 ? (
-            <div className="space-y-2">
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Transcript preview
-              </div>
-              <div className="space-y-2">
-                {transcriptPreview.map((entry) => (
-                  <div
-                    key={`${entry.index}-${entry.role}`}
-                    className="rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs"
-                  >
-                    <div className="font-medium text-foreground">
-                      #{entry.index} · {entry.role}
-                    </div>
-                    <div className="mt-1 text-muted-foreground">
-                      {entry.summary}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-        </>
-      )}
-
-      <Collapsible className="group rounded-md border border-border/50 bg-muted/5">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-foreground hover:bg-muted/20">
-          Advanced
-          <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="space-y-2 border-t border-border/40 px-3 py-3 text-xs">
-          {row.kind === "span" ? (
-            <div>
-              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                Span ID
-              </div>
-              <Badge
-                variant="outline"
-                data-testid="trace-detail-copy-span-id"
-                className="mt-1 max-w-full cursor-pointer gap-1 font-mono text-[10px] font-normal"
-                title={row.span.id}
-                onClick={() => void handleCopySpanId(row.span.id)}
-              >
-                <Copy className="size-3 shrink-0" aria-hidden />
-                <span className="min-w-0 truncate">
-                  {truncateIdForBadge(row.span.id)}
-                </span>
-              </Badge>
-            </div>
-          ) : null}
-          <div>
-            <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              Transcript indices
-            </div>
-            <div className="mt-0.5 font-medium text-foreground">
-              {transcriptRange
-                ? `${transcriptRange.startIndex}–${transcriptRange.endIndex}`
-                : "No message range"}
-            </div>
           </div>
-          <div className="text-muted-foreground">Prompt {promptIndex + 1}</div>
-        </CollapsibleContent>
-      </Collapsible>
-
-      {row.kind === "span" &&
-      (row.span.category === "error" || toolData.errorText) ? (
-        <div className="space-y-2">
-          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
-            Error excerpt
-          </div>
-          <pre className="max-h-40 overflow-auto rounded-md border border-red-500/20 bg-red-500/5 p-3 text-xs whitespace-pre-wrap break-words text-red-900 dark:text-red-100">
-            {toolData.errorText ?? row.span.name}
-          </pre>
         </div>
       ) : null}
     </div>
@@ -1628,6 +1521,8 @@ export function TraceTimeline({
         group.messageEndIndex,
       );
 
+      const aggTokens = aggregateLlmTokenTotals(group.spans);
+
       nextRows.push({
         kind: "prompt",
         key: group.key,
@@ -1643,6 +1538,9 @@ export function TraceTimeline({
         counts: group.counts,
         hasAnyFailure,
         isExpanded: expandedPromptIds.has(group.key),
+        aggregatedInputTokens: aggTokens.inputTokens,
+        aggregatedOutputTokens: aggTokens.outputTokens,
+        aggregatedTotalTokens: aggTokens.totalTokens,
       });
 
       if (expandedPromptIds.has(group.key)) {
