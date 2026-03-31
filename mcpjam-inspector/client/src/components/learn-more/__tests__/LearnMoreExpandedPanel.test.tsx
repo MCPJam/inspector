@@ -69,7 +69,7 @@ describe("LearnMoreExpandedPanel", () => {
     );
 
     expect(
-      screen.getByText(/Connect to MCP servers using STDIO/i),
+      screen.getByText(/Connect MCP servers to your workspace/i),
     ).toBeInTheDocument();
   });
 
