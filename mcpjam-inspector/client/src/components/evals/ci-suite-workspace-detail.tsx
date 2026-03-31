@@ -40,7 +40,9 @@ export interface CiSuiteWorkspaceDetailProps {
   onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
   omitRunIterationList?: boolean;
   canDeleteRuns?: boolean;
-  /** Desktop CI uses read-only header; hosted product allows suite edits. */
+  /**
+   * When true (default), hide suite/settings/model overrides — CI config comes from code.
+   */
   readOnlyConfig?: boolean;
 }
 
@@ -72,7 +74,7 @@ export function CiSuiteWorkspaceDetail({
   onRunDetailSortByChange,
   omitRunIterationList = false,
   canDeleteRuns = true,
-  readOnlyConfig = false,
+  readOnlyConfig = true,
 }: CiSuiteWorkspaceDetailProps) {
   const navigation = useMemo(
     () => ({
@@ -81,6 +83,9 @@ export function CiSuiteWorkspaceDetail({
           type: "suite-overview",
           suiteId,
           view,
+          ...(route.type === "suite-overview" && route.fromCommit
+            ? { fromCommit: route.fromCommit }
+            : {}),
         }),
       toRunDetail: (
         suiteId: string,
@@ -107,7 +112,7 @@ export function CiSuiteWorkspaceDetail({
       toSuiteEdit: (suiteId: string) =>
         navigateToCiEvalsRoute({ type: "suite-edit", suiteId }),
     }),
-    [],
+    [route],
   );
 
   const isRunDetailView = route.type === "run-detail";

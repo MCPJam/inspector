@@ -70,6 +70,24 @@ function makeCommitGroup(): CommitGroup {
 }
 
 describe("CommitDetailView", () => {
+  it("does not auto-navigate when no suite is selected; prompts for sidebar selection", () => {
+    render(
+      <CommitDetailView
+        commitGroup={makeCommitGroup()}
+        route={{
+          type: "commit-detail",
+          commitSha: "abc1234567",
+        }}
+      />,
+    );
+
+    expect(
+      screen.getByText(/Select a suite from the sidebar/i),
+    ).toBeVisible();
+    expect(screen.queryByTestId("run-detail-view")).not.toBeInTheDocument();
+    expect(routerMocks.navigateToCiEvalsRoute).not.toHaveBeenCalled();
+  });
+
   it("renders run detail without commit triage summary affordances", () => {
     render(
       <CommitDetailView

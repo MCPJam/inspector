@@ -11,7 +11,13 @@
 export type CiEvalsRoute =
   | { type: "list" }
   | { type: "create" }
-  | { type: "suite-overview"; suiteId: string; view?: "runs" | "test-cases" }
+  | {
+      type: "suite-overview";
+      suiteId: string;
+      view?: "runs" | "test-cases";
+      /** Commit sidebar context when drilling in from Group by commit */
+      fromCommit?: string;
+    }
   | { type: "suite-edit"; suiteId: string }
   | {
       type: "run-detail";
@@ -124,10 +130,12 @@ export function parseCiEvalsRoute(): CiEvalsRoute | null {
     if (!rest) {
       const params = new URLSearchParams(queryString || "");
       const view = params.get("view");
+      const fromCommit = params.get("fromCommit") || undefined;
       return {
         type: "suite-overview",
         suiteId,
         view: view === "test-cases" ? "test-cases" : "runs",
+        ...(fromCommit ? { fromCommit } : {}),
       };
     }
   }
@@ -155,6 +163,9 @@ export function navigateToCiEvalsRoute(
       const params = new URLSearchParams();
       if (route.view && route.view !== "runs") {
         params.set("view", route.view);
+      }
+      if (route.fromCommit) {
+        params.set("fromCommit", route.fromCommit);
       }
       const query = params.toString();
       hash = `#/ci-evals/suite/${route.suiteId}${query ? `?${query}` : ""}`;

@@ -127,6 +127,27 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [visibleSuites],
   );
 
+  // CI/CD: suite config and tests are defined in code (SDK); close edit URLs.
+  useEffect(() => {
+    if (route.type === "suite-edit") {
+      navigateToCiEvalsRoute(
+        { type: "suite-overview", suiteId: route.suiteId },
+        { replace: true },
+      );
+      return;
+    }
+    if (route.type === "test-edit") {
+      navigateToCiEvalsRoute(
+        {
+          type: "test-detail",
+          suiteId: route.suiteId,
+          testId: route.testId,
+        },
+        { replace: true },
+      );
+    }
+  }, [route]);
+
   // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
   useEffect(() => {
     if (hasAutoSwitchedMode) return;
@@ -150,8 +171,25 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
   }, [route.type]);
 
-  const selectedCommitSha =
-    route.type === "commit-detail" ? route.commitSha : null;
+  useEffect(() => {
+    if (route.type !== "commit-detail" || !route.suite) return;
+    navigateToCiEvalsRoute(
+      {
+        type: "suite-overview",
+        suiteId: route.suite,
+        fromCommit: route.commitSha,
+      },
+      { replace: true },
+    );
+  }, [route]);
+
+  const selectedCommitSha = useMemo(() => {
+    if (route.type === "commit-detail") return route.commitSha;
+    if (route.type === "suite-overview" && route.fromCommit) {
+      return route.fromCommit;
+    }
+    return null;
+  }, [route]);
 
   const selectedRunIdForSidebar =
     route.type === "run-detail" ? route.runId : null;
@@ -179,6 +217,34 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     if (!selectedCommitSha) return null;
     return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
   }, [commitGroups, selectedCommitSha]);
+
+  const commitBreadcrumbContext = useMemo(() => {
+    if (route.type !== "suite-overview" || !route.fromCommit) return null;
+    const group = commitGroups.find((g) => g.commitSha === route.fromCommit);
+    const label = group
+      ? group.commitSha.startsWith("manual-")
+        ? "Manual"
+        : group.shortSha
+      : route.fromCommit.length > 7
+        ? route.fromCommit.slice(0, 7)
+        : route.fromCommit;
+    return { commitSha: route.fromCommit, label };
+  }, [route, commitGroups]);
+
+  const selectedSuiteIdInCommit = useMemo(() => {
+    if (route.type === "commit-detail" && route.suite) return route.suite;
+    if (
+      route.type === "suite-overview" &&
+      route.fromCommit &&
+      selectedSuiteId
+    ) {
+      const group = commitGroups.find((g) => g.commitSha === route.fromCommit);
+      if (!group) return null;
+      const inGroup = group.runs.some((r) => r.suiteId === selectedSuiteId);
+      return inGroup ? selectedSuiteId : null;
+    }
+    return null;
+  }, [route, commitGroups, selectedSuiteId]);
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
     return (
@@ -253,19 +319,22 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     navigateToCiEvalsRoute({ type: "commit-detail", commitSha });
   }, []);
 
-  const selectedSuiteIdInCommit =
-    route.type === "commit-detail" ? (route.suite ?? null) : null;
-
   const handleSelectSuiteInCommit = useCallback(
     (suiteId: string) => {
-      if (!selectedCommitSha) return;
+      const commitSha =
+        route.type === "commit-detail"
+          ? route.commitSha
+          : route.type === "suite-overview" && route.fromCommit
+            ? route.fromCommit
+            : null;
+      if (!commitSha) return;
       navigateToCiEvalsRoute({
-        type: "commit-detail",
-        commitSha: selectedCommitSha,
-        suite: suiteId,
+        type: "suite-overview",
+        suiteId,
+        fromCommit: commitSha,
       });
     },
-    [selectedCommitSha],
+    [route],
   );
 
   const handleDeleteSuite = useCallback(
@@ -364,6 +433,14 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     });
   }, [selectedSuite]);
 
+  const handleCiBreadcrumbToCommit = useCallback(() => {
+    if (!commitBreadcrumbContext) return;
+    navigateToCiEvalsRoute({
+      type: "commit-detail",
+      commitSha: commitBreadcrumbContext.commitSha,
+    });
+  }, [commitBreadcrumbContext]);
+
   if (isLoading) {
     return (
       <div className="p-6">
@@ -422,6 +499,23 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
+                {commitBreadcrumbContext ? (
+                  <>
+                    <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          onClick={handleCiBreadcrumbToCommit}
+                          title="Back to commit"
+                          className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate font-mono text-xs"
+                        >
+                          {commitBreadcrumbContext.label}
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                  </>
+                ) : null}
                 {route.type === "run-detail" ? (
                   <>
                     <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
@@ -498,13 +592,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 route.type === "run-detail"
                   ? Boolean(route.insightsFocus && !route.iteration)
                   : false
-              }
-              onEditTestCase={(testCaseId) =>
-                navigateToCiEvalsRoute({
-                  type: "test-edit",
-                  suiteId: route.suiteId,
-                  testId: testCaseId,
-                })
               }
             />
           ) : (
@@ -623,7 +710,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               }
               omitRunIterationList={route.type === "run-detail"}
               canDeleteRuns={canDeleteRuns}
-              readOnlyConfig={!HOSTED_MODE}
             />
           )}
         </ResizablePanel>

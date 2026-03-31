@@ -137,7 +137,7 @@ export function SuiteIterationsView({
   omitSuiteHeader?: boolean;
 }) {
   // Derive view state from route
-  const isEditMode = route.type === "suite-edit";
+  const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
@@ -148,9 +148,11 @@ export function SuiteIterationsView({
       ? "run-detail"
       : route.type === "test-detail"
         ? "test-detail"
-        : route.type === "test-edit"
+        : route.type === "test-edit" && !readOnlyConfig
           ? "test-edit"
-          : "overview";
+          : route.type === "test-edit"
+            ? "test-detail"
+            : "overview";
   const runsViewMode =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"

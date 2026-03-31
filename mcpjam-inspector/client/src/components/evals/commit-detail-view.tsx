@@ -94,24 +94,6 @@ export function CommitDetailView({
     [commitGroup.runs],
   );
 
-  // Auto-select first suite if none selected
-  useEffect(() => {
-    if (
-      route.type === "commit-detail" &&
-      !route.suite &&
-      orderedRuns.length > 0
-    ) {
-      navigateToCiEvalsRoute(
-        {
-          type: "commit-detail",
-          commitSha: commitGroup.commitSha,
-          suite: orderedRuns[0].suiteId,
-        },
-        { replace: true },
-      );
-    }
-  }, [route, orderedRuns, commitGroup.commitSha]);
-
   // Find the selected run
   const selectedRun = useMemo(() => {
     if (!selectedSuiteId) return null;

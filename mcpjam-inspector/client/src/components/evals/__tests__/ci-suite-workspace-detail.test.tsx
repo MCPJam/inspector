@@ -126,7 +126,7 @@ describe("CiSuiteWorkspaceDetail", () => {
     );
   });
 
-  it("defaults readOnlyConfig to false for SuiteIterationsView", () => {
+  it("defaults readOnlyConfig to true for SuiteIterationsView (CI has no config overrides)", () => {
     renderWithProviders(
       <CiSuiteWorkspaceDetail
         {...baseProps}
@@ -140,7 +140,7 @@ describe("CiSuiteWorkspaceDetail", () => {
 
     expect(screen.getByTestId("suite-iterations-mock")).toHaveAttribute(
       "data-read-only",
-      "false",
+      "true",
     );
   });
 });

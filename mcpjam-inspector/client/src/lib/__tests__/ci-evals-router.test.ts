@@ -120,6 +120,51 @@ describe("ci-evals-router", () => {
     expect(window.location.hash).toBe("#/ci-evals/suite/s_abc?view=test-cases");
   });
 
+  it("parses suite overview with fromCommit query", () => {
+    window.location.hash =
+      "#/ci-evals/suite/s_123?fromCommit=manual-abc-123";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "suite-overview",
+      suiteId: "s_123",
+      view: "runs",
+      fromCommit: "manual-abc-123",
+    });
+  });
+
+  it("parses suite overview with view and fromCommit", () => {
+    window.location.hash =
+      "#/ci-evals/suite/s_123?view=test-cases&fromCommit=sha9abcdef";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "suite-overview",
+      suiteId: "s_123",
+      view: "test-cases",
+      fromCommit: "sha9abcdef",
+    });
+  });
+
+  it("navigates to suite overview with fromCommit", () => {
+    navigateToCiEvalsRoute({
+      type: "suite-overview",
+      suiteId: "s_abc",
+      fromCommit: "manual-xyz",
+    });
+    expect(window.location.hash).toBe(
+      "#/ci-evals/suite/s_abc?fromCommit=manual-xyz",
+    );
+  });
+
+  it("navigates to suite overview with view and fromCommit", () => {
+    navigateToCiEvalsRoute({
+      type: "suite-overview",
+      suiteId: "s_abc",
+      view: "test-cases",
+      fromCommit: "abc1234567890",
+    });
+    expect(window.location.hash).toBe(
+      "#/ci-evals/suite/s_abc?view=test-cases&fromCommit=abc1234567890",
+    );
+  });
+
   it("navigates to run detail route with iteration", () => {
     navigateToCiEvalsRoute({
       type: "run-detail",

@@ -289,18 +289,21 @@ export function TraceViewer({
   const timelineZoomMinMs = Math.max(1, Math.round(maxEndMsForToolbar / 50));
   const compactChrome = chromeDensity === "compact";
 
+  const flexFillChrome =
+    viewMode === "raw" ||
+    (viewMode === "tools" && hasEvalToolCalls);
+
   return (
     <div
       className={cn(
         compactChrome ? "space-y-2" : "space-y-3",
-        viewMode === "tools" &&
-          hasEvalToolCalls &&
-          "flex min-h-0 flex-1 flex-col",
+        flexFillChrome && "flex min-h-0 flex-1 flex-col",
       )}
     >
       <div
         className={cn(
           "rounded-lg border border-border/50 bg-muted/15",
+          flexFillChrome && "shrink-0",
           compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
         )}
       >
@@ -457,7 +460,14 @@ export function TraceViewer({
       </div>
 
       {viewMode === "raw" && (
-        <JsonEditor height="100%" viewOnly value={trace} />
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+          <JsonEditor
+            height="100%"
+            viewOnly
+            value={trace}
+            className="min-h-0"
+          />
+        </div>
       )}
 
       {viewMode === "timeline" && (
