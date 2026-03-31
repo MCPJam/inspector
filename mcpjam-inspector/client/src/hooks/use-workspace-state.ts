@@ -9,6 +9,8 @@ import {
 import { toast } from "sonner";
 import type { AppAction, AppState, Workspace } from "@/state/app-types";
 import {
+  type RemoteServer,
+  useServerMutations,
   useWorkspaceMutations,
   useWorkspaceQueries,
   useWorkspaceServers,
@@ -22,6 +24,11 @@ import {
   type WorkspaceClientConfig,
 } from "@/lib/client-config";
 import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  buildPersistedServerPayload,
+  buildRemoteServerFromPersistedPayload,
+  isRemoteServerEquivalent,
+} from "@/lib/persisted-server-payload";
 
 const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
 
@@ -89,6 +96,7 @@ export function useWorkspaceState({
     updateClientConfig: convexUpdateClientConfig,
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
+  const { createServer: convexCreateServer } = useServerMutations();
 
   const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<
     string | null
@@ -106,6 +114,7 @@ export function useWorkspaceState({
     });
 
   const migrationInFlightRef = useRef(new Set<string>());
+  const carryForwardInFlightRef = useRef(new Set<string>());
   const ensureDefaultInFlightRef = useRef(new Set<string>());
   const [useLocalFallback, setUseLocalFallback] = useState(false);
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -307,6 +316,15 @@ export function useWorkspaceState({
       ),
     [appState.workspaces],
   );
+  const carryForwardLocalWorkspaces = useMemo(
+    () =>
+      Object.values(appState.workspaces).filter(
+        (workspace) =>
+          !workspace.sharedWorkspaceId &&
+          Object.keys(workspace.servers).length > 0,
+      ),
+    [appState.workspaces],
+  );
   const migratableLocalWorkspaceCount = migratableLocalWorkspaces.length;
   const hasAnyRemoteWorkspaces = (allRemoteWorkspaces?.length ?? 0) > 0;
   const hasCurrentOrganizationWorkspaces = (remoteWorkspaces?.length ?? 0) > 0;
@@ -346,6 +364,7 @@ export function useWorkspaceState({
   useEffect(() => {
     if (!isAuthenticated || useLocalFallback) {
       migrationInFlightRef.current.clear();
+      carryForwardInFlightRef.current.clear();
       ensureDefaultInFlightRef.current.clear();
     }
   }, [isAuthenticated, useLocalFallback]);
@@ -412,6 +431,144 @@ export function useWorkspaceState({
     dispatch,
     logger,
     activeOrganizationId,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    if (useLocalFallback) return;
+    if (allRemoteWorkspaces === undefined) return;
+    if (allRemoteWorkspaces.length === 0) return;
+    if (!convexActiveWorkspaceId) return;
+
+    const targetWorkspace = convexWorkspaces[convexActiveWorkspaceId];
+    if (!targetWorkspace) return;
+    if (activeWorkspaceServersFlat === undefined) return;
+    if (carryForwardLocalWorkspaces.length === 0) return;
+
+    const targetOrganizationId =
+      targetWorkspace.organizationId ?? activeOrganizationId;
+
+    const carryForwardWorkspace = async (
+      workspace: Workspace,
+      targetServersByName: Map<string, RemoteServer>,
+    ) => {
+      const inFlightKey = `${convexActiveWorkspaceId}:${workspace.id}`;
+      if (carryForwardInFlightRef.current.has(inFlightKey)) {
+        return;
+      }
+
+      carryForwardInFlightRef.current.add(inFlightKey);
+
+      const conflictNames: string[] = [];
+      const failedNames: string[] = [];
+
+      try {
+        for (const [serverName, server] of Object.entries(workspace.servers)) {
+          const existingRemoteServer = targetServersByName.get(serverName);
+
+          if (existingRemoteServer) {
+            if (isRemoteServerEquivalent(server, existingRemoteServer)) {
+              continue;
+            }
+
+            conflictNames.push(serverName);
+            continue;
+          }
+
+          const payload = buildPersistedServerPayload(serverName, server);
+
+          try {
+            const createdServerId = await convexCreateServer({
+              workspaceId: convexActiveWorkspaceId,
+              ...payload,
+            });
+
+            targetServersByName.set(
+              serverName,
+              buildRemoteServerFromPersistedPayload({
+                payload,
+                workspaceId: convexActiveWorkspaceId,
+                serverId:
+                  typeof createdServerId === "string"
+                    ? createdServerId
+                    : undefined,
+              }),
+            );
+          } catch (error) {
+            failedNames.push(serverName);
+            logger.error("Failed to carry forward guest server", {
+              workspaceId: workspace.id,
+              targetWorkspaceId: convexActiveWorkspaceId,
+              serverName,
+              error: error instanceof Error ? error.message : "Unknown error",
+            });
+          }
+        }
+
+        if (conflictNames.length === 0 && failedNames.length === 0) {
+          dispatch({
+            type: "UPDATE_WORKSPACE",
+            workspaceId: workspace.id,
+            updates: {
+              sharedWorkspaceId: convexActiveWorkspaceId,
+              ...(targetOrganizationId
+                ? { organizationId: targetOrganizationId }
+                : {}),
+            },
+          });
+
+          logger.info("Carried forward guest workspace servers", {
+            workspaceId: workspace.id,
+            targetWorkspaceId: convexActiveWorkspaceId,
+            serverCount: Object.keys(workspace.servers).length,
+          });
+          return;
+        }
+
+        if (conflictNames.length > 0) {
+          logger.warn("Guest workspace server carry-forward conflicts", {
+            workspaceId: workspace.id,
+            targetWorkspaceId: convexActiveWorkspaceId,
+            serverNames: conflictNames,
+          });
+          toast.error(
+            `Some guest servers were not imported because those names already exist: ${conflictNames.join(", ")}`,
+          );
+        }
+
+        if (failedNames.length > 0) {
+          toast.error(
+            `Could not import some guest servers after sign-in: ${failedNames.join(", ")}`,
+          );
+        }
+      } finally {
+        carryForwardInFlightRef.current.delete(inFlightKey);
+      }
+    };
+
+    void (async () => {
+      const targetServersByName = new Map(
+        activeWorkspaceServersFlat.map((server) => [server.name, server]),
+      );
+
+      for (const workspace of carryForwardLocalWorkspaces) {
+        await carryForwardWorkspace(workspace, targetServersByName);
+      }
+    })();
+  }, [
+    isAuthenticated,
+    useLocalFallback,
+    allRemoteWorkspaces,
+    convexActiveWorkspaceId,
+    convexWorkspaces,
+    activeWorkspaceServersFlat,
+    carryForwardLocalWorkspaces,
+    convexCreateServer,
+    dispatch,
+    activeOrganizationId,
+    logger,
   ]);
 
   useEffect(() => {
