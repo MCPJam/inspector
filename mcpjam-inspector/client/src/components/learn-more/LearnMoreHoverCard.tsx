@@ -12,13 +12,21 @@ import {
 } from "@/components/ui/tooltip";
 import { learnMoreContent } from "@/lib/learn-more-content";
 
-// Preload all preview videos into blob URLs so they play instantly on hover
 const blobCache: Record<string, string> = {};
-if (
-  typeof window !== "undefined" &&
-  typeof fetch === "function" &&
-  typeof URL.createObjectURL === "function"
-) {
+let previewsPreloaded = false;
+
+function preloadPreviewVideos() {
+  if (
+    previewsPreloaded ||
+    typeof window === "undefined" ||
+    typeof fetch !== "function" ||
+    typeof URL.createObjectURL !== "function"
+  ) {
+    return;
+  }
+
+  previewsPreloaded = true;
+
   Object.values(learnMoreContent).forEach((entry) => {
     if (entry.previewVideoUrl && !(entry.previewVideoUrl in blobCache)) {
       const url = entry.previewVideoUrl;
@@ -64,6 +72,10 @@ export function LearnMoreHoverCard({
       handoffTimerRef.current = null;
     }
   };
+
+  useEffect(() => {
+    preloadPreviewVideos();
+  }, []);
 
   useEffect(() => {
     if (open && videoRef.current) {

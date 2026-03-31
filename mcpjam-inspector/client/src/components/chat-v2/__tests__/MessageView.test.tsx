@@ -145,7 +145,7 @@ describe("MessageView", () => {
       );
     });
 
-    it("renders the provider logo for sandbox assistant avatars", () => {
+    it("renders the sandbox host logo for assistant avatars (not the model provider)", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hello" }],
@@ -157,8 +157,8 @@ describe("MessageView", () => {
         </SandboxHostStyleProvider>,
       );
 
-      expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
-      expect(screen.getByRole("img")).toHaveAttribute("alt", "gpt-4 logo");
+      expect(screen.getByLabelText("Claude assistant")).toBeInTheDocument();
+      expect(screen.getByRole("img")).toHaveAttribute("alt", "Claude logo");
     });
   });
 
