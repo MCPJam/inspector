@@ -31,14 +31,14 @@ describe("ThinkingIndicator", () => {
     expect(screen.getByRole("img")).toHaveAttribute("alt", "gpt-4 logo");
   });
 
-  it("renders the provider logo inside sandboxes", () => {
+  it("renders the sandbox host logo inside sandboxes (not the model provider)", () => {
     render(
       <SandboxHostStyleProvider value="chatgpt">
         <ThinkingIndicator model={defaultModel} />
       </SandboxHostStyleProvider>,
     );
 
-    expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
-    expect(screen.getByRole("img")).toHaveAttribute("alt", "gpt-4 logo");
+    expect(screen.getByLabelText("ChatGPT assistant")).toBeInTheDocument();
+    expect(screen.getByRole("img")).toHaveAttribute("alt", "ChatGPT logo");
   });
 });

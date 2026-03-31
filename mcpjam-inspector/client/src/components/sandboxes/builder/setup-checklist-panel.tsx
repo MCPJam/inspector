@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Globe, Lock, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -100,29 +101,44 @@ function SectionStatusBadge({ kind }: { kind: SectionStatusKind }) {
   }
 }
 
-function SetupSectionStepIndex({
-  step,
-  kind,
-}: {
-  step: number;
-  kind: SectionStatusKind;
-}) {
+function SetupSectionStepIndex({ step }: { step: number }) {
   return (
     <span
       className={cn(
-        "flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-semibold tabular-nums transition-colors",
-        kind === "complete" &&
-          "border-emerald-600/55 bg-emerald-500/[0.14] text-emerald-900 dark:border-emerald-400/45 dark:bg-emerald-950/50 dark:text-emerald-200",
-        kind === "attention" &&
-          "border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300",
-        (kind === "optional" ||
-          kind === "default_on" ||
-          kind === "collapsed") &&
-          "border-border/70 bg-muted/40 text-muted-foreground",
+        "flex size-7 shrink-0 items-center justify-center rounded-full border border-border/70 bg-muted/40 text-xs font-semibold tabular-nums text-muted-foreground transition-colors",
       )}
     >
       {step}
     </span>
+  );
+}
+
+const setupSectionCollapsibleTriggerClass =
+  "group flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35";
+
+function SetupSectionCollapsibleTrigger({
+  step,
+  title,
+  statusKind,
+}: {
+  step: number;
+  title: string;
+  statusKind: SectionStatusKind;
+}) {
+  return (
+    <CollapsibleTrigger className={setupSectionCollapsibleTriggerClass}>
+      <div className="flex min-w-0 items-center gap-2.5">
+        <SetupSectionStepIndex step={step} />
+        <span className="text-sm font-semibold">{title}</span>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <SectionStatusBadge kind={statusKind} />
+        <ChevronDown
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180"
+          aria-hidden
+        />
+      </div>
+    </CollapsibleTrigger>
   );
 }
 
@@ -173,103 +189,105 @@ export function ServerSelectionEditor({
     selectedServerSet.has(server._id),
   );
 
+  const selectionSummary =
+    selectedServers.length === 0
+      ? "Choose workspace servers…"
+      : selectedServers.length === 1
+        ? "1 server selected"
+        : `${selectedServers.length} servers selected`;
+
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold">MCP servers</h3>
-          <p className="text-xs text-muted-foreground">
-            Attach HTTPS MCP servers. For each server, choose whether it connects
-            when the sandbox opens or stays off until the tester adds it from{" "}
-            <span className="whitespace-nowrap">Add server</span> in the chat bar.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={onOpenAdd}>
-          <Plus className="mr-1.5 size-4" />
+      <div>
+        <h3 className="text-sm font-semibold">MCP servers</h3>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Pick HTTPS servers from the workspace, then set whether each connects
+          at start or only when the tester adds it from chat.
+        </p>
+      </div>
+
+      <div className="flex min-w-0 gap-2">
+        <Popover>
+          <PopoverTrigger asChild>
+            <button
+              type="button"
+              aria-label={`Select MCP servers. ${selectionSummary}`}
+              className="flex min-h-9 min-w-0 flex-1 items-center justify-between rounded-xl border border-border/60 bg-muted/35 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50"
+            >
+              <span
+                className={
+                  selectedServers.length === 0
+                    ? "text-muted-foreground"
+                    : "text-foreground"
+                }
+              >
+                {selectionSummary}
+              </span>
+              <ChevronDown className="ml-2 size-4 shrink-0 text-muted-foreground" />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent
+            className="w-[var(--radix-popover-trigger-width)] p-1"
+            align="start"
+          >
+            {availableServers.length === 0 ? (
+              <p className="px-2 py-1.5 text-sm text-muted-foreground">
+                No HTTP servers in this workspace. Use Add to create one.
+              </p>
+            ) : (
+              <div className="max-h-56 overflow-y-auto">
+                {availableServers.map((server) => {
+                  const insecure = isInsecureUrl(server.url);
+                  return (
+                    <label
+                      key={server._id}
+                      className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
+                      title={
+                        insecure
+                          ? "Sandboxes require HTTPS server URLs"
+                          : undefined
+                      }
+                    >
+                      <Checkbox
+                        checked={!insecure && selectedServerSet.has(server._id)}
+                        onCheckedChange={(checked) =>
+                          onToggleSelection(server._id, checked === true)
+                        }
+                        disabled={insecure}
+                      />
+                      <span className="flex-1 text-sm">{server.name}</span>
+                      {insecure ? (
+                        <span className="text-[10px] text-destructive">
+                          Requires HTTPS
+                        </span>
+                      ) : null}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </PopoverContent>
+        </Popover>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0 gap-1.5"
+          onClick={onOpenAdd}
+          aria-label="Add MCP server to workspace"
+        >
+          <Plus className="size-4" />
           Add server
         </Button>
       </div>
 
-      <Popover>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            aria-label="Select servers"
-            className="flex w-full items-center justify-between rounded-xl border border-border/60 bg-muted/35 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
-          >
-            {selectedServers.length === 0 ? (
-              <span className="text-muted-foreground">Select servers...</span>
-            ) : (
-              <span className="flex flex-wrap gap-1">
-                {selectedServers.map((server) => (
-                  <Badge
-                    key={server._id}
-                    variant="secondary"
-                    className="text-xs"
-                  >
-                    {server.name}
-                  </Badge>
-                ))}
-              </span>
-            )}
-            <ChevronDown className="ml-2 size-4 shrink-0 text-muted-foreground" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent
-          className="w-[var(--radix-popover-trigger-width)] p-1"
-          align="start"
-        >
-          {availableServers.length === 0 ? (
-            <p className="px-2 py-1.5 text-sm text-muted-foreground">
-              No HTTP servers available.
-            </p>
-          ) : (
-            <div className="max-h-56 overflow-y-auto">
-              {availableServers.map((server) => {
-                const insecure = isInsecureUrl(server.url);
-                return (
-                  <label
-                    key={server._id}
-                    className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
-                    title={
-                      insecure
-                        ? "Sandboxes require HTTPS server URLs"
-                        : undefined
-                    }
-                  >
-                    <Checkbox
-                      checked={!insecure && selectedServerSet.has(server._id)}
-                      onCheckedChange={(checked) =>
-                        onToggleSelection(server._id, checked === true)
-                      }
-                      disabled={insecure}
-                    />
-                    <span className="flex-1 text-sm">{server.name}</span>
-                    {insecure ? (
-                      <span className="text-[10px] text-destructive">
-                        Requires HTTPS
-                      </span>
-                    ) : null}
-                  </label>
-                );
-              })}
-            </div>
-          )}
-        </PopoverContent>
-      </Popover>
-
       {selectedServers.length === 0 ? (
-        <Card className="rounded-2xl border-dashed p-5 text-sm text-muted-foreground">
-          <p className="font-medium text-foreground">No servers attached yet</p>
-          <p className="mt-1 text-muted-foreground">
-            Attach at least one HTTPS MCP server to test this sandbox.
-          </p>
-          <Button className="mt-4" size="sm" onClick={onOpenAdd}>
-            <Plus className="mr-1.5 size-4" />
-            Add server
-          </Button>
-        </Card>
-      ) : (
+        <p className="text-xs text-muted-foreground">
+          Select at least one HTTPS server to continue.
+        </p>
+      ) : null}
+
+      {selectedServers.length > 0 ? (
         <div className="space-y-3">
           {selectedServers.map((server) => {
             const isOptional = optionalServerSet.has(server._id);
@@ -281,21 +299,25 @@ export function ServerSelectionEditor({
               !isOptional && requiredCount === 1;
 
             return (
-              <Card key={server._id} className="rounded-2xl p-4">
+              <Card
+                key={server._id}
+                className="gap-3 rounded-2xl p-3 py-4 shadow-sm"
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-medium">{server.name}</p>
-                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                    <p className="font-medium leading-tight">{server.name}</p>
+                    <p className="mt-0.5 font-mono text-xs leading-snug text-muted-foreground">
                       {server.url ?? "Workspace server"}
                     </p>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <Badge variant="outline">
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge variant="outline" className="text-[11px] font-normal">
                         {server.useOAuth ? "OAuth" : "Direct"}
                       </Badge>
                       <Badge
                         variant={
                           isInsecureUrl(server.url) ? "secondary" : "outline"
                         }
+                        className="text-[11px] font-normal"
                       >
                         {isInsecureUrl(server.url) ? "Requires HTTPS" : "HTTPS"}
                       </Badge>
@@ -310,12 +332,12 @@ export function ServerSelectionEditor({
                     Remove
                   </Button>
                 </div>
-                <div className="mt-4 space-y-2">
+                <div className="space-y-1.5">
                   <p
-                    className="text-xs font-medium text-muted-foreground"
+                    className="text-xs font-medium leading-snug text-muted-foreground"
                     id={`server-startup-${server._id}`}
                   >
-                    When sandbox opens
+                    Require server to connect at start or allow tester to add later
                   </p>
                   <ToggleGroup
                     type="single"
@@ -324,8 +346,18 @@ export function ServerSelectionEditor({
                     className="w-full sm:w-auto"
                     value={isOptional ? "optional" : "required"}
                     onValueChange={(value) => {
-                      if (value === "required" || value === "optional") {
-                        onOptionalChange(server._id, value === "optional");
+                      if (value === "optional") {
+                        if (cannotMarkOptional) {
+                          toast.message(
+                            "Add another server before marking this one optional. At least one server must connect when the sandbox opens.",
+                          );
+                          return;
+                        }
+                        onOptionalChange(server._id, true);
+                        return;
+                      }
+                      if (value === "required") {
+                        onOptionalChange(server._id, false);
                       }
                     }}
                     aria-labelledby={`server-startup-${server._id}`}
@@ -333,20 +365,14 @@ export function ServerSelectionEditor({
                     <ToggleGroupItem
                       value="required"
                       className="flex-1 px-3 text-xs"
-                      aria-label="Required: connect when sandbox opens"
+                      aria-label="Required: connect at start"
                     >
                       Required
                     </ToggleGroupItem>
                     <ToggleGroupItem
                       value="optional"
                       className="flex-1 px-3 text-xs"
-                      disabled={cannotMarkOptional}
-                      title={
-                        cannotMarkOptional
-                          ? "At least one server must connect when the sandbox opens"
-                          : undefined
-                      }
-                      aria-label="Optional: off until tester adds from chat"
+                      aria-label="Optional: tester adds later from chat"
                     >
                       Optional
                     </ToggleGroupItem>
@@ -356,7 +382,7 @@ export function ServerSelectionEditor({
             );
           })}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
@@ -504,13 +530,11 @@ export function SetupChecklistPanel({
               open={openMap.basics ?? false}
               onOpenChange={(o) => setSectionOpen("basics", o)}
             >
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2.5">
-                  <SetupSectionStepIndex step={1} kind={statuses.basics} />
-                  <span className="text-sm font-semibold">Basics</span>
-                </div>
-                <SectionStatusBadge kind={statuses.basics} />
-              </CollapsibleTrigger>
+              <SetupSectionCollapsibleTrigger
+                step={1}
+                title="Basics"
+                statusKind={statuses.basics}
+              />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
                   <div className="space-y-2">
@@ -632,13 +656,11 @@ export function SetupChecklistPanel({
               open={openMap.servers ?? false}
               onOpenChange={(o) => setSectionOpen("servers", o)}
             >
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2.5">
-                  <SetupSectionStepIndex step={2} kind={statuses.servers} />
-                  <span className="text-sm font-semibold">Servers</span>
-                </div>
-                <SectionStatusBadge kind={statuses.servers} />
-              </CollapsibleTrigger>
+              <SetupSectionCollapsibleTrigger
+                step={2}
+                title="Servers"
+                statusKind={statuses.servers}
+              />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="rounded-xl border border-border/50 bg-card/40 p-4">
                   <ServerSelectionEditor
@@ -664,13 +686,11 @@ export function SetupChecklistPanel({
               open={openMap.access ?? false}
               onOpenChange={(o) => setSectionOpen("access", o)}
             >
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2.5">
-                  <SetupSectionStepIndex step={3} kind={statuses.access} />
-                  <span className="text-sm font-semibold">Access</span>
-                </div>
-                <SectionStatusBadge kind={statuses.access} />
-              </CollapsibleTrigger>
+              <SetupSectionCollapsibleTrigger
+                step={3}
+                title="Access"
+                statusKind={statuses.access}
+              />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
                   <div className="flex items-start justify-between gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4">
@@ -785,13 +805,11 @@ export function SetupChecklistPanel({
               open={openMap.welcome ?? false}
               onOpenChange={(o) => setSectionOpen("welcome", o)}
             >
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2.5">
-                  <SetupSectionStepIndex step={4} kind={statuses.welcome} />
-                  <span className="text-sm font-semibold">Welcome dialog</span>
-                </div>
-                <SectionStatusBadge kind={statuses.welcome} />
-              </CollapsibleTrigger>
+              <SetupSectionCollapsibleTrigger
+                step={4}
+                title="Welcome dialog"
+                statusKind={statuses.welcome}
+              />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-3 rounded-xl border border-border/50 bg-card/40 p-4">
                   <div className="flex items-center justify-between gap-3">
@@ -854,13 +872,11 @@ export function SetupChecklistPanel({
               open={openMap.feedback ?? false}
               onOpenChange={(o) => setSectionOpen("feedback", o)}
             >
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2.5">
-                  <SetupSectionStepIndex step={5} kind={statuses.feedback} />
-                  <span className="text-sm font-semibold">Feedback</span>
-                </div>
-                <SectionStatusBadge kind={statuses.feedback} />
-              </CollapsibleTrigger>
+              <SetupSectionCollapsibleTrigger
+                step={5}
+                title="Feedback"
+                statusKind={statuses.feedback}
+              />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-3 rounded-xl border border-border/50 bg-card/40 p-4">
                   <div className="flex items-center justify-between gap-3">
@@ -940,13 +956,11 @@ export function SetupChecklistPanel({
               open={openMap.advanced ?? false}
               onOpenChange={(o) => setSectionOpen("advanced", o)}
             >
-              <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/60 bg-muted/20 px-3 py-3 text-left hover:bg-muted/35">
-                <div className="flex items-center gap-2.5">
-                  <SetupSectionStepIndex step={6} kind={statuses.advanced} />
-                  <span className="text-sm font-semibold">Advanced</span>
-                </div>
-                <SectionStatusBadge kind="collapsed" />
-              </CollapsibleTrigger>
+              <SetupSectionCollapsibleTrigger
+                step={6}
+                title="Advanced"
+                statusKind="collapsed"
+              />
               <CollapsibleContent className="pt-3 pb-1">
                 <div className="space-y-4 rounded-xl border border-border/50 bg-card/40 p-4">
                   <div className="space-y-2">

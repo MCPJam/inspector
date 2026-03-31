@@ -93,7 +93,7 @@ describe("ServerSelectionEditor", () => {
     useOAuth: false,
   };
 
-  it("uses a Required / Optional toggle for when the sandbox opens", () => {
+  it("uses a Required / Optional toggle for connect at start vs add later", () => {
     const onOptionalChange = vi.fn();
     render(
       <ServerSelectionEditor
@@ -106,14 +106,18 @@ describe("ServerSelectionEditor", () => {
       />,
     );
 
-    expect(screen.getAllByText("When sandbox opens")).toHaveLength(2);
+    expect(
+      screen.getAllByText(
+        "Require server to connect at start or allow tester to add later",
+      ),
+    ).toHaveLength(2);
     const requiredButtons = screen.getAllByRole("radio", {
-      name: /Required: connect when sandbox opens/i,
+      name: /Required: connect at start/i,
     });
     expect(requiredButtons[0]).toHaveAttribute("data-state", "on");
     fireEvent.click(
       screen.getAllByRole("radio", {
-        name: /Optional: off until tester adds from chat/i,
+        name: /Optional: tester adds later from chat/i,
       })[0]!,
     );
     expect(onOptionalChange).toHaveBeenCalledWith(httpServer._id, true);

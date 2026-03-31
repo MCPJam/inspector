@@ -1,5 +1,9 @@
 import type { ModelDefinition } from "@/shared/types";
-import type { SandboxHostStyle } from "@/lib/sandbox-host-style";
+import {
+  getSandboxHostLabel,
+  getSandboxHostLogo,
+  type SandboxHostStyle,
+} from "@/lib/sandbox-host-style";
 import { getProviderLogoFromModel } from "@/components/chat-v2/shared/chat-helpers";
 
 type ThemeMode = "light" | "dark" | "system";
@@ -24,13 +28,19 @@ export function getAssistantAvatarDescriptor({
   themeMode,
   sandboxHostStyle,
 }: AssistantAvatarOptions): AssistantAvatarDescriptor {
+  if (sandboxHostStyle !== null) {
+    const hostLabel = getSandboxHostLabel(sandboxHostStyle);
+    return {
+      logoSrc: getSandboxHostLogo(sandboxHostStyle),
+      logoAlt: `${hostLabel} logo`,
+      avatarClasses: `sandbox-host-assistant-avatar ${DEFAULT_AVATAR_CLASSES}`,
+      ariaLabel: `${hostLabel} assistant`,
+    };
+  }
   return {
     logoSrc: getProviderLogoFromModel(model, themeMode),
     logoAlt: `${model.id} logo`,
-    avatarClasses:
-      sandboxHostStyle !== null
-        ? `sandbox-host-assistant-avatar ${DEFAULT_AVATAR_CLASSES}`
-        : DEFAULT_AVATAR_CLASSES,
+    avatarClasses: DEFAULT_AVATAR_CLASSES,
     ariaLabel: `${model.name} assistant`,
   };
 }
