@@ -9,7 +9,6 @@ import type {
 export const BILLING_FEATURE_BY_TAB = {
   evals: "evals",
   "ci-evals": "cicd",
-  sandboxes: "sandboxes",
 } as const satisfies Record<string, BillingFeatureName>;
 
 export function getRequiredBillingFeatureForTab(

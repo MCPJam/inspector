@@ -745,6 +745,28 @@
   animation: csp-alert-blink 2s ease-in-out 3;
 }
 
+/* Onboarding: send button pulse glow */
+@keyframes onboarding-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 oklch(0.75 0.18 55 / 0.6);
+  }
+  50% {
+    box-shadow: 0 0 0 6px oklch(0.75 0.18 55 / 0);
+  }
+}
+
+.animate-onboarding-pulse {
+  animation: onboarding-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-onboarding-pulse {
+    animation: none;
+    box-shadow: 0 0 0 3px oklch(0.75 0.18 55 / 0.3);
+  }
+}
+
 /* Font code variable for theme */
 @theme inline {
   --font-code: var(--font-code);

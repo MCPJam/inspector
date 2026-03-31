@@ -29,6 +29,19 @@ export interface SandboxServerSettings {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  /** When true, server is not connected until the tester enables it (off by default). */
+  optional?: boolean;
+}
+
+export interface SandboxWelcomeDialogSettings {
+  enabled: boolean;
+  body?: string;
+}
+
+export interface SandboxFeedbackDialogSettings {
+  enabled: boolean;
+  everyNToolCalls?: number;
+  promptHint?: string;
 }
 
 export interface SandboxSettings {
@@ -43,6 +56,10 @@ export interface SandboxSettings {
   requireToolApproval: boolean;
   allowGuestAccess: boolean;
   mode: SandboxMode;
+  /** When present, drives welcome dialog in hosted sandbox (Convex may add fields incrementally). */
+  welcomeDialog?: SandboxWelcomeDialogSettings | null;
+  /** When present, drives tester feedback cadence and copy. */
+  feedbackDialog?: SandboxFeedbackDialogSettings | null;
   servers: SandboxServerSettings[];
   link: {
     token: string;

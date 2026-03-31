@@ -34,6 +34,9 @@ global.ResizeObserver = vi.fn().mockImplementation(() => ({
   disconnect: vi.fn(),
 }));
 
+// cmdk / Command dialogs call scrollIntoView on active items
+Element.prototype.scrollIntoView = vi.fn();
+
 // Mock IntersectionObserver (required for lazy loading/virtual lists)
 global.IntersectionObserver = vi.fn().mockImplementation(() => ({
   observe: vi.fn(),

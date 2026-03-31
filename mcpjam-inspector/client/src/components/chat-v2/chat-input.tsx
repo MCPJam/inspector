@@ -1,10 +1,23 @@
-import { useRef, useState, useCallback, type ChangeEvent } from "react";
+import {
+  useRef,
+  useState,
+  useCallback,
+  useLayoutEffect,
+  type ChangeEvent,
+} from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square, Paperclip, Glasses, ShieldCheck } from "lucide-react";
+import {
+  ArrowUp,
+  Square,
+  Paperclip,
+  Glasses,
+  ShieldCheck,
+  Plus,
+} from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -46,6 +59,11 @@ import {
   useSandboxHostTheme,
 } from "@/contexts/sandbox-host-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface ChatInputProps {
   value: string;
@@ -96,6 +114,17 @@ interface ChatInputProps {
   onRequireToolApprovalChange?: (enabled: boolean) => void;
   /** Shared chat-only mode */
   minimalMode?: boolean;
+  /** Onboarding: pulse the send button with glow animation */
+  pulseSubmit?: boolean;
+  /** Move the textarea caret to the end when this trigger changes */
+  moveCaretToEndTrigger?: number;
+  /** Hosted sandbox: optional servers not yet connected (Add server popover). */
+  sandboxAttachableServers?: Array<{
+    serverId: string;
+    serverName: string;
+    useOAuth: boolean;
+  }>;
+  onAttachSandboxServer?: (serverId: string) => void;
 }
 
 export function ChatInput({
@@ -135,6 +164,10 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  pulseSubmit = false,
+  moveCaretToEndTrigger,
+  sandboxAttachableServers,
+  onAttachSandboxServer,
 }: ChatInputProps) {
   const posthog = usePostHog();
   const sandboxHostStyle = useSandboxHostStyle();
@@ -158,6 +191,18 @@ export function ChatInput({
     value,
     caretIndex,
   );
+
+  useLayoutEffect(() => {
+    if (moveCaretToEndTrigger === undefined) return;
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.focus();
+    const end = textarea.value.length;
+    textarea.setSelectionRange(end, end);
+    setCaretIndex(end);
+  }, [moveCaretToEndTrigger]);
 
   const onMCPPromptSelected = useCallback(
     (mcpPromptResult: MCPPromptResult) => {
@@ -389,6 +434,53 @@ export function ChatInput({
           caretIndex={caretIndex}
           minimalMode={minimalMode}
         />
+
+        {minimalMode &&
+        sandboxAttachableServers &&
+        sandboxAttachableServers.length > 0 &&
+        onAttachSandboxServer ? (
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-0.5">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1 rounded-full border-dashed px-3 text-xs"
+                  disabled={disabled}
+                  aria-label="Add optional server"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add server
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-1" align="start">
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                  Connect an optional server. You may be asked to authorize.
+                </p>
+                <div className="max-h-48 overflow-y-auto">
+                  {sandboxAttachableServers.map((s) => (
+                    <button
+                      key={s.serverId}
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
+                      onClick={() => onAttachSandboxServer(s.serverId)}
+                    >
+                      <span className="truncate font-medium">
+                        {s.serverName}
+                      </span>
+                      {s.useOAuth ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          OAuth
+                        </span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        ) : null}
 
         {/* Hidden file input */}
         <input
@@ -640,6 +732,7 @@ export function ChatInput({
                         !submitDisabled
                         ? activeSubmitButtonClasses
                         : inactiveSubmitButtonClasses,
+                      pulseSubmit && "animate-onboarding-pulse",
                     )}
                     disabled={
                       (!value.trim() && !hasResults) ||

@@ -4,12 +4,10 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
-  ChevronsUpDown,
   ExternalLink,
   Globe,
   Loader2,
   Lock,
-  Plus,
   Save,
   Trash2,
 } from "lucide-react";
@@ -49,16 +47,15 @@ import {
 } from "@/components/ui/sheet";
 import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
-import { Badge } from "@/components/ui/badge";
-
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { SandboxHostOnboardingOverlays } from "@/components/hosted/SandboxHostOnboardingOverlays";
+import { useSandboxHostIntroGate } from "@/components/hosted/useSandboxHostIntroGate";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -73,10 +70,17 @@ import {
 import {
   SANDBOX_OAUTH_PENDING_KEY,
   buildPlaygroundSandboxLink,
+  sandboxPreviewEnabledOptionalStorageKey,
   type SandboxBootstrapPayload,
   type SandboxBootstrapServer,
   writePlaygroundSession,
 } from "@/lib/sandbox-session";
+import type { RemoteServer } from "@/hooks/useWorkspaces";
+import { ServerSelectionEditor } from "./builder/setup-checklist-panel";
+import {
+  bootstrapServerToHostedOAuthDescriptor,
+  countRequiredServers,
+} from "./builder/sandbox-server-optional";
 
 interface WorkspaceServerOption {
   _id: string;
@@ -118,40 +122,6 @@ function createPlaygroundId(): string {
   }
 
   return `playground-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function getSandboxOAuthRowCopy(status: string): {
-  description: string;
-  buttonLabel: string | null;
-} {
-  switch (status) {
-    case "launching":
-      return {
-        description: "Opening consent screen…",
-        buttonLabel: null,
-      };
-    case "resuming":
-      return {
-        description: "Finishing authorization…",
-        buttonLabel: null,
-      };
-    case "verifying":
-      return {
-        description: "Verifying access…",
-        buttonLabel: null,
-      };
-    case "error":
-      return {
-        description: "Authorization could not be completed. Try again.",
-        buttonLabel: "Authorize again",
-      };
-    case "needs_auth":
-    default:
-      return {
-        description: "You'll return here automatically after consent.",
-        buttonLabel: "Authorize",
-      };
-  }
 }
 
 export function SandboxEditor({
@@ -200,6 +170,10 @@ export function SandboxEditor({
   const [selectedServerIds, setSelectedServerIds] = useState<string[]>(
     sandbox?.servers.map((s) => s.serverId) ?? [],
   );
+  const [optionalServerIds, setOptionalServerIds] = useState<string[]>(
+    () =>
+      sandbox?.servers.filter((s) => s.optional).map((s) => s.serverId) ?? [],
+  );
   const [isSaving, setIsSaving] = useState(false);
   const [isEditingTitle, setIsEditingTitle] = useState(isCreateMode);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
@@ -212,6 +186,10 @@ export function SandboxEditor({
   const previewHasOpenedRef = useRef(false);
   const previewPendingRestartRef = useRef(false);
   const previewIsInitialFingerprintRef = useRef(true);
+
+  const [previewEnabledOptionalIds, setPreviewEnabledOptionalIds] = useState<
+    string[]
+  >([]);
 
   // Reset form when the selected sandbox changes or the editor switches modes.
   useEffect(() => {
@@ -226,6 +204,8 @@ export function SandboxEditor({
       setAllowGuestAccess(true);
       setMode("any_signed_in_with_link");
       setSelectedServerIds([]);
+      setOptionalServerIds([]);
+      setPreviewEnabledOptionalIds([]);
       setIsEditingTitle(true);
       setIsPreviewOpen(false);
       setPreviewChatKey(0);
@@ -246,6 +226,9 @@ export function SandboxEditor({
     setAllowGuestAccess(sandbox.allowGuestAccess);
     setMode(sandbox.mode);
     setSelectedServerIds(sandbox.servers.map((s) => s.serverId));
+    setOptionalServerIds(
+      sandbox.servers.filter((s) => s.optional).map((s) => s.serverId),
+    );
     setIsEditingTitle(false);
     setIsPreviewOpen(false);
     setPreviewChatKey(0);
@@ -253,7 +236,54 @@ export function SandboxEditor({
     previewHasOpenedRef.current = false;
     previewPendingRestartRef.current = false;
     previewIsInitialFingerprintRef.current = true;
+    setPreviewEnabledOptionalIds([]);
   }, [hostedModels, sandbox]);
+
+  const optionalServerIdsKey = [...optionalServerIds].sort().join(",");
+
+  useEffect(() => {
+    if (!sandbox?.sandboxId) return;
+    try {
+      const raw = sessionStorage.getItem(
+        sandboxPreviewEnabledOptionalStorageKey(sandbox.sandboxId),
+      );
+      if (!raw) {
+        setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      const optionalSet = new Set(optionalServerIds);
+      const next = parsed.filter(
+        (id): id is string => typeof id === "string" && optionalSet.has(id),
+      );
+      setPreviewEnabledOptionalIds((prev) => {
+        if (
+          prev.length === next.length &&
+          prev.every((id, i) => id === next[i])
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    } catch {
+      setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
+    }
+  }, [sandbox?.sandboxId, optionalServerIdsKey]);
+
+  useEffect(() => {
+    if (!sandbox?.sandboxId) return;
+    try {
+      const storageKey = sandboxPreviewEnabledOptionalStorageKey(
+        sandbox.sandboxId,
+      );
+      const serialized = JSON.stringify(previewEnabledOptionalIds);
+      if (sessionStorage.getItem(storageKey) === serialized) return;
+      sessionStorage.setItem(storageKey, serialized);
+    } catch {
+      // ignore
+    }
+  }, [sandbox?.sandboxId, previewEnabledOptionalIds]);
 
   const availableServers = useMemo(
     () => workspaceServers.filter((s) => s.transportType === "http"),
@@ -299,6 +329,7 @@ export function SandboxEditor({
             serverUrl: workspaceServer.url ?? null,
             clientId: workspaceServer.clientId ?? null,
             oauthScopes: workspaceServer.oauthScopes ?? null,
+            optional: optionalServerIds.includes(workspaceServer._id),
           } satisfies SandboxBootstrapServer;
         }
 
@@ -311,6 +342,7 @@ export function SandboxEditor({
             serverUrl: null,
             clientId: null,
             oauthScopes: null,
+            optional: optionalServerIds.includes(serverId),
           } satisfies SandboxBootstrapServer;
         }
 
@@ -321,13 +353,37 @@ export function SandboxEditor({
           serverUrl: savedServer.serverUrl,
           clientId: savedServer.clientId,
           oauthScopes: savedServer.oauthScopes,
+          optional: optionalServerIds.includes(savedServer.serverId),
         } satisfies SandboxBootstrapServer;
       })
       .filter((server) => !!server.serverId && !!server.serverName);
-  }, [availableServers, sandbox?.servers, selectedServerIds]);
+  }, [
+    availableServers,
+    optionalServerIds,
+    sandbox?.servers,
+    selectedServerIds,
+  ]);
+
+  const requiredPreviewServers = useMemo(
+    () => selectedPreviewServers.filter((s) => !s.optional),
+    [selectedPreviewServers],
+  );
+
+  const activePreviewServers = useMemo(() => {
+    const enabled = new Set(previewEnabledOptionalIds);
+    const optionalOn = selectedPreviewServers.filter(
+      (s) => s.optional && enabled.has(s.serverId),
+    );
+    return [...requiredPreviewServers, ...optionalOn];
+  }, [
+    requiredPreviewServers,
+    selectedPreviewServers,
+    previewEnabledOptionalIds,
+  ]);
+
   const previewServerConfigs = useMemo(() => {
     return Object.fromEntries(
-      selectedPreviewServers.map((server) => [
+      activePreviewServers.map((server) => [
         server.serverName,
         {
           name: server.serverName,
@@ -341,19 +397,26 @@ export function SandboxEditor({
         } satisfies ServerWithName,
       ]),
     );
-  }, [selectedPreviewServers]);
+  }, [activePreviewServers]);
+
+  const previewOAuthGateServers = useMemo(
+    () => activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
+    [activePreviewServers],
+  );
+
   const {
     oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
+    hasBusyOAuth,
   } = useHostedOAuthGate({
     surface: "sandbox",
     pendingKey: SANDBOX_OAUTH_PENDING_KEY,
-    servers: selectedPreviewServers,
+    servers: previewOAuthGateServers,
   });
   const previewOAuthTokens = useMemo(() => {
-    const entries = selectedPreviewServers
+    const entries = activePreviewServers
       .map((server) => {
         const token = getStoredTokens(server.serverName)?.access_token;
         return token ? ([server.serverId, token] as const) : null;
@@ -363,15 +426,29 @@ export function SandboxEditor({
       );
 
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, selectedPreviewServers]);
+  }, [oauthStateByServerId, activePreviewServers]);
   const isFinishingPreviewOAuth =
     pendingOAuthServers.length > 0 &&
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
+
+  const oauthPending = pendingOAuthServers.length > 0;
+  const introGate = useSandboxHostIntroGate({
+    sandboxId: sandbox?.sandboxId ?? "",
+    servers: requiredPreviewServers,
+    oauthPending,
+    hasBusyOAuth,
+    pendingOAuthServers,
+  });
 
   const hasUnsavedChanges = useMemo(() => {
     if (isCreateMode) return true;
     const currentServerIds = sandbox!.servers.map((s) => s.serverId).sort();
     const formServerIds = [...selectedServerIds].sort();
+    const optionalFromSandbox = sandbox!.servers
+      .filter((s) => s.optional)
+      .map((s) => s.serverId)
+      .sort();
+    const formOptional = [...optionalServerIds].sort();
     return (
       name !== sandbox!.name ||
       description !== (sandbox!.description ?? "") ||
@@ -381,7 +458,8 @@ export function SandboxEditor({
       temperature !== sandbox!.temperature ||
       requireToolApproval !== sandbox!.requireToolApproval ||
       allowGuestAccess !== sandbox!.allowGuestAccess ||
-      JSON.stringify(formServerIds) !== JSON.stringify(currentServerIds)
+      JSON.stringify(formServerIds) !== JSON.stringify(currentServerIds) ||
+      JSON.stringify(formOptional) !== JSON.stringify(optionalFromSandbox)
     );
   }, [
     isCreateMode,
@@ -394,8 +472,26 @@ export function SandboxEditor({
     requireToolApproval,
     allowGuestAccess,
     selectedServerIds,
+    optionalServerIds,
     sandbox,
   ]);
+
+  const handleServerOptionalChange = (serverId: string, optional: boolean) => {
+    const requiredIds = selectedServerIds.filter(
+      (id) => !optionalServerIds.includes(id),
+    );
+    if (optional && requiredIds.length === 1 && requiredIds[0] === serverId) {
+      toast.error(
+        "Add another required server or mark another as required first.",
+      );
+      return;
+    }
+    setOptionalServerIds((current) =>
+      optional
+        ? [...new Set([...current, serverId])]
+        : current.filter((id) => id !== serverId),
+    );
+  };
 
   const handleToggleServer = (serverId: string, checked: boolean) => {
     setSelectedServerIds((current) => {
@@ -404,6 +500,11 @@ export function SandboxEditor({
       }
       return current.filter((id) => id !== serverId);
     });
+    if (!checked) {
+      setOptionalServerIds((current) =>
+        current.filter((id) => id !== serverId),
+      );
+    }
   };
 
   const saveServerToWorkspace = async (formData: ServerFormData) => {
@@ -453,6 +554,10 @@ export function SandboxEditor({
       toast.error("Select at least one HTTPS server");
       return;
     }
+    if (countRequiredServers(selectedServerIds, optionalServerIds) < 1) {
+      toast.error("At least one server must be required (on by default)");
+      return;
+    }
     const hasInsecure = selectedServerIds.some((id) => {
       const server = availableServers.find((s) => s._id === id);
       return server && isInsecureUrl(server.url);
@@ -474,6 +579,7 @@ export function SandboxEditor({
         requireToolApproval,
         allowGuestAccess,
         serverIds: selectedServerIds,
+        optionalServerIds,
       };
 
       let result;
@@ -560,6 +666,10 @@ export function SandboxEditor({
       temperature,
       requireToolApproval,
       servers: selectedPreviewServers,
+      welcomeDialog: sandbox.welcomeDialog ?? {
+        enabled: true,
+        body: "",
+      },
     };
 
     writePlaygroundSession({
@@ -782,97 +892,14 @@ export function SandboxEditor({
           </div>
 
           <div>
-            <div className="flex items-center justify-between">
-              <Label className="text-xs font-medium text-muted-foreground">
-                Servers
-              </Label>
-              <div className="flex items-center gap-1">
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted/50 hover:text-foreground"
-                  onClick={() => setIsAddServerOpen(true)}
-                >
-                  <Plus className="h-3 w-3" />
-                  Add
-                </button>
-              </div>
-            </div>
-            <Popover>
-              <PopoverTrigger asChild>
-                <button
-                  type="button"
-                  className="flex w-full items-center justify-between rounded-md border-0 bg-muted/50 px-3 py-2 text-sm transition-colors hover:bg-muted"
-                >
-                  {selectedServerIds.length === 0 ? (
-                    <span className="text-muted-foreground">
-                      Select servers…
-                    </span>
-                  ) : (
-                    <span className="flex flex-wrap gap-1">
-                      {selectedServerIds.map((id) => {
-                        const server = availableServers.find(
-                          (s) => s._id === id,
-                        );
-                        return (
-                          <Badge
-                            key={id}
-                            variant="secondary"
-                            className="text-xs"
-                          >
-                            {server?.name ?? id}
-                          </Badge>
-                        );
-                      })}
-                    </span>
-                  )}
-                  <ChevronsUpDown className="ml-2 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                className="w-[var(--radix-popover-trigger-width)] p-1"
-                align="start"
-              >
-                {availableServers.length === 0 ? (
-                  <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                    No HTTP servers available.
-                  </p>
-                ) : (
-                  <div className="max-h-56 overflow-y-auto">
-                    {availableServers.map((server) => {
-                      const insecure = isInsecureUrl(server.url);
-                      return (
-                        <label
-                          key={server._id}
-                          className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
-                          title={
-                            insecure
-                              ? "Sandboxes require HTTPS server URLs"
-                              : undefined
-                          }
-                        >
-                          <Checkbox
-                            checked={
-                              !insecure &&
-                              selectedServerIds.includes(server._id)
-                            }
-                            onCheckedChange={(checked) =>
-                              handleToggleServer(server._id, checked === true)
-                            }
-                            disabled={insecure}
-                          />
-                          <span className="flex-1 text-sm">{server.name}</span>
-                          {insecure && (
-                            <span className="text-[10px] text-destructive">
-                              Requires HTTPS
-                            </span>
-                          )}
-                        </label>
-                      );
-                    })}
-                  </div>
-                )}
-              </PopoverContent>
-            </Popover>
+            <ServerSelectionEditor
+              workspaceServers={workspaceServers as RemoteServer[]}
+              selectedServerIds={selectedServerIds}
+              optionalServerIds={optionalServerIds}
+              onToggleSelection={handleToggleServer}
+              onOptionalChange={handleServerOptionalChange}
+              onOpenAdd={() => setIsAddServerOpen(true)}
+            />
           </div>
         </div>
 
@@ -1106,82 +1133,68 @@ export function SandboxEditor({
                   </p>
                 </div>
               </div>
-            ) : pendingOAuthServers.length > 0 ? (
-              <div className="flex flex-1 items-center justify-center p-6">
-                <div className="w-full max-w-xl rounded-2xl border bg-background p-6">
-                  <h3 className="text-center text-base font-semibold">
-                    {isFinishingPreviewOAuth
-                      ? "Finishing authorization"
-                      : "Authorization Required"}
-                  </h3>
-                  <p className="mt-2 text-center text-sm text-muted-foreground">
-                    {isFinishingPreviewOAuth
-                      ? "Finishing authorization for the required sandbox servers."
-                      : "Authorize the required sandbox servers to continue."}
-                  </p>
-                  <div className="mt-5 space-y-3">
-                    {pendingOAuthServers.map(({ server, state }) => {
-                      const rowCopy = getSandboxOAuthRowCopy(state.status);
-                      return (
-                        <div
-                          key={server.serverId}
-                          className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
-                        >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium">
-                              {server.serverName}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              {state.status === "error" && state.errorMessage
-                                ? state.errorMessage
-                                : rowCopy.description}
-                            </p>
-                          </div>
-                          {rowCopy.buttonLabel ? (
-                            <Button
-                              size="sm"
-                              onClick={() => void authorizeServer(server)}
-                            >
-                              {rowCopy.buttonLabel}
-                            </Button>
-                          ) : (
-                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </div>
             ) : (
-              <SandboxHostStyleProvider value={hostStyle}>
-                <div
-                  className="flex min-h-0 flex-1"
-                  data-host-style={hostStyle}
-                >
-                  <ChatTabV2
-                    key={previewChatKey}
-                    connectedOrConnectingServerConfigs={previewServerConfigs}
-                    selectedServerNames={selectedPreviewServers.map(
-                      (server) => server.serverName,
-                    )}
-                    minimalMode
-                    reasoningDisplayMode="hidden"
-                    hostedWorkspaceIdOverride={sandbox.workspaceId}
-                    hostedSelectedServerIdsOverride={selectedPreviewServers.map(
-                      (server) => server.serverId,
-                    )}
-                    hostedOAuthTokensOverride={previewOAuthTokens}
-                    hostedSandboxToken={previewToken}
-                    hostedSandboxSurface="preview"
-                    initialModelId={modelId}
-                    initialSystemPrompt={normalizedSystemPrompt}
-                    initialTemperature={temperature}
-                    initialRequireToolApproval={requireToolApproval}
-                    onOAuthRequired={handlePreviewOAuthRequired}
-                  />
-                </div>
-              </SandboxHostStyleProvider>
+              <div className="relative flex min-h-0 flex-1 flex-col">
+                <SandboxHostStyleProvider value={hostStyle}>
+                  <div
+                    className="flex min-h-0 flex-1"
+                    data-host-style={hostStyle}
+                  >
+                    <ChatTabV2
+                      key={previewChatKey}
+                      connectedOrConnectingServerConfigs={previewServerConfigs}
+                      selectedServerNames={activePreviewServers.map(
+                        (server) => server.serverName,
+                      )}
+                      minimalMode
+                      reasoningDisplayMode="hidden"
+                      hostedWorkspaceIdOverride={sandbox.workspaceId}
+                      hostedSelectedServerIdsOverride={activePreviewServers.map(
+                        (server) => server.serverId,
+                      )}
+                      hostedOAuthTokensOverride={previewOAuthTokens}
+                      hostedSandboxToken={previewToken}
+                      hostedSandboxSurface="preview"
+                      initialModelId={modelId}
+                      initialSystemPrompt={normalizedSystemPrompt}
+                      initialTemperature={temperature}
+                      initialRequireToolApproval={requireToolApproval}
+                      onOAuthRequired={handlePreviewOAuthRequired}
+                      sandboxComposerBlocked={introGate.composerBlocked}
+                      sandboxComposerBlockedReason="Get started or authorize to send messages…"
+                      sandboxOptionalInventory={selectedPreviewServers
+                        .filter(
+                          (s) =>
+                            s.optional &&
+                            !previewEnabledOptionalIds.includes(s.serverId),
+                        )
+                        .map((s) => ({
+                          serverId: s.serverId,
+                          serverName: s.serverName,
+                          useOAuth: s.useOAuth,
+                        }))}
+                      onEnableSandboxOptionalServer={(id) => {
+                        setPreviewEnabledOptionalIds((prev) =>
+                          prev.includes(id) ? prev : [...prev, id],
+                        );
+                      }}
+                    />
+                  </div>
+                </SandboxHostStyleProvider>
+                <SandboxHostOnboardingOverlays
+                  showWelcome={introGate.showWelcome}
+                  onGetStarted={introGate.dismissIntro}
+                  welcomeBody={
+                    (sandbox.welcomeDialog?.enabled ?? true)
+                      ? sandbox.welcomeDialog?.body
+                      : undefined
+                  }
+                  showAuthPanel={introGate.showAuthPanel}
+                  pendingOAuthServers={pendingOAuthServers}
+                  authorizeServer={authorizeServer}
+                  isFinishingOAuth={isFinishingPreviewOAuth}
+                />
+              </div>
             )}
           </div>
         </SheetContent>

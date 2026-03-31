@@ -7,6 +7,20 @@ export type SandboxBuilderNodeKind = "host" | "server";
 
 export type SandboxBuilderNodeState = "ready" | "attention" | "draft" | "live";
 
+export interface SandboxWelcomeDialogDraft {
+  enabled: boolean;
+  /** Host-authored first-open content (stored when backend supports it). */
+  body: string;
+}
+
+export interface SandboxFeedbackDialogDraft {
+  enabled: boolean;
+  /** Fire feedback prompt every N tool calls when enabled. */
+  everyNToolCalls: number;
+  /** Optional prompt copy for testers. */
+  promptHint: string;
+}
+
 export interface SandboxDraftConfig {
   name: string;
   description: string;
@@ -15,8 +29,13 @@ export interface SandboxDraftConfig {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  allowGuestAccess: boolean;
   mode: SandboxMode;
   selectedServerIds: string[];
+  /** Subset of selectedServerIds that are optional (off by default for testers). */
+  optionalServerIds: string[];
+  welcomeDialog: SandboxWelcomeDialogDraft;
+  feedbackDialog: SandboxFeedbackDialogDraft;
 }
 
 export interface SandboxBuilderContext {
@@ -34,9 +53,15 @@ export interface SandboxBuilderNodeData extends Record<string, unknown> {
   kind: SandboxBuilderNodeKind;
   title: string;
   subtitle?: string;
+  /** Small label above the title (e.g. Isolated Environment on the host chat card). */
+  eyebrow?: string;
+  /** Extra line under subtitle (e.g. model name on the host card). */
+  detailLine?: string;
   chips: SandboxBuilderChip[];
   state: SandboxBuilderNodeState;
   serverId?: string;
+  /** Host preview only: drives Claude vs ChatGPT-style logo on the canvas. */
+  hostStyle?: SandboxHostStyle;
 }
 
 export interface SandboxSectionLabelData extends Record<string, unknown> {

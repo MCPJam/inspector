@@ -64,6 +64,7 @@ import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
+import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
 import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
@@ -113,6 +114,11 @@ interface PlaygroundMainProps {
   disableChatInput?: boolean;
   hideSaveViewButton?: boolean;
   disabledInputPlaceholder?: string;
+  // Onboarding
+  initialInput?: string;
+  pulseSubmit?: boolean;
+  showPostConnectGuide?: boolean;
+  onFirstMessageSent?: () => void;
 }
 
 function ScrollToBottomButton() {
@@ -182,11 +188,31 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
+  initialInput,
+  pulseSubmit = false,
+  showPostConnectGuide = false,
+  onFirstMessageSent,
 }: PlaygroundMainProps) {
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialInput ?? "");
+  const [guidedInputCursorTrigger, setGuidedInputCursorTrigger] = useState(0);
+  const [isGuidedInputPristine, setIsGuidedInputPristine] = useState(
+    showPostConnectGuide && !!initialInput,
+  );
+
+  // Seed the guided prompt when the post-connect flow becomes active.
+  useEffect(() => {
+    if (showPostConnectGuide && initialInput) {
+      setInput(initialInput);
+      setIsGuidedInputPristine(true);
+      setGuidedInputCursorTrigger((current) => current + 1);
+      return;
+    }
+
+    setIsGuidedInputPristine(false);
+  }, [initialInput, showPostConnectGuide]);
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
@@ -292,6 +318,12 @@ export function PlaygroundMain({
     hostedSelectedServerIds,
     hostedOAuthTokens,
     onReset: () => {
+      if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
+        setInput((currentInput) => currentInput || initialInput);
+        setGuidedInputCursorTrigger((current) => current + 1);
+        return;
+      }
+
       setInput("");
     },
   });
@@ -504,6 +536,9 @@ export function PlaygroundMain({
     const hasContent =
       input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
     if (hasContent && status === "ready" && !submitBlocked) {
+      if (showPostConnectGuide && isGuidedInputPristine) {
+        setIsGuidedInputPristine(false);
+      }
       if (displayMode === "fullscreen" && isWidgetFullscreen) {
         setIsFullscreenChatOpen(true);
       }
@@ -552,16 +587,32 @@ export function PlaygroundMain({
       revokeFileAttachmentUrls(fileAttachments);
       setFileAttachments([]);
       setModelContextQueue([]); // Clear after sending
+
+      // Notify onboarding that the first message was sent
+      onFirstMessageSent?.();
     }
   };
 
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
+  const handleInputChange = useCallback(
+    (nextInput: string) => {
+      setInput(nextInput);
+      if (
+        showPostConnectGuide &&
+        isGuidedInputPristine &&
+        nextInput !== initialInput
+      ) {
+        setIsGuidedInputPristine(false);
+      }
+    },
+    [initialInput, isGuidedInputPristine, showPostConnectGuide],
+  );
 
   // Shared chat input props
   const sharedChatInputProps = {
     value: input,
-    onChange: setInput,
+    onChange: handleInputChange,
     onSubmit,
     stop,
     disabled: inputDisabled,
@@ -596,6 +647,12 @@ export function PlaygroundMain({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
+    pulseSubmit: pulseSubmit && isGuidedInputPristine,
+    minimalMode: showPostConnectGuide,
+    moveCaretToEndTrigger:
+      showPostConnectGuide && isThreadEmpty
+        ? guidedInputCursorTrigger
+        : undefined,
   };
 
   // Check if widget should take over the full container
@@ -623,9 +680,21 @@ export function PlaygroundMain({
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - centered welcome message
-        <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
-          <div className="text-center max-w-md mx-auto space-y-6 py-8">
+        // Empty state - centered when onboarding, otherwise top-aligned
+        <div
+          className={cn(
+            "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
+            "items-center justify-center",
+          )}
+        >
+          <div
+            className={cn(
+              "text-center mx-auto",
+              showPostConnectGuide
+                ? "max-w-3xl w-full"
+                : "max-w-md space-y-6 py-8",
+            )}
+          >
             {isAuthLoading ? (
               <div className="space-y-4">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
@@ -633,6 +702,11 @@ export function PlaygroundMain({
               </div>
             ) : shouldShowUpsell ? (
               <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+            ) : showPostConnectGuide ? (
+              <>
+                <PostConnectGuide />
+                <ChatInput {...sharedChatInputProps} hasMessages={false} />
+              </>
             ) : (
               <h3 className="text-sm font-semibold text-foreground mb-2">
                 Test ChatGPT Apps and MCP Apps
@@ -681,30 +755,34 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput that persists - hidden when widget takes over */}
-      {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
-        <div
-          className={cn(
-            "flex-shrink-0 max-w-3xl mx-auto w-full",
-            isThreadEmpty ? "px-4 pb-4" : "p-3",
-          )}
-        >
-          {errorMessage && (
-            <div className="pb-3">
-              <ErrorBox
-                message={errorMessage.message}
-                errorDetails={errorMessage.details}
-                code={errorMessage.code}
-                statusCode={errorMessage.statusCode}
-                isRetryable={errorMessage.isRetryable}
-                isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
-                onResetChat={resetChat}
-              />
-            </div>
-          )}
-          <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
-        </div>
-      )}
+      {/* Single ChatInput that persists - hidden when widget takes over.
+          During guided onboarding it moves inline while the thread is empty,
+          then returns to the footer after the first message. */}
+      {!isWidgetFullTakeover &&
+        !showFullscreenChatOverlay &&
+        (!showPostConnectGuide || !isThreadEmpty) && (
+          <div
+            className={cn(
+              "flex-shrink-0 max-w-3xl mx-auto w-full",
+              isThreadEmpty ? "px-4 pb-4" : "p-3",
+            )}
+          >
+            {errorMessage && (
+              <div className="pb-3">
+                <ErrorBox
+                  message={errorMessage.message}
+                  errorDetails={errorMessage.details}
+                  code={errorMessage.code}
+                  statusCode={errorMessage.statusCode}
+                  isRetryable={errorMessage.isRetryable}
+                  isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                  onResetChat={resetChat}
+                />
+              </div>
+            )}
+            <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
+          </div>
+        )}
 
       {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
       {showFullscreenChatOverlay && (
@@ -735,44 +813,53 @@ export function PlaygroundMain({
 
   // Device frame container - display mode is passed to widgets via Thread
   return (
-    <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
-      {/* Device frame header */}
-      <div
-        className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
-        data-testid="playground-main-header"
-      >
-        {/* All controls centered */}
-        <DisplayContextHeader
-          protocol={selectedProtocol}
-          showThemeToggle
-          themeModeOverride={effectiveThreadTheme}
-          onThemeToggleOverride={toggleLocalThreadTheme}
-        />
+    <div
+      className={cn(
+        "h-full flex flex-col overflow-hidden",
+        showPostConnectGuide ? "bg-background" : "bg-muted/20",
+      )}
+    >
+      {/* Device frame header — hidden during onboarding */}
+      {!showPostConnectGuide && (
+        <div
+          className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
+          data-testid="playground-main-header"
+        >
+          {/* All controls centered */}
+          <DisplayContextHeader
+            protocol={selectedProtocol}
+            showThemeToggle
+            themeModeOverride={effectiveThreadTheme}
+            onThemeToggleOverride={toggleLocalThreadTheme}
+          />
 
-        {/* Right actions - absolutely positioned */}
-        {!isThreadEmpty && (
-          <div className="absolute right-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowClearConfirm(true)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Clear chat</p>
-                <p className="text-xs text-muted-foreground">
-                  {navigator.platform.includes("Mac") ? "⌘⇧K" : "Ctrl+Shift+K"}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
-      </div>
+          {/* Right actions - absolutely positioned */}
+          {!isThreadEmpty && (
+            <div className="absolute right-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowClearConfirm(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Clear chat</p>
+                  <p className="text-xs text-muted-foreground">
+                    {navigator.platform.includes("Mac")
+                      ? "⌘⇧K"
+                      : "Ctrl+Shift+K"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          )}
+        </div>
+      )}
 
       <ConfirmChatResetDialog
         open={showClearConfirm}
@@ -794,12 +881,18 @@ export function PlaygroundMain({
               data-theme-preset={themePreset}
               data-thread-theme={effectiveThreadTheme}
               style={{
-                width: deviceConfig.width,
+                width: showPostConnectGuide ? "100%" : deviceConfig.width,
                 maxWidth: "100%",
-                height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
+                height: showPostConnectGuide
+                  ? "100%"
+                  : isWidgetFullTakeover
+                    ? "100%"
+                    : deviceConfig.height,
                 maxHeight: "100%",
                 transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-                backgroundColor: hostBackgroundColor,
+                backgroundColor: showPostConnectGuide
+                  ? undefined
+                  : hostBackgroundColor,
               }}
             >
               {/* X-Ray mode: show raw JSON view of AI payload */}

@@ -1,6 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Loader2, MessageSquare } from "lucide-react";
+import { Copy, Loader2, MessageSquare } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { copyToClipboard } from "@/lib/clipboard";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
 import {
@@ -120,6 +123,17 @@ export function ShareUsageThreadDetail({
     [thread?.modelId],
   );
 
+  const handleCopySessionRef = useCallback(async () => {
+    if (!thread) return;
+    const text = thread.chatSessionId ?? thread._id;
+    const ok = await copyToClipboard(text);
+    if (ok) {
+      toast.success("Session reference copied");
+    } else {
+      toast.error("Failed to copy");
+    }
+  }, [thread]);
+
   // Loading state: thread query or messages fetch
   if (thread === undefined || isLoadingMessages) {
     return (
@@ -166,11 +180,32 @@ export function ShareUsageThreadDetail({
   const isSandboxThread = thread.sourceType === "sandbox";
   const reasoningDisplayMode = isSandboxThread ? "collapsible" : "collapsed";
 
+  const hasFeedback =
+    thread.feedbackRating != null ||
+    (thread.feedbackComment && thread.feedbackComment.trim().length > 0);
+
   return (
     <div className="flex h-full flex-col">
       {/* Thread header */}
       <div className="shrink-0 border-b px-4 py-3">
-        <div className="flex items-center gap-3">
+        {hasFeedback ? (
+          <div className="mb-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Feedback
+            </p>
+            {thread.feedbackRating != null ? (
+              <p className="mt-1 text-sm font-medium">
+                {thread.feedbackRating}/5
+              </p>
+            ) : null}
+            {thread.feedbackComment ? (
+              <p className="mt-1 text-sm text-muted-foreground">
+                &ldquo;{thread.feedbackComment}&rdquo;
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0 flex-1">
             <p className="text-sm font-medium truncate">
               {thread.visitorDisplayName}
@@ -195,6 +230,18 @@ export function ShareUsageThreadDetail({
                 })}
               </span>
             </div>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="font-mono text-xs"
+              onClick={() => void handleCopySessionRef()}
+            >
+              <Copy className="mr-1.5 size-3.5" />
+              Copy session link
+            </Button>
           </div>
         </div>
       </div>
