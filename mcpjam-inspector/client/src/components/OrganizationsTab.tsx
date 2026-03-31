@@ -239,6 +239,7 @@ function OrganizationPage({
     isLoadingPlanCatalog,
     isLoadingOrganizationPremiumness,
     isStartingCheckout,
+    pendingCheckoutTier,
     isOpeningPortal,
     error: billingError,
     startCheckout,
@@ -700,6 +701,7 @@ function OrganizationPage({
               isLoadingBilling={isLoadingBilling}
               isLoadingPlanCatalog={isLoadingPlanCatalog}
               isStartingCheckout={isStartingCheckout}
+              pendingCheckoutTier={pendingCheckoutTier}
               isOpeningPortal={isOpeningPortal}
               onManageBilling={handleManageBilling}
               onStartCheckout={handlePlanCheckout}

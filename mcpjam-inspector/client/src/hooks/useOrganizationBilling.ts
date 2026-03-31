@@ -163,6 +163,9 @@ export function useOrganizationBilling(
   );
 
   const [isStartingCheckout, setIsStartingCheckout] = useState(false);
+  const [pendingCheckoutTier, setPendingCheckoutTier] = useState<
+    "starter" | "team" | null
+  >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
   const [isSelectingFreeAfterTrial, setIsSelectingFreeAfterTrial] =
     useState(false);
@@ -176,6 +179,7 @@ export function useOrganizationBilling(
     ) => {
       if (!organizationId) throw new Error("Organization is required");
       setIsStartingCheckout(true);
+      setPendingCheckoutTier(tier);
       setError(null);
       try {
         const result = await createCheckout({
@@ -192,6 +196,7 @@ export function useOrganizationBilling(
         throw err;
       } finally {
         setIsStartingCheckout(false);
+        setPendingCheckoutTier(null);
       }
     },
     [createCheckout, organizationId],
@@ -253,6 +258,7 @@ export function useOrganizationBilling(
     isLoadingWorkspacePremiumness,
     isLoadingPlanCatalog: !!organizationId && planCatalog === undefined,
     isStartingCheckout,
+    pendingCheckoutTier,
     isOpeningPortal,
     isSelectingFreeAfterTrial,
     error,

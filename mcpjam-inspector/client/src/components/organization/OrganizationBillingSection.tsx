@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { Check, CheckCircle2, CreditCard, Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -71,7 +71,7 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
-  onManageBilling: () => Promise<void>;
+  onDowngrade: (plan: OrganizationPlan) => void;
   onStartCheckout: (
     plan: "starter" | "team",
     billingInterval: BillingInterval,
@@ -90,7 +90,7 @@ function getPlanColumnCta(params: {
     billingConfigured,
     canManageBilling,
     isBillingActionPending,
-    onManageBilling,
+    onDowngrade,
     onStartCheckout,
     billingInterval,
   } = params;
@@ -122,7 +122,7 @@ function getPlanColumnCta(params: {
       disabled:
         !canManageBilling || !billingConfigured || isBillingActionPending,
       variant: "outline",
-      onClick: () => void onManageBilling(),
+      onClick: () => void onDowngrade(plan),
     };
   }
 
@@ -461,6 +461,7 @@ interface OrganizationBillingSectionProps {
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
   isStartingCheckout: boolean;
+  pendingCheckoutTier: "starter" | "team" | null;
   isOpeningPortal: boolean;
   onManageBilling: () => Promise<void>;
   onStartCheckout: (
@@ -482,6 +483,7 @@ export function OrganizationBillingSection({
   isLoadingBilling,
   isLoadingPlanCatalog,
   isStartingCheckout,
+  pendingCheckoutTier,
   isOpeningPortal,
   onManageBilling,
   onStartCheckout,
@@ -497,6 +499,20 @@ export function OrganizationBillingSection({
     currentDisplayName: string;
     requestedDisplayName: string;
   } | null>(null);
+  const [portalLoadingPlan, setPortalLoadingPlan] =
+    useState<OrganizationPlan | null>(null);
+
+  const manageBillingFromPlan = useCallback(
+    async (plan: OrganizationPlan) => {
+      setPortalLoadingPlan(plan);
+      try {
+        await onManageBilling();
+      } finally {
+        setPortalLoadingPlan(null);
+      }
+    },
+    [onManageBilling],
+  );
 
   useEffect(() => {
     if (checkoutIntent?.interval) {
@@ -819,10 +835,20 @@ export function OrganizationBillingSection({
                           billingConfigured,
                           canManageBilling,
                           isBillingActionPending,
-                          onManageBilling,
+                          onDowngrade: (p) => void manageBillingFromPlan(p),
                           onStartCheckout,
                           billingInterval,
                         });
+                        const showCheckoutSpinner =
+                          pendingCheckoutTier === plan &&
+                          cta.label === "Upgrade" &&
+                          (plan === "starter" || plan === "team");
+                        const showPortalSpinner =
+                          isOpeningPortal &&
+                          portalLoadingPlan === plan &&
+                          cta.label === "Downgrade";
+                        const showCtaSpinner =
+                          showCheckoutSpinner || showPortalSpinner;
                         const isPopular = plan === POPULAR_PLAN;
                         return (
                           <TableHead
@@ -864,7 +890,7 @@ export function OrganizationBillingSection({
                                 disabled={cta.disabled}
                                 onClick={cta.onClick}
                               >
-                                {isBillingActionPending && cta.onClick ? (
+                                {showCtaSpinner ? (
                                   <>
                                     <Loader2 className="size-4 animate-spin" />
                                     Loading...

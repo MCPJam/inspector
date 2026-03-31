@@ -193,6 +193,7 @@ function createBillingHookState(overrides: Record<string, unknown>) {
     isLoadingWorkspacePremiumness: false,
     isLoadingPlanCatalog: false,
     isStartingCheckout: false,
+    pendingCheckoutTier: null,
     isOpeningPortal: false,
     isSelectingFreeAfterTrial: false,
     error: null,
