@@ -275,6 +275,10 @@ export function useChatSession({
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
   const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
+  const selectedServersSignature = useMemo(
+    () => selectedServers.join("\u0000"),
+    [selectedServers],
+  );
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -664,10 +668,14 @@ export function useChatSession({
   useEffect(() => {
     const fetchToolsMetadata = async () => {
       if (selectedServers.length === 0) {
-        setToolsMetadata({});
-        setToolServerMap({});
-        setMcpToolsTokenCount(null);
-        setMcpToolsTokenCountLoading(false);
+        setToolsMetadata((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous,
+        );
+        setToolServerMap((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous,
+        );
+        setMcpToolsTokenCount((previous) => (previous !== null ? null : previous));
+        setMcpToolsTokenCountLoading((previous) => (previous ? false : previous));
         return;
       }
 
@@ -713,7 +721,12 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
+  }, [
+    selectedServersSignature,
+    selectedModel,
+    hostedShareToken,
+    hostedSandboxToken,
+  ]);
 
   // System prompt token count
   useEffect(() => {
