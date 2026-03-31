@@ -3,6 +3,14 @@ import { useCallback, useState } from "react";
 
 export type OrganizationPlan = "free" | "starter" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
+export type BillingModel = "flat" | "per_seat" | "contact";
+export type BillingOfferKey =
+  | "starter_public_monthly"
+  | "starter_public_annual"
+  | "starter_legacy_monthly"
+  | "starter_legacy_annual"
+  | "team_public_monthly"
+  | "team_public_annual";
 export type BillingFeatureName =
   | "evals"
   | "sandboxes"
@@ -71,6 +79,12 @@ export interface OrganizationBillingStatus {
   hasCustomer: boolean;
   stripeCurrentPeriodEnd: number | null;
   stripePriceId: string | null;
+  stripeSeatQuantity?: number | null;
+  billingOfferKey?: BillingOfferKey | null;
+  billingModel?: BillingModel | null;
+  unitAmountCents?: number | null;
+  includedSeats?: number | null;
+  seatMinimum?: number | null;
   trialStatus: string;
   trialPlan: OrganizationPlan | null;
   trialStartedAt: string | null;
@@ -83,17 +97,24 @@ export interface OrganizationBillingStatus {
 export interface PlanCatalogEntry {
   plan: OrganizationPlan;
   displayName: string;
+  billingModel?: BillingModel;
   isSelfServe: boolean;
   prices: Record<BillingInterval, number | null>;
   features: Record<BillingFeatureName, boolean>;
   limits: Record<BillingLimitName, number | null>;
-  /** Plan comparison table: human-readable audit retention (e.g. "None", "7 days"). */
-  auditLogRetentionLabel?: string;
+  includedSeats?: number | null;
+  seatMinimum?: number | null;
+  checkout?: {
+    ctaKind: "open_app" | "deep_link" | "contact";
+    plan: "starter" | "team" | null;
+    intervals: BillingInterval[];
+  };
 }
 
 export interface PlanCatalog {
   catalogVersion: string;
   currency: string;
+  appOrigin?: string;
   plans: Record<OrganizationPlan, PlanCatalogEntry>;
 }
 

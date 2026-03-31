@@ -5,7 +5,6 @@ import {
   getDisplayPriceCentsForPlan,
   isGateAccessDenied,
   isPremiumnessGateDeniedForShell,
-  MARKETING_PLAN_PRICE_CENTS_USD,
 } from "../billing-entitlements";
 import type {
   PlanCatalogEntry,
@@ -217,16 +216,16 @@ describe("isGateAccessDenied", () => {
 });
 
 describe("getDisplayPriceCentsForPlan", () => {
-  it("returns marketing cents for Starter and Team regardless of catalog drift", () => {
+  it("returns catalog cents for Starter and Team", () => {
     const drifted = minimalCatalogEntry({
       monthly: 6100,
       annual: 29000,
     });
     expect(getDisplayPriceCentsForPlan("starter", "annual", drifted)).toBe(
-      MARKETING_PLAN_PRICE_CENTS_USD.starter.annual,
+      29000,
     );
     expect(getDisplayPriceCentsForPlan("team", "monthly", drifted)).toBe(
-      MARKETING_PLAN_PRICE_CENTS_USD.team.monthly,
+      6100,
     );
   });
 

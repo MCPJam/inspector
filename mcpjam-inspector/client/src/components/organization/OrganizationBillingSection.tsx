@@ -34,12 +34,12 @@ import type {
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import { guardCheckoutIntentAgainstEffectivePlan } from "@/lib/billing-checkout-intent-guard";
 import {
+  getAnnualDiscountPercent,
   getDisplayPriceCentsForPlan,
-  MARKETING_PLAN_PRICE_CENTS_USD,
 } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
+import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
 import {
-  COMPARE_PLAN_MARKETING_SECTIONS,
   type ComparePlanCell,
 } from "@/components/organization/compare-plan-marketing";
 
@@ -185,15 +185,16 @@ function formatPlanPriceLabel(
 
 function formatPerSeatCadence(
   plan: OrganizationPlan,
+  entry: PlanCatalog["plans"][OrganizationPlan],
   interval: BillingInterval,
 ): string {
   if (plan === "free") {
-    return "Per seat, billed monthly";
+    return "No credit card required";
   }
   if (plan === "enterprise") {
     return "Annual commitment";
   }
-  if (plan === "starter") {
+  if (entry.billingModel === "flat") {
     return interval === "annual"
       ? "Flat rate, billed annually"
       : "Flat rate, billed monthly";
@@ -240,16 +241,6 @@ function PlanPriceDisplay({ label }: { label: string }) {
       {label}
     </p>
   );
-}
-
-/**
- * Badge next to "Annual": Starter-only. Compares paying monthly for 12 months vs one annual bill:
- * `(12×monthly − annualTotal) / (12×monthly)` → with $61/mo and $588/yr that rounds to 20%.
- */
-function getAnnualDiscountPercent(): number {
-  const { monthly, annual } = MARKETING_PLAN_PRICE_CENTS_USD.starter;
-  const annualizedMonthly = monthly * 12;
-  return Math.round(((annualizedMonthly - annual) / annualizedMonthly) * 100);
 }
 
 const COMPARE_PLAN_ROW_LABEL_TOOLTIPS: Record<
@@ -610,7 +601,10 @@ export function OrganizationBillingSection({
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
   const isBillingActionPending = isStartingCheckout || isOpeningPortal;
-  const annualDiscountPct = getAnnualDiscountPercent();
+  const annualDiscountPct = getAnnualDiscountPercent(planCatalog);
+  const compareSections = planCatalog
+    ? buildComparePlanSectionsFromCatalog(planCatalog)
+    : null;
 
   return (
     <div className="space-y-5">
@@ -814,10 +808,10 @@ export function OrganizationBillingSection({
                                 billingInterval,
                               );
                         const priceSubtext = isEnterprisePlan
-                          ? formatPerSeatCadence(plan, billingInterval)
+                          ? formatPerSeatCadence(plan, entry, billingInterval)
                           : plan === "free"
                             ? "No credit card required"
-                            : formatPerSeatCadence(plan, billingInterval);
+                            : formatPerSeatCadence(plan, entry, billingInterval);
                         const cta = getPlanColumnCta({
                           plan,
                           currentPlan,
@@ -856,9 +850,9 @@ export function OrganizationBillingSection({
                                   <p className="text-xs leading-snug text-muted-foreground">
                                     {priceSubtext}
                                   </p>
-                                  {plan === "team" ? (
+                                  {entry.seatMinimum ? (
                                     <p className="text-xs leading-snug text-muted-foreground">
-                                      4 seat minimum
+                                      {entry.seatMinimum} seat minimum
                                     </p>
                                   ) : null}
                                 </div>
@@ -886,7 +880,7 @@ export function OrganizationBillingSection({
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {COMPARE_PLAN_MARKETING_SECTIONS.map((section) => (
+                    {(compareSections ?? []).map((section) => (
                       <Fragment key={section.title}>
                         <TableRow className="border-b hover:bg-transparent">
                           <TableCell

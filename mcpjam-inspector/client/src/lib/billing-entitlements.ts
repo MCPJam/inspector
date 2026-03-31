@@ -3,41 +3,31 @@ import type {
   BillingFeatureName,
   BillingInterval,
   OrganizationPlan,
+  PlanCatalog,
   PlanCatalogEntry,
   PremiumnessGateKey,
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
-
-/**
- * Canonical USD cents for Starter/Team shown in-app (matches marketing pricing).
- * Starter is single-seat: monthly = monthly charge in cents; annual = full year billed in cents
- * (effective monthly shown as annual ÷ 12, e.g. $49/mo).
- * Team is per-seat: same shape; display uses effective monthly per seat for annual.
- */
-export const MARKETING_PLAN_PRICE_CENTS_USD: Record<
-  "starter" | "team",
-  Record<BillingInterval, number>
-> = {
-  starter: {
-    monthly: 6100,
-    annual: 58800,
-  },
-  team: {
-    monthly: 7400,
-    annual: 70800,
-  },
-};
-
-/** Use marketing prices for self-serve tiers so UI matches the website even if catalog drifts. */
 export function getDisplayPriceCentsForPlan(
   plan: OrganizationPlan,
   interval: BillingInterval,
   catalogEntry: PlanCatalogEntry,
 ): number | null {
-  if (plan === "starter" || plan === "team") {
-    return MARKETING_PLAN_PRICE_CENTS_USD[plan][interval];
-  }
   return catalogEntry.prices[interval];
+}
+
+export function getAnnualDiscountPercent(
+  planCatalog: PlanCatalog | undefined,
+): number {
+  if (!planCatalog) {
+    return 0;
+  }
+  const monthly = planCatalog.plans.starter.prices.monthly;
+  const annual = planCatalog.plans.starter.prices.annual;
+  if (monthly == null || annual == null || monthly <= 0) {
+    return 0;
+  }
+  return Math.round((((monthly * 12) - annual) / (monthly * 12)) * 100);
 }
 
 export const BILLING_FEATURE_BY_TAB = {

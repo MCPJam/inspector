@@ -7,10 +7,7 @@ import type {
   OrganizationPlan,
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
-import {
-  formatPlanName,
-  getDisplayPriceCentsForPlan,
-} from "@/lib/billing-entitlements";
+import { formatPlanName } from "@/lib/billing-entitlements";
 
 function formatCurrency(
   amount: number,
@@ -42,33 +39,37 @@ export function getCurrentPlanRenewalLine(
 }
 
 function formatCurrentPlanBillingDetailLine(
-  plan: OrganizationPlan,
-  interval: BillingInterval | null,
+  billingStatus: OrganizationBillingStatus,
   currency: string,
-  planCatalog: PlanCatalog | undefined,
 ): string | null {
-  if (!planCatalog) {
-    return null;
-  }
-  const entry = planCatalog.plans[plan];
+  const plan = billingStatus.plan ?? "free";
+  const interval = billingStatus.billingInterval;
   if (plan === "free") {
     return "No credit card required";
   }
   if (plan === "enterprise") {
     return "Annual commitment · Contact sales for pricing";
   }
-  const effInterval: BillingInterval = interval ?? "monthly";
-  const displayCents = getDisplayPriceCentsForPlan(plan, effInterval, entry);
-  if (displayCents == null) {
-    return "Custom pricing";
+  if (
+    !billingStatus.billingOfferKey ||
+    !billingStatus.billingModel ||
+    billingStatus.unitAmountCents == null
+  ) {
+    return null;
   }
+  const effInterval: BillingInterval = interval ?? "monthly";
   const monthlyAmount =
-    effInterval === "annual" ? displayCents / 12 / 100 : displayCents / 100;
+    effInterval === "annual"
+      ? billingStatus.unitAmountCents / 12 / 100
+      : billingStatus.unitAmountCents / 100;
   const money = formatCurrency(monthlyAmount, currency, 2);
-  if (plan === "starter") {
+  if (billingStatus.billingModel === "flat") {
     return `${money} flat monthly rate, ${effInterval === "annual" ? "billed annually" : "billed monthly"}`;
   }
-  return `${money} per seat/month, ${effInterval === "annual" ? "billed annually" : "billed monthly"}`;
+  const seatMinimumSuffix = billingStatus.seatMinimum
+    ? ` · ${billingStatus.seatMinimum} seat minimum`
+    : "";
+  return `${money} per seat/month, ${effInterval === "annual" ? "billed annually" : "billed monthly"}${seatMinimumSuffix}`;
 }
 
 export interface OrganizationCurrentPlanPanelProps {
@@ -104,12 +105,7 @@ export function OrganizationCurrentPlanPanel({
   const effectiveBillingInterval =
     billingStatus.billingInterval ?? "monthly";
   const billingDetailLine = planCatalog
-    ? formatCurrentPlanBillingDetailLine(
-        currentPlan,
-        billingStatus.billingInterval,
-        planCatalog.currency,
-        planCatalog,
-      )
+    ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog.currency)
     : null;
 
   const showIntervalPortalLink =
@@ -201,6 +197,10 @@ export function OrganizationCurrentPlanPanel({
             ) : isLoadingPlanCatalog ? (
               <p className="text-sm text-muted-foreground">
                 Loading plan details…
+              </p>
+            ) : currentPlan !== "free" ? (
+              <p className="text-sm text-muted-foreground">
+                Billing details are updating…
               </p>
             ) : null}
           </div>
