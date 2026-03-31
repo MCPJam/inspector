@@ -1,4 +1,10 @@
-import { useRef, useState, useCallback, type ChangeEvent } from "react";
+import {
+  useRef,
+  useState,
+  useCallback,
+  useLayoutEffect,
+  type ChangeEvent,
+} from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
@@ -108,6 +114,10 @@ interface ChatInputProps {
   onRequireToolApprovalChange?: (enabled: boolean) => void;
   /** Shared chat-only mode */
   minimalMode?: boolean;
+  /** Onboarding: pulse the send button with glow animation */
+  pulseSubmit?: boolean;
+  /** Move the textarea caret to the end when this trigger changes */
+  moveCaretToEndTrigger?: number;
   /** Hosted sandbox: optional servers not yet connected (Add server popover). */
   sandboxAttachableServers?: Array<{
     serverId: string;
@@ -154,6 +164,8 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  pulseSubmit = false,
+  moveCaretToEndTrigger,
   sandboxAttachableServers,
   onAttachSandboxServer,
 }: ChatInputProps) {
@@ -179,6 +191,18 @@ export function ChatInput({
     value,
     caretIndex,
   );
+
+  useLayoutEffect(() => {
+    if (moveCaretToEndTrigger === undefined) return;
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.focus();
+    const end = textarea.value.length;
+    textarea.setSelectionRange(end, end);
+    setCaretIndex(end);
+  }, [moveCaretToEndTrigger]);
 
   const onMCPPromptSelected = useCallback(
     (mcpPromptResult: MCPPromptResult) => {
@@ -708,6 +732,7 @@ export function ChatInput({
                         !submitDisabled
                         ? activeSubmitButtonClasses
                         : inactiveSubmitButtonClasses,
+                      pulseSubmit && "animate-onboarding-pulse",
                     )}
                     disabled={
                       (!value.trim() && !hasResults) ||

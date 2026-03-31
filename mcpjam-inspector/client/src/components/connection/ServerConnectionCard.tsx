@@ -66,6 +66,9 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   }
 }
 
+// Temporary hide while sandbox sharing replaces server sharing in the main UI.
+const SERVER_SHARE_UI_ENABLED = false;
+
 interface ServerConnectionCardProps {
   server: ServerWithName;
   needsReconnect?: boolean;
@@ -154,6 +157,7 @@ export function ServerConnectionCard({
       }
     })();
   const canShareServer =
+    SERVER_SHARE_UI_ENABLED &&
     HOSTED_MODE &&
     !!hostedServerId &&
     isAuthenticated &&

@@ -202,6 +202,28 @@ describe("ChatInput", () => {
       const textarea = screen.getByPlaceholderText("Type your message...");
       expect(textarea).toHaveValue("Test message");
     });
+
+    it("places the caret at the end when requested", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Draw me an MCP architecture diagram"
+          moveCaretToEndTrigger={1}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+
+      expect(document.activeElement).toBe(textarea);
+      expect(textarea.selectionStart).toBe(
+        "Draw me an MCP architecture diagram".length,
+      );
+      expect(textarea.selectionEnd).toBe(
+        "Draw me an MCP architecture diagram".length,
+      );
+    });
   });
 
   describe("form submission", () => {

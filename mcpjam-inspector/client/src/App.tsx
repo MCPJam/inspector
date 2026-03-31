@@ -1,5 +1,13 @@
 import { useConvexAuth, useQuery } from "convex/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +32,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
@@ -132,11 +141,36 @@ function getHostedOAuthCallbackErrorMessage(): string {
   );
 }
 
+type AppChromeSidebarProps = ComponentProps<typeof MCPSidebar> & {
+  hidden: boolean;
+};
+
+function AppChromeSidebar({ hidden, ...props }: AppChromeSidebarProps) {
+  if (hidden) {
+    return null;
+  }
+
+  return <MCPSidebar {...props} />;
+}
+
+type AppChromeHeaderProps = ComponentProps<typeof Header> & {
+  hidden: boolean;
+};
+
+function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
+  if (hidden) {
+    return null;
+  }
+
+  return <Header {...props} />;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const posthog = usePostHog();
@@ -376,6 +410,7 @@ export default function App() {
 
   const { sortedOrganizations, isLoading: isLoadingOrganizations } =
     useOrganizationQueries({ isAuthenticated });
+  const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
     () => resolveHostedNavigation(currentHash, HOSTED_MODE),
@@ -389,6 +424,29 @@ export default function App() {
         (org) => org._id === currentHashRoute.organizationId,
       )
     : false;
+  const hostedShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces,
+  });
+  const hostedChatShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces: false,
+  });
+  const isOnboardingDecisionReady = hostedShellGateState === "ready";
+  const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
+  const shouldHoldHostedDefaultRouteForAuth =
+    HOSTED_MODE &&
+    !isHostedChatRoute &&
+    isHostedDefaultRoute &&
+    hostedShellGateState === "auth-loading";
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -675,7 +733,7 @@ export default function App() {
   );
 
   // Sync tab with hash on mount and when hash changes
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isHostedChatRoute) {
       return;
     }
@@ -687,7 +745,33 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
+  }, [applyNavigation, isHostedChatRoute]);
+
+  useLayoutEffect(() => {
+    if (isHostedChatRoute) {
+      return;
+    }
+
+    if (!isOnboardingDecisionReady) {
+      return;
+    }
+
+    if (
+      isFirstRunEligible(
+        hasAnyWorkspaceServers,
+        window.location.hash,
+        isAuthenticated,
+      )
+    ) {
+      applyNavigation("app-builder", { updateHash: true });
+    }
+  }, [
+    applyNavigation,
+    hasAnyWorkspaceServers,
+    isAuthenticated,
+    isOnboardingDecisionReady,
+    isHostedChatRoute,
+  ]);
 
   useEffect(() => {
     if (activeTabBillingLocked && activeTabBillingFeature) {
@@ -822,22 +906,9 @@ export default function App() {
     return <LoadingScreen />;
   }
 
-  const hostedShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    isLoadingRemoteWorkspaces,
-  });
-  const hostedChatShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    isLoadingRemoteWorkspaces: false,
-  });
+  if (shouldHoldHostedDefaultRouteForAuth) {
+    return <LoadingScreen />;
+  }
 
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
@@ -876,7 +947,8 @@ export default function App() {
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
-      <MCPSidebar
+      <AppChromeSidebar
+        hidden={appBuilderOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
         servers={workspaceServers}
@@ -893,7 +965,10 @@ export default function App() {
         }
       />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header activeServerSelectorProps={activeServerSelectorProps} />
+        <AppChromeHeader
+          hidden={appBuilderOnboarding}
+          activeServerSelectorProps={activeServerSelectorProps}
+        />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {activeTabGracePeriodBanner && activeTabBillingFeature ? (
             <div className="border-b border-border/60 px-4 py-3">
@@ -1050,6 +1125,11 @@ export default function App() {
             <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
+              servers={workspaceServers}
+              isAuthenticated={isAuthenticated}
+              isAuthLoading={isAuthLoading}
+              onConnect={handleConnect}
+              onOnboardingChange={setAppBuilderOnboarding}
             />
           )}
           {activeTab === "client-config" && (

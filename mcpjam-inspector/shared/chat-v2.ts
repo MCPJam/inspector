@@ -5,6 +5,10 @@ export interface ChatV2Request {
   messages: UIMessage[];
   chatSessionId?: string;
   surface?: "preview" | "share_link";
+  serverUrl?: string;
+  serverHeaders?: Record<string, string>;
+  oauthAccessToken?: string;
+  clientCapabilities?: Record<string, unknown>;
   model?: ModelDefinition;
   modelId?: string;
   systemPrompt?: string;
