@@ -182,6 +182,28 @@ export type EvalSuiteRun = {
       summary: string;
     }>;
   };
+  serverQualityJobId?: number;
+  serverQualityStatus?: "pending" | "completed" | "failed";
+  serverQuality?: {
+    summary: string;
+    generatedAt: number;
+    modelUsed: string;
+    toolInsights: Array<{
+      toolName: string;
+      rating: "good" | "needs_improvement" | "poor";
+      issues: string[];
+      suggestions: string[];
+    }>;
+    workflowInsights: Array<{
+      caseKey: string;
+      title: string;
+      toolCallCount: number;
+      optimalCallCount?: number;
+      efficiency: "optimal" | "acceptable" | "inefficient" | "excessive";
+      issues: string[];
+      suggestions: string[];
+    }>;
+  };
 };
 
 export type EvalRefinementSession = {

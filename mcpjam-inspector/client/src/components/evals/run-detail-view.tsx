@@ -30,6 +30,8 @@ import {
 } from "./run-case-insight-block";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
+import { useServerQuality } from "./use-server-quality";
+import { InsightPrimaryBlock } from "./insight-primary-block";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import { ArrowUpDown, ChevronRight, ExternalLink } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
@@ -435,6 +437,16 @@ export function RunDetailView({
     unavailable: runInsightsUnavailable,
   } = useRunInsights(selectedRunDetails, { autoRequest: true });
 
+  const {
+    summary: serverQualitySummary,
+    pending: serverQualityPending,
+    requested: serverQualityRequested,
+    failedGeneration: serverQualityFailedGeneration,
+    error: serverQualityError,
+    requestServerQuality,
+    unavailable: serverQualityUnavailable,
+  } = useServerQuality(selectedRunDetails, { autoRequest: true });
+
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
@@ -608,6 +620,23 @@ export function RunDetailView({
       />
     ) : null;
 
+  const serverQualityNarrative =
+    selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
+      <InsightPrimaryBlock
+        embedded
+        title="Server quality"
+        summary={serverQualitySummary}
+        pending={serverQualityPending}
+        requested={serverQualityRequested}
+        failedGeneration={serverQualityFailedGeneration}
+        error={serverQualityError}
+        onRetry={() => requestServerQuality(true)}
+        pendingLabel="Analyzing server quality…"
+        requestingLabel="Requesting server quality analysis…"
+        emptyLabel="We will analyze your MCP server's tool quality and workflow efficiency here."
+      />
+    ) : null;
+
   const runInsightsBody = (
     <div className="space-y-6">
       <div className="flex w-full min-w-0 flex-nowrap gap-3 sm:gap-4">
@@ -646,6 +675,7 @@ export function RunDetailView({
       </div>
 
       {runInsightsNarrative}
+      {serverQualityNarrative}
 
       {hasSecondaryBreakdown ? (
         <div className="space-y-3">

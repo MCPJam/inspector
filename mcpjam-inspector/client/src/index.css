@@ -114,12 +114,6 @@
   --trace-waterfall-bar-step: oklch(0.88 0.055 250);
   --trace-waterfall-bar-error: oklch(0.88 0.115 25);
   --trace-waterfall-row-selected: oklch(0.67 0.1 288 / 0.12);
-  /* Glyphs/borders: same C+H as bar tokens above; lower L only (fills can be light, strokes cannot). */
-  --trace-waterfall-accent-prompt: oklch(0.52 0.082 292);
-  --trace-waterfall-accent-llm: oklch(0.52 0.076 255);
-  --trace-waterfall-accent-tool: oklch(0.52 0.105 96);
-  --trace-waterfall-accent-step: oklch(0.52 0.055 250);
-  --trace-waterfall-accent-error: oklch(0.52 0.115 25);
 }
 
 .app-theme-scope {
@@ -156,11 +150,6 @@
   --trace-waterfall-bar-step: oklch(0.88 0.055 250);
   --trace-waterfall-bar-error: oklch(0.88 0.115 25);
   --trace-waterfall-row-selected: oklch(0.67 0.1 288 / 0.12);
-  --trace-waterfall-accent-prompt: oklch(0.52 0.082 292);
-  --trace-waterfall-accent-llm: oklch(0.52 0.076 255);
-  --trace-waterfall-accent-tool: oklch(0.52 0.105 96);
-  --trace-waterfall-accent-step: oklch(0.52 0.055 250);
-  --trace-waterfall-accent-error: oklch(0.52 0.115 25);
 }
 
 .dark {
@@ -464,37 +453,101 @@
     background-color: var(--trace-waterfall-row-selected);
   }
 
-  /* Trace timeline — pastel icons (CategoryGlyph) */
+  /*
+   * Trace icons + row borders (light): same hue/chroma as bar fills; darkened L for stroke contrast.
+   * Chromatic drop-shadow mimics the “glow” of solid bars; neutral shadow matches .trace-waterfall-bar-*.
+   */
   .trace-waterfall-glyph-prompt {
-    color: var(--trace-waterfall-accent-prompt);
+    color: oklch(from var(--trace-waterfall-bar-prompt) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(0 0 5px oklch(from var(--trace-waterfall-bar-prompt) l c h / 0.5));
   }
   .trace-waterfall-glyph-llm {
-    color: var(--trace-waterfall-accent-llm);
+    color: oklch(from var(--trace-waterfall-bar-llm) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(0 0 5px oklch(from var(--trace-waterfall-bar-llm) l c h / 0.5));
   }
   .trace-waterfall-glyph-tool {
-    color: var(--trace-waterfall-accent-tool);
+    color: oklch(from var(--trace-waterfall-bar-tool) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(0 0 5px oklch(from var(--trace-waterfall-bar-tool) l c h / 0.5));
   }
   .trace-waterfall-glyph-step {
-    color: var(--trace-waterfall-accent-step);
+    color: oklch(from var(--trace-waterfall-bar-step) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(0 0 5px oklch(from var(--trace-waterfall-bar-step) l c h / 0.5));
   }
   .trace-waterfall-glyph-error {
-    color: var(--trace-waterfall-accent-error);
+    color: oklch(from var(--trace-waterfall-bar-error) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(0 0 5px oklch(from var(--trace-waterfall-bar-error) l c h / 0.5));
   }
 
-  /* Trace timeline — left border accent on rows */
   .trace-waterfall-row-accent-prompt {
-    border-left-color: var(--trace-waterfall-accent-prompt);
+    border-left-color: oklch(from var(--trace-waterfall-bar-prompt) calc(l - 0.36) c h);
   }
   .trace-waterfall-row-accent-llm {
-    border-left-color: var(--trace-waterfall-accent-llm);
+    border-left-color: oklch(from var(--trace-waterfall-bar-llm) calc(l - 0.36) c h);
   }
   .trace-waterfall-row-accent-tool {
-    border-left-color: var(--trace-waterfall-accent-tool);
+    border-left-color: oklch(from var(--trace-waterfall-bar-tool) calc(l - 0.36) c h);
   }
   .trace-waterfall-row-accent-step {
-    border-left-color: var(--trace-waterfall-accent-step);
+    border-left-color: oklch(from var(--trace-waterfall-bar-step) calc(l - 0.36) c h);
   }
   .trace-waterfall-row-accent-error {
+    border-left-color: oklch(from var(--trace-waterfall-bar-error) calc(l - 0.36) c h);
+  }
+
+  .dark .trace-waterfall-glyph-prompt,
+  .app-theme-scope.dark .trace-waterfall-glyph-prompt {
+    color: var(--trace-waterfall-accent-prompt);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(0 0 6px oklch(from var(--trace-waterfall-bar-prompt) l c h / 0.45));
+  }
+  .dark .trace-waterfall-glyph-llm,
+  .app-theme-scope.dark .trace-waterfall-glyph-llm {
+    color: var(--trace-waterfall-accent-llm);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(0 0 6px oklch(from var(--trace-waterfall-bar-llm) l c h / 0.45));
+  }
+  .dark .trace-waterfall-glyph-tool,
+  .app-theme-scope.dark .trace-waterfall-glyph-tool {
+    color: var(--trace-waterfall-accent-tool);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(0 0 6px oklch(from var(--trace-waterfall-bar-tool) l c h / 0.45));
+  }
+  .dark .trace-waterfall-glyph-step,
+  .app-theme-scope.dark .trace-waterfall-glyph-step {
+    color: var(--trace-waterfall-accent-step);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(0 0 6px oklch(from var(--trace-waterfall-bar-step) l c h / 0.45));
+  }
+  .dark .trace-waterfall-glyph-error,
+  .app-theme-scope.dark .trace-waterfall-glyph-error {
+    color: var(--trace-waterfall-accent-error);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(0 0 6px oklch(from var(--trace-waterfall-bar-error) l c h / 0.45));
+  }
+
+  .dark .trace-waterfall-row-accent-prompt,
+  .app-theme-scope.dark .trace-waterfall-row-accent-prompt {
+    border-left-color: var(--trace-waterfall-accent-prompt);
+  }
+  .dark .trace-waterfall-row-accent-llm,
+  .app-theme-scope.dark .trace-waterfall-row-accent-llm {
+    border-left-color: var(--trace-waterfall-accent-llm);
+  }
+  .dark .trace-waterfall-row-accent-tool,
+  .app-theme-scope.dark .trace-waterfall-row-accent-tool {
+    border-left-color: var(--trace-waterfall-accent-tool);
+  }
+  .dark .trace-waterfall-row-accent-step,
+  .app-theme-scope.dark .trace-waterfall-row-accent-step {
+    border-left-color: var(--trace-waterfall-accent-step);
+  }
+  .dark .trace-waterfall-row-accent-error,
+  .app-theme-scope.dark .trace-waterfall-row-accent-error {
     border-left-color: var(--trace-waterfall-accent-error);
   }
 }

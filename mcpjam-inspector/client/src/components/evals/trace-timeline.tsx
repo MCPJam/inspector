@@ -11,6 +11,7 @@ import {
   Bot,
   ChevronDown,
   ChevronRight,
+  Clock,
   Layers,
   ListTree,
   MessageSquareQuote,
@@ -1923,7 +1924,7 @@ export function TraceTimeline({
                   className="grid pr-4"
                   style={{
                     gridTemplateColumns:
-                      "minmax(140px, 260px) minmax(0, 1fr) auto",
+                      "minmax(140px, 260px) minmax(0, 1fr) minmax(5.25rem, max-content)",
                     gridTemplateRows: `auto repeat(${rows.length}, minmax(48px, auto))`,
                   }}
                 >
@@ -1960,10 +1961,15 @@ export function TraceTimeline({
               </div>
             </div>
             <div
-              className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-3 py-3 backdrop-blur"
+              className="sticky top-0 z-20 border-b border-l border-border/50 bg-background/95 px-3 py-3 pl-4 backdrop-blur"
               style={{ gridColumn: 3, gridRow: 1 }}
             >
-              <span className="sr-only">Duration</span>
+              <div className="relative flex h-8 items-center justify-start gap-1.5">
+                <Clock className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Latency
+                </span>
+              </div>
             </div>
 
             {rows.length > 0 ? (
@@ -2057,11 +2063,11 @@ export function TraceTimeline({
                       style={{
                         gridColumn: "1 / 4",
                         gridRow,
-                        gridTemplateColumns:
-                          "minmax(140px, 260px) minmax(0, 1fr) auto",
+                        display: "grid",
+                        gridTemplateColumns: "subgrid",
                       }}
                       className={cn(
-                        "group grid min-w-0",
+                        "group min-w-0",
                         isSelected &&
                           "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
                       )}
@@ -2176,12 +2182,13 @@ export function TraceTimeline({
                         data-testid="trace-row-duration-hit"
                         data-state={isSelected ? "selected" : undefined}
                         className={cn(
-                          "flex h-full min-h-[48px] items-center justify-end whitespace-nowrap border-b border-border/40 px-3 py-2 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
+                          "flex h-full min-h-[48px] items-center justify-start gap-1.5 whitespace-nowrap border-b border-l border-border/40 px-3 py-2 pl-4 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
                           sharedCellClass,
                         )}
                         aria-label={`Select row duration (${durationLabel})`}
                         onClick={selectRow}
                       >
+                        <Clock className="size-3 shrink-0 opacity-80" aria-hidden />
                         {durationLabel}
                       </button>
                     </motion.div>
