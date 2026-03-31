@@ -204,6 +204,8 @@ export function SandboxEditor({
       setAllowGuestAccess(true);
       setMode("any_signed_in_with_link");
       setSelectedServerIds([]);
+      setOptionalServerIds([]);
+      setPreviewEnabledOptionalIds([]);
       setIsEditingTitle(true);
       setIsPreviewOpen(false);
       setPreviewChatKey(0);
