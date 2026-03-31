@@ -4,6 +4,9 @@ import type { SandboxFlowNode } from "./types";
 export const SANDBOX_BUILDER_NODE_WIDTH = 280;
 export const SANDBOX_BUILDER_NODE_HEIGHT = 128;
 
+/** Chat / host node id from `buildSandboxCanvas` — used to center the viewport on load. */
+export const SANDBOX_BUILDER_HOST_NODE_ID = "host";
+
 interface SandboxCanvasBounds {
   minX: number;
   minY: number;

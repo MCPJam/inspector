@@ -75,6 +75,25 @@ const httpsServer = {
 };
 
 describe("SandboxBuilderView", () => {
+  it("exposes return navigation as an icon button with a descriptive label", () => {
+    const draft = SANDBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
+      "openai/gpt-5-mini",
+    );
+    render(
+      <SandboxBuilderView
+        workspaceId="ws-1"
+        workspaceServers={[httpsServer]}
+        draft={draft}
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Return to sandboxes" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows setup-mode bottom CTA only in setup mode", () => {
     const draft = SANDBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
       "openai/gpt-5-mini",

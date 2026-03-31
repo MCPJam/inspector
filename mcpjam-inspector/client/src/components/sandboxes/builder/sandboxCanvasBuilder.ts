@@ -8,7 +8,10 @@ import type {
   SandboxFlowNode,
 } from "./types";
 import { getModelById } from "@/shared/types";
-import { SANDBOX_BUILDER_NODE_WIDTH } from "./sandbox-canvas-viewport";
+import {
+  SANDBOX_BUILDER_HOST_NODE_ID,
+  SANDBOX_BUILDER_NODE_WIDTH,
+} from "./sandbox-canvas-viewport";
 
 const SECTION_Y = {
   host: 0,
@@ -133,7 +136,7 @@ export function buildSandboxCanvas(
     : [];
 
   const nodeMap: Record<string, SandboxBuilderNodeData> = {
-    host: resolveHostState(context),
+    [SANDBOX_BUILDER_HOST_NODE_ID]: resolveHostState(context),
   };
 
   const serverRowCount = Math.max(1, selectedServerIds.length);
@@ -143,7 +146,12 @@ export function buildSandboxCanvas(
   const serverX = centerRow(serverRowCount, totalWidth);
 
   const nodes: SandboxFlowNode[] = [
-    createNode("host", hostX, SECTION_Y.host + 44, nodeMap.host),
+    createNode(
+      SANDBOX_BUILDER_HOST_NODE_ID,
+      hostX,
+      SECTION_Y.host + 44,
+      nodeMap[SANDBOX_BUILDER_HOST_NODE_ID],
+    ),
   ];
 
   selectedServerIds.forEach((serverId, index) => {
@@ -163,7 +171,7 @@ export function buildSandboxCanvas(
   const edges: Edge[] = [
     ...selectedServerIds.map((serverId) => ({
       id: `host-server-${serverId}`,
-      source: "host",
+      source: SANDBOX_BUILDER_HOST_NODE_ID,
       target: `server:${serverId}`,
       ...edgeDefaults,
     })),

@@ -160,13 +160,15 @@ function SandboxBuilderChrome({
       <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
         <div className="flex min-w-0 items-center gap-3">
           <Button
+            type="button"
             variant="ghost"
-            size="sm"
-            className="rounded-xl"
+            size="icon"
+            className="size-8 shrink-0 rounded-xl"
             onClick={onBack}
+            aria-label="Return to sandboxes"
+            title="Return to sandboxes"
           >
-            <ArrowLeft className="mr-1.5 size-4" />
-            Back
+            <ArrowLeft className="size-4" aria-hidden />
           </Button>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -1011,7 +1013,7 @@ export function SandboxBuilderView({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <SandboxBuilderChrome
-        title={viewMode === "usage" ? "Usage" : viewModel.title}
+        title={viewModel.title}
         subtitle={
           viewMode === "usage"
             ? (sandbox?.description ?? undefined)
@@ -1255,10 +1257,16 @@ export function SandboxBuilderView({
                           <SandboxCanvas
                             viewModel={viewModel}
                             selectedNodeId={selectedNodeId}
-                            onAddServer={() => {
-                              setFocusedSetupSection("servers");
-                              setIsSetupSheetOpen(true);
-                              setIsAddServerOpen(true);
+                            canvasServerPicker={{
+                              workspaceServers,
+                              selectedServerIds:
+                                draftSandboxConfig.selectedServerIds,
+                              onToggleServer: handleToggleServer,
+                              onOpenAddWorkspaceServer: () => {
+                                setFocusedSetupSection("servers");
+                                setIsSetupSheetOpen(true);
+                                setIsAddServerOpen(true);
+                              },
                             }}
                             onSelectNode={(nodeId) => {
                               setSelectedNodeId(nodeId);

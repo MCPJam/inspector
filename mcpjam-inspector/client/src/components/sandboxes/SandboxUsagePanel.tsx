@@ -64,15 +64,6 @@ export function SandboxUsagePanel({ sandbox }: SandboxUsagePanelProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b px-5 py-4">
-        <h2 className="truncate text-lg font-semibold">{sandbox.name}</h2>
-        {sandbox.description && (
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {sandbox.description}
-          </p>
-        )}
-      </div>
-
       <div className="flex flex-wrap gap-2 border-b px-5 py-3">
         {FILTER_OPTIONS.map(({ id, label }) => (
           <Button

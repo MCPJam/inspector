@@ -165,6 +165,61 @@ function updateSelectedServerIds(
     : currentServerIds;
 }
 
+/** Shared checklist of workspace HTTP(S) servers; used in Setup and on the canvas + control. */
+export function WorkspaceServerPickerList({
+  workspaceServers,
+  selectedServerIds,
+  onToggleSelection,
+}: {
+  workspaceServers: RemoteServer[];
+  selectedServerIds: string[];
+  onToggleSelection: (serverId: string, checked: boolean) => void;
+}) {
+  const availableServers = workspaceServers.filter(
+    (server) => server.transportType === "http",
+  );
+  const selectedServerSet = new Set(selectedServerIds);
+
+  if (availableServers.length === 0) {
+    return (
+      <p className="px-2 py-1.5 text-sm text-muted-foreground">
+        No HTTP servers in this workspace. Use Add to create one.
+      </p>
+    );
+  }
+
+  return (
+    <div className="max-h-56 overflow-y-auto">
+      {availableServers.map((server) => {
+        const insecure = isInsecureUrl(server.url);
+        return (
+          <label
+            key={server._id}
+            className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
+            title={
+              insecure ? "Sandboxes require HTTPS server URLs" : undefined
+            }
+          >
+            <Checkbox
+              checked={!insecure && selectedServerSet.has(server._id)}
+              onCheckedChange={(checked) =>
+                onToggleSelection(server._id, checked === true)
+              }
+              disabled={insecure}
+            />
+            <span className="flex-1 text-sm">{server.name}</span>
+            {insecure ? (
+              <span className="text-[10px] text-destructive">
+                Requires HTTPS
+              </span>
+            ) : null}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ServerSelectionEditor({
   workspaceServers,
   selectedServerIds,
@@ -230,42 +285,11 @@ export function ServerSelectionEditor({
             className="w-[var(--radix-popover-trigger-width)] p-1"
             align="start"
           >
-            {availableServers.length === 0 ? (
-              <p className="px-2 py-1.5 text-sm text-muted-foreground">
-                No HTTP servers in this workspace. Use Add to create one.
-              </p>
-            ) : (
-              <div className="max-h-56 overflow-y-auto">
-                {availableServers.map((server) => {
-                  const insecure = isInsecureUrl(server.url);
-                  return (
-                    <label
-                      key={server._id}
-                      className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
-                      title={
-                        insecure
-                          ? "Sandboxes require HTTPS server URLs"
-                          : undefined
-                      }
-                    >
-                      <Checkbox
-                        checked={!insecure && selectedServerSet.has(server._id)}
-                        onCheckedChange={(checked) =>
-                          onToggleSelection(server._id, checked === true)
-                        }
-                        disabled={insecure}
-                      />
-                      <span className="flex-1 text-sm">{server.name}</span>
-                      {insecure ? (
-                        <span className="text-[10px] text-destructive">
-                          Requires HTTPS
-                        </span>
-                      ) : null}
-                    </label>
-                  );
-                })}
-              </div>
-            )}
+            <WorkspaceServerPickerList
+              workspaceServers={workspaceServers}
+              selectedServerIds={selectedServerIds}
+              onToggleSelection={onToggleSelection}
+            />
           </PopoverContent>
         </Popover>
         <Button
@@ -807,7 +831,7 @@ export function SetupChecklistPanel({
             >
               <SetupSectionCollapsibleTrigger
                 step={4}
-                title="Welcome dialog"
+                title="Welcome Dialog"
                 statusKind={statuses.welcome}
               />
               <CollapsibleContent className="pt-3 pb-1">

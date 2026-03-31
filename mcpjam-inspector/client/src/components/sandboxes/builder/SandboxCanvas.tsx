@@ -18,7 +18,6 @@ import {
   SmoothStepEdge,
   useNodesInitialized,
   useReactFlow,
-  type HandleProps,
   type Node,
   type NodeProps,
   type EdgeProps,
@@ -28,10 +27,17 @@ import "@xyflow/react/dist/style.css";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import type { RemoteServer } from "@/hooks/useWorkspaces";
+import { WorkspaceServerPickerList } from "@/components/sandboxes/builder/setup-checklist-panel";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { getSandboxHostLogo } from "@/lib/sandbox-host-style";
 import { cn } from "@/lib/utils";
@@ -40,9 +46,23 @@ import type {
   SandboxBuilderViewModel,
   SandboxSectionLabelData,
 } from "./types";
-import { getSandboxCanvasLayoutSignature } from "./sandbox-canvas-viewport";
+import {
+  getSandboxCanvasLayoutSignature,
+  SANDBOX_BUILDER_HOST_NODE_ID,
+  SANDBOX_BUILDER_NODE_HEIGHT,
+  SANDBOX_BUILDER_NODE_WIDTH,
+} from "./sandbox-canvas-viewport";
 
-const SandboxCanvasContext = createContext<{ onAddServer?: () => void }>({});
+export type SandboxCanvasServerPickerProps = {
+  workspaceServers: RemoteServer[];
+  selectedServerIds: string[];
+  onToggleServer: (serverId: string, checked: boolean) => void;
+  onOpenAddWorkspaceServer: () => void;
+};
+
+const SandboxCanvasContext = createContext<{
+  canvasServerPicker?: SandboxCanvasServerPickerProps;
+}>({});
 
 const CHIP_STYLES = {
   neutral: "border-border/70 bg-muted/40 text-muted-foreground",
@@ -83,31 +103,14 @@ function hasBottomHandle(kind: SandboxBuilderNodeData["kind"]) {
   return kind === "host";
 }
 
-function ButtonHandle({
-  onClick,
-  ...handleProps
-}: Omit<HandleProps, "children"> & { onClick?: () => void }) {
-  return (
-    <>
-      <Handle {...handleProps} />
-      <div className="absolute left-1/2 bottom-0 -translate-x-1/2 translate-y-full flex flex-col items-center pointer-events-none">
-        <div className="h-10 w-px border-l border-dashed border-border/60" />
-        <button
-          type="button"
-          onClick={onClick}
-          className="nodrag nopan pointer-events-auto flex size-7 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-primary hover:text-primary-foreground hover:border-primary"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-    </>
-  );
-}
+const plusHandleButtonClass =
+  "nodrag nopan pointer-events-auto flex size-7 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-primary hover:text-primary-foreground hover:border-primary";
 
 const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
   const { data, selected } = props;
+  const [canvasPickerOpen, setCanvasPickerOpen] = useState(false);
   const Icon = getNodeIcon(data.kind);
-  const { onAddServer } = useContext(SandboxCanvasContext);
+  const { canvasServerPicker } = useContext(SandboxCanvasContext);
   const isHostPreview = data.kind === "host";
   const hostStyle = data.hostStyle ?? "claude";
   const hostLogoSrc = isHostPreview ? getSandboxHostLogo(hostStyle) : null;
@@ -220,13 +223,76 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
       )}
 
       {data.kind === "host" ? (
-        <ButtonHandle
-          type="source"
-          position={Position.Bottom}
-          id="bottom"
-          className={handleClass}
-          onClick={onAddServer}
-        />
+        <>
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="bottom"
+            className={handleClass}
+          />
+          <div className="absolute left-1/2 bottom-0 -translate-x-1/2 translate-y-full flex flex-col items-center pointer-events-none">
+            <div className="h-10 w-px border-l border-dashed border-border/60" />
+            {canvasServerPicker ? (
+              <Popover
+                open={canvasPickerOpen}
+                onOpenChange={setCanvasPickerOpen}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Add workspace servers to sandbox"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    className={plusHandleButtonClass}
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="bottom"
+                  align="center"
+                  sideOffset={8}
+                  className="w-80 p-0 z-[100]"
+                >
+                  <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                    Pick HTTPS servers from your workspace for this sandbox.
+                  </p>
+                  <div className="p-1">
+                    <WorkspaceServerPickerList
+                      workspaceServers={canvasServerPicker.workspaceServers}
+                      selectedServerIds={canvasServerPicker.selectedServerIds}
+                      onToggleSelection={(serverId, checked) => {
+                        canvasServerPicker.onToggleServer(serverId, checked);
+                      }}
+                    />
+                  </div>
+                  <div className="border-t border-border/60 p-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-9 w-full justify-start gap-2 rounded-md px-2 text-sm text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setCanvasPickerOpen(false);
+                        canvasServerPicker.onOpenAddWorkspaceServer();
+                      }}
+                    >
+                      <Plus className="size-4 shrink-0" />
+                      Add server to workspace…
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            ) : (
+              <button
+                type="button"
+                className={plusHandleButtonClass}
+                aria-label="Add server"
+              >
+                <Plus className="size-3.5" />
+              </button>
+            )}
+          </div>
+        </>
       ) : hasBottomHandle(data.kind) ? (
         <Handle
           type="source"
@@ -291,7 +357,12 @@ function CanvasViewportController({
   containerRef,
   layoutSignature,
 }: CanvasViewportControllerProps) {
-  const reactFlow = useReactFlow();
+  const {
+    fitBounds,
+    getNode,
+    getNodesBounds,
+    viewportInitialized,
+  } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const [containerBox, setContainerBox] = useState<{
     width: number;
@@ -335,7 +406,7 @@ function CanvasViewportController({
   }, [containerRef]);
 
   useEffect(() => {
-    if (!nodesInitialized || !layoutSignature) {
+    if (!viewportInitialized || !nodesInitialized || !layoutSignature) {
       return;
     }
     if (containerBox.width < 1 || containerBox.height < 1) {
@@ -343,19 +414,43 @@ function CanvasViewportController({
     }
 
     const timer = window.setTimeout(() => {
-      reactFlow.fitView({
-        padding: VIEWPORT_FIT_PADDING,
-        duration: VIEWPORT_ANIMATION_DURATION,
+      /** Wait two frames so panZoom + store width/height match the visible pane. */
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          let bounds = getNodesBounds([SANDBOX_BUILDER_HOST_NODE_ID]);
+          if (
+            !Number.isFinite(bounds.width) ||
+            !Number.isFinite(bounds.height) ||
+            bounds.width < 16 ||
+            bounds.height < 16
+          ) {
+            const node = getNode(SANDBOX_BUILDER_HOST_NODE_ID);
+            if (!node) return;
+            bounds = {
+              x: node.position.x,
+              y: node.position.y,
+              width: SANDBOX_BUILDER_NODE_WIDTH,
+              height: SANDBOX_BUILDER_NODE_HEIGHT,
+            };
+          }
+          void fitBounds(bounds, {
+            padding: VIEWPORT_FIT_PADDING,
+            duration: VIEWPORT_ANIMATION_DURATION,
+          });
+        });
       });
     }, VIEWPORT_SETTLE_DELAY_MS);
 
     return () => window.clearTimeout(timer);
   }, [
+    viewportInitialized,
     nodesInitialized,
     layoutSignature,
     containerBox.width,
     containerBox.height,
-    reactFlow,
+    fitBounds,
+    getNode,
+    getNodesBounds,
   ]);
 
   return null;
@@ -366,7 +461,7 @@ interface SandboxCanvasProps {
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
-  onAddServer?: () => void;
+  canvasServerPicker?: SandboxCanvasServerPickerProps;
 }
 
 export function SandboxCanvas({
@@ -374,7 +469,7 @@ export function SandboxCanvas({
   selectedNodeId,
   onSelectNode,
   onClearSelection,
-  onAddServer,
+  canvasServerPicker,
 }: SandboxCanvasProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const nodes = viewModel.nodes.map((node) =>
@@ -389,7 +484,10 @@ export function SandboxCanvas({
     () => getSandboxCanvasLayoutSignature(viewModel.nodes),
     [viewModel.nodes],
   );
-  const ctxValue = useMemo(() => ({ onAddServer }), [onAddServer]);
+  const ctxValue = useMemo(
+    () => ({ canvasServerPicker }),
+    [canvasServerPicker],
+  );
 
   return (
     <SandboxCanvasContext.Provider value={ctxValue}>
