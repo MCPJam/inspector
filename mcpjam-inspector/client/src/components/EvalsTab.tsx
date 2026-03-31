@@ -38,6 +38,7 @@ import { getServerUrl } from "@/components/connection/server-card-utils";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { EvalCase } from "./evals/types";
 import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
+import { getPersistedTestCaseModelValue } from "./evals/single-test-case-runner";
 
 interface EvalsTabProps {
   selectedServer?: string;
@@ -310,8 +311,10 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const handleRunSelectedExploreCase = useCallback(
     async (testCase: EvalCase) => {
       if (!exploreSuite) return;
+      const selectedModel = getPersistedTestCaseModelValue(testCase._id);
       await handlers.handleRunTestCase(exploreSuite, testCase, {
         location: "test_case_list_sidebar",
+        selectedModel,
       });
     },
     [exploreSuite, handlers],

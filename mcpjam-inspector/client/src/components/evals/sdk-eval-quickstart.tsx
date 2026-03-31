@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import {
   Check,
-  ChevronDown,
-  ChevronRight,
-  Clock,
   Copy,
+  ExternalLink,
+  Loader2,
   RefreshCw,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,20 +23,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import {
-  Accordion,
-  AccordionContent,
-  AccordionItem,
-  AccordionTrigger,
-} from "@/components/ui/accordion";
-import { Accordion as AccordionRx } from "radix-ui";
-import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -175,6 +160,10 @@ describe("MCP eval quickstart", () => {
   );
 });`;
 
+/* ------------------------------------------------------------------ */
+/*  Shared helpers                                                     */
+/* ------------------------------------------------------------------ */
+
 function QuickstartCodeBlock({
   code,
   copyLabel,
@@ -254,6 +243,38 @@ function QuickstartCodeBlock({
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  StepCard                                                           */
+/* ------------------------------------------------------------------ */
+
+function StepCard({
+  step,
+  title,
+  children,
+}: {
+  step: number;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/50 px-5 py-4">
+      <div className="mb-3 flex items-center gap-2.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary ring-1 ring-primary/20">
+          {step}
+        </span>
+        <h3 className="text-sm font-semibold tracking-tight text-foreground">
+          {title}
+        </h3>
+      </div>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  API key management                                                 */
+/* ------------------------------------------------------------------ */
+
 type ApiKeyListEntry = {
   _id: string;
   workspaceId?: string;
@@ -264,143 +285,204 @@ type ApiKeyListEntry = {
   revokedAt: number | null;
 };
 
-function EnvSnippetsTabs({
-  shellCode,
-  dotenvCode,
+function ApiKeyRow({
+  isAuthLoading,
+  isAuthenticated,
+  workspaceId,
+  maybeApiKey,
+  existingKey,
+  plaintextKey,
+  isGenerating,
+  isConfirmRegenerateOpen,
+  setIsConfirmRegenerateOpen,
+  onSignIn,
+  onGenerate,
+  onCopyKey,
+  headerCopied,
 }: {
-  shellCode: string;
-  dotenvCode: string;
+  isAuthLoading: boolean;
+  isAuthenticated: boolean;
+  workspaceId: string | null;
+  maybeApiKey: ApiKeyListEntry[] | undefined;
+  existingKey: ApiKeyListEntry | null;
+  plaintextKey: string | null;
+  isGenerating: boolean;
+  isConfirmRegenerateOpen: boolean;
+  setIsConfirmRegenerateOpen: (open: boolean) => void;
+  onSignIn: () => void;
+  onGenerate: () => Promise<boolean>;
+  onCopyKey: () => void;
+  headerCopied: boolean;
 }) {
-  const [tab, setTab] = useState("shell");
-  const [copied, setCopied] = useState(false);
-  const activeCode = tab === "shell" ? shellCode : dotenvCode;
-  const activeFormat = tab === "shell" ? "Shell exports" : ".env file";
+  if (isAuthLoading) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Checking...</span>
+      </div>
+    );
+  }
 
-  const handleCopy = useCallback(async () => {
-    const ok = await copyToClipboard(activeCode);
-    if (ok) {
-      toast.success("Copied to clipboard");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } else {
-      toast.error("Could not copy");
-    }
-  }, [activeCode]);
+  if (!isAuthenticated) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <Button type="button" size="sm" variant="outline" className="text-xs" onClick={onSignIn}>
+          Sign in
+        </Button>
+      </div>
+    );
+  }
 
-  return (
-    <div className="overflow-hidden rounded-lg border border-border bg-muted/30">
-      <Tabs value={tab} onValueChange={setTab} className="gap-0">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 bg-muted/50 px-3 py-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Environment
+  if (!workspaceId) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <span className="text-xs text-muted-foreground">
+          Select a workspace first
+        </span>
+      </div>
+    );
+  }
+
+  if (maybeApiKey === undefined) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Loading key...</span>
+      </div>
+    );
+  }
+
+  if (plaintextKey) {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2">
+          <span className="shrink-0 text-xs font-medium text-muted-foreground">
+            MCPJAM_API_KEY
           </span>
-          <div className="flex flex-wrap items-center gap-2">
-            <TabsList className="h-8 bg-transparent p-0">
-              <TabsTrigger value="shell" className="h-8 px-2.5 text-xs">
-                Shell
-              </TabsTrigger>
-              <TabsTrigger value="dotenv" className="h-8 px-2.5 text-xs">
-                .env
-              </TabsTrigger>
-            </TabsList>
-            <span className="hidden text-[10px] text-muted-foreground/80 sm:inline">
-              {activeFormat}
-            </span>
-            <button
-              type="button"
-              onClick={handleCopy}
-              aria-label="Copy environment variables"
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            >
-              {copied ? (
-                <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
-              ) : (
-                <Copy className="h-4 w-4" />
-              )}
-            </button>
+          <div className="relative min-w-0 flex-1">
+            <Input
+              readOnly
+              value={plaintextKey}
+              className="h-8 truncate pr-9 font-mono text-xs"
+              aria-label="Workspace API key"
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0.5 top-0.5 h-7 w-7"
+                  onClick={onCopyKey}
+                >
+                  {headerCopied ? (
+                    <Check className="h-3.5 w-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Copy API key</TooltipContent>
+            </Tooltip>
           </div>
         </div>
-        <TabsContent value="shell" className="mt-0">
-          <pre className="max-h-[min(360px,50vh)] overflow-auto px-4 py-3.5 text-left font-mono text-[11px] leading-relaxed text-foreground sm:text-xs">
-            <code>{shellCode}</code>
-          </pre>
-        </TabsContent>
-        <TabsContent value="dotenv" className="mt-0">
-          <pre className="max-h-[min(360px,50vh)] overflow-auto px-4 py-3.5 text-left font-mono text-[11px] leading-relaxed text-foreground sm:text-xs">
-            <code>{dotenvCode}</code>
-          </pre>
-        </TabsContent>
-      </Tabs>
+      </TooltipProvider>
+    );
+  }
+
+  if (!existingKey) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="default"
+          className="text-xs"
+          disabled={isGenerating}
+          onClick={() => void onGenerate()}
+        >
+          {isGenerating ? "Generating..." : "Generate API key"}
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <span className="font-mono text-xs text-muted-foreground/70">
+          mcpjam_{existingKey.prefix}_...
+        </span>
+      </div>
+      <AlertDialog
+        open={isConfirmRegenerateOpen}
+        onOpenChange={setIsConfirmRegenerateOpen}
+      >
+        <AlertDialogTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            disabled={isGenerating}
+          >
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", isGenerating && "animate-spin")}
+            />
+            {isGenerating ? "Regenerating..." : "Regenerate"}
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerate workspace API key?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This invalidates your current key immediately. Integrations using
+              the old key will stop working. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isGenerating}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isGenerating}
+              onClick={async (e) => {
+                e.preventDefault();
+                const ok = await onGenerate();
+                if (ok) setIsConfirmRegenerateOpen(false);
+              }}
+            >
+              {isGenerating ? "Regenerating..." : "Regenerate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Backward-compat exports (used by tests)                            */
+/* ------------------------------------------------------------------ */
 
 export const SDK_EVAL_QUICKSTART_CHECKLIST_STORAGE_KEY =
   "mcp-inspector-sdk-eval-quickstart-checklist" as const;
 
 export type SdkEvalQuickstartStepId = "install" | "configure" | "run";
 
-const QUICKSTART_STEPS: {
-  id: SdkEvalQuickstartStepId;
-  title: string;
-  minutes: number;
-}[] = [
-  { id: "install", title: "Install", minutes: 1 },
-  { id: "configure", title: "Configure environment", minutes: 3 },
-  { id: "run", title: "Run the quickstart", minutes: 2 },
-];
-
-function loadQuickstartCompleted(): Set<SdkEvalQuickstartStepId> {
-  try {
-    const raw = localStorage.getItem(SDK_EVAL_QUICKSTART_CHECKLIST_STORAGE_KEY);
-    if (!raw) return new Set();
-    const parsed = JSON.parse(raw) as string[];
-    const allowed = new Set<string>(["install", "configure", "run"]);
-    return new Set(
-      parsed.filter((id): id is SdkEvalQuickstartStepId => allowed.has(id)),
-    );
-  } catch {
-    return new Set();
-  }
-}
-
-function saveQuickstartCompleted(ids: Set<SdkEvalQuickstartStepId>) {
-  localStorage.setItem(
-    SDK_EVAL_QUICKSTART_CHECKLIST_STORAGE_KEY,
-    JSON.stringify([...ids]),
-  );
-}
-
-function useSdkEvalQuickstartChecklist() {
-  const [completed, setCompleted] = useState<Set<SdkEvalQuickstartStepId>>(
-    loadQuickstartCompleted,
-  );
-
-  useEffect(() => {
-    function handleStorage(e: StorageEvent) {
-      if (e.key === SDK_EVAL_QUICKSTART_CHECKLIST_STORAGE_KEY) {
-        setCompleted(loadQuickstartCompleted());
-      }
-    }
-    window.addEventListener("storage", handleStorage);
-    return () => window.removeEventListener("storage", handleStorage);
-  }, []);
-
-  const toggleComplete = useCallback((id: SdkEvalQuickstartStepId) => {
-    setCompleted((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      saveQuickstartCompleted(next);
-      return next;
-    });
-  }, []);
-
-  const checkedCount = completed.size;
-  const allDone = checkedCount === QUICKSTART_STEPS.length;
-
-  return { completed, toggleComplete, checkedCount, allDone };
-}
+/* ------------------------------------------------------------------ */
+/*  Main component                                                     */
+/* ------------------------------------------------------------------ */
 
 export type SdkEvalQuickstartProps = {
   workspaceId?: string | null;
@@ -413,8 +495,6 @@ export function SdkEvalQuickstart({
   const [isGenerating, setIsGenerating] = useState(false);
   const [headerCopied, setHeaderCopied] = useState(false);
   const [isConfirmRegenerateOpen, setIsConfirmRegenerateOpen] = useState(false);
-  const { completed, toggleComplete, checkedCount, allDone } =
-    useSdkEvalQuickstartChecklist();
 
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
   const { signIn } = useAuth();
@@ -440,7 +520,7 @@ export function SdkEvalQuickstart({
       const result = await regenerateAndGet({ workspaceId });
       setPlaintextKey(result.apiKey);
       toast.success(
-        "API key ready — copy it now; the full value is not shown again after you leave this page.",
+        "API key ready -- copy it now; the full value won't be shown again.",
       );
       return true;
     } catch (err) {
@@ -469,25 +549,32 @@ export function SdkEvalQuickstart({
   const activeKeys = maybeApiKey?.filter((k) => !k.revokedAt) ?? [];
   const existingKey = activeKeys.length > 0 ? activeKeys[0] : null;
 
-  const shellEnv = buildShellEnvSnippet(plaintextKey);
   const dotenvEnv = buildDotEnvSnippet(plaintextKey);
 
-  const apiKeyHeaderRight = (() => {
-    if (isAuthLoading) {
-      return (
-        <span className="text-xs text-muted-foreground tabular-nums">
-          Checking…
-        </span>
-      );
-    }
-    if (!isAuthenticated) {
-      return (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="text-xs"
-          onClick={() => {
+  return (
+    <div className="w-full max-w-2xl space-y-4">
+      {/* Step 1: Install */}
+      <StepCard step={1} title="Install">
+        <QuickstartCodeBlock
+          code={SDK_EVAL_QUICKSTART_INSTALL}
+          copyLabel="Copy install command"
+          toolbarLabel="Terminal"
+        />
+      </StepCard>
+
+      {/* Step 2: Set environment */}
+      <StepCard step={2} title="Set environment">
+        <ApiKeyRow
+          isAuthLoading={isAuthLoading}
+          isAuthenticated={isAuthenticated}
+          workspaceId={workspaceId}
+          maybeApiKey={maybeApiKey}
+          existingKey={existingKey}
+          plaintextKey={plaintextKey}
+          isGenerating={isGenerating}
+          isConfirmRegenerateOpen={isConfirmRegenerateOpen}
+          setIsConfirmRegenerateOpen={setIsConfirmRegenerateOpen}
+          onSignIn={() => {
             posthog.capture("login_button_clicked", {
               location: "sdk_eval_quickstart",
               platform: detectPlatform(),
@@ -495,442 +582,45 @@ export function SdkEvalQuickstart({
             });
             void signIn();
           }}
-        >
-          Sign in
-        </Button>
-      );
-    }
-    if (!workspaceId) {
-      return (
-        <span className="max-w-[220px] text-right text-xs text-muted-foreground">
-          Select a workspace to create or reveal an API key.
-        </span>
-      );
-    }
-    if (maybeApiKey === undefined) {
-      return (
-        <span className="text-xs text-muted-foreground">Loading key…</span>
-      );
-    }
-    if (plaintextKey) {
-      return (
-        <TooltipProvider delayDuration={300}>
-          <div className="flex max-w-full min-w-0 flex-1 items-center gap-2 sm:max-w-md">
-            <div className="relative min-w-0 flex-1">
-              <Input
-                readOnly
-                value={plaintextKey}
-                className="h-9 truncate pr-10 font-mono text-xs"
-                aria-label="Workspace API key"
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1 h-7 w-7"
-                    onClick={() => void handleCopyHeaderKey()}
-                  >
-                    {headerCopied ? (
-                      <Check className="h-3.5 w-3.5 text-green-600" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Copy API key</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-        </TooltipProvider>
-      );
-    }
-    if (!existingKey) {
-      return (
-        <Button
-          type="button"
-          size="sm"
-          variant="default"
-          className="shrink-0 text-xs"
-          disabled={isGenerating}
-          onClick={() => void runGenerate()}
-        >
-          {isGenerating ? "Generating…" : "Generate API key"}
-        </Button>
-      );
-    }
-    return (
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <span className="font-mono text-xs text-muted-foreground">
-          mcpjam_{existingKey.prefix}_••••••••
-        </span>
-        <AlertDialog
-          open={isConfirmRegenerateOpen}
-          onOpenChange={setIsConfirmRegenerateOpen}
-        >
-          <AlertDialogTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              disabled={isGenerating}
-            >
-              <RefreshCw
-                className={cn("h-3.5 w-3.5", isGenerating && "animate-spin")}
-              />
-              {isGenerating ? "Regenerating…" : "Regenerate"}
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Regenerate workspace API key?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This invalidates your current key immediately. Integrations
-                using the old key will stop working. This cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={isGenerating}>
-                Cancel
-              </AlertDialogCancel>
-              <AlertDialogAction
-                disabled={isGenerating}
-                onClick={async (e) => {
-                  e.preventDefault();
-                  const ok = await runGenerate();
-                  if (ok) setIsConfirmRegenerateOpen(false);
-                }}
-              >
-                {isGenerating ? "Regenerating…" : "Regenerate"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
-    );
-  })();
-
-  return (
-    <div className="w-full max-w-3xl text-left">
-      <Collapsible defaultOpen className="group mb-4">
-        <CollapsibleTrigger
-          className="flex w-full cursor-pointer items-baseline justify-between rounded-md px-3 pb-1.5 pt-2 hover:bg-muted/50"
-          aria-label="SDK eval quickstart — toggle checklist"
-        >
-          <div className="flex items-center gap-2">
-            <ChevronDown
-              aria-hidden
-              className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]:-rotate-90"
-            />
-            <div className="text-left">
-              <h2 className="text-sm font-semibold text-foreground">
-                SDK eval quickstart
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Add <span className="font-medium text-foreground/90">@mcpjam/sdk</span>,
-                set env, run your tests — evals show up here.
-              </p>
-            </div>
-          </div>
-          <span
-            className={`text-xs font-medium tabular-nums ${allDone ? "text-primary" : "text-muted-foreground"}`}
-          >
-            {checkedCount}/{QUICKSTART_STEPS.length}
-            {allDone ? " ✓" : ""}
+          onGenerate={runGenerate}
+          onCopyKey={() => void handleCopyHeaderKey()}
+          headerCopied={headerCopied}
+        />
+        <QuickstartCodeBlock
+          code={dotenvEnv}
+          copyLabel="Copy .env"
+          toolbarLabel=".env"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          <span>
+            Providers:{" "}
+            <span className="text-foreground/80">{SDK_TEST_AGENT_PROVIDERS}</span>
           </span>
-        </CollapsibleTrigger>
+          <a
+            className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
+            href={SDK_README_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            SDK README
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        </div>
+      </StepCard>
 
-        <CollapsibleContent>
-          <Accordion type="single" collapsible className="w-full">
-            {QUICKSTART_STEPS.map((step, index) => {
-              const n = index + 1;
-              const done = completed.has(step.id);
-              return (
-                <AccordionItem
-                  key={step.id}
-                  value={step.id}
-                  className="border-b border-border/40 last:border-b-0"
-                >
-                  <div className="flex w-full items-stretch">
-                    <div
-                      className="flex shrink-0 items-center self-center pl-2 pr-1"
-                      onPointerDown={(e) => e.stopPropagation()}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Checkbox
-                        checked={done}
-                        onCheckedChange={() => {
-                          toggleComplete(step.id);
-                        }}
-                      />
-                    </div>
-                    <AccordionRx.Header className="m-0 flex flex-1 p-0">
-                      <AccordionRx.Trigger
-                        className={cn(
-                          "group/trigger flex flex-1 items-center gap-3 rounded-md py-2.5 pr-3 pl-0 text-left transition-colors hover:bg-muted/50 hover:no-underline",
-                          "focus-visible:border-ring focus-visible:ring-ring/50 outline-none focus-visible:ring-[3px] disabled:pointer-events-none disabled:opacity-50",
-                        )}
-                      >
-                        <span
-                          className={cn(
-                            "w-5 shrink-0 text-sm tabular-nums",
-                            done
-                              ? "text-muted-foreground/60"
-                              : "text-muted-foreground",
-                          )}
-                        >
-                          {n}.
-                        </span>
-                        <span
-                          role="heading"
-                          aria-level={3}
-                          className={cn(
-                            "min-w-0 flex-1 text-base font-semibold tracking-tight",
-                            done
-                              ? "text-muted-foreground/60"
-                              : "text-foreground",
-                          )}
-                        >
-                          {step.title}
-                        </span>
-                        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground/70">
-                          <Clock className="h-3 w-3" />~{step.minutes} min
-                        </span>
-                        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/40 transition-colors group-hover/trigger:text-muted-foreground" />
-                      </AccordionRx.Trigger>
-                    </AccordionRx.Header>
-                  </div>
-                  <AccordionContent className="pb-4 pt-0">
-                    <div className="space-y-4 border-l-2 border-border/60 pl-4 sm:pl-5">
-                      {step.id === "install" ? (
-                        <>
-                          <QuickstartCodeBlock
-                            code={SDK_EVAL_QUICKSTART_INSTALL}
-                            copyLabel="Copy install command"
-                            toolbarLabel="bash"
-                          />
-                          <p className="text-sm text-muted-foreground">
-                            The runnable example in step 3 uses Vitest APIs—add{" "}
-                            <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-                              vitest
-                            </code>{" "}
-                            as a dev dependency if you paste it as-is, or adapt
-                            the file to your test runner.
-                          </p>
-                        </>
-                      ) : null}
-
-                      {step.id === "configure" ? (
-                        <>
-                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <p className="text-sm text-muted-foreground sm:max-w-[62%]">
-                              Set MCP, your eval model, and LLM credentials. Paste
-                              your workspace key into the snippet after you generate
-                              it.
-                            </p>
-                            <div className="flex shrink-0 flex-col gap-2 sm:items-end sm:pl-2">
-                              {apiKeyHeaderRight}
-                            </div>
-                          </div>
-                          <ul className="list-inside list-disc space-y-1.5 text-sm text-muted-foreground marker:text-primary/70">
-                            <li>
-                              Defaults target the{" "}
-                              <span className="font-medium text-foreground">
-                                MCPJam learning server
-                              </span>{" "}
-                              at{" "}
-                              <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                {LEARN_MCP_URL}
-                              </code>
-                              .
-                            </li>
-                            <li>
-                              Set{" "}
-                              <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                EVAL_MODEL
-                              </code>{" "}
-                              to{" "}
-                              <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                provider/model-id
-                              </code>{" "}
-                              (e.g.{" "}
-                              <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                openai/gpt-4o-mini
-                              </code>
-                              ).
-                            </li>
-                            <li>
-                              Set your vendor&apos;s API key (e.g. via{" "}
-                              <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                LLM_API_KEY
-                              </code>
-                              ) and match the name in your test file.
-                            </li>
-                          </ul>
-
-                          <Accordion
-                            type="multiple"
-                            className="rounded-lg border border-border/60"
-                          >
-                            <AccordionItem
-                              value="mcp-url"
-                              className="border-border/60 px-4"
-                            >
-                              <AccordionTrigger className="py-3 text-sm">
-                                Custom MCP server URL
-                              </AccordionTrigger>
-                              <AccordionContent className="space-y-2 text-muted-foreground">
-                                <p>
-                                  Override{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    MCP_SERVER_URL
-                                  </code>{" "}
-                                  in the snippet when you want to point at your
-                                  own MCP instead of the learning server (
-                                  {LEARN_MCP_URL}).
-                                </p>
-                              </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem
-                              value="providers"
-                              className="border-border/60 px-4"
-                            >
-                              <AccordionTrigger className="py-3 text-sm">
-                                Supported TestAgent providers
-                              </AccordionTrigger>
-                              <AccordionContent className="space-y-2 text-muted-foreground">
-                                <p>
-                                  <span className="font-medium text-foreground">
-                                    Eval LLM (TestAgent)
-                                  </span>{" "}
-                                  uses{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    EVAL_MODEL
-                                  </code>{" "}
-                                  as{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    provider/model-id
-                                  </code>
-                                  . Allowed providers:{" "}
-                                  <span className="break-words text-foreground/90">
-                                    {SDK_TEST_AGENT_PROVIDERS}
-                                  </span>
-                                  . Pick any model string your vendor documents for
-                                  that provider. Examples:{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    openai/gpt-4o-mini
-                                  </code>
-                                  ,{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    anthropic/claude-sonnet-4-20250514
-                                  </code>
-                                  ,{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    openrouter/openai/gpt-4o-mini
-                                  </code>
-                                  .
-                                </p>
-                                <p>
-                                  Set the matching API key env var for your
-                                  provider, or keep{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    LLM_API_KEY
-                                  </code>{" "}
-                                  and use the same name in the sample test file (
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    apiKey
-                                  </code>
-                                  ).
-                                </p>
-                              </AccordionContent>
-                            </AccordionItem>
-                            <AccordionItem
-                              value="docs"
-                              className="border-border/60 px-4"
-                            >
-                              <AccordionTrigger className="py-3 text-sm">
-                                Docs and patterns
-                              </AccordionTrigger>
-                              <AccordionContent className="space-y-2 text-muted-foreground">
-                                <p>
-                                  Generate or regenerate your workspace key above
-                                  to insert{" "}
-                                  <code className="rounded bg-muted px-1 font-mono text-xs text-foreground">
-                                    MCPJAM_API_KEY
-                                  </code>{" "}
-                                  into the snippet.
-                                </p>
-                                <p>
-                                  For more detail and patterns, see the{" "}
-                                  <a
-                                    className="font-medium text-primary underline-offset-4 hover:underline"
-                                    href={SDK_README_URL}
-                                    target="_blank"
-                                    rel="noreferrer noopener"
-                                  >
-                                    @mcpjam/sdk README
-                                  </a>
-                                  .
-                                </p>
-                              </AccordionContent>
-                            </AccordionItem>
-                          </Accordion>
-
-                          {!plaintextKey ? (
-                            <p className="text-xs text-muted-foreground">
-                              API keys are only shown in full right after you create
-                              or regenerate them. If you already have a key, use
-                              Regenerate to reveal a new one here.
-                            </p>
-                          ) : null}
-
-                          <EnvSnippetsTabs
-                            shellCode={shellEnv}
-                            dotenvCode={dotenvEnv}
-                          />
-                        </>
-                      ) : null}
-
-                      {step.id === "run" ? (
-                        <>
-                          <p className="text-sm text-muted-foreground">
-                            Save the sample test, run it once with your test runner,
-                            and your suite and run show up here.
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            Save as{" "}
-                            <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-                              mcp-eval.quickstart.test.ts
-                            </code>{" "}
-                            next to your config.
-                          </p>
-                          <QuickstartCodeBlock
-                            code={SDK_EVAL_QUICKSTART_RUN}
-                            copyLabel="Copy quickstart test file"
-                            toolbarLabel="TypeScript"
-                          />
-                          <p className="text-sm text-muted-foreground">
-                            <span className="font-medium text-foreground/90">
-                              Example (Vitest):
-                            </span>{" "}
-                            <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs text-foreground">
-                              npx vitest mcp-eval.quickstart.test.ts
-                            </code>
-                            . After a successful run, your suite and run appear in
-                            this view.
-                          </p>
-                        </>
-                      ) : null}
-                    </div>
-                  </AccordionContent>
-                </AccordionItem>
-              );
-            })}
-          </Accordion>
-        </CollapsibleContent>
-      </Collapsible>
+      {/* Step 3: Run */}
+      <StepCard step={3} title="Run the test">
+        <QuickstartCodeBlock
+          code={SDK_EVAL_QUICKSTART_RUN}
+          copyLabel="Copy quickstart test file"
+          toolbarLabel="mcp-eval.quickstart.test.ts"
+        />
+        <QuickstartCodeBlock
+          code="npx vitest mcp-eval.quickstart.test.ts"
+          copyLabel="Copy run command"
+          toolbarLabel="Terminal"
+        />
+      </StepCard>
     </div>
   );
 }

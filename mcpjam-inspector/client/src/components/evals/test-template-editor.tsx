@@ -33,7 +33,13 @@ import {
   useAiProviderKeys,
 } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { prepareSingleTestCaseRun } from "./single-test-case-runner";
+import type { ModelDefinition } from "@/shared/types";
+import {
+  buildTestCaseModelOptions,
+  prepareSingleTestCaseRun,
+  resolveSelectedTestCaseModelValue,
+  setPersistedTestCaseModelValue,
+} from "./single-test-case-runner";
 
 interface TestTemplate {
   title: string;
@@ -54,6 +60,7 @@ interface TestTemplateEditorProps {
   selectedTestCaseId: string;
   connectedServerNames: Set<string>;
   workspaceId: string | null;
+  availableModels: ModelDefinition[];
 }
 
 const validateExpectedToolCalls = (
@@ -124,6 +131,7 @@ export function TestTemplateEditor({
   selectedTestCaseId,
   connectedServerNames,
   workspaceId,
+  availableModels,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -445,23 +453,24 @@ export function TestTemplateEditor({
     }
   };
 
-  // Use models from the test case (which come from the suite configuration)
+  // Offer the full eval model set while keeping the case's saved model selectable.
   const modelOptions = useMemo(() => {
-    if (!currentTestCase) return [];
-    const models = currentTestCase.models || [];
-    return models.map((m: any) => ({
-      value: `${m.provider}/${m.model}`,
-      label: m.model, // Show only model name, not provider
-      provider: m.provider,
-    }));
-  }, [currentTestCase]);
+    return buildTestCaseModelOptions(availableModels, currentTestCase);
+  }, [availableModels, currentTestCase]);
 
-  // Auto-select first model if none selected
   useEffect(() => {
-    if (modelOptions.length > 0 && !selectedModel) {
-      setSelectedModel(modelOptions[0].value);
-    }
-  }, [modelOptions, selectedModel]);
+    const nextSelectedModel = resolveSelectedTestCaseModelValue({
+      testCaseId: currentTestCase?._id ?? selectedTestCaseId,
+      testCase: currentTestCase,
+      modelOptions,
+    });
+
+    setSelectedModel(nextSelectedModel ?? "");
+  }, [currentTestCase, modelOptions, selectedTestCaseId]);
+
+  useEffect(() => {
+    setPersistedTestCaseModelValue(selectedTestCaseId, selectedModel || null);
+  }, [selectedModel, selectedTestCaseId]);
 
   if (!currentTestCase) {
     return (

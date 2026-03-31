@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { Eye, GitBranch, Loader2 } from "lucide-react";
+import { Eye, GitBranch, Loader2, Play } from "lucide-react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
 import {
   Breadcrumb,
@@ -16,7 +17,6 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -597,32 +597,45 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           ) : !hasVisibleSuites ? (
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
               <div className="mx-auto w-full max-w-3xl px-6 py-8 pb-12">
-                <div className="mb-8 text-center">
-                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
-                    <GitBranch className="h-7 w-7 text-primary" />
+                <div className="mb-6 text-center">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
+                    <GitBranch className="h-6 w-6 text-primary" />
                   </div>
-                  <h2 className="mb-2 text-lg font-semibold tracking-tight text-foreground">
-                    Run your first eval from the repo
+                  <h2 className="mb-1 text-lg font-semibold tracking-tight text-foreground">
+                    Run your first eval from code
                   </h2>
-                  <p className="mx-auto max-w-lg text-sm leading-relaxed text-muted-foreground">
-                    Three steps below wire up{" "}
-                    <span className="font-medium text-foreground">
-                      @mcpjam/sdk
-                    </span>{" "}
-                    so your CI tests can report a suite and run to this view. Prefer
-                    designing cases in the UI first? Use Explore, then come back
-                    for CI.
+                  <p className="mb-4 text-sm text-muted-foreground">
+                    See what a completed eval looks like before you start.
                   </p>
-                  <div className="mt-5 flex justify-center">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => setShowSampleTrace(true)}
+                  <motion.button
+                    type="button"
+                    onClick={() => setShowSampleTrace(true)}
+                    className="group relative mx-auto inline-flex items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/5 px-5 py-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/10"
+                    initial={{ opacity: 0, y: 8 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.2, duration: 0.4, ease: "easeOut" }}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <motion.span
+                      className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
+                      animate={{ scale: [1, 1.08, 1] }}
+                      transition={{
+                        duration: 2.4,
+                        repeat: Infinity,
+                        ease: "easeInOut",
+                      }}
                     >
-                      <Eye className="mr-2 size-4" />
-                      View sample trace
-                    </Button>
-                  </div>
+                      <Play className="size-4 fill-current" />
+                    </motion.span>
+                    <span className="flex flex-col items-start">
+                      <span>View sample trace</span>
+                      <span className="text-xs font-normal text-muted-foreground">
+                        Timeline, chat &amp; raw data
+                      </span>
+                    </span>
+                    <Eye className="size-4 text-muted-foreground transition-colors group-hover:text-primary" />
+                  </motion.button>
                 </div>
                 <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
               </div>

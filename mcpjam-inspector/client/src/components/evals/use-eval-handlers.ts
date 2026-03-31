@@ -425,7 +425,7 @@ export function useEvalHandlers({
     async (
       suite: EvalSuite,
       testCase: EvalCase,
-      options?: { location?: string },
+      options?: { location?: string; selectedModel?: string | null },
     ) => {
       if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
         return null;
@@ -447,6 +447,7 @@ export function useEvalHandlers({
           getAccessToken,
           getToken,
           hasToken,
+          selectedModel: options?.selectedModel,
         });
 
         posthog.capture("eval_test_case_run_started", {

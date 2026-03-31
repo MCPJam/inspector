@@ -420,6 +420,7 @@ export function SuiteIterationsView({
                 selectedTestCaseId={selectedTestId}
                 connectedServerNames={connectedServerNames}
                 workspaceId={workspaceId}
+                availableModels={availableModels}
               />
             </motion.div>
           ) : viewMode === "test-detail" && selectedTestId ? (
