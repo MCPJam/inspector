@@ -7,8 +7,8 @@ import { Card, CardInteractive } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { SandboxListItem } from "@/hooks/useSandboxes";
 import {
-  getSandboxHostLabel,
   getSandboxHostLogo,
+  getSandboxHostStyleShortLabel,
 } from "@/lib/sandbox-host-style";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +46,7 @@ function SandboxSummaryCard({
             alt=""
             className="size-3"
           />
-          {getSandboxHostLabel(sandbox.hostStyle)}
+          {getSandboxHostStyleShortLabel(sandbox.hostStyle)}
         </Badge>
         <Badge
           variant="secondary"
@@ -207,7 +207,9 @@ export function SandboxIndexPage({
                   </p>
                 </div>
                 <div className="ml-4 flex shrink-0 items-center gap-2">
-                  <Badge variant="outline">{sandbox.hostStyle}</Badge>
+                  <Badge variant="outline">
+                    {getSandboxHostStyleShortLabel(sandbox.hostStyle)}
+                  </Badge>
                   <Badge variant="outline">{sandbox.serverCount} servers</Badge>
                 </div>
               </button>

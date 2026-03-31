@@ -7,6 +7,20 @@ export type SandboxBuilderNodeKind = "host" | "server";
 
 export type SandboxBuilderNodeState = "ready" | "attention" | "draft" | "live";
 
+export interface SandboxWelcomeDialogDraft {
+  enabled: boolean;
+  /** Host-authored first-open content (stored when backend supports it). */
+  body: string;
+}
+
+export interface SandboxFeedbackDialogDraft {
+  enabled: boolean;
+  /** Fire feedback prompt every N tool calls when enabled. */
+  everyNToolCalls: number;
+  /** Optional prompt copy for testers. */
+  promptHint: string;
+}
+
 export interface SandboxDraftConfig {
   name: string;
   description: string;
@@ -15,8 +29,11 @@ export interface SandboxDraftConfig {
   modelId: string;
   temperature: number;
   requireToolApproval: boolean;
+  allowGuestAccess: boolean;
   mode: SandboxMode;
   selectedServerIds: string[];
+  welcomeDialog: SandboxWelcomeDialogDraft;
+  feedbackDialog: SandboxFeedbackDialogDraft;
 }
 
 export interface SandboxBuilderContext {

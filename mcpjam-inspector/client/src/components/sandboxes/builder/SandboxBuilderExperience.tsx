@@ -42,7 +42,7 @@ export default function SandboxBuilderExperience({
   );
   const [draft, setDraft] = useState<SandboxDraftConfig | null>(null);
   const [restoredViewMode, setRestoredViewMode] = useState<
-    "builder" | "insights" | "preview" | undefined
+    "setup" | "preview" | "usage" | undefined
   >();
 
   // Restore builder session from sessionStorage when workspaceId becomes
@@ -61,9 +61,14 @@ export default function SandboxBuilderExperience({
     startTransition(() => {
       setSelectedSandboxId(session.sandboxId);
       setDraft((session.draft as SandboxDraftConfig | null) ?? null);
-      setRestoredViewMode(
-        session.viewMode as "builder" | "insights" | "preview" | undefined,
-      );
+      const vm = session.viewMode;
+      if (vm === "builder") {
+        setRestoredViewMode("setup");
+      } else if (vm === "insights") {
+        setRestoredViewMode("usage");
+      } else {
+        setRestoredViewMode(vm as "setup" | "preview" | "usage" | undefined);
+      }
     });
   }, [workspaceId]);
 

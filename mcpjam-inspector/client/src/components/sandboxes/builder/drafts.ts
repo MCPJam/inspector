@@ -30,8 +30,11 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
       modelId: defaultModelId,
       temperature: 0.4,
       requireToolApproval: true,
+      allowGuestAccess: false,
       mode: "invited_only",
       selectedServerIds: [],
+      welcomeDialog: { enabled: true, body: "" },
+      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
     }),
   },
   {
@@ -51,8 +54,11 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
       modelId: defaultModelId,
       temperature: 0.6,
       requireToolApproval: false,
+      allowGuestAccess: false,
       mode: "any_signed_in_with_link",
       selectedServerIds: [],
+      welcomeDialog: { enabled: true, body: "" },
+      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
     }),
   },
   {
@@ -69,8 +75,11 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
       modelId: defaultModelId,
       temperature: 0.7,
       requireToolApproval: false,
+      allowGuestAccess: false,
       mode: "any_signed_in_with_link",
       selectedServerIds: [],
+      welcomeDialog: { enabled: true, body: "" },
+      feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
     }),
   },
 ];
@@ -84,7 +93,20 @@ export function toDraftConfig(sandbox: SandboxSettings): SandboxDraftConfig {
     modelId: sandbox.modelId,
     temperature: sandbox.temperature,
     requireToolApproval: sandbox.requireToolApproval,
+    allowGuestAccess: sandbox.allowGuestAccess,
     mode: sandbox.mode,
     selectedServerIds: sandbox.servers.map((server) => server.serverId),
+    welcomeDialog: {
+      enabled: sandbox.welcomeDialog?.enabled ?? true,
+      body: sandbox.welcomeDialog?.body ?? "",
+    },
+    feedbackDialog: {
+      enabled: sandbox.feedbackDialog?.enabled ?? true,
+      everyNToolCalls: Math.max(
+        1,
+        sandbox.feedbackDialog?.everyNToolCalls ?? 1,
+      ),
+      promptHint: sandbox.feedbackDialog?.promptHint ?? "",
+    },
   };
 }

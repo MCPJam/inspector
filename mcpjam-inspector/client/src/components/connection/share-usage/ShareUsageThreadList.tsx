@@ -1,17 +1,24 @@
 import { formatDistanceToNow } from "date-fns";
-import { MessageSquare } from "lucide-react";
+import { AlertTriangle, MessageSquare } from "lucide-react";
+import { useMemo } from "react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
+  compareThreadsForUsageList,
+  threadMatchesUsageFilter,
+  type UsageSessionFilter,
+} from "@/hooks/sandbox-usage-filters";
+import {
   useSharedChatThreadList,
-  type SharedChatSourceType,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
 
 interface ShareUsageThreadListProps {
-  sourceType: SharedChatSourceType;
+  sourceType: "sandbox" | "serverShare";
   sourceId: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
+  /** When set, filters and sorts threads for sandbox usage triage. */
+  usageFilter?: UsageSessionFilter;
 }
 
 export function ShareUsageThreadList({
@@ -19,8 +26,23 @@ export function ShareUsageThreadList({
   sourceId,
   selectedThreadId,
   onSelectThread,
+  usageFilter = "all",
 }: ShareUsageThreadListProps) {
-  const { threads } = useSharedChatThreadList({ sourceType, sourceId });
+  const { threads: rawThreads } = useSharedChatThreadList({
+    sourceType,
+    sourceId,
+  });
+
+  const threads = useMemo(() => {
+    if (rawThreads === undefined) return undefined;
+    const filtered =
+      usageFilter === "all"
+        ? rawThreads
+        : rawThreads.filter((t) =>
+            threadMatchesUsageFilter(t, usageFilter),
+          );
+    return [...filtered].sort(compareThreadsForUsageList);
+  }, [rawThreads, usageFilter]);
 
   if (threads === undefined) {
     return (
@@ -42,10 +64,14 @@ export function ShareUsageThreadList({
         <div className="text-center">
           <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
           <p className="text-sm font-medium text-muted-foreground">
-            No conversations yet
+            {usageFilter === "all"
+              ? "No conversations yet"
+              : "No sessions match this filter"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground/70">
-            Visitor conversations will appear here
+            {usageFilter === "all"
+              ? "Visitor conversations will appear here"
+              : "Try another filter or check back later"}
           </p>
         </div>
       </div>
@@ -77,6 +103,12 @@ function ThreadCard({
   isSelected: boolean;
   onSelect: () => void;
 }) {
+  const rating = thread.feedbackRating;
+  const needsReview =
+    rating === 1 ||
+    rating === 2 ||
+    (rating === 3 && (thread.feedbackComment?.trim().length ?? 0) > 0);
+
   return (
     <button
       type="button"
@@ -88,33 +120,50 @@ function ThreadCard({
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <p className="text-sm font-medium truncate">
-          {thread.visitorDisplayName}
+        <p className="truncate text-sm font-medium">
+          {thread.visitorDisplayName ?? "Anonymous"}
         </p>
-        <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+        <span className="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
           <MessageSquare className="h-3 w-3" />
-          {thread.messageCount}
+          {thread.toolCallCount ?? thread.messageCount}
         </span>
       </div>
-      {thread.firstMessagePreview && (
-        <p className="mt-1 text-xs text-muted-foreground line-clamp-2">
+      <div className="mt-1 flex flex-wrap items-center gap-2">
+        {rating != null ? (
+          <span
+            className={`text-xs font-medium ${rating <= 2 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"}`}
+          >
+            {rating}/5
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">No feedback</span>
+        )}
+        {needsReview ? (
+          <span className="inline-flex items-center gap-0.5 text-[10px] font-medium text-amber-800 dark:text-amber-300">
+            <AlertTriangle className="size-3" />
+            Needs review
+          </span>
+        ) : null}
+      </div>
+      {thread.firstMessagePreview ? (
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
           {thread.firstMessagePreview}
         </p>
-      )}
+      ) : null}
       <div className="mt-1.5 flex items-center gap-2">
         <span className="text-[10px] text-muted-foreground/70">
           {formatDistanceToNow(new Date(thread.lastActivityAt), {
             addSuffix: true,
           })}
         </span>
-        {thread.modelId && (
+        {thread.modelId ? (
           <>
             <span className="text-[10px] text-muted-foreground/40">·</span>
-            <span className="text-[10px] text-muted-foreground/70 truncate">
+            <span className="truncate font-mono text-[10px] text-muted-foreground/70">
               {thread.modelId}
             </span>
           </>
-        )}
+        ) : null}
       </div>
     </button>
   );

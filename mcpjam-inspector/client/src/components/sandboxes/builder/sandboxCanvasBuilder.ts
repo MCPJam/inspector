@@ -5,7 +5,7 @@ import type {
   SandboxBuilderViewModel,
   SandboxFlowNode,
 } from "./types";
-import { getSandboxHostLabel } from "@/lib/sandbox-host-style";
+import { getSandboxHostStyleShortLabel } from "@/lib/sandbox-host-style";
 import { getModelById } from "@/shared/types";
 
 const SECTION_Y = {
@@ -43,10 +43,14 @@ function resolveHostState(
     : "Model";
   return {
     kind: "host",
-    title: "Host Context",
+    title: "Host",
     subtitle: source?.name || "New sandbox",
     chips: [
-      chip(source ? getSandboxHostLabel(source.hostStyle) : "Claude"),
+      chip(
+        source
+          ? getSandboxHostStyleShortLabel(source.hostStyle)
+          : getSandboxHostStyleShortLabel("claude"),
+      ),
       chip(modelName),
       chip(source ? `Temp ${source.temperature.toFixed(2)}` : "Temp 0.70"),
     ],

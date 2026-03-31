@@ -21,6 +21,13 @@ export function getSandboxHostLabel(hostStyle: SandboxHostStyle): string {
   return hostStyle === "chatgpt" ? "ChatGPT" : "Claude";
 }
 
+/** User-facing label for sandbox builder surfaces (host style terminology). */
+export function getSandboxHostStyleShortLabel(
+  hostStyle: SandboxHostStyle,
+): string {
+  return hostStyle === "chatgpt" ? "ChatGPT-style host" : "Claude-style host";
+}
+
 export function getSandboxHostLogo(hostStyle: SandboxHostStyle): string {
   return hostStyle === "chatgpt" ? openaiLogo : claudeLogo;
 }
