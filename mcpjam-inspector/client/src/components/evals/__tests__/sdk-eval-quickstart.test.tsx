@@ -5,7 +5,9 @@ import {
   SDK_EVAL_QUICKSTART_INSTALL,
   SDK_EVAL_QUICKSTART_ENV,
   SDK_EVAL_QUICKSTART_RUN,
+  SDK_TEST_AGENT_PROVIDERS,
   buildShellEnvSnippet,
+  buildDotEnvSnippet,
 } from "../sdk-eval-quickstart";
 
 const mockUseQuery = vi.fn();
@@ -49,32 +51,33 @@ describe("SdkEvalQuickstart", () => {
     });
   });
 
-  it("renders install, environment, and run sections", async () => {
-    const { copyToClipboard } = await import("@/lib/clipboard");
-    vi.mocked(copyToClipboard).mockResolvedValue(true);
-
+  it("renders all three step cards with content visible", () => {
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    expect(screen.getByRole("heading", { name: "Install" })).toBeTruthy();
-    expect(
-      screen.getByRole("heading", { name: "Configure environment" }),
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("heading", { name: "Run the quickstart" }),
-    ).toBeTruthy();
+    expect(screen.getByText("Install")).toBeTruthy();
+    expect(screen.getByText("Set environment")).toBeTruthy();
+    expect(screen.getByText("Run the test")).toBeTruthy();
+
+    // All content visible without expansion
     expect(screen.getByText(SDK_EVAL_QUICKSTART_INSTALL)).toBeTruthy();
-    expect(SDK_EVAL_QUICKSTART_ENV).toMatch(/MCPJAM_API_KEY/);
-    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/createEvalRunReporter/);
-    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/greet/);
-    expect(
-      screen.getAllByText(/mcp-eval\.quickstart\.test\.ts/).length,
-    ).toBeGreaterThanOrEqual(1);
     expect(document.body.textContent).toContain("workspace-api-key");
     expect(document.body.textContent).toContain("learn.mcpjam.com");
     expect(document.body.textContent).toContain("openai");
     expect(document.body.textContent).toContain("openrouter");
-    expect(screen.getByRole("tab", { name: "Shell" })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: ".env" })).toBeTruthy();
+    expect(
+      screen.getAllByText(/mcp-eval\.quickstart\.test\.ts/).length,
+    ).toBeGreaterThanOrEqual(1);
+
+    expect(SDK_EVAL_QUICKSTART_ENV).toMatch(/MCPJAM_API_KEY/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/createEvalRunReporter/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/greet/);
+  });
+
+  it("shows provider list and SDK README link", () => {
+    renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
+
+    expect(document.body.textContent).toContain(SDK_TEST_AGENT_PROVIDERS);
+    expect(screen.getByText("SDK README")).toBeTruthy();
   });
 
   it("copies install snippet when copy is triggered", async () => {
@@ -108,21 +111,19 @@ describe("SdkEvalQuickstart", () => {
     expect(copyToClipboard).toHaveBeenCalledTimes(1);
   });
 
-  it("copies shell environment snippet from tabs", async () => {
+  it("copies .env snippet when copy is triggered", async () => {
     const user = userEvent.setup();
     const { copyToClipboard } = await import("@/lib/clipboard");
     vi.mocked(copyToClipboard).mockResolvedValue(true);
 
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    await user.click(
-      screen.getByRole("button", { name: "Copy environment variables" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Copy .env" }));
 
-    expect(copyToClipboard).toHaveBeenCalledWith(buildShellEnvSnippet(null));
+    expect(copyToClipboard).toHaveBeenCalledWith(buildDotEnvSnippet(null));
   });
 
-  it("embeds revealed API key in shell snippet after Generate API key", async () => {
+  it("embeds revealed API key in .env snippet after Generate API key", async () => {
     const user = userEvent.setup();
     mockUseQuery.mockImplementation((_name: unknown, args: unknown) => {
       if (args === "skip") return undefined;
@@ -150,8 +151,21 @@ describe("SdkEvalQuickstart", () => {
     ).toBeTruthy();
 
     expect(document.body.textContent).toContain("mcpjam_inline_secret_xyz");
-    expect(document.body.textContent).toContain(
-      'export MCPJAM_API_KEY="mcpjam_inline_secret_xyz"',
-    );
+  });
+
+  it("buildShellEnvSnippet and buildDotEnvSnippet produce valid output", () => {
+    const shell = buildShellEnvSnippet("test_key");
+    expect(shell).toContain('export MCPJAM_API_KEY="test_key"');
+    expect(shell).toContain("EVAL_MODEL");
+
+    const dotenv = buildDotEnvSnippet("test_key");
+    expect(dotenv).toContain('MCPJAM_API_KEY="test_key"');
+    expect(dotenv).toContain("EVAL_MODEL");
+
+    const shellNoKey = buildShellEnvSnippet(null);
+    expect(shellNoKey).toContain("workspace-api-key");
+
+    const dotenvNoKey = buildDotEnvSnippet(null);
+    expect(dotenvNoKey).toContain("workspace-api-key");
   });
 });

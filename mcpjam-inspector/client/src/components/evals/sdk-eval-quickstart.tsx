@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Check, Copy, RefreshCw } from "lucide-react";
+import { Check, Copy, ExternalLink, Loader2, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
@@ -17,7 +17,6 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Tooltip,
   TooltipContent,
@@ -29,6 +28,8 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
+const SDK_README_URL =
+  "https://github.com/MCPJam/inspector/blob/main/sdk/README.md";
 
 /** Providers supported by TestAgent — same list as @mcpjam/sdk README (TestAgent). */
 export const SDK_TEST_AGENT_PROVIDERS =
@@ -47,7 +48,7 @@ const ENV_TAIL_DOTENV = `MCP_SERVER_URL=${LEARN_MCP_URL}
 # EVAL_MODEL = <provider>/<model-id>. TestAgent providers: ${SDK_TEST_AGENT_PROVIDERS}
 # Examples: openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
 EVAL_MODEL=<provider/model-id>
-# Match your provider's usual env var name; sync with apiKey in the Vitest file below.
+# Match your provider's usual env var name; sync with apiKey in the sample test below.
 LLM_API_KEY=<your-llm-api-key>`;
 
 function escapeDoubleQuotes(value: string): string {
@@ -75,7 +76,7 @@ export function buildDotEnvSnippet(
 }
 
 /** Snippet strings exported for tests and consistency with copy targets. */
-export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk vitest";
+export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 
 /** Placeholder shell env (no workspace key injected). */
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
@@ -153,14 +154,20 @@ describe("MCP eval quickstart", () => {
   );
 });`;
 
+/* ------------------------------------------------------------------ */
+/*  Shared helpers                                                     */
+/* ------------------------------------------------------------------ */
+
 function QuickstartCodeBlock({
   code,
   copyLabel,
   className,
+  toolbarLabel,
 }: {
   code: string;
   copyLabel: string;
   className?: string;
+  toolbarLabel?: string;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -178,31 +185,89 @@ function QuickstartCodeBlock({
   return (
     <div
       className={cn(
-        "relative rounded-lg border border-border bg-muted/40",
+        "overflow-hidden rounded-lg border border-border bg-muted/30",
         className,
       )}
     >
-      <pre
-        className="max-h-[min(420px,55vh)] overflow-auto p-4 pr-12 text-left font-mono text-xs leading-relaxed text-foreground"
-        tabIndex={0}
-      >
-        <code>{code}</code>
-      </pre>
-      <button
-        type="button"
-        onClick={handleCopy}
-        aria-label={copyLabel}
-        className="absolute right-2 top-2 rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-      >
-        {copied ? (
-          <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
-        ) : (
-          <Copy className="h-4 w-4" />
-        )}
-      </button>
+      {toolbarLabel ? (
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/50 px-3 py-2">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {toolbarLabel}
+          </span>
+          <button
+            type="button"
+            onClick={handleCopy}
+            aria-label={copyLabel}
+            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {copied ? (
+              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
+            ) : (
+              <Copy className="h-4 w-4" />
+            )}
+          </button>
+        </div>
+      ) : null}
+      <div className="relative">
+        <pre
+          className={cn(
+            "max-h-[min(420px,55vh)] overflow-auto px-4 py-3.5 text-left font-mono text-[11px] leading-relaxed text-foreground sm:text-xs",
+            toolbarLabel ? "pr-4" : "pr-12",
+          )}
+          tabIndex={0}
+        >
+          <code>{code}</code>
+        </pre>
+        {!toolbarLabel ? (
+          <button
+            type="button"
+            onClick={handleCopy}
+            aria-label={copyLabel}
+            className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {copied ? (
+              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
+            ) : (
+              <Copy className="h-4 w-4" />
+            )}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  StepCard                                                           */
+/* ------------------------------------------------------------------ */
+
+function StepCard({
+  step,
+  title,
+  children,
+}: {
+  step: number;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-border/60 bg-card/50 px-5 py-4">
+      <div className="mb-3 flex items-center gap-2.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary ring-1 ring-primary/20">
+          {step}
+        </span>
+        <h3 className="text-sm font-semibold tracking-tight text-foreground">
+          {title}
+        </h3>
+      </div>
+      <div className="space-y-3">{children}</div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  API key management                                                 */
+/* ------------------------------------------------------------------ */
 
 type ApiKeyListEntry = {
   _id: string;
@@ -214,67 +279,212 @@ type ApiKeyListEntry = {
   revokedAt: number | null;
 };
 
-function EnvSnippetsTabs({
-  shellCode,
-  dotenvCode,
+function ApiKeyRow({
+  isAuthLoading,
+  isAuthenticated,
+  workspaceId,
+  maybeApiKey,
+  existingKey,
+  plaintextKey,
+  isGenerating,
+  isConfirmRegenerateOpen,
+  setIsConfirmRegenerateOpen,
+  onSignIn,
+  onGenerate,
+  onCopyKey,
+  headerCopied,
 }: {
-  shellCode: string;
-  dotenvCode: string;
+  isAuthLoading: boolean;
+  isAuthenticated: boolean;
+  workspaceId: string | null;
+  maybeApiKey: ApiKeyListEntry[] | undefined;
+  existingKey: ApiKeyListEntry | null;
+  plaintextKey: string | null;
+  isGenerating: boolean;
+  isConfirmRegenerateOpen: boolean;
+  setIsConfirmRegenerateOpen: (open: boolean) => void;
+  onSignIn: () => void;
+  onGenerate: () => Promise<boolean>;
+  onCopyKey: () => void;
+  headerCopied: boolean;
 }) {
-  const [tab, setTab] = useState("shell");
-  const [copied, setCopied] = useState(false);
-  const activeCode = tab === "shell" ? shellCode : dotenvCode;
+  if (isAuthLoading) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Checking...</span>
+      </div>
+    );
+  }
 
-  const handleCopy = useCallback(async () => {
-    const ok = await copyToClipboard(activeCode);
-    if (ok) {
-      toast.success("Copied to clipboard");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } else {
-      toast.error("Could not copy");
-    }
-  }, [activeCode]);
+  if (!isAuthenticated) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="text-xs"
+          onClick={onSignIn}
+        >
+          Sign in
+        </Button>
+      </div>
+    );
+  }
+
+  if (!workspaceId) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <span className="text-xs text-muted-foreground">
+          Select a workspace first
+        </span>
+      </div>
+    );
+  }
+
+  if (maybeApiKey === undefined) {
+    return (
+      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+        <span className="text-xs text-muted-foreground">Loading key...</span>
+      </div>
+    );
+  }
+
+  if (plaintextKey) {
+    return (
+      <TooltipProvider delayDuration={300}>
+        <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2">
+          <span className="shrink-0 text-xs font-medium text-muted-foreground">
+            MCPJAM_API_KEY
+          </span>
+          <div className="relative min-w-0 flex-1">
+            <Input
+              readOnly
+              value={plaintextKey}
+              className="h-8 truncate pr-9 font-mono text-xs"
+              aria-label="Workspace API key"
+            />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="absolute right-0.5 top-0.5 h-7 w-7"
+                  onClick={onCopyKey}
+                >
+                  {headerCopied ? (
+                    <Check className="h-3.5 w-3.5 text-green-600" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">Copy API key</TooltipContent>
+            </Tooltip>
+          </div>
+        </div>
+      </TooltipProvider>
+    );
+  }
+
+  if (!existingKey) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <Button
+          type="button"
+          size="sm"
+          variant="default"
+          className="text-xs"
+          disabled={isGenerating}
+          onClick={() => void onGenerate()}
+        >
+          {isGenerating ? "Generating..." : "Generate API key"}
+        </Button>
+      </div>
+    );
+  }
 
   return (
-    <div className="relative rounded-lg border border-border bg-muted/40">
-      <Tabs value={tab} onValueChange={setTab} className="gap-0">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
-          <TabsList className="h-8 bg-transparent p-0">
-            <TabsTrigger value="shell" className="h-8 px-2.5 text-xs">
-              Shell
-            </TabsTrigger>
-            <TabsTrigger value="dotenv" className="h-8 px-2.5 text-xs">
-              .env
-            </TabsTrigger>
-          </TabsList>
-          <button
+    <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">
+          MCPJAM_API_KEY
+        </span>
+        <span className="font-mono text-xs text-muted-foreground/70">
+          mcpjam_{existingKey.prefix}_...
+        </span>
+      </div>
+      <AlertDialog
+        open={isConfirmRegenerateOpen}
+        onOpenChange={setIsConfirmRegenerateOpen}
+      >
+        <AlertDialogTrigger asChild>
+          <Button
             type="button"
-            onClick={handleCopy}
-            aria-label="Copy environment variables"
-            className="rounded p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            disabled={isGenerating}
           >
-            {copied ? (
-              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-        <TabsContent value="shell" className="mt-0">
-          <pre className="max-h-[min(360px,50vh)] overflow-auto p-4 text-left font-mono text-xs leading-relaxed text-foreground">
-            <code>{shellCode}</code>
-          </pre>
-        </TabsContent>
-        <TabsContent value="dotenv" className="mt-0">
-          <pre className="max-h-[min(360px,50vh)] overflow-auto p-4 text-left font-mono text-xs leading-relaxed text-foreground">
-            <code>{dotenvCode}</code>
-          </pre>
-        </TabsContent>
-      </Tabs>
+            <RefreshCw
+              className={cn("h-3.5 w-3.5", isGenerating && "animate-spin")}
+            />
+            {isGenerating ? "Regenerating..." : "Regenerate"}
+          </Button>
+        </AlertDialogTrigger>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerate workspace API key?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This invalidates your current key immediately. Integrations using
+              the old key will stop working. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isGenerating}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isGenerating}
+              onClick={async (e) => {
+                e.preventDefault();
+                const ok = await onGenerate();
+                if (ok) setIsConfirmRegenerateOpen(false);
+              }}
+            >
+              {isGenerating ? "Regenerating..." : "Regenerate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Backward-compat exports (used by tests)                            */
+/* ------------------------------------------------------------------ */
+
+export const SDK_EVAL_QUICKSTART_CHECKLIST_STORAGE_KEY =
+  "mcp-inspector-sdk-eval-quickstart-checklist" as const;
+
+export type SdkEvalQuickstartStepId = "install" | "configure" | "run";
+
+/* ------------------------------------------------------------------ */
+/*  Main component                                                     */
+/* ------------------------------------------------------------------ */
 
 export type SdkEvalQuickstartProps = {
   workspaceId?: string | null;
@@ -312,7 +522,7 @@ export function SdkEvalQuickstart({
       const result = await regenerateAndGet({ workspaceId });
       setPlaintextKey(result.apiKey);
       toast.success(
-        "API key ready — copy it now; the full value is not shown again after you leave this page.",
+        "API key ready -- copy it now; the full value won't be shown again.",
       );
       return true;
     } catch (err) {
@@ -341,25 +551,32 @@ export function SdkEvalQuickstart({
   const activeKeys = maybeApiKey?.filter((k) => !k.revokedAt) ?? [];
   const existingKey = activeKeys.length > 0 ? activeKeys[0] : null;
 
-  const shellEnv = buildShellEnvSnippet(plaintextKey);
   const dotenvEnv = buildDotEnvSnippet(plaintextKey);
 
-  const apiKeyHeaderRight = (() => {
-    if (isAuthLoading) {
-      return (
-        <span className="text-xs text-muted-foreground tabular-nums">
-          Checking…
-        </span>
-      );
-    }
-    if (!isAuthenticated) {
-      return (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="text-xs"
-          onClick={() => {
+  return (
+    <div className="w-full max-w-2xl space-y-4">
+      {/* Step 1: Install */}
+      <StepCard step={1} title="Install">
+        <QuickstartCodeBlock
+          code={SDK_EVAL_QUICKSTART_INSTALL}
+          copyLabel="Copy install command"
+          toolbarLabel="Terminal"
+        />
+      </StepCard>
+
+      {/* Step 2: Set environment */}
+      <StepCard step={2} title="Set environment">
+        <ApiKeyRow
+          isAuthLoading={isAuthLoading}
+          isAuthenticated={isAuthenticated}
+          workspaceId={workspaceId}
+          maybeApiKey={maybeApiKey}
+          existingKey={existingKey}
+          plaintextKey={plaintextKey}
+          isGenerating={isGenerating}
+          isConfirmRegenerateOpen={isConfirmRegenerateOpen}
+          setIsConfirmRegenerateOpen={setIsConfirmRegenerateOpen}
+          onSignIn={() => {
             posthog.capture("login_button_clicked", {
               location: "sdk_eval_quickstart",
               platform: detectPlatform(),
@@ -367,215 +584,47 @@ export function SdkEvalQuickstart({
             });
             void signIn();
           }}
-        >
-          Sign in
-        </Button>
-      );
-    }
-    if (!workspaceId) {
-      return (
-        <span className="max-w-[220px] text-right text-xs text-muted-foreground">
-          Select a workspace to create or reveal an API key.
-        </span>
-      );
-    }
-    if (maybeApiKey === undefined) {
-      return (
-        <span className="text-xs text-muted-foreground">Loading key…</span>
-      );
-    }
-    if (plaintextKey) {
-      return (
-        <TooltipProvider delayDuration={300}>
-          <div className="flex max-w-full min-w-0 flex-1 items-center gap-2 sm:max-w-md">
-            <div className="relative min-w-0 flex-1">
-              <Input
-                readOnly
-                value={plaintextKey}
-                className="h-9 truncate pr-10 font-mono text-xs"
-                aria-label="Workspace API key"
-              />
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="absolute right-1 top-1 h-7 w-7"
-                    onClick={() => void handleCopyHeaderKey()}
-                  >
-                    {headerCopied ? (
-                      <Check className="h-3.5 w-3.5 text-green-600" />
-                    ) : (
-                      <Copy className="h-3.5 w-3.5" />
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Copy API key</TooltipContent>
-              </Tooltip>
-            </div>
-          </div>
-        </TooltipProvider>
-      );
-    }
-    if (!existingKey) {
-      return (
-        <Button
-          type="button"
-          size="sm"
-          variant="default"
-          className="shrink-0 text-xs"
-          disabled={isGenerating}
-          onClick={() => void runGenerate()}
-        >
-          {isGenerating ? "Generating…" : "Generate API key"}
-        </Button>
-      );
-    }
-    return (
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        <span className="font-mono text-xs text-muted-foreground">
-          mcpjam_{existingKey.prefix}_••••••••
-        </span>
-        <AlertDialog
-          open={isConfirmRegenerateOpen}
-          onOpenChange={setIsConfirmRegenerateOpen}
-        >
-          <AlertDialogTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="gap-1.5 text-xs"
-              disabled={isGenerating}
-            >
-              <RefreshCw
-                className={cn("h-3.5 w-3.5", isGenerating && "animate-spin")}
-              />
-              {isGenerating ? "Regenerating…" : "Regenerate"}
-            </Button>
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Regenerate workspace API key?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This invalidates your current key immediately. Integrations
-                using the old key will stop working. This cannot be undone.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={isGenerating}>
-                Cancel
-              </AlertDialogCancel>
-              <AlertDialogAction
-                disabled={isGenerating}
-                onClick={async (e) => {
-                  e.preventDefault();
-                  const ok = await runGenerate();
-                  if (ok) setIsConfirmRegenerateOpen(false);
-                }}
-              >
-                {isGenerating ? "Regenerating…" : "Regenerate"}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      </div>
-    );
-  })();
-
-  return (
-    <div className="w-full max-w-3xl space-y-8 text-left">
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-foreground">Install</h3>
-        <QuickstartCodeBlock
-          code={SDK_EVAL_QUICKSTART_INSTALL}
-          copyLabel="Copy install command"
+          onGenerate={runGenerate}
+          onCopyKey={() => void handleCopyHeaderKey()}
+          headerCopied={headerCopied}
         />
-      </div>
-
-      <div className="space-y-2">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <h3 className="text-sm font-semibold text-foreground shrink-0">
-            Configure environment
-          </h3>
-          <div className="flex min-w-0 flex-1 flex-col items-stretch gap-2 sm:items-end">
-            {apiKeyHeaderRight}
-          </div>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          Snippets default to the{" "}
-          <span className="font-medium text-foreground">
-            MCPJam learning server
-          </span>{" "}
-          ({LEARN_MCP_URL}); override{" "}
-          <code className="rounded bg-muted px-1 font-mono">
-            MCP_SERVER_URL
-          </code>{" "}
-          for your own MCP.{" "}
-          <span className="font-medium text-foreground">
-            Eval LLM (TestAgent)
+        <QuickstartCodeBlock
+          code={dotenvEnv}
+          copyLabel="Copy .env"
+          toolbarLabel=".env"
+        />
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          <span>
+            Providers:{" "}
+            <span className="text-foreground/80">
+              {SDK_TEST_AGENT_PROVIDERS}
+            </span>
           </span>
-          : use{" "}
-          <code className="rounded bg-muted px-1 font-mono">EVAL_MODEL</code> in
-          the form{" "}
-          <code className="rounded bg-muted px-1 font-mono">
-            provider/model-id
-          </code>{" "}
-          (for example{" "}
-          <code className="rounded bg-muted px-1 font-mono">
-            openai/gpt-4o-mini
-          </code>
-          ). Allowed providers are{" "}
-          <span className="whitespace-normal break-words text-foreground/90">
-            {SDK_TEST_AGENT_PROVIDERS}
-          </span>
-          — pick any model string your vendor documents for that provider. Set
-          the matching API key env var (or keep{" "}
-          <code className="rounded bg-muted px-1 font-mono">LLM_API_KEY</code>{" "}
-          and the same name in the test file). Generate or regenerate above to
-          insert your MCPJam key. For detail and patterns, see{" "}
           <a
-            className="text-primary underline-offset-4 hover:underline"
-            href="https://github.com/MCPJam/inspector/blob/main/sdk/README.md"
+            className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
+            href={SDK_README_URL}
             target="_blank"
             rel="noreferrer noopener"
           >
-            @mcpjam/sdk README
+            SDK README
+            <ExternalLink className="h-3 w-3" />
           </a>
-          .
-        </p>
-        {!plaintextKey && (
-          <p className="text-xs text-muted-foreground">
-            API keys are only shown in full right after you create or regenerate
-            them. If you already have a key, use Regenerate to reveal a new one
-            here.
-          </p>
-        )}
-        <EnvSnippetsTabs shellCode={shellEnv} dotenvCode={dotenvEnv} />
-      </div>
+        </div>
+      </StepCard>
 
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold text-foreground">
-          Run the quickstart
-        </h3>
-        <p className="text-xs font-medium text-muted-foreground">
-          <code className="rounded bg-muted px-1 py-0.5 font-mono">
-            mcp-eval.quickstart.test.ts
-          </code>
-        </p>
+      {/* Step 3: Run */}
+      <StepCard step={3} title="Run the test">
         <QuickstartCodeBlock
           code={SDK_EVAL_QUICKSTART_RUN}
           copyLabel="Copy quickstart test file"
+          toolbarLabel="mcp-eval.quickstart.test.ts"
         />
-        <p className="text-xs text-muted-foreground">
-          Run with{" "}
-          <code className="rounded bg-muted px-1 py-0.5 font-mono">
-            npx vitest mcp-eval.quickstart.test.ts
-          </code>
-          . After a successful run, your suite and run appear in this view.
-        </p>
-      </div>
+        <QuickstartCodeBlock
+          code="npx vitest mcp-eval.quickstart.test.ts"
+          copyLabel="Copy run command"
+          toolbarLabel="Terminal"
+        />
+      </StepCard>
     </div>
   );
 }

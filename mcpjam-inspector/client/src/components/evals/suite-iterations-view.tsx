@@ -1,6 +1,7 @@
 import { useMemo, useState, useEffect, useCallback } from "react";
 import { useMutation } from "convex/react";
 import { toast } from "sonner";
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import { SuiteHeader } from "./suite-header";
 import { SuiteHeroStats } from "./suite-hero-stats";
 import { RunOverview } from "./run-overview";
@@ -18,35 +19,28 @@ import type {
   EvalSuiteRun,
   SuiteAggregate,
 } from "./types";
-import type { EvalsRoute } from "@/lib/evals-router";
-import { navigateToEvalsRoute } from "@/lib/evals-router";
-import type { CiEvalsRoute } from "@/lib/ci-evals-router";
+import type { EvalRoute } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { isMCPJamProvidedModel } from "@/shared/types";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2 } from "lucide-react";
 
-type SuiteRoute = EvalsRoute | CiEvalsRoute;
-
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
-  toRunDetail: (suiteId: string, runId: string, iteration?: string) => void;
+  toRunDetail: (
+    suiteId: string,
+    runId: string,
+    iteration?: string,
+    options?: { insightsFocus?: boolean; replace?: boolean },
+  ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (suiteId: string, testId: string) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
-
-const defaultNavigation: SuiteNavigation = {
-  toSuiteOverview: (suiteId, view) =>
-    navigateToEvalsRoute({ type: "suite-overview", suiteId, view }),
-  toRunDetail: (suiteId, runId, iteration) =>
-    navigateToEvalsRoute({ type: "run-detail", suiteId, runId, iteration }),
-  toTestDetail: (suiteId, testId, iteration) =>
-    navigateToEvalsRoute({ type: "test-detail", suiteId, testId, iteration }),
-  toTestEdit: (suiteId, testId) =>
-    navigateToEvalsRoute({ type: "test-edit", suiteId, testId }),
-  toSuiteEdit: (suiteId) =>
-    navigateToEvalsRoute({ type: "suite-edit", suiteId }),
-};
 
 export function SuiteIterationsView({
   suite,
@@ -72,13 +66,20 @@ export function SuiteIterationsView({
   route,
   userMap,
   workspaceId = null,
-  navigation = defaultNavigation,
+  navigation,
   onSetupCi,
   caseListInSidebar = false,
   runDetailSortByOverride,
   onRunDetailSortByChange,
   omitRunIterationList = false,
   canDeleteRuns = true,
+  readOnlyConfig = false,
+  hideRunActions = false,
+  casesSidebarHidden,
+  onShowCasesSidebar,
+  omitSuiteHeader = false,
+  alwaysShowEditIterationRows = false,
+  onEditTestCase,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -100,10 +101,10 @@ export function SuiteIterationsView({
   deletingSuiteId: string | null;
   deletingRunId: string | null;
   availableModels: any[];
-  route: SuiteRoute;
+  route: EvalRoute;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   workspaceId?: string | null;
-  navigation?: SuiteNavigation;
+  navigation: SuiteNavigation;
   onSetupCi?: () => void;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
@@ -114,9 +115,21 @@ export function SuiteIterationsView({
   omitRunIterationList?: boolean;
   /** Workspace admins only: run list batch delete and selection. */
   canDeleteRuns?: boolean;
+  /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
+  readOnlyConfig?: boolean;
+  /** When true, suppress suite-level run/replay entry points in shared chrome. */
+  hideRunActions?: boolean;
+  casesSidebarHidden?: boolean;
+  onShowCasesSidebar?: () => void;
+  /** When true, hide {@link SuiteHeader} on run detail (e.g. CI where breadcrumbs + sidebar carry context). */
+  omitSuiteHeader?: boolean;
+  /** Playground run detail: show edit affordance on every row that has a test case id. */
+  alwaysShowEditIterationRows?: boolean;
+  /** Override default test edit navigation (e.g. playground hash navigation). */
+  onEditTestCase?: (testCaseId: string) => void;
 }) {
   // Derive view state from route
-  const isEditMode = route.type === "suite-edit";
+  const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
@@ -127,9 +140,11 @@ export function SuiteIterationsView({
       ? "run-detail"
       : route.type === "test-detail"
         ? "test-detail"
-        : route.type === "test-edit"
+        : route.type === "test-edit" && !readOnlyConfig
           ? "test-edit"
-          : "overview";
+          : route.type === "test-edit"
+            ? "test-detail"
+            : "overview";
   const runsViewMode =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
@@ -181,6 +196,10 @@ export function SuiteIterationsView({
   // Auto-select the first iteration when on run-detail with iterations but no ?iteration= param.
   useEffect(() => {
     if (route.type !== "run-detail" || caseGroupsForSelectedRun.length === 0) {
+      return;
+    }
+
+    if (route.insightsFocus && !route.iteration) {
       return;
     }
 
@@ -287,12 +306,30 @@ export function SuiteIterationsView({
   };
 
   const handleRunClick = (runId: string) => {
-    navigation.toRunDetail(suite._id, runId);
+    navigation.toRunDetail(suite._id, runId, undefined, {
+      insightsFocus: true,
+    });
   };
 
   const handleBackToOverview = () => {
     navigation.toSuiteOverview(suite._id);
   };
+
+  const { hasToken } = useAiProviderKeys();
+  const missingReplayProviderKeys = useMemo(() => {
+    if (!cases || cases.length === 0) return [];
+    const providers = new Set<string>();
+    for (const tc of cases) {
+      for (const m of tc.models ?? []) {
+        if (!isMCPJamProvidedModel(m.model)) {
+          providers.add(m.provider);
+        }
+      }
+    }
+    return [...providers].filter(
+      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens),
+    );
+  }, [cases, hasToken]);
 
   const isReplayingLatestRun = useMemo(
     () =>
@@ -310,185 +347,281 @@ export function SuiteIterationsView({
     [replayingRunId, runs],
   );
 
+  const shouldReduceMotion = useReducedMotion();
+
+  const contentKey = useMemo(() => {
+    if (viewMode === "test-edit" && selectedTestId)
+      return `test-edit-${selectedTestId}`;
+    if (viewMode === "test-detail" && selectedTestId)
+      return `test-detail-${selectedTestId}`;
+    if (viewMode === "overview") return `overview-${runsViewMode}`;
+    if (viewMode === "run-detail" && selectedRunId)
+      return `run-detail-${selectedRunId}`;
+    return "empty";
+  }, [viewMode, selectedTestId, selectedRunId, runsViewMode]);
+
+  const showSuiteHeader =
+    !omitSuiteHeader || viewMode !== "run-detail" || isEditMode;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Header */}
-      <div className="shrink-0">
-        <SuiteHeader
-          suite={suite}
-          viewMode={viewMode}
-          selectedRunDetails={selectedRunDetails}
-          isEditMode={isEditMode}
-          onRerun={onRerun}
-          onReplayRun={onReplayRun}
-          onDelete={onDelete}
-          onCancelRun={onCancelRun}
-          onDeleteRun={onDeleteRun}
-          onViewModeChange={handleBackToOverview}
-          connectedServerNames={connectedServerNames}
-          rerunningSuiteId={rerunningSuiteId}
-          replayingRunId={replayingRunId}
-          cancellingRunId={cancellingRunId}
-          deletingSuiteId={deletingSuiteId}
-          deletingRunId={deletingRunId}
-          runsViewMode={runsViewMode}
-          runs={runs}
-          allIterations={allIterations}
-          aggregate={aggregate}
-          testCases={cases}
-          availableModels={availableModels}
-          onUpdateModels={handleUpdateTests}
-          onEditSuite={() => navigation.toSuiteEdit(suite._id)}
-          onSetupCi={onSetupCi}
-        />
-      </div>
+      {showSuiteHeader ? (
+        <div className="shrink-0">
+          <SuiteHeader
+            suite={suite}
+            viewMode={viewMode}
+            selectedRunDetails={selectedRunDetails}
+            isEditMode={isEditMode}
+            onRerun={onRerun}
+            onReplayRun={onReplayRun}
+            onDelete={onDelete}
+            onCancelRun={onCancelRun}
+            onDeleteRun={onDeleteRun}
+            onViewModeChange={handleBackToOverview}
+            connectedServerNames={connectedServerNames}
+            rerunningSuiteId={rerunningSuiteId}
+            replayingRunId={replayingRunId}
+            cancellingRunId={cancellingRunId}
+            deletingSuiteId={deletingSuiteId}
+            deletingRunId={deletingRunId}
+            runsViewMode={runsViewMode}
+            runs={runs}
+            allIterations={allIterations}
+            aggregate={aggregate}
+            testCases={cases}
+            availableModels={availableModels}
+            onUpdateModels={handleUpdateTests}
+            onEditSuite={() => navigation.toSuiteEdit(suite._id)}
+            onSetupCi={onSetupCi}
+            readOnlyConfig={readOnlyConfig}
+            hideRunActions={hideRunActions}
+            casesSidebarHidden={casesSidebarHidden}
+            onShowCasesSidebar={onShowCasesSidebar}
+          />
+        </div>
+      ) : null}
 
       {/* Content */}
       {!isEditMode && (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {viewMode === "test-edit" && selectedTestId ? (
-            <div className="h-full min-h-0 overflow-y-auto">
-              <TestTemplateEditor
-                suiteId={suite._id}
-                selectedTestCaseId={selectedTestId}
-                connectedServerNames={connectedServerNames}
-                workspaceId={workspaceId}
-              />
-            </div>
-          ) : viewMode === "test-detail" && selectedTestId ? (
-            (() => {
-              const selectedCase = cases.find((c) => c._id === selectedTestId);
-              if (!selectedCase) return null;
-
-              const caseIterations = allIterations.filter(
-                (iter) => iter.testCaseId === selectedTestId,
-              );
-
-              return (
-                <div className="min-h-0 flex-1 overflow-y-auto">
-                  <TestCaseDetailView
-                    testCase={selectedCase}
-                    runs={runs}
-                    iterations={caseIterations}
-                    serverNames={(suite.environment?.servers || []).filter(
-                      (name) => connectedServerNames.has(name),
-                    )}
-                    suiteName={suite.name}
-                    onNavigateToSuite={() =>
-                      navigation.toSuiteOverview(suite._id)
-                    }
-                    onBack={() =>
-                      navigation.toSuiteOverview(suite._id, "test-cases")
-                    }
-                    onViewRun={(runId) =>
-                      navigation.toRunDetail(suite._id, runId)
-                    }
-                  />
-                </div>
-              );
-            })()
-          ) : viewMode === "overview" ? (
-            runsViewMode === "runs" ? (
-              <div
-                key={runsViewMode}
-                className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+          <AnimatePresence mode="wait">
+            {viewMode === "test-edit" && selectedTestId ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="h-full min-h-0 overflow-y-auto"
               >
-                <RunOverview
-                  suite={suite}
-                  runs={runs}
-                  runsLoading={runsLoading}
-                  allIterations={allIterations}
-                  runTrendData={runTrendData}
-                  modelStats={modelStats}
-                  onRunClick={handleRunClick}
-                  onDirectDeleteRun={onDirectDeleteRun}
-                  runsViewMode={runsViewMode}
-                  onViewModeChange={(value) =>
-                    navigation.toSuiteOverview(suite._id, value)
-                  }
-                  userMap={userMap}
-                  canDeleteRuns={canDeleteRuns}
+                <TestTemplateEditor
+                  suiteId={suite._id}
+                  selectedTestCaseId={selectedTestId}
+                  connectedServerNames={connectedServerNames}
+                  workspaceId={workspaceId}
+                  availableModels={availableModels}
                 />
-              </div>
-            ) : (
-              <div
-                key={runsViewMode}
-                className="min-h-0 flex-1 space-y-4 overflow-y-auto p-0.5"
-              >
-                {caseListInSidebar ? (
-                  <div className="space-y-4">
-                    <SuiteHeroStats
+              </motion.div>
+            ) : viewMode === "test-detail" && selectedTestId ? (
+              (() => {
+                const selectedCase = cases.find(
+                  (c) => c._id === selectedTestId,
+                );
+                if (!selectedCase) return null;
+
+                const caseIterations = allIterations.filter(
+                  (iter) => iter.testCaseId === selectedTestId,
+                );
+
+                return (
+                  <motion.div
+                    key={contentKey}
+                    initial={shouldReduceMotion ? false : { opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                    transition={
+                      shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                    }
+                    className="min-h-0 flex-1 overflow-y-auto"
+                  >
+                    <TestCaseDetailView
+                      testCase={selectedCase}
                       runs={runs}
-                      allIterations={allIterations}
-                      runTrendData={runTrendData}
-                      modelStats={modelStats}
-                      testCaseCount={cases.length}
-                      isSDK={suite.source === "sdk"}
-                      onRunClick={handleRunClick}
-                      onReplayLatestRun={
-                        onReplayRun
-                          ? (run) => onReplayRun(suite, run)
-                          : undefined
+                      iterations={caseIterations}
+                      serverNames={(suite.environment?.servers || []).filter(
+                        (name) => connectedServerNames.has(name),
+                      )}
+                      suiteName={suite.name}
+                      onNavigateToSuite={() =>
+                        navigation.toSuiteOverview(suite._id)
                       }
-                      isReplayingLatestRun={isReplayingLatestRun}
+                      onBack={() =>
+                        navigation.toSuiteOverview(suite._id, "test-cases")
+                      }
+                      onViewRun={(runId) =>
+                        navigation.toRunDetail(suite._id, runId, undefined, {
+                          insightsFocus: true,
+                        })
+                      }
                     />
-                    <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
-                      <p>
-                        Select a case from the list on the left to view its
-                        history and performance.
-                      </p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="mt-4"
-                        onClick={() =>
-                          navigation.toSuiteOverview(suite._id, "runs")
-                        }
-                      >
-                        View runs table
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <TestCasesOverview
+                  </motion.div>
+                );
+              })()
+            ) : viewMode === "overview" ? (
+              runsViewMode === "runs" ? (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+                >
+                  <RunOverview
                     suite={suite}
-                    cases={cases}
+                    runs={runs}
+                    runsLoading={runsLoading}
                     allIterations={allIterations}
+                    runTrendData={runTrendData}
+                    modelStats={modelStats}
+                    onRunClick={handleRunClick}
+                    onDirectDeleteRun={onDirectDeleteRun}
                     runsViewMode={runsViewMode}
                     onViewModeChange={(value) =>
                       navigation.toSuiteOverview(suite._id, value)
                     }
-                    onTestCaseClick={(testCaseId) =>
-                      navigation.toTestDetail(suite._id, testCaseId)
-                    }
-                    runTrendData={runTrendData}
-                    modelStats={modelStats}
-                    runsLoading={runsLoading}
-                    onRunClick={handleRunClick}
+                    userMap={userMap}
+                    canDeleteRuns={canDeleteRuns}
                   />
-                )}
-              </div>
-            )
-          ) : viewMode === "run-detail" && selectedRunDetails ? (
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              <RunDetailView
-                selectedRunDetails={selectedRunDetails}
-                caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-                source={suite.source}
-                selectedRunChartData={selectedRunChartData}
-                runDetailSortBy={effectiveRunDetailSortBy}
-                onSortChange={effectiveRunDetailSortChange}
-                serverNames={(suite.environment?.servers || []).filter((name) =>
-                  connectedServerNames.has(name),
-                )}
-                selectedIterationId={selectedIterationId}
-                onSelectIteration={handleSelectIteration}
-                hideReplayLineage
-                omitIterationList={omitRunIterationList}
-              />
-            </div>
-          ) : null}
+                </motion.div>
+              ) : (
+                <motion.div
+                  key={contentKey}
+                  initial={shouldReduceMotion ? false : { opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                  transition={
+                    shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                  }
+                  className="min-h-0 flex-1 space-y-4 overflow-y-auto p-0.5"
+                >
+                  {caseListInSidebar ? (
+                    hideRunActions ? (
+                      <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
+                        <p>
+                          Select a case from the list on the left to edit it and
+                          run it individually.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <SuiteHeroStats
+                          runs={runs}
+                          allIterations={allIterations}
+                          runTrendData={runTrendData}
+                          modelStats={modelStats}
+                          testCaseCount={cases.length}
+                          isSDK={suite.source === "sdk"}
+                          onRunClick={handleRunClick}
+                          onReplayLatestRun={
+                            onReplayRun
+                              ? (run) => onReplayRun(suite, run)
+                              : undefined
+                          }
+                          isReplayingLatestRun={isReplayingLatestRun}
+                          missingReplayProviderKeys={missingReplayProviderKeys}
+                        />
+                        <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
+                          <p>
+                            Select a case from the list on the left to view its
+                            history and performance.
+                          </p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="mt-4"
+                            onClick={() =>
+                              navigation.toSuiteOverview(suite._id, "runs")
+                            }
+                          >
+                            View runs table
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  ) : (
+                    <TestCasesOverview
+                      suite={suite}
+                      cases={cases}
+                      allIterations={allIterations}
+                      runsViewMode={runsViewMode}
+                      onViewModeChange={(value) =>
+                        navigation.toSuiteOverview(suite._id, value)
+                      }
+                      onTestCaseClick={(testCaseId) =>
+                        navigation.toTestDetail(suite._id, testCaseId)
+                      }
+                      runTrendData={runTrendData}
+                      modelStats={modelStats}
+                      runsLoading={runsLoading}
+                      onRunClick={handleRunClick}
+                    />
+                  )}
+                </motion.div>
+              )
+            ) : viewMode === "run-detail" && selectedRunDetails ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="min-h-0 flex-1 overflow-y-auto"
+              >
+                <RunDetailView
+                  selectedRunDetails={selectedRunDetails}
+                  caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                  source={suite.source}
+                  selectedRunChartData={selectedRunChartData}
+                  runDetailSortBy={effectiveRunDetailSortBy}
+                  onSortChange={effectiveRunDetailSortChange}
+                  serverNames={(suite.environment?.servers || []).filter(
+                    (name) => connectedServerNames.has(name),
+                  )}
+                  selectedIterationId={selectedIterationId}
+                  onSelectIteration={handleSelectIteration}
+                  hideReplayLineage
+                  omitIterationList={omitRunIterationList}
+                  onOpenRunInsights={
+                    !omitRunIterationList && route.type === "run-detail"
+                      ? () =>
+                          navigation.toRunDetail(
+                            route.suiteId,
+                            route.runId,
+                            undefined,
+                            { insightsFocus: true },
+                          )
+                      : undefined
+                  }
+                  runInsightsSelected={
+                    !omitRunIterationList &&
+                    route.type === "run-detail" &&
+                    Boolean(route.insightsFocus && !route.iteration)
+                  }
+                  onEditTestCase={onEditTestCase}
+                  alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+                />
+              </motion.div>
+            ) : null}
+          </AnimatePresence>
         </div>
       )}
 

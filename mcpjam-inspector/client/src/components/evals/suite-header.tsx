@@ -18,6 +18,7 @@ import {
 import {
   GitBranch,
   Loader2,
+  PanelLeft,
   RotateCw,
   Settings2,
   Trash2,
@@ -39,8 +40,14 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
+import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 
 interface ModelInfo {
   model: string;
@@ -73,8 +80,12 @@ interface SuiteHeaderProps {
   availableModels?: ModelDefinition[];
   onUpdateModels?: (models: ModelInfo[]) => Promise<void>;
   readOnlyConfig?: boolean;
+  hideRunActions?: boolean;
   onEditSuite?: () => void;
   onSetupCi?: () => void;
+  /** When the parent hides the cases sidebar (e.g. Explore run insights landing). */
+  casesSidebarHidden?: boolean;
+  onShowCasesSidebar?: () => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -98,8 +109,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     availableModels = [],
     onUpdateModels,
     readOnlyConfig = false,
+    hideRunActions = false,
     onEditSuite,
     onSetupCi,
+    casesSidebarHidden = false,
+    onShowCasesSidebar,
+    runsViewMode = "runs",
   } = props;
 
   const [isEditingName, setIsEditingName] = useState(false);
@@ -258,6 +273,23 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
 
+  // Check which provider API keys are missing for replay
+  const { hasToken } = useAiProviderKeys();
+  const missingReplayProviderKeys = useMemo(() => {
+    if (!replayableLatestRun || !testCases || testCases.length === 0) return [];
+    const providers = new Set<string>();
+    for (const tc of testCases) {
+      for (const m of tc.models ?? []) {
+        if (!isMCPJamProvidedModel(m.model)) {
+          providers.add(m.provider);
+        }
+      }
+    }
+    return [...providers].filter(
+      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens),
+    );
+  }, [replayableLatestRun, testCases, hasToken]);
+
   if (isEditMode) {
     return (
       <div className="flex items-center justify-between gap-4 mb-2 px-6 pt-6 max-w-5xl mx-auto w-full">
@@ -297,123 +329,50 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   }
 
   if (viewMode === "run-detail" && selectedRunDetails) {
-    const isCancelling = cancellingRunId === selectedRunDetails._id;
-    const isRunInProgress =
-      selectedRunDetails.status === "running" ||
-      selectedRunDetails.status === "pending";
-    const showAsRunning =
-      isRunInProgress ||
-      rerunningSuiteId === suite._id ||
-      replayingRunId === selectedRunDetails._id;
-    const replayableSelectedRun = selectedRunDetails.hasServerReplayConfig
-      ? selectedRunDetails
-      : null;
-    const showRunAction = Boolean(replayableSelectedRun) || !readOnlyConfig;
-    const isReplayAction = Boolean(replayableSelectedRun);
-    const runActionDisabled = isReplayAction
-      ? showAsRunning || !onReplayRun
-      : !canRerun || showAsRunning;
-    const runActionLabel = showAsRunning
-      ? isReplayAction
-        ? "Replaying..."
-        : "Running..."
-      : isReplayAction
-        ? "Replay this run"
-        : "Rerun";
-    const runActionTooltip = isReplayAction
-      ? "Replay this CI run in the playground"
-      : !hasServersConfigured
-        ? "No connected MCP servers are configured for this suite"
-        : !canRerun
-          ? `Connect the following servers: ${missingServers.join(", ")}`
-          : "Run all cases";
-
     return (
       <div className="flex items-center justify-between gap-4 mb-4">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-          <h2 className="text-lg font-semibold tracking-tight">
-            Run {formatRunId(selectedRunDetails._id)}
-          </h2>
-          <PassCriteriaBadge
-            run={selectedRunDetails}
-            variant="compact"
-            metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
-          />
-          {selectedRunDetails.replayedFromRunId ? (
-            <span
-              className="text-xs text-muted-foreground"
-              title={selectedRunDetails.replayedFromRunId}
-            >
-              Replay of{" "}
-              <span className="font-mono text-foreground/80">
-                Run {formatRunId(selectedRunDetails.replayedFromRunId)}
-              </span>
-            </span>
-          ) : null}
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {!readOnlyConfig &&
-            (isRunInProgress ? (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onCancelRun(selectedRunDetails._id)}
-                    disabled={isCancelling}
-                    className="gap-2"
-                  >
-                    {isCancelling ? (
-                      <>
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Cancelling...
-                      </>
-                    ) : (
-                      <>
-                        <X className="h-4 w-4" />
-                        Cancel run
-                      </>
-                    )}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  Cancel the current evaluation run
-                </TooltipContent>
-              </Tooltip>
-            ) : null)}
-          {showRunAction && !isRunInProgress ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() =>
-                      isReplayAction
-                        ? onReplayRun?.(suite, replayableSelectedRun)
-                        : onRerun(suite)
-                    }
-                    disabled={runActionDisabled}
-                    className="gap-2"
-                  >
-                    <RotateCw
-                      className={`h-4 w-4 ${showAsRunning ? "animate-spin" : ""}`}
-                    />
-                    {runActionLabel}
-                  </Button>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <h2 className="text-lg font-semibold tracking-tight">
+              Run {formatRunId(selectedRunDetails._id)}
+            </h2>
+            <PassCriteriaBadge
+              run={selectedRunDetails}
+              variant="compact"
+              metricLabel={suite.source === "sdk" ? "Pass Rate" : "Accuracy"}
+            />
+            {selectedRunDetails.replayedFromRunId ? (
+              <span
+                className="text-xs text-muted-foreground"
+                title={selectedRunDetails.replayedFromRunId}
+              >
+                Replay of{" "}
+                <span className="font-mono text-foreground/80">
+                  Run {formatRunId(selectedRunDetails.replayedFromRunId)}
                 </span>
-              </TooltipTrigger>
-              <TooltipContent>{runActionTooltip}</TooltipContent>
-            </Tooltip>
-          ) : null}
-          <Button
-            variant="outline"
-            size="icon"
-            onClick={() => onViewModeChange("overview")}
-          >
-            <X className="h-4 w-4" />
-          </Button>
+              </span>
+            ) : null}
+          </div>
+          <RunHeaderCompactStats run={selectedRunDetails} />
         </div>
+        {!hideRunActions ? (
+          <RunDetailPlaygroundActions
+            suite={suite}
+            selectedRun={selectedRunDetails}
+            readOnlyConfig={readOnlyConfig}
+            onReplayRun={onReplayRun}
+            onRerun={onRerun}
+            onCancelRun={onCancelRun}
+            rerunningSuiteId={rerunningSuiteId}
+            replayingRunId={replayingRunId}
+            cancellingRunId={cancellingRunId}
+            canRerun={canRerun}
+            hasServersConfigured={hasServersConfigured}
+            missingServers={missingServers}
+            showCloseButton
+            onBackToOverview={() => onViewModeChange("overview")}
+          />
+        ) : null}
       </div>
     );
   }
@@ -455,6 +414,17 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">
+        {casesSidebarHidden && onShowCasesSidebar && runsViewMode === "runs" ? (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onShowCasesSidebar}
+          >
+            <PanelLeft className="h-4 w-4 mr-2" />
+            Cases
+          </Button>
+        ) : null}
         {onEditSuite && !readOnlyConfig && (
           <Button size="sm" variant="outline" onClick={onEditSuite}>
             <Settings2 className="h-4 w-4 mr-2" />
@@ -638,7 +608,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         )}
 
         {/* Action buttons */}
-        {(replayableLatestRun || !readOnlyConfig) && (
+        {!hideRunActions && (replayableLatestRun || !readOnlyConfig) && (
           <Tooltip>
             <TooltipTrigger asChild>
               <span>
@@ -652,7 +622,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   }
                   disabled={
                     replayableLatestRun
-                      ? isReplayingLatestRun || !onReplayRun
+                      ? isReplayingLatestRun ||
+                        !onReplayRun ||
+                        missingReplayProviderKeys.length > 0
                       : !canRerun || isRerunning
                   }
                   className="gap-2"
@@ -672,7 +644,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             </TooltipTrigger>
             <TooltipContent>
               {replayableLatestRun
-                ? "Replay the latest CI run in the playground"
+                ? missingReplayProviderKeys.length > 0
+                  ? `Add your ${missingReplayProviderKeys.join(", ")} API key${missingReplayProviderKeys.length > 1 ? "s" : ""} in Settings to replay`
+                  : "Replay the latest CI run"
                 : !hasServersConfigured
                   ? "No connected MCP servers are configured for this suite"
                   : !canRerun

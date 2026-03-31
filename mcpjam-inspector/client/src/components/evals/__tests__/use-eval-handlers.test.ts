@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
+import { toast } from "sonner";
 import { useEvalHandlers } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
@@ -40,11 +41,13 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-// Mock useAiProviderKeys
+// Mock useAiProviderKeys (mutable for replay-without-keys coverage)
+const mockProviderGetToken = vi.fn().mockReturnValue("mock-api-key");
+const mockProviderHasToken = vi.fn().mockReturnValue(true);
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
   useAiProviderKeys: () => ({
-    getToken: vi.fn().mockReturnValue("mock-api-key"),
-    hasToken: vi.fn().mockReturnValue(true),
+    getToken: mockProviderGetToken,
+    hasToken: mockProviderHasToken,
   }),
 }));
 
@@ -118,6 +121,8 @@ describe("useEvalHandlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsHostedMode.mockReturnValue(false);
+    mockProviderGetToken.mockReturnValue("mock-api-key");
+    mockProviderHasToken.mockReturnValue(true);
 
     // Default mock implementations
     mockGetAccessToken.mockResolvedValue("mock-access-token");
@@ -283,6 +288,7 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-123",
         runId: "run-replay",
+        insightsFocus: true,
       });
     });
 
@@ -345,6 +351,7 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-123",
         runId: "run-replay",
+        insightsFocus: true,
       });
     });
 
@@ -567,6 +574,44 @@ describe("useEvalHandlers", () => {
       );
     });
 
+    it("requires browser API keys for replay (shows toast error when missing)", async () => {
+      mockProviderHasToken.mockReturnValue(false);
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          selectedSuiteEntry: {
+            latestRun: {
+              _id: "run-source",
+              hasServerReplayConfig: true,
+            },
+            recentRuns: [],
+          } as any,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleReplayRun(
+          {
+            _id: "suite-no-keys",
+            name: "Suite",
+            description: "Needs external provider",
+            source: "sdk",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "run-source",
+            hasServerReplayConfig: true,
+          } as any,
+        );
+      });
+
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/API key.*Settings/i),
+      );
+    });
+
     it("posts to the hosted replay endpoint for a specific run", async () => {
       mockIsHostedMode.mockReturnValue(true);
 
@@ -639,6 +684,7 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-456",
         runId: "run-new",
+        insightsFocus: true,
       });
     });
   });

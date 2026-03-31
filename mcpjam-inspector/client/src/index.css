@@ -107,6 +107,13 @@
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
+  /* Eval trace waterfall — bar fills (light): slightly richer than before so capsules match icons */
+  --trace-waterfall-bar-prompt: oklch(0.885 0.082 292);
+  --trace-waterfall-bar-llm: oklch(0.885 0.076 255);
+  --trace-waterfall-bar-tool: oklch(0.905 0.105 96);
+  --trace-waterfall-bar-step: oklch(0.88 0.055 250);
+  --trace-waterfall-bar-error: oklch(0.88 0.115 25);
+  --trace-waterfall-row-selected: oklch(0.67 0.1 288 / 0.12);
 }
 
 .app-theme-scope {
@@ -137,6 +144,12 @@
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.769 0.188 85.3);
   --pending-foreground: oklch(0.239 0.06 60);
+  --trace-waterfall-bar-prompt: oklch(0.885 0.082 292);
+  --trace-waterfall-bar-llm: oklch(0.885 0.076 255);
+  --trace-waterfall-bar-tool: oklch(0.905 0.105 96);
+  --trace-waterfall-bar-step: oklch(0.88 0.055 250);
+  --trace-waterfall-bar-error: oklch(0.88 0.115 25);
+  --trace-waterfall-row-selected: oklch(0.67 0.1 288 / 0.12);
 }
 
 .dark {
@@ -218,6 +231,18 @@
   --shadow-xl:
     0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* Eval trace waterfall — translucent pastels on dark */
+  --trace-waterfall-bar-prompt: oklch(0.79 0.11 292 / 0.58);
+  --trace-waterfall-bar-llm: oklch(0.79 0.1 255 / 0.58);
+  --trace-waterfall-bar-tool: oklch(0.83 0.12 88 / 0.58);
+  --trace-waterfall-bar-step: oklch(0.77 0.06 250 / 0.56);
+  --trace-waterfall-bar-error: oklch(0.78 0.14 25 / 0.58);
+  --trace-waterfall-row-selected: oklch(0.8 0.09 288 / 0.18);
+  --trace-waterfall-accent-prompt: oklch(0.84 0.11 292 / 0.82);
+  --trace-waterfall-accent-llm: oklch(0.84 0.1 255 / 0.82);
+  --trace-waterfall-accent-tool: oklch(0.87 0.11 88 / 0.82);
+  --trace-waterfall-accent-step: oklch(0.8 0.065 250 / 0.82);
+  --trace-waterfall-accent-error: oklch(0.84 0.12 25 / 0.82);
 }
 
 .app-theme-scope.dark {
@@ -248,6 +273,17 @@
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.75 0.183 55);
   --pending-foreground: oklch(0.95 0.06 70);
+  --trace-waterfall-bar-prompt: oklch(0.79 0.11 292 / 0.58);
+  --trace-waterfall-bar-llm: oklch(0.79 0.1 255 / 0.58);
+  --trace-waterfall-bar-tool: oklch(0.83 0.12 88 / 0.58);
+  --trace-waterfall-bar-step: oklch(0.77 0.06 250 / 0.56);
+  --trace-waterfall-bar-error: oklch(0.78 0.14 25 / 0.58);
+  --trace-waterfall-row-selected: oklch(0.8 0.09 288 / 0.18);
+  --trace-waterfall-accent-prompt: oklch(0.84 0.11 292 / 0.82);
+  --trace-waterfall-accent-llm: oklch(0.84 0.1 255 / 0.82);
+  --trace-waterfall-accent-tool: oklch(0.87 0.11 88 / 0.82);
+  --trace-waterfall-accent-step: oklch(0.8 0.065 250 / 0.82);
+  --trace-waterfall-accent-error: oklch(0.84 0.12 25 / 0.82);
 }
 
 @theme inline {
@@ -373,6 +409,177 @@
   .scrollbar-hidden::-webkit-scrollbar {
     display: none;
   }
+
+  /* Trace timeline waterfall — category bar fills */
+  .trace-waterfall-bar-prompt {
+    background-color: var(--trace-waterfall-bar-prompt);
+  }
+  .trace-waterfall-bar-llm {
+    background-color: var(--trace-waterfall-bar-llm);
+  }
+  .trace-waterfall-bar-tool {
+    background-color: var(--trace-waterfall-bar-tool);
+  }
+  .trace-waterfall-bar-step {
+    background-color: var(--trace-waterfall-bar-step);
+  }
+  .trace-waterfall-bar-error {
+    background-color: var(--trace-waterfall-bar-error);
+  }
+  .trace-waterfall-bar-prompt,
+  .trace-waterfall-bar-llm,
+  .trace-waterfall-bar-tool,
+  .trace-waterfall-bar-step,
+  .trace-waterfall-bar-error {
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 0.28),
+      0 1px 3px rgb(15 23 42 / 0.08);
+  }
+  .dark .trace-waterfall-bar-prompt,
+  .dark .trace-waterfall-bar-llm,
+  .dark .trace-waterfall-bar-tool,
+  .dark .trace-waterfall-bar-step,
+  .dark .trace-waterfall-bar-error,
+  .app-theme-scope.dark .trace-waterfall-bar-prompt,
+  .app-theme-scope.dark .trace-waterfall-bar-llm,
+  .app-theme-scope.dark .trace-waterfall-bar-tool,
+  .app-theme-scope.dark .trace-waterfall-bar-step,
+  .app-theme-scope.dark .trace-waterfall-bar-error {
+    box-shadow:
+      inset 0 0 0 1px rgb(255 255 255 / 0.12),
+      0 1px 4px rgb(0 0 0 / 0.26);
+  }
+  .trace-waterfall-row-selected {
+    background-color: var(--trace-waterfall-row-selected);
+  }
+
+  /*
+   * Trace icons + row borders (light): same hue/chroma as bar fills; darkened L for stroke contrast.
+   * Chromatic drop-shadow mimics the “glow” of solid bars; neutral shadow matches .trace-waterfall-bar-*.
+   */
+  .trace-waterfall-glyph-prompt {
+    color: oklch(from var(--trace-waterfall-bar-prompt) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(
+        0 0 5px oklch(from var(--trace-waterfall-bar-prompt) l c h / 0.5)
+      );
+  }
+  .trace-waterfall-glyph-llm {
+    color: oklch(from var(--trace-waterfall-bar-llm) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(
+        0 0 5px oklch(from var(--trace-waterfall-bar-llm) l c h / 0.5)
+      );
+  }
+  .trace-waterfall-glyph-tool {
+    color: oklch(from var(--trace-waterfall-bar-tool) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(
+        0 0 5px oklch(from var(--trace-waterfall-bar-tool) l c h / 0.5)
+      );
+  }
+  .trace-waterfall-glyph-step {
+    color: oklch(from var(--trace-waterfall-bar-step) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(
+        0 0 5px oklch(from var(--trace-waterfall-bar-step) l c h / 0.5)
+      );
+  }
+  .trace-waterfall-glyph-error {
+    color: oklch(from var(--trace-waterfall-bar-error) calc(l - 0.36) c h);
+    filter: drop-shadow(0 1px 3px rgb(15 23 42 / 0.08))
+      drop-shadow(
+        0 0 5px oklch(from var(--trace-waterfall-bar-error) l c h / 0.5)
+      );
+  }
+
+  .trace-waterfall-row-accent-prompt {
+    border-left-color: oklch(
+      from var(--trace-waterfall-bar-prompt) calc(l - 0.36) c h
+    );
+  }
+  .trace-waterfall-row-accent-llm {
+    border-left-color: oklch(
+      from var(--trace-waterfall-bar-llm) calc(l - 0.36) c h
+    );
+  }
+  .trace-waterfall-row-accent-tool {
+    border-left-color: oklch(
+      from var(--trace-waterfall-bar-tool) calc(l - 0.36) c h
+    );
+  }
+  .trace-waterfall-row-accent-step {
+    border-left-color: oklch(
+      from var(--trace-waterfall-bar-step) calc(l - 0.36) c h
+    );
+  }
+  .trace-waterfall-row-accent-error {
+    border-left-color: oklch(
+      from var(--trace-waterfall-bar-error) calc(l - 0.36) c h
+    );
+  }
+
+  .dark .trace-waterfall-glyph-prompt,
+  .app-theme-scope.dark .trace-waterfall-glyph-prompt {
+    color: var(--trace-waterfall-accent-prompt);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(
+        0 0 6px oklch(from var(--trace-waterfall-bar-prompt) l c h / 0.45)
+      );
+  }
+  .dark .trace-waterfall-glyph-llm,
+  .app-theme-scope.dark .trace-waterfall-glyph-llm {
+    color: var(--trace-waterfall-accent-llm);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(
+        0 0 6px oklch(from var(--trace-waterfall-bar-llm) l c h / 0.45)
+      );
+  }
+  .dark .trace-waterfall-glyph-tool,
+  .app-theme-scope.dark .trace-waterfall-glyph-tool {
+    color: var(--trace-waterfall-accent-tool);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(
+        0 0 6px oklch(from var(--trace-waterfall-bar-tool) l c h / 0.45)
+      );
+  }
+  .dark .trace-waterfall-glyph-step,
+  .app-theme-scope.dark .trace-waterfall-glyph-step {
+    color: var(--trace-waterfall-accent-step);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(
+        0 0 6px oklch(from var(--trace-waterfall-bar-step) l c h / 0.45)
+      );
+  }
+  .dark .trace-waterfall-glyph-error,
+  .app-theme-scope.dark .trace-waterfall-glyph-error {
+    color: var(--trace-waterfall-accent-error);
+    filter: drop-shadow(0 1px 4px rgb(0 0 0 / 0.26))
+      drop-shadow(
+        0 0 6px oklch(from var(--trace-waterfall-bar-error) l c h / 0.45)
+      );
+  }
+
+  .dark .trace-waterfall-row-accent-prompt,
+  .app-theme-scope.dark .trace-waterfall-row-accent-prompt {
+    border-left-color: var(--trace-waterfall-accent-prompt);
+  }
+  .dark .trace-waterfall-row-accent-llm,
+  .app-theme-scope.dark .trace-waterfall-row-accent-llm {
+    border-left-color: var(--trace-waterfall-accent-llm);
+  }
+  .dark .trace-waterfall-row-accent-tool,
+  .app-theme-scope.dark .trace-waterfall-row-accent-tool {
+    border-left-color: var(--trace-waterfall-accent-tool);
+  }
+  .dark .trace-waterfall-row-accent-step,
+  .app-theme-scope.dark .trace-waterfall-row-accent-step {
+    border-left-color: var(--trace-waterfall-accent-step);
+  }
+  .dark .trace-waterfall-row-accent-error,
+  .app-theme-scope.dark .trace-waterfall-row-accent-error {
+    border-left-color: var(--trace-waterfall-accent-error);
+  }
 }
 
 .disable-transitions * {
@@ -439,6 +646,51 @@
     oklch(0.67 0.13 39 / 0.4) 50%,
     oklch(0.67 0.13 39 / 0.15) 100%
   );
+}
+
+@keyframes ai-insight-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+/* Warm amber wash + slow shimmer for AI-generated run insight copy */
+.ai-insight-glow {
+  background: linear-gradient(
+    105deg,
+    oklch(0.72 0.12 45 / 0.035) 0%,
+    oklch(0.75 0.11 42 / 0.05) 45%,
+    oklch(0.72 0.12 45 / 0.035) 90%
+  );
+  background-size: 200% 100%;
+  animation: ai-insight-shimmer 6s ease-in-out infinite;
+}
+
+.dark .ai-insight-glow {
+  background: linear-gradient(
+    105deg,
+    oklch(0.67 0.13 39 / 0.055) 0%,
+    oklch(0.7 0.12 42 / 0.075) 45%,
+    oklch(0.67 0.13 39 / 0.055) 90%
+  );
+  background-size: 200% 100%;
+}
+
+.ai-sparkle-icon {
+  color: oklch(0.72 0.12 45);
+}
+
+.dark .ai-sparkle-icon {
+  color: oklch(0.75 0.11 42);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-insight-glow {
+    animation: none;
+  }
 }
 
 /* JSON syntax highlighting classes */

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupRunsByCommit } from "../helpers";
+import { groupRunsByCommit, orderCommitGroupRunsByOutcome } from "../helpers";
 import type { EvalSuiteOverviewEntry, EvalSuiteRun } from "../types";
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
@@ -176,5 +176,26 @@ describe("groupRunsByCommit", () => {
 
   it("returns empty array for empty input", () => {
     expect(groupRunsByCommit([])).toEqual([]);
+  });
+});
+
+describe("orderCommitGroupRunsByOutcome", () => {
+  it("orders failed, then running, then passed, then other", () => {
+    const passed = makeRun({ _id: "p", result: "passed", status: "completed" });
+    const failed = makeRun({ _id: "f", result: "failed", status: "completed" });
+    const running = makeRun({ _id: "r", status: "running" });
+    const cancelled = makeRun({
+      _id: "c",
+      result: "cancelled",
+      status: "cancelled",
+    });
+
+    const ordered = orderCommitGroupRunsByOutcome([
+      passed,
+      cancelled,
+      running,
+      failed,
+    ]);
+    expect(ordered.map((x) => x._id)).toEqual(["f", "r", "p", "c"]);
   });
 });

@@ -58,6 +58,12 @@ export const RUN_STATUS = {
 
 export type RunStatus = (typeof RUN_STATUS)[keyof typeof RUN_STATUS];
 
+/** Pass/fail foreground text — same semantic tokens as charts/icons (`--success` / `--destructive` in index.css). */
+export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
+  passed: "text-success",
+  failed: "text-destructive",
+} as const;
+
 // UI configuration
 export const UI_CONFIG = {
   MAX_TITLE_LENGTH: 100,

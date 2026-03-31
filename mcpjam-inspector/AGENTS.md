@@ -52,7 +52,7 @@ Browser `console.*` is acceptable for client-side debugging.
 
 ## Testing
 
-**All changes should include tests.** Uses Vitest. Run with `npm run test` (or `test:watch`, `test:coverage`).
+**All changes should include tests.** In this repo, `npm run test` runs the Vitest suite (`test:watch`, `test:coverage` are available); we are not opinionated about test frameworks elsewhere.
 
 ### Structure
 

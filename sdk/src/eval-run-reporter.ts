@@ -21,8 +21,10 @@ import type { EvalRunResult } from "./EvalTest.js";
 import { captureEvalReportingFailure } from "./sentry.js";
 import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import {
+  promptsToEvalResult,
   runToEvalResults,
   suiteRunToEvalResults,
+  type PromptsToEvalResultOverrides,
   type RunToEvalResultsOptions,
   type SuiteRunToEvalResultsOptions,
 } from "./eval-result-mapping.js";
@@ -63,6 +65,23 @@ export interface EvalRunReporter {
     overrides?: Partial<
       Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
     > & { failOnToolError?: boolean }
+  ): Promise<void>;
+
+  /**
+   * Aggregate multiple PromptResults into one EvalResultInput and add it.
+   */
+  addFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
+  ): void;
+
+  /**
+   * Aggregate multiple PromptResults into one EvalResultInput, add it, and
+   * auto-flush when the buffer is large enough.
+   */
+  recordFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
   ): Promise<void>;
 
   /**
@@ -174,6 +193,36 @@ class EvalRunReporterImpl implements EvalRunReporter {
         ...overrides,
         failOnToolError:
           overrides?.failOnToolError !== undefined
+            ? overrides.failOnToolError
+            : this.input.failOnToolError,
+      })
+    );
+  }
+
+  addFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
+  ): void {
+    this.add(
+      promptsToEvalResult(prompts, {
+        ...overrides,
+        failOnToolError:
+          overrides.failOnToolError !== undefined
+            ? overrides.failOnToolError
+            : this.input.failOnToolError,
+      })
+    );
+  }
+
+  async recordFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
+  ): Promise<void> {
+    await this.record(
+      promptsToEvalResult(prompts, {
+        ...overrides,
+        failOnToolError:
+          overrides.failOnToolError !== undefined
             ? overrides.failOnToolError
             : this.input.failOnToolError,
       })

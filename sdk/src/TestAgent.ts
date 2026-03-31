@@ -33,10 +33,10 @@ import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js"
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
 import {
-  createEvalSpanSink,
+  createEvalSpanIntegration,
   patchEvalSpansMessageRangesFromSteps,
 } from "./eval-trace-spans.js";
-import { isCallToolResultError } from "./eval-tool-execution.js";
+
 
 /**
  * Configuration for creating a TestAgent
@@ -113,9 +113,6 @@ type StartedToolCall = {
   shortCircuited: boolean;
 };
 
-type EvalAwareStepResult = StepResult<ToolSet> & {
-  stepNumber?: number;
-};
 
 /**
  * Agent for running LLM prompts with tool calling.
@@ -316,8 +313,6 @@ export class TestAgent implements EvalAgent {
     onLatency: (ms: number) => void,
     snapshotBuffer: Map<string, EvalWidgetSnapshotInput>,
     pendingStepToolCalls: StartedToolCall[],
-    spanSink: ReturnType<typeof createEvalSpanSink>,
-    getCurrentStepStartMs: () => number,
     shortCircuitTools?: Set<string>
   ): ToolSet {
     const instrumented: ToolSet = {};
@@ -343,21 +338,6 @@ export class TestAgent implements EvalAgent {
               shortCircuited: shouldShortCircuit,
             });
 
-            // AI SDK 6.0.50 does not expose tool lifecycle callbacks yet, so
-            // the execute wrapper remains the timing fallback for current builds.
-            spanSink.onToolStart(
-              toolCallId,
-              name,
-              undefined,
-              getCurrentStepStartMs(),
-              {
-                serverId:
-                  typeof (tool as any)._serverId === "string"
-                    ? (tool as any)._serverId
-                    : undefined,
-              }
-            );
-            let success = true;
             try {
               if (shouldShortCircuit) {
                 return CallToolResultSchema.parse({
@@ -371,9 +351,6 @@ export class TestAgent implements EvalAgent {
               }
 
               const result = await originalExecute(args, options);
-              if (isCallToolResultError(result)) {
-                success = false;
-              }
               await this.captureMcpAppSnapshot({
                 toolName: name,
                 tool,
@@ -383,13 +360,7 @@ export class TestAgent implements EvalAgent {
                 snapshotBuffer,
               });
               return result;
-            } catch (error) {
-              success = false;
-              throw error;
             } finally {
-              spanSink.onToolEnd(toolCallId, {
-                status: success ? "ok" : "error",
-              });
               onLatency(Date.now() - start);
             }
           },
@@ -499,21 +470,31 @@ export class TestAgent implements EvalAgent {
     options?: PromptOptions
   ): Promise<PromptResult> {
     const startTime = Date.now();
-    const spanSink = createEvalSpanSink(() => Date.now() - startTime);
     let totalMcpMs = 0;
     let lastStepEndTime = startTime;
-    const getCurrentStepStartMs = () =>
-      Math.max(0, lastStepEndTime - startTime);
     let totalLlmMs = 0;
     let stepMcpMs = 0; // MCP time within current step
     const widgetSnapshots = new Map<string, EvalWidgetSnapshotInput>();
     const completedToolCalls: PromptToolCall[] = [];
     const pendingStepToolCalls: StartedToolCall[] = [];
     let lastCompletedStepMessages: ModelMessage[] = [];
-    let emittedMessageCount = 0;
     let partialInputTokens = 0;
     let partialOutputTokens = 0;
     let lastCompletedStepText = "";
+
+    // Build tool name → serverId map for span metadata
+    const serverIdByTool = new Map<string, string>();
+    for (const [name, tool] of Object.entries(this.tools)) {
+      const sid = (tool as any)?._serverId;
+      if (typeof sid === "string" && sid) {
+        serverIdByTool.set(name, sid);
+      }
+    }
+
+    const spanIntegration = createEvalSpanIntegration({
+      rel: () => Date.now() - startTime,
+      serverIdByTool,
+    });
 
     try {
       const modelOptions: CreateModelOptions = {
@@ -525,7 +506,7 @@ export class TestAgent implements EvalAgent {
         options?.stopAfterToolCall
       );
 
-      // Instrument tools to track MCP execution time
+      // Instrument tools to track MCP execution time and widget snapshots
       const instrumentedTools = this.createInstrumentedTools(
         (ms) => {
           totalMcpMs += ms;
@@ -533,8 +514,6 @@ export class TestAgent implements EvalAgent {
         },
         widgetSnapshots,
         pendingStepToolCalls,
-        spanSink,
-        getCurrentStepStartMs,
         new Set(stopAfterToolCallNames)
       );
 
@@ -543,8 +522,6 @@ export class TestAgent implements EvalAgent {
       const userMessage: UserModelMessage = { role: "user", content: message };
       const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
 
-      // Cast to any so newer AI SDK lifecycle hooks can be forwarded when the
-      // runtime supports them, while preserving compatibility with 6.0.50.
       const generateTextOptions: any = {
         model: model as any,
         tools: instrumentedTools,
@@ -563,39 +540,17 @@ export class TestAgent implements EvalAgent {
         ...(resolvedTimeout !== undefined && {
           timeout: resolvedTimeout,
         }),
-        prepareStep: ({ stepNumber }: { stepNumber: number }) => {
-          spanSink.onStepStart(stepNumber, getCurrentStepStartMs(), {
-            modelId: this._parsedModel,
-          });
-          return {};
-        },
-        experimental_onStepStart: (event: { stepNumber: number }) => {
-          spanSink.onStepStart(event.stepNumber, getCurrentStepStartMs(), {
-            modelId: this._parsedModel,
-          });
-        },
-        experimental_onToolCallStart: (event: {
-          stepNumber?: number;
-          toolCall: { toolCallId: string; toolName: string };
-        }) => {
-          spanSink.onToolStart(
-            event.toolCall.toolCallId,
-            event.toolCall.toolName,
-            event.stepNumber,
-            getCurrentStepStartMs()
-          );
-        },
-        experimental_onToolCallFinish: (event: {
-          toolCall: { toolCallId: string };
-        }) => {
-          spanSink.onToolEnd(event.toolCall.toolCallId);
+        experimental_telemetry: {
+          isEnabled: true,
+          recordInputs: false,
+          recordOutputs: false,
+          integrations: [spanIntegration],
         },
         stopWhen: this.resolveStopWhen(
           options?.stopWhen,
           options?.stopAfterToolCall
         ),
-        onStepFinish: (stepResult: EvalAwareStepResult) => {
-          const stepStartMs = getCurrentStepStartMs();
+        onStepFinish: (stepResult: StepResult<ToolSet>) => {
           const now = Date.now();
           const stepDuration = now - lastStepEndTime;
           // LLM time for this step = step duration - MCP time in this step
@@ -610,33 +565,11 @@ export class TestAgent implements EvalAgent {
           const stepMessages = stepResult.response?.messages
             ? [...stepResult.response.messages]
             : [];
-          // AI SDK gives cumulative response.messages per step (grows across the loop).
-          // Indices must cover only the new slice vs the previous step.
-          const cumulativeLen = stepMessages.length;
-          const messageStartIndex =
-            cumulativeLen > emittedMessageCount
-              ? 1 + emittedMessageCount
-              : undefined;
-          const messageEndIndex =
-            cumulativeLen > emittedMessageCount
-              ? 1 + cumulativeLen - 1
-              : undefined;
-
-          spanSink.onStepFinish(stepResult.stepNumber, stepStartMs, {
-            modelId: stepResult.response?.modelId ?? this._parsedModel,
-            inputTokens: stepResult.usage?.inputTokens,
-            outputTokens: stepResult.usage?.outputTokens,
-            totalTokens: stepResult.usage?.totalTokens,
-            messageStartIndex,
-            messageEndIndex,
-            status: "ok",
-          });
 
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
           lastCompletedStepMessages = stepMessages;
-          emittedMessageCount = cumulativeLen;
           completedToolCalls.push(
             ...stepResult.toolCalls.map((toolCall) => ({
               toolName: toolCall.toolName,
@@ -663,7 +596,7 @@ export class TestAgent implements EvalAgent {
         messages.push(...result.response.messages);
       }
 
-      const recordedSpans = spanSink.getSpans();
+      const recordedSpans = spanIntegration.getSpans();
       patchEvalSpansMessageRangesFromSteps(
         recordedSpans,
         1,
@@ -704,6 +637,7 @@ export class TestAgent implements EvalAgent {
             : error instanceof Error
               ? error.message
               : String(error);
+      spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },
         ...lastCompletedStepMessages,
@@ -717,8 +651,6 @@ export class TestAgent implements EvalAgent {
         })),
       ];
       const totalTokens = partialInputTokens + partialOutputTokens;
-
-      spanSink.finalizeFailure(errorMessage);
 
       this.lastResult = PromptResult.from({
         prompt: message,
@@ -739,7 +671,7 @@ export class TestAgent implements EvalAgent {
         provider: this._parsedProvider,
         model: this._parsedModel,
         widgetSnapshots: Array.from(widgetSnapshots.values()),
-        spans: spanSink.getSpans(),
+        spans: spanIntegration.getSpans(),
       });
       this.promptHistory.push(this.lastResult);
       return this.lastResult;

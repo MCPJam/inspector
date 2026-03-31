@@ -1,7 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
 import { GitBranch, GitCommit, Clock, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
-import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import type {
   CommitGroup,
@@ -10,11 +9,12 @@ import type {
   SuiteDetailsQueryResponse,
 } from "./types";
 import {
-  evalStatusLeftBorderClasses,
   formatDuration,
   formatRunId,
+  orderCommitGroupRunsByOutcome,
 } from "./helpers";
 import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { useRunDetailData } from "./use-suite-data";
@@ -89,58 +89,16 @@ export function CommitDetailView({
   const totalCases = getTotalCases(commitGroup.runs);
   const isManual = commitGroup.commitSha.startsWith("manual-");
 
-  // Build ordered suite list: failed first, then running, then passed, then not-run
-  const orderedRuns = useMemo(() => {
-    const failed: EvalSuiteRun[] = [];
-    const running: EvalSuiteRun[] = [];
-    const passed: EvalSuiteRun[] = [];
-    const notRun: EvalSuiteRun[] = [];
-
-    for (const run of commitGroup.runs) {
-      if (run.status === "running" || run.status === "pending") {
-        running.push(run);
-      } else if (run.result === "failed") {
-        failed.push(run);
-      } else if (run.result === "passed") {
-        passed.push(run);
-      } else {
-        notRun.push(run);
-      }
-    }
-    return [...failed, ...running, ...passed, ...notRun];
-  }, [commitGroup.runs]);
-
-  // Auto-select first suite if none selected
-  useEffect(() => {
-    if (
-      route.type === "commit-detail" &&
-      !route.suite &&
-      orderedRuns.length > 0
-    ) {
-      navigateToCiEvalsRoute(
-        {
-          type: "commit-detail",
-          commitSha: commitGroup.commitSha,
-          suite: orderedRuns[0].suiteId,
-        },
-        { replace: true },
-      );
-    }
-  }, [route, orderedRuns, commitGroup.commitSha]);
+  const orderedRuns = useMemo(
+    () => orderCommitGroupRunsByOutcome(commitGroup.runs),
+    [commitGroup.runs],
+  );
 
   // Find the selected run
   const selectedRun = useMemo(() => {
     if (!selectedSuiteId) return null;
     return commitGroup.runs.find((r) => r.suiteId === selectedSuiteId) ?? null;
   }, [selectedSuiteId, commitGroup.runs]);
-
-  const handleSelectSuite = (suiteId: string) => {
-    navigateToCiEvalsRoute({
-      type: "commit-detail",
-      commitSha: commitGroup.commitSha,
-      suite: suiteId,
-    });
-  };
 
   const handleSelectIteration = (iterationId: string) => {
     if (selectedSuiteId) {
@@ -231,83 +189,24 @@ export function CommitDetailView({
         </div>
       </div>
 
-      {/* Two-pane body */}
-      <div className="flex flex-1 min-h-0">
-        {/* Left: Suite list */}
-        <div className="w-[280px] shrink-0 border-r flex flex-col bg-background">
-          <div className="border-b px-3 py-2 shrink-0">
-            <div className="text-xs font-semibold">
-              Suites · {commitGroup.runs.length}
+      <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto">
+        {selectedRun && selectedSuiteId ? (
+          <CommitSuiteRunDetail
+            run={selectedRun}
+            suiteId={selectedSuiteId}
+            suiteName={commitGroup.suiteMap.get(selectedSuiteId) || "Unknown"}
+            selectedIterationId={selectedIterationId}
+            onSelectIteration={handleSelectIteration}
+            runDetailSortBy={runDetailSortBy}
+            onSortChange={setRunDetailSortBy}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center p-6">
+            <div className="text-sm text-muted-foreground">
+              Select a suite from the sidebar to view run details
             </div>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="divide-y">
-              {orderedRuns.map((run) => {
-                const suiteName =
-                  commitGroup.suiteMap.get(run.suiteId) || "Unknown";
-                const isSelected = run.suiteId === selectedSuiteId;
-                const isRunning =
-                  run.status === "running" || run.status === "pending";
-                const runAccent = evalStatusLeftBorderClasses(
-                  isRunning ? "running" : (run.result ?? "pending"),
-                );
-                const outcomeTitle = isRunning
-                  ? "Run in progress"
-                  : run.result === "passed"
-                    ? "Last run passed"
-                    : run.result === "failed"
-                      ? "Last run failed"
-                      : run.status === "cancelled"
-                        ? "Run cancelled"
-                        : "Run status";
-
-                return (
-                  <button
-                    key={run._id}
-                    type="button"
-                    title={outcomeTitle}
-                    onClick={() => handleSelectSuite(run.suiteId)}
-                    className={cn(
-                      "w-full border-l-2 py-2.5 pl-[11px] pr-3 text-left transition-colors hover:bg-muted/50",
-                      runAccent,
-                      isSelected && "border-r-2 border-r-primary bg-primary/10",
-                    )}
-                  >
-                    <span className="block truncate text-xs font-medium">
-                      {suiteName}
-                    </span>
-                    {isRunning && (
-                      <div className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
-                        in progress
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Right: Suite run detail */}
-        <div className="flex-1 min-w-0 overflow-y-auto">
-          {selectedRun && selectedSuiteId ? (
-            <CommitSuiteRunDetail
-              run={selectedRun}
-              suiteId={selectedSuiteId}
-              suiteName={commitGroup.suiteMap.get(selectedSuiteId) || "Unknown"}
-              selectedIterationId={selectedIterationId}
-              onSelectIteration={handleSelectIteration}
-              runDetailSortBy={runDetailSortBy}
-              onSortChange={setRunDetailSortBy}
-            />
-          ) : (
-            <div className="flex-1 flex items-center justify-center h-full">
-              <div className="text-sm text-muted-foreground">
-                Select a suite to view details
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
@@ -377,15 +276,18 @@ function CommitSuiteRunDetail({
 
   return (
     <>
-      <div className="flex shrink-0 flex-wrap items-center gap-2 px-4 pt-4">
-        <h2 className="text-lg font-semibold tracking-tight">
-          Run {formatRunId(run._id)}
-        </h2>
-        <PassCriteriaBadge
-          run={run}
-          variant="compact"
-          metricLabel={metricLabel}
-        />
+      <div className="flex shrink-0 flex-col gap-1 px-4 pt-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Run {formatRunId(run._id)}
+          </h2>
+          <PassCriteriaBadge
+            run={run}
+            variant="compact"
+            metricLabel={metricLabel}
+          />
+        </div>
+        <RunHeaderCompactStats run={run} />
       </div>
       <RunDetailView
         selectedRunDetails={run}

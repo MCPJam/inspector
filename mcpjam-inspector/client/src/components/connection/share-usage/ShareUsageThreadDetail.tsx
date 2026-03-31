@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
-import { MessageView } from "@/components/chat-v2/thread/message-view";
+import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
 import {
   adaptTraceToUiMessages,
   type TraceWidgetSnapshot,
@@ -248,29 +248,25 @@ export function ShareUsageThreadDetail({
 
       {/* Messages */}
       <div className="flex-1 min-h-0 overflow-y-auto">
-        <div className="max-w-4xl space-y-8 px-4 py-4">
-          {adaptedTrace.messages.map((message) => (
-            <MessageView
-              key={message.id}
-              message={message}
-              model={resolvedModel}
-              onSendFollowUp={NOOP}
-              toolsMetadata={{}}
-              toolServerMap={{}}
-              pipWidgetId={null}
-              fullscreenWidgetId={null}
-              onRequestPip={NOOP}
-              onExitPip={NOOP}
-              onRequestFullscreen={NOOP}
-              onExitFullscreen={NOOP}
-              toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-              showSaveViewButton={false}
-              minimalMode={!isSandboxThread}
-              interactive={false}
-              reasoningDisplayMode={reasoningDisplayMode}
-            />
-          ))}
-        </div>
+        <TranscriptThread
+          messages={adaptedTrace.messages}
+          model={resolvedModel}
+          sendFollowUpMessage={NOOP}
+          toolsMetadata={{}}
+          toolServerMap={{}}
+          pipWidgetId={null}
+          fullscreenWidgetId={null}
+          onRequestPip={NOOP}
+          onExitPip={NOOP}
+          onRequestFullscreen={NOOP}
+          onExitFullscreen={NOOP}
+          toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+          showSaveViewButton={false}
+          minimalMode={!isSandboxThread}
+          interactive={false}
+          reasoningDisplayMode={reasoningDisplayMode}
+          contentClassName="max-w-4xl space-y-8 px-4 py-4"
+        />
       </div>
     </div>
   );

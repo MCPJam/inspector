@@ -1,13 +1,24 @@
-import { GitBranch, GitCommit } from "lucide-react";
-import { cn } from "@/lib/utils";
-import type { CommitGroup } from "./types";
-import { evalStatusLeftBorderClasses, formatRelativeTime } from "./helpers";
+import { GitCommit } from "lucide-react";
+import type { CommitGroup, EvalSuiteRun } from "./types";
+import {
+  evalStatusLeftBorderClasses,
+  evalStatusMiniBarClasses,
+  formatRelativeTime,
+  orderCommitGroupRunsByOutcome,
+} from "./helpers";
+import {
+  EvalSidebarNestedRow,
+  EvalSidebarParentRow,
+} from "./eval-sidebar-rows";
 
 interface CommitListSidebarProps {
   commitGroups: CommitGroup[];
   selectedCommitSha: string | null;
   onSelectCommit: (commitSha: string) => void;
   isLoading?: boolean;
+  /** When drilling into a commit from CI route query `suite`. */
+  selectedSuiteIdInCommit?: string | null;
+  onSelectSuiteInCommit?: (suiteId: string) => void;
 }
 
 function commitGroupLeftBorder(status: CommitGroup["status"]): string {
@@ -32,11 +43,43 @@ function commitGroupOutcomeTitle(status: CommitGroup["status"]): string {
   }
 }
 
+function runOutcomeTitle(run: EvalSuiteRun): string {
+  const isRunning = run.status === "running" || run.status === "pending";
+  if (isRunning) return "Run in progress";
+  if (run.result === "passed") return "Last run passed";
+  if (run.result === "failed") return "Last run failed";
+  if (run.status === "cancelled") return "Run cancelled";
+  return "Run status";
+}
+
+function commitGroupSubtitle(group: CommitGroup): string {
+  const time = formatRelativeTime(group.timestamp);
+  const stats: string[] = [];
+  if (group.summary.passed > 0) {
+    stats.push(`${group.summary.passed} passed`);
+  }
+  if (group.summary.failed > 0) {
+    stats.push(`${group.summary.failed} failed`);
+  }
+  if (group.summary.running > 0) {
+    stats.push(`${group.summary.running} running`);
+  }
+  const statsStr = stats.join(" · ");
+  const tail = group.branch
+    ? group.branch
+    : group.commitSha.startsWith("manual-")
+      ? Array.from(group.suiteMap.values()).join(", ")
+      : "";
+  return [time, statsStr, tail].filter(Boolean).join(" · ");
+}
+
 export function CommitListSidebar({
   commitGroups,
   selectedCommitSha,
   onSelectCommit,
   isLoading = false,
+  selectedSuiteIdInCommit = null,
+  onSelectSuiteInCommit,
 }: CommitListSidebarProps) {
   return (
     <div className="flex-1 overflow-y-auto">
@@ -53,74 +96,81 @@ export function CommitListSidebar({
           {commitGroups.map((group) => {
             const isManual = group.commitSha.startsWith("manual-");
             const leftBorder = commitGroupLeftBorder(group.status);
+            const isCommitSelected = selectedCommitSha === group.commitSha;
+            const orderedRuns = orderCommitGroupRunsByOutcome(group.runs);
 
             return (
-              <button
-                key={group.commitSha}
-                type="button"
-                title={commitGroupOutcomeTitle(group.status)}
-                onClick={() => onSelectCommit(group.commitSha)}
-                className={cn(
-                  "w-full border-l-2 py-2.5 pl-[15px] pr-4 text-left transition-colors hover:bg-accent/50",
-                  leftBorder,
-                  selectedCommitSha === group.commitSha &&
-                    "bg-accent shadow-sm",
-                )}
-              >
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center justify-between gap-2">
-                    {isManual ? (
-                      <span className="text-sm font-medium text-muted-foreground">
-                        Manual
-                      </span>
+              <div key={group.commitSha}>
+                <EvalSidebarParentRow
+                  leftBorderClassName={leftBorder}
+                  isSelected={isCommitSelected}
+                  rowTitle={commitGroupOutcomeTitle(group.status)}
+                  title={
+                    isManual ? (
+                      "Manual"
                     ) : (
-                      <div className="flex items-center gap-1">
+                      <span className="flex min-w-0 items-center gap-1">
                         <GitCommit className="h-3 w-3 shrink-0 text-muted-foreground" />
-                        <span className="text-sm font-mono font-medium truncate">
+                        <span className="truncate font-mono">
                           {group.shortSha}
                         </span>
-                      </div>
-                    )}
-                    <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
-                      {formatRelativeTime(group.timestamp)}
-                    </span>
-                  </div>
-
-                  <div className="mt-0.5 flex items-center justify-between gap-2">
-                    {group.branch ? (
-                      <div className="flex min-w-0 items-center gap-1">
-                        <GitBranch className="h-3 w-3 shrink-0 text-muted-foreground" />
-                        <span className="truncate text-[11px] text-muted-foreground">
-                          {group.branch}
-                        </span>
-                      </div>
-                    ) : isManual ? (
-                      <span className="truncate text-[11px] text-muted-foreground">
-                        {Array.from(group.suiteMap.values()).join(", ")}
                       </span>
-                    ) : (
-                      <div />
-                    )}
-                    <div className="flex shrink-0 items-center gap-1.5 text-[10px] tabular-nums">
-                      {group.summary.passed > 0 && (
-                        <span className="font-medium text-emerald-600 dark:text-emerald-400">
-                          {group.summary.passed} passed
-                        </span>
-                      )}
-                      {group.summary.failed > 0 && (
-                        <span className="font-medium text-destructive">
-                          {group.summary.failed} failed
-                        </span>
-                      )}
-                      {group.summary.running > 0 && (
-                        <span className="font-medium text-amber-600 dark:text-amber-400">
-                          {group.summary.running} running
-                        </span>
-                      )}
-                    </div>
+                    )
+                  }
+                  subtitle={commitGroupSubtitle(group)}
+                  onClick={() => onSelectCommit(group.commitSha)}
+                />
+
+                {isCommitSelected && orderedRuns.length > 0 ? (
+                  <div className="border-l-2 border-muted ml-3">
+                    {orderedRuns.map((run) => {
+                      const suiteName =
+                        group.suiteMap.get(run.suiteId) || "Unknown";
+                      const isRunning =
+                        run.status === "running" || run.status === "pending";
+                      const isSuiteSelected =
+                        selectedSuiteIdInCommit === run.suiteId;
+
+                      return (
+                        <EvalSidebarNestedRow
+                          key={run._id}
+                          miniBarClassName={evalStatusMiniBarClasses(
+                            isRunning ? "running" : (run.result ?? "pending"),
+                          )}
+                          isSelected={isSuiteSelected}
+                          selectedClassName={
+                            isSuiteSelected
+                              ? "bg-primary/10 font-medium text-foreground"
+                              : undefined
+                          }
+                          innerClassName="py-2"
+                          rowTitle={runOutcomeTitle(run)}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectSuiteInCommit?.(run.suiteId);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              onSelectSuiteInCommit?.(run.suiteId);
+                            }
+                          }}
+                        >
+                          <span className="block truncate text-xs font-medium">
+                            {suiteName}
+                          </span>
+                          {isRunning ? (
+                            <div className="mt-0.5 text-[10px] text-amber-600 dark:text-amber-400">
+                              in progress
+                            </div>
+                          ) : null}
+                        </EvalSidebarNestedRow>
+                      );
+                    })}
                   </div>
-                </div>
-              </button>
+                ) : null}
+              </div>
             );
           })}
         </div>

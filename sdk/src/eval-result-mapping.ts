@@ -14,6 +14,104 @@ import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
 
 /**
+ * Options for {@link promptsToEvalResult}. Pass/fail from your test assertion
+ * (`passed`) is combined with trace/errors via {@link finalizePassedForEval}.
+ */
+export type PromptsToEvalResultOverrides = Partial<
+  Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace" | "passed">
+> & {
+  caseTitle: string;
+  passed: boolean;
+  failOnToolError?: boolean;
+};
+
+/**
+ * Build one {@link EvalResultInput} from several {@link PromptResult}s (e.g. a
+ * multi-turn Vitest flow). Aggregates tool calls, messages, tokens, duration,
+ * and merged timeline spans the same way as a single EvalTest iteration.
+ *
+ * @throws If `prompts` is empty
+ */
+export function promptsToEvalResult(
+  prompts: PromptResult[],
+  overrides: PromptsToEvalResultOverrides
+): EvalResultInput {
+  if (prompts.length === 0) {
+    throw new Error("promptsToEvalResult requires at least one PromptResult");
+  }
+
+  const first = prompts[0]!;
+  const actualToolCalls = prompts.flatMap((prompt) =>
+    prompt.getToolCalls().map((toolCall) => ({
+      toolName: toolCall.toolName,
+      arguments: toolCall.arguments,
+    }))
+  );
+  const traceMessages = prompts.flatMap((prompt) =>
+    prompt.getMessages().map((message) => ({
+      role: message.role,
+      content: message.content,
+    }))
+  );
+  const widgetSnapshots = prompts.flatMap((prompt) =>
+    prompt.getWidgetSnapshots()
+  );
+  const trace = iterationTraceFromPrompts(prompts, traceMessages);
+
+  const inputTokens = prompts.reduce((sum, p) => sum + p.inputTokens(), 0);
+  const outputTokens = prompts.reduce((sum, p) => sum + p.outputTokens(), 0);
+  const totalTokens = prompts.reduce((sum, p) => sum + p.totalTokens(), 0);
+
+  const durationSum = prompts.reduce(
+    (sum, p) => sum + p.e2eLatencyMs(),
+    0
+  );
+
+  const errorParts = prompts
+    .map((p) => p.getError())
+    .filter(
+      (e): e is string => typeof e === "string" && e.trim().length > 0
+    );
+  const derivedError =
+    errorParts.length > 0 ? errorParts.join("\n") : undefined;
+  const iterationError = overrides.error ?? derivedError;
+
+  const passed = finalizePassedForEval({
+    matchPassed: overrides.passed,
+    trace,
+    iterationError,
+    failOnToolError: overrides.failOnToolError,
+  });
+
+  return {
+    caseTitle: overrides.caseTitle,
+    query: overrides.query ?? first.getPrompt(),
+    passed,
+    durationMs: durationSum > 0 ? durationSum : undefined,
+    provider: overrides.provider ?? first.getProvider(),
+    model: overrides.model ?? first.getModel(),
+    expectedToolCalls: overrides.expectedToolCalls,
+    actualToolCalls,
+    tokens: {
+      input: inputTokens,
+      output: outputTokens,
+      total: totalTokens,
+    },
+    error: overrides.error ?? derivedError,
+    errorDetails: overrides.errorDetails,
+    trace,
+    externalIterationId: overrides.externalIterationId,
+    externalCaseId: overrides.externalCaseId,
+    metadata: overrides.metadata,
+    isNegativeTest: overrides.isNegativeTest,
+    advancedConfig: overrides.advancedConfig,
+    widgetSnapshots:
+      overrides.widgetSnapshots ??
+      (widgetSnapshots.length > 0 ? widgetSnapshots : undefined),
+  };
+}
+
+/**
  * Merge per-prompt timeline spans into one iteration trace.
  * Prompt N spans are offset by the cumulative e2e latency of prompts 0..N-1.
  */
