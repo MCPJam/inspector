@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { toast } from "sonner";
 import { OrganizationsTab } from "../OrganizationsTab";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
@@ -11,6 +12,25 @@ const mockUseOrganizationQueries = vi.fn();
 const mockUseOrganizationMembers = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn();
 const mockUseOrganizationBilling = vi.mocked(useOrganizationBilling);
+const {
+  addMemberMock,
+  removeMemberMock,
+  updateOrganizationMock,
+  deleteOrganizationMock,
+  changeMemberRoleMock,
+  transferOrganizationOwnershipMock,
+  generateLogoUploadUrlMock,
+  updateOrganizationLogoMock,
+} = vi.hoisted(() => ({
+  addMemberMock: vi.fn(),
+  removeMemberMock: vi.fn(),
+  updateOrganizationMock: vi.fn(),
+  deleteOrganizationMock: vi.fn(),
+  changeMemberRoleMock: vi.fn(),
+  transferOrganizationOwnershipMock: vi.fn(),
+  generateLogoUploadUrlMock: vi.fn(),
+  updateOrganizationLogoMock: vi.fn(),
+}));
 
 function createPlanCatalog() {
   return {
@@ -214,20 +234,28 @@ vi.mock("posthog-js/react", () => ({
     mockUseFeatureFlagEnabled(...args),
 }));
 
+vi.mock("sonner", () => ({
+  toast: {
+    success: vi.fn(),
+    error: vi.fn(),
+    warning: vi.fn(),
+  },
+}));
+
 vi.mock("@/hooks/useOrganizations", () => ({
   useOrganizationQueries: (...args: unknown[]) =>
     mockUseOrganizationQueries(...args),
   useOrganizationMembers: (...args: unknown[]) =>
     mockUseOrganizationMembers(...args),
   useOrganizationMutations: () => ({
-    updateOrganization: vi.fn(),
-    deleteOrganization: vi.fn(),
-    addMember: vi.fn(),
-    changeMemberRole: vi.fn(),
-    transferOrganizationOwnership: vi.fn(),
-    removeMember: vi.fn(),
-    generateLogoUploadUrl: vi.fn(),
-    updateOrganizationLogo: vi.fn(),
+    updateOrganization: updateOrganizationMock,
+    deleteOrganization: deleteOrganizationMock,
+    addMember: addMemberMock,
+    changeMemberRole: changeMemberRoleMock,
+    transferOrganizationOwnership: transferOrganizationOwnershipMock,
+    removeMember: removeMemberMock,
+    generateLogoUploadUrl: generateLogoUploadUrlMock,
+    updateOrganizationLogo: updateOrganizationLogoMock,
   }),
   resolveOrganizationRole: (member: { role?: string; isOwner?: boolean }) => {
     if (member.role) return member.role;
@@ -251,6 +279,8 @@ vi.mock("../organization/OrganizationMemberRow", () => ({
 describe("OrganizationsTab billing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    addMemberMock.mockResolvedValue({ isPending: false });
+    removeMemberMock.mockResolvedValue(undefined);
 
     mockUseConvexAuth.mockReturnValue({ isAuthenticated: true });
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) => {
@@ -436,6 +466,81 @@ describe("OrganizationsTab billing", () => {
       expect(button).toBeDisabled();
     }
     expect(screen.getByRole("button", { name: "Talk to sales" })).toBeEnabled();
+  });
+
+  it("shows non-owner billing copy when an admin invite hits the member limit", async () => {
+    mockUseOrganizationMembers.mockReturnValue({
+      activeMembers: [
+        {
+          _id: "member-user",
+          organizationId: "org-1",
+          userId: "user-admin",
+          email: "admin@example.com",
+          role: "admin",
+          isOwner: false,
+          addedBy: "user-owner",
+          addedAt: 1,
+          user: {
+            name: "Admin",
+            email: "admin@example.com",
+            imageUrl: "",
+          },
+        },
+      ],
+      pendingMembers: [],
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: { email: "admin@example.com" },
+      signIn: vi.fn(),
+    });
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [
+        {
+          _id: "org-1",
+          name: "Org One",
+          createdBy: "user_1",
+          createdAt: 1,
+          updatedAt: 1,
+          myRole: "admin",
+        },
+      ],
+      isLoading: false,
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          canManageBilling: false,
+          isOwner: false,
+        }),
+      }),
+    );
+    addMemberMock.mockRejectedValue(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxMembers",
+          allowedValue: 3,
+        }),
+      ),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    fireEvent.change(screen.getByPlaceholderText("Email address"), {
+      target: { value: "new-user@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add member" }));
+
+    await waitFor(() => {
+      expect(addMemberMock).toHaveBeenCalledWith({
+        organizationId: "org-1",
+        email: "new-user@example.com",
+      });
+    });
+    expect(toast.error).toHaveBeenCalledWith(
+      "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+    );
   });
 
   it("shows Team as a purchasable upgrade when billing UI is enabled", () => {

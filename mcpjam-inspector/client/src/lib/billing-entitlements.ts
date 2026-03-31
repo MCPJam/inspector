@@ -304,6 +304,16 @@ export function getBillingErrorMessage(
         ? `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`
         : `This workspace has reached its sandbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
     }
+    if (limitName === "maxMembers" && typeof allowedValue === "number") {
+      return canManage
+        ? `This organization has reached its member limit (${allowedValue}). Upgrade to add more members.`
+        : `This organization has reached its member limit (${allowedValue}). Ask an organization owner to upgrade.`;
+    }
+    if (limitName === "maxWorkspaces" && typeof allowedValue === "number") {
+      return canManage
+        ? `This organization has reached its workspace limit (${allowedValue}). Upgrade to create more workspaces.`
+        : `This organization has reached its workspace limit (${allowedValue}). Ask an organization owner to upgrade.`;
+    }
   }
 
   if (payload.code === "billing_organization_context_required") {

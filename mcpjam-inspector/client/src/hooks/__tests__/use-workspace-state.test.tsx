@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import type { AppAction, AppState, Workspace } from "@/state/app-types";
 import { useWorkspaceState } from "../use-workspace-state";
 import { useClientConfigStore } from "@/stores/client-config-store";
@@ -12,6 +13,7 @@ const {
   updateWorkspaceMock,
   deleteWorkspaceMock,
   workspaceQueryState,
+  organizationBillingStatusState,
   serializeServersForSharingMock,
 } = vi.hoisted(() => ({
   createWorkspaceMock: vi.fn(),
@@ -23,6 +25,13 @@ const {
     allWorkspaces: undefined as any,
     workspaces: undefined as any,
     isLoading: false,
+  },
+  organizationBillingStatusState: {
+    value: undefined as
+      | {
+          canManageBilling: boolean;
+        }
+      | undefined,
   },
   serializeServersForSharingMock: vi.fn((servers) => servers),
 }));
@@ -48,6 +57,10 @@ vi.mock("../useWorkspaces", () => ({
     servers: undefined,
     isLoading: false,
   }),
+}));
+
+vi.mock("../useOrganizationBilling", () => ({
+  useOrganizationBillingStatus: () => organizationBillingStatusState.value,
 }));
 
 vi.mock("@/lib/workspace-serialization", () => ({
@@ -148,6 +161,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     workspaceQueryState.allWorkspaces = [];
     workspaceQueryState.workspaces = [];
     workspaceQueryState.isLoading = false;
+    organizationBillingStatusState.value = undefined;
     useClientConfigStore.setState({
       activeWorkspaceId: null,
       defaultConfig: null,
@@ -399,6 +413,131 @@ describe("useWorkspaceState automatic workspace creation", () => {
     );
     expect(useClientConfigStore.getState().isAwaitingRemoteEcho).toBe(false);
     expect(useClientConfigStore.getState().isSaving).toBe(false);
+  });
+
+  it("formats workspace create billing errors for organization owners", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Existing workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-owner",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    organizationBillingStatusState.value = {
+      canManageBilling: true,
+    };
+    createWorkspaceMock.mockRejectedValue(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxWorkspaces",
+          allowedValue: 1,
+        }),
+      ),
+    );
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-owner",
+    });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Workspace Two");
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+    );
+  });
+
+  it("formats workspace create billing errors for non-billing-admin members", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Existing workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-member",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    organizationBillingStatusState.value = {
+      canManageBilling: false,
+    };
+    createWorkspaceMock.mockRejectedValue(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxWorkspaces",
+          allowedValue: 1,
+        }),
+      ),
+    );
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-member",
+    });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Workspace Two");
+    });
+
+    expect(toast.error).toHaveBeenCalledWith(
+      "This organization has reached its workspace limit (1). Ask an organization owner to upgrade.",
+    );
+  });
+
+  it("shows only one toast when multiple local workspace migrations fail in the same burst", async () => {
+    organizationBillingStatusState.value = {
+      canManageBilling: false,
+    };
+    createWorkspaceMock.mockRejectedValue(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxWorkspaces",
+          allowedValue: 1,
+        }),
+      ),
+    );
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+      "local-1": createLocalWorkspace("local-1", {
+        name: "Local One",
+      }),
+      "local-2": createLocalWorkspace("local-2", {
+        name: "Local Two",
+      }),
+    });
+    const { logger } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-member",
+    });
+
+    await waitFor(() => {
+      expect(createWorkspaceMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast.error).toHaveBeenCalledWith(
+      "This organization has reached its workspace limit (1). Ask an organization owner to upgrade.",
+    );
+    expect(logger.error).toHaveBeenCalledTimes(2);
   });
 
   it("rejects authenticated client-config saves when the hook unmounts mid-sync", async () => {

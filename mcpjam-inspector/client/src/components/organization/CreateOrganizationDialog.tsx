@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useOrganizationMutations } from "@/hooks/useOrganizations";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { toast } from "sonner";
 
 interface CreateOrganizationDialogProps {
@@ -59,7 +60,7 @@ export function CreateOrganizationDialog({
       onOpenChange(false);
       onCreated?.(organizationId);
     } catch (error) {
-      toast.error((error as Error).message || "Failed to create organization");
+      toast.error(getBillingErrorMessage(error, "Failed to create organization"));
     } finally {
       setIsCreating(false);
     }

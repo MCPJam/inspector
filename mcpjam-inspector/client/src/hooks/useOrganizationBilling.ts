@@ -105,16 +105,22 @@ export interface UseOrganizationBillingOptions {
   workspaceId?: string | null;
 }
 
+export function useOrganizationBillingStatus(
+  organizationId: string | null,
+): OrganizationBillingStatus | undefined {
+  return useQuery(
+    "billing:getOrganizationBillingStatus" as any,
+    organizationId ? ({ organizationId } as any) : "skip",
+  ) as OrganizationBillingStatus | undefined;
+}
+
 export function useOrganizationBilling(
   organizationId: string | null,
   options?: UseOrganizationBillingOptions,
 ) {
   const workspaceId = options?.workspaceId ?? null;
 
-  const billingStatus = useQuery(
-    "billing:getOrganizationBillingStatus" as any,
-    organizationId ? ({ organizationId } as any) : "skip",
-  ) as OrganizationBillingStatus | undefined;
+  const billingStatus = useOrganizationBillingStatus(organizationId);
 
   const entitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,

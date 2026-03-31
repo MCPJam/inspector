@@ -88,6 +88,76 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
+  it("formats backend limit payloads for organization members", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxMembers",
+          allowedValue: 3,
+        }),
+      ),
+      "fallback",
+    );
+
+    expect(message).toBe(
+      "This organization has reached its member limit (3). Upgrade to add more members.",
+    );
+  });
+
+  it("formats member-limit payloads for non-billing-admin users", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxMembers",
+          allowedValue: 3,
+        }),
+      ),
+      "fallback",
+      false,
+    );
+
+    expect(message).toBe(
+      "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+    );
+  });
+
+  it("formats backend limit payloads for workspaces", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxWorkspaces",
+          allowedValue: 1,
+        }),
+      ),
+      "fallback",
+    );
+
+    expect(message).toBe(
+      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+    );
+  });
+
+  it("formats workspace-limit payloads for non-billing-admin users", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_limit_reached",
+          limit: "maxWorkspaces",
+          allowedValue: 1,
+        }),
+      ),
+      "fallback",
+      false,
+    );
+
+    expect(message).toBe(
+      "This organization has reached its workspace limit (1). Ask an organization owner to upgrade.",
+    );
+  });
+
   it("formats billing_feature_not_included using gateKey when feature is absent", () => {
     const message = getBillingErrorMessage(
       new Error(

@@ -43,6 +43,7 @@ import {
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import {
   formatBillingFeatureName,
+  getBillingErrorMessage,
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
@@ -380,7 +381,13 @@ function OrganizationPage({
       }
       setInviteEmail("");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to invite member");
+      toast.error(
+        getBillingErrorMessage(
+          error,
+          "Failed to invite member",
+          billingStatus?.canManageBilling ?? false,
+        ),
+      );
     } finally {
       setIsInviting(false);
     }
@@ -394,7 +401,13 @@ function OrganizationPage({
       });
       toast.success("Member removed");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to remove member");
+      toast.error(
+        getBillingErrorMessage(
+          error,
+          "Failed to remove member",
+          billingStatus?.canManageBilling ?? false,
+        ),
+      );
     }
   };
 
