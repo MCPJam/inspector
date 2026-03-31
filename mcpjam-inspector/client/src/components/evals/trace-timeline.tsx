@@ -960,39 +960,18 @@ function getRowTiming(row: TimelineRow): {
   };
 }
 
-type PayloadVisualFormat = "tree" | "plain" | "markdown";
+type PayloadVisualFormat = "plain" | "markdown";
 
-function PayloadFormatToggles({
-  valueKind,
+function StringPayloadFormatToggles({
   format,
   onFormatChange,
 }: {
-  valueKind: "string" | "json";
   format: PayloadVisualFormat;
   onFormatChange: (next: PayloadVisualFormat) => void;
 }) {
-  if (valueKind === "string") {
-    return (
-      <div className="flex flex-wrap gap-1">
-        {(["plain", "markdown"] as const).map((key) => (
-          <Button
-            key={key}
-            type="button"
-            size="sm"
-            variant={format === key ? "secondary" : "outline"}
-            className="h-7 text-[10px] capitalize"
-            onClick={() => onFormatChange(key)}
-          >
-            {key === "plain" ? "Plain" : "Markdown"}
-          </Button>
-        ))}
-      </div>
-    );
-  }
-
   return (
     <div className="flex flex-wrap gap-1">
-      {(["tree", "plain"] as const).map((key) => (
+      {(["plain", "markdown"] as const).map((key) => (
         <Button
           key={key}
           type="button"
@@ -1001,7 +980,7 @@ function PayloadFormatToggles({
           className="h-7 text-[10px] capitalize"
           onClick={() => onFormatChange(key)}
         >
-          {key === "tree" ? "JSON" : "Plain"}
+          {key === "plain" ? "Plain" : "Markdown"}
         </Button>
       ))}
     </div>
@@ -1015,14 +994,13 @@ function PayloadPreview({
   value: unknown;
   height?: string;
 }) {
-  const valueKind = typeof value === "string" ? "string" : "json";
-  const [format, setFormat] = useState<PayloadVisualFormat>(() =>
-    valueKind === "string" ? "plain" : "tree",
-  );
+  const [format, setFormat] = useState<PayloadVisualFormat>("plain");
 
   useEffect(() => {
-    setFormat(valueKind === "string" ? "plain" : "tree");
-  }, [value, valueKind]);
+    if (typeof value === "string") {
+      setFormat("plain");
+    }
+  }, [value]);
 
   if (value == null) {
     return (
@@ -1046,42 +1024,15 @@ function PayloadPreview({
 
     return (
       <div className="space-y-2">
-        <PayloadFormatToggles
-          valueKind="string"
-          format={format === "markdown" ? "markdown" : "plain"}
-          onFormatChange={setFormat}
-        />
+        <StringPayloadFormatToggles format={format} onFormatChange={setFormat} />
         {body}
       </div>
     );
   }
 
-  const plainText = (() => {
-    try {
-      return JSON.stringify(value, null, 2);
-    } catch {
-      return String(value);
-    }
-  })();
-
   return (
-    <div className="space-y-2">
-      <PayloadFormatToggles
-        valueKind="json"
-        format={format === "plain" ? "plain" : "tree"}
-        onFormatChange={(next) =>
-          setFormat(next === "plain" ? "plain" : "tree")
-        }
-      />
-      {format === "plain" ? (
-        <pre className="max-h-44 overflow-auto rounded-md border border-border/60 bg-muted/20 p-3 text-xs whitespace-pre-wrap break-words">
-          {plainText}
-        </pre>
-      ) : (
-        <div className="overflow-hidden rounded-md border border-border/60 bg-background">
-          <JsonEditor height={height} viewOnly value={value} />
-        </div>
-      )}
+    <div className="overflow-hidden rounded-md border border-border/60 bg-background">
+      <JsonEditor height={height} viewOnly value={value} />
     </div>
   );
 }
@@ -2016,7 +1967,7 @@ export function TraceTimeline({
                           : "trace-row-bar"
                       }
                       className={cn(
-                        "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] shadow-sm transition-[left,width] duration-150",
+                        "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] transition-[left,width] duration-150",
                         waterfallBarClass,
                       )}
                       style={{

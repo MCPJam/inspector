@@ -574,16 +574,8 @@ describe("useEvalHandlers", () => {
       );
     });
 
-    it("replays without requiring browser API keys (server uses SDK config)", async () => {
+    it("requires browser API keys for replay (shows toast error when missing)", async () => {
       mockProviderHasToken.mockReturnValue(false);
-
-      mockAuthFetch.mockResolvedValue(
-        createFetchResponse({
-          success: true,
-          suiteId: "suite-no-keys",
-          runId: "run-replay",
-        }),
-      );
 
       const { result } = renderHook(() =>
         useEvalHandlers({
@@ -614,8 +606,8 @@ describe("useEvalHandlers", () => {
         );
       });
 
-      expect(mockAuthFetch).toHaveBeenCalled();
-      expect(toast.error).not.toHaveBeenCalledWith(
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith(
         expect.stringMatching(/API key.*Settings/i),
       );
     });

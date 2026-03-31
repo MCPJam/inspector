@@ -6,6 +6,11 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -31,6 +36,7 @@ interface SuiteHeroStatsProps {
   onRunClick?: (runId: string) => void;
   onReplayLatestRun?: (run: EvalSuiteRun) => void;
   isReplayingLatestRun?: boolean;
+  missingReplayProviderKeys?: string[];
 }
 
 export function SuiteHeroStats({
@@ -43,6 +49,7 @@ export function SuiteHeroStats({
   onRunClick,
   onReplayLatestRun,
   isReplayingLatestRun = false,
+  missingReplayProviderKeys = [],
 }: SuiteHeroStatsProps) {
   const stats = useMemo(() => {
     if (runs.length === 0) return null;
@@ -250,18 +257,32 @@ export function SuiteHeroStats({
 
         {latestReplayableRun && onReplayLatestRun && (
           <div className="shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => onReplayLatestRun(latestReplayableRun)}
-              disabled={isReplayingLatestRun}
-              className="gap-2"
-            >
-              <RotateCw
-                className={`h-4 w-4 ${isReplayingLatestRun ? "animate-spin" : ""}`}
-              />
-              {isReplayingLatestRun ? "Replaying..." : "Replay latest run"}
-            </Button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onReplayLatestRun(latestReplayableRun)}
+                    disabled={
+                      isReplayingLatestRun ||
+                      missingReplayProviderKeys.length > 0
+                    }
+                    className="gap-2"
+                  >
+                    <RotateCw
+                      className={`h-4 w-4 ${isReplayingLatestRun ? "animate-spin" : ""}`}
+                    />
+                    {isReplayingLatestRun ? "Replaying..." : "Replay latest run"}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {missingReplayProviderKeys.length > 0 && (
+                <TooltipContent>
+                  {`Add your ${missingReplayProviderKeys.join(", ")} API key${missingReplayProviderKeys.length > 1 ? "s" : ""} in Settings to replay`}
+                </TooltipContent>
+              )}
+            </Tooltip>
           </div>
         )}
 

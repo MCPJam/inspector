@@ -121,10 +121,7 @@ export function useEvalHandlers({
   );
 
   const getSuiteExecutionContext = useCallback(
-    async (
-      suite: EvalSuite,
-      options?: { skipApiKeyCheck?: boolean },
-    ) => {
+    async (suite: EvalSuite) => {
       const testCases = (await getTestCasesForRerun(suite._id)) as any[];
       if (!testCases || testCases.length === 0) {
         toast.error("No test cases found in this suite");
@@ -165,19 +162,17 @@ export function useEvalHandlers({
       }
 
       const modelApiKeys: Record<string, string> = {};
-      if (!options?.skipApiKeyCheck) {
-        for (const provider of providersNeeded) {
-          const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-          if (!hasToken(tokenKey)) {
-            toast.error(
-              `Please add your ${provider} API key in Settings before running evals`,
-            );
-            return null;
-          }
-          const key = getToken(tokenKey);
-          if (key) {
-            modelApiKeys[provider] = key;
-          }
+      for (const provider of providersNeeded) {
+        const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
+        if (!hasToken(tokenKey)) {
+          toast.error(
+            `Please add your ${provider} API key in Settings before running evals`,
+          );
+          return null;
+        }
+        const key = getToken(tokenKey);
+        if (key) {
+          modelApiKeys[provider] = key;
         }
       }
 
@@ -207,9 +202,7 @@ export function useEvalHandlers({
         return;
       }
 
-      const executionContext = await getSuiteExecutionContext(suite, {
-        skipApiKeyCheck: true,
-      });
+      const executionContext = await getSuiteExecutionContext(suite);
       if (!executionContext) {
         return;
       }

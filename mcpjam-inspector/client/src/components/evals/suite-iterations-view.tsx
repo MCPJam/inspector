@@ -22,6 +22,11 @@ import type { EvalsRoute } from "@/lib/evals-router";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { isMCPJamProvidedModel } from "@/shared/types";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2 } from "lucide-react";
 
@@ -323,6 +328,22 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
+  const { hasToken } = useAiProviderKeys();
+  const missingReplayProviderKeys = useMemo(() => {
+    if (!cases || cases.length === 0) return [];
+    const providers = new Set<string>();
+    for (const tc of cases) {
+      for (const m of tc.models ?? []) {
+        if (!isMCPJamProvidedModel(m.model)) {
+          providers.add(m.provider);
+        }
+      }
+    }
+    return [...providers].filter(
+      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens),
+    );
+  }, [cases, hasToken]);
+
   const isReplayingLatestRun = useMemo(
     () =>
       replayingRunId != null &&
@@ -470,6 +491,7 @@ export function SuiteIterationsView({
                           : undefined
                       }
                       isReplayingLatestRun={isReplayingLatestRun}
+                      missingReplayProviderKeys={missingReplayProviderKeys}
                     />
                     <div className="rounded-xl border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
                       <p>

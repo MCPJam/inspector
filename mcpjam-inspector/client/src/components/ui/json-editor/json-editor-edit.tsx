@@ -505,13 +505,6 @@ export function JsonEditorEdit({
       )}
       style={containerStyle}
     >
-      {readOnly && showLineNumbers && (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-y-0 left-0 z-0 w-12 bg-muted/50 border-r border-border/50"
-        />
-      )}
-
       {/* Line numbers - virtualized for performance */}
       {showLineNumbers && !readOnly && (
         <div
@@ -560,21 +553,25 @@ export function JsonEditorEdit({
         )}
       >
         {readOnly ? (
+          // Keep gesture and scrollbar scrolling on the same element in read-only
+          // mode so trackpads can scroll Raw JSON reliably across browsers.
           <div
             ref={readOnlyViewportRef}
             className={cn(
               "relative z-10 flex min-w-0 items-start",
               readOnlyAutoHeight
                 ? "h-auto overflow-visible"
-                : "h-full min-h-0 overflow-x-hidden overflow-y-auto overscroll-none",
+                : "h-full min-h-0 overflow-auto overscroll-none",
             )}
           >
             {showLineNumbers && (
               <div
                 ref={lineNumbersRef}
                 className={cn(
-                  "flex-shrink-0 text-right select-none",
-                  readOnlyAutoHeight ? "self-start" : "self-stretch",
+                  "flex-shrink-0 border-r border-border/50 bg-muted/50 text-right select-none",
+                  readOnlyAutoHeight
+                    ? "self-start"
+                    : "sticky left-0 z-20 self-stretch",
                 )}
                 style={{ width: "3rem" }}
               >
@@ -608,10 +605,8 @@ export function JsonEditorEdit({
 
             <div
               className={cn(
-                "relative self-start flex-1 min-w-0",
-                readOnlyAutoHeight
-                  ? "overflow-visible"
-                  : "overflow-x-auto overflow-y-clip",
+                "relative self-start overflow-visible",
+                lineWrapEnabled ? "flex-1 min-w-0" : "w-max min-w-full",
               )}
             >
               {/* Read-only mode: Use JsonHighlighter with per-value copy */}

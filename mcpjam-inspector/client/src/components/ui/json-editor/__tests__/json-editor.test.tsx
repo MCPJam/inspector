@@ -183,7 +183,7 @@ describe("JsonEditor", () => {
       expect(pre?.className).toContain("break-words");
     });
 
-    it("uses a shared vertical scroll container in view-only mode", () => {
+    it("uses a shared read-only viewport for scrollbar and gesture scrolling", () => {
       const { container } = render(
         <JsonEditor
           value={{ avatarUrl: `https://${"a".repeat(120)}` }}
@@ -191,9 +191,7 @@ describe("JsonEditor", () => {
         />,
       );
 
-      const viewport = container.querySelector(
-        ".overflow-y-auto.overscroll-none",
-      );
+      const viewport = container.querySelector(".overflow-auto.overscroll-none");
       expect(viewport).toBeTruthy();
       expect(viewport?.className).toContain("items-start");
       expect(viewport?.className).toContain("z-10");
@@ -202,33 +200,33 @@ describe("JsonEditor", () => {
         ".self-stretch.flex-shrink-0.text-right.select-none",
       );
       expect(gutter?.className).toContain("self-stretch");
-
-      const fixedGutterBackground = container.querySelector(
-        ".absolute.inset-y-0.left-0.w-12.bg-muted\\/50.border-r.border-border\\/50",
-      );
-      expect(fixedGutterBackground).toBeTruthy();
+      expect(gutter?.className).toContain("sticky");
+      expect(gutter?.className).toContain("bg-muted/50");
+      expect(gutter?.className).toContain("border-r");
 
       const pre = container.querySelector("pre");
       expect(pre?.className).not.toContain("overflow-auto");
     });
 
-    it("read-only inner JSON column uses overflow-y-clip for vertical wheel scroll chaining", () => {
+    it("keeps horizontal overflow on the shared read-only viewport", () => {
       const { container } = render(
         <JsonEditor
           value={{ items: [{ id: 1 }] }}
           viewOnly
           height={200}
+          wrapLongLinesInView={false}
         />,
       );
 
-      const innerCol = container.querySelector(
-        ".overflow-x-auto.overflow-y-clip",
-      );
+      const innerCol = container.querySelector("pre")?.parentElement;
       expect(innerCol).toBeTruthy();
-      expect(innerCol?.className).not.toContain("overflow-y-hidden");
+      expect(innerCol?.className).toContain("overflow-visible");
+      expect(innerCol?.className).toContain("w-max");
+      expect(innerCol?.className).not.toContain("overflow-x-auto");
+      expect(innerCol?.className).not.toContain("overflow-y-clip");
 
       expect(
-        container.querySelector(".overflow-y-auto.overscroll-none"),
+        container.querySelector(".overflow-auto.overscroll-none"),
       ).toBeTruthy();
     });
 

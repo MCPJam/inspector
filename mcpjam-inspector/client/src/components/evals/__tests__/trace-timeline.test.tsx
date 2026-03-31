@@ -76,6 +76,12 @@ describe("TraceTimeline detail pane", () => {
     expect(within(pane).getByTestId("json-editor").textContent).toContain(
       "README.md",
     );
+    expect(
+      within(pane).queryByRole("button", { name: "JSON" }),
+    ).not.toBeInTheDocument();
+    expect(
+      within(pane).queryByRole("button", { name: "Plain" }),
+    ).not.toBeInTheDocument();
   });
 
   it("hides step rows from the waterfall (only LLM/tool/error spans are shown)", () => {

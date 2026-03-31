@@ -43,6 +43,10 @@ import { PassCriteriaBadge } from "./pass-criteria-badge";
 import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
+import {
+  useAiProviderKeys,
+  type ProviderTokens,
+} from "@/hooks/use-ai-provider-keys";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 
 interface ModelInfo {
@@ -266,6 +270,23 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   const replayableLatestRun = replayEligibility.replayableLatestRun;
   const isReplayingLatestRun =
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
+
+  // Check which provider API keys are missing for replay
+  const { hasToken } = useAiProviderKeys();
+  const missingReplayProviderKeys = useMemo(() => {
+    if (!replayableLatestRun || !testCases || testCases.length === 0) return [];
+    const providers = new Set<string>();
+    for (const tc of testCases) {
+      for (const m of tc.models ?? []) {
+        if (!isMCPJamProvidedModel(m.model)) {
+          providers.add(m.provider);
+        }
+      }
+    }
+    return [...providers].filter(
+      (p) => !hasToken(p.toLowerCase() as keyof ProviderTokens),
+    );
+  }, [replayableLatestRun, testCases, hasToken]);
 
   if (isEditMode) {
     return (
@@ -599,7 +620,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   }
                   disabled={
                     replayableLatestRun
-                      ? isReplayingLatestRun || !onReplayRun
+                      ? isReplayingLatestRun ||
+                        !onReplayRun ||
+                        missingReplayProviderKeys.length > 0
                       : !canRerun || isRerunning
                   }
                   className="gap-2"
@@ -619,7 +642,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             </TooltipTrigger>
             <TooltipContent>
               {replayableLatestRun
-                ? "Replay the latest CI run"
+                ? missingReplayProviderKeys.length > 0
+                  ? `Add your ${missingReplayProviderKeys.join(", ")} API key${missingReplayProviderKeys.length > 1 ? "s" : ""} in Settings to replay`
+                  : "Replay the latest CI run"
                 : !hasServersConfigured
                   ? "No connected MCP servers are configured for this suite"
                   : !canRerun
