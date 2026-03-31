@@ -28,6 +28,7 @@
         "group": "Inspector Features",
         "icon": "star",
         "pages": [
+          "inspector/registry",
           "inspector/app-builder",
           "inspector/llm-playground",
           "inspector/guided-oauth",
