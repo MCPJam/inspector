@@ -5,7 +5,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import type { OnboardingPhase } from "@/lib/onboarding-state";
 
 const EASING: [number, number, number, number] = [0.16, 1, 0.3, 1];
-const PANEL_WIDTH = 340;
+const PANEL_WIDTH = 380;
 
 interface WelcomeOverlayProps {
   phase: OnboardingPhase;
@@ -50,7 +50,7 @@ export function WelcomeOverlay({
         transition={{ duration: 0.35, ease: EASING }}
       >
         <div
-          className="pointer-events-auto bg-background rounded-lg border shadow-lg overflow-y-auto"
+          className="pointer-events-auto bg-background rounded-xl border shadow-xl overflow-y-auto"
           role="dialog"
           aria-modal="true"
           aria-labelledby={dialogTitleId}
@@ -60,27 +60,43 @@ export function WelcomeOverlay({
             maxHeight: "80vh",
           }}
         >
-          <div className="flex flex-col items-center px-10 pt-10 pb-8">
-            {/* Logo */}
-            <img
-              src={
-                themeMode === "dark"
-                  ? "/mcp_jam_dark.png"
-                  : "/mcp_jam_light.png"
-              }
-              alt="MCPJam"
-              className="h-10 w-auto mb-6"
-            />
+          <div className="flex min-h-[264px] flex-col items-center pb-6">
+            {/* Gradient header strip */}
+            <div className="w-full rounded-t-xl bg-gradient-to-b from-muted/30 to-transparent px-8 pt-8 pb-6 flex flex-col items-center">
+              {/* Logo */}
+              <img
+                src={
+                  themeMode === "dark"
+                    ? "/mcp_jam_dark.png"
+                    : "/mcp_jam_light.png"
+                }
+                alt="MCPJam"
+                className="h-10 w-auto mb-5"
+              />
 
-            {/* Demo server section */}
-            <h2
-              id={dialogTitleId}
-              className="text-sm text-muted-foreground mb-5"
-            >
-              Try a demo server
-            </h2>
+              <h2 id={dialogTitleId} className="sr-only">
+                Welcome to MCPJam
+              </h2>
 
-            <div className="flex flex-col gap-3 w-full">
+              <div className="space-y-2 text-center">
+                <p className="text-xl font-semibold text-foreground">
+                  Your playground for MCP servers
+                </p>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  Inspect tools, test prompts, and build AI powered apps.
+                </p>
+              </div>
+            </div>
+
+            <div className="w-full px-8 flex flex-col gap-4">
+              <div className="flex items-center gap-3">
+                <div className="h-px flex-1 bg-border" />
+                <p className="text-xs font-medium text-muted-foreground/70">
+                  Try a demo server
+                </p>
+                <div className="h-px flex-1 bg-border" />
+              </div>
+
               {/* Primary: Connect Excalidraw */}
               <Button
                 onClick={isError ? onRetry : onConnectExcalidraw}

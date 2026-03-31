@@ -48,7 +48,13 @@ describe("WelcomeOverlay", () => {
     render(<WelcomeOverlay {...defaultProps} />);
 
     expect(
-      screen.getByRole("dialog", { name: "Try a demo server" }),
+      screen.getByRole("dialog", { name: "Welcome to MCPJam" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Your playground for MCP servers"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Inspect tools, test prompts, and build AI powered apps."),
     ).toBeInTheDocument();
     expect(screen.getByText("Try a demo server")).toBeInTheDocument();
     expect(
@@ -68,6 +74,17 @@ describe("WelcomeOverlay", () => {
     expect(
       screen.queryByRole("button", { name: /Add server manually/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("renders the demo label before the primary CTA in DOM order", () => {
+    render(<WelcomeOverlay {...defaultProps} />);
+
+    const cta = screen.getByRole("button", { name: /Connect Excalidraw/i });
+    const label = screen.getByText("Try a demo server");
+
+    expect(
+      label.compareDocumentPosition(cta) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("shows loading state when connecting", () => {
