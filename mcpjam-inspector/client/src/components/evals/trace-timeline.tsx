@@ -1977,10 +1977,10 @@ export function TraceTimeline({
                     data-state={isSelected ? "selected" : undefined}
                     style={{ gridColumn: 2, gridRow }}
                     className={cn(
-                      "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 px-4 py-2 text-left transition-all duration-150 border-l-2",
+                      "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
                       isSelected
-                        ? cn("bg-primary/10", borderAccent)
-                        : "border-l-transparent bg-background hover:bg-muted/20",
+                        ? "bg-primary/10"
+                        : "bg-background hover:bg-muted/20",
                     )}
                     aria-label={`Select on timeline (${formatDuration(durationMs)})`}
                     onClick={() => setSelectedRowKey(row.key)}

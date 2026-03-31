@@ -1,4 +1,11 @@
-import type { ModelMessage } from "ai";
+import type {
+  ModelMessage,
+  TelemetryIntegration,
+  OnStepStartEvent,
+  OnToolCallStartEvent,
+  OnToolCallFinishEvent,
+  OnStepFinishEvent,
+} from "ai";
 import type { EvalTraceSpanInput } from "./eval-reporting-types.js";
 
 type MutableSpan = EvalTraceSpanInput;
@@ -144,6 +151,66 @@ export type EvalSpanSink = {
  * Records eval timeline spans for a single TestAgent.prompt() run.
  * Times are relative to runStartedAt via rel().
  */
+/**
+ * AI SDK TelemetryIntegration that records eval timeline spans.
+ *
+ * Uses native `onStepStart`, `onToolCallStart`, `onToolCallFinish`, and
+ * `onStepFinish` lifecycle hooks — each provides `stepNumber` directly,
+ * avoiding the synthetic-step-number bugs that arise when the execute-wrapper
+ * fallback passes `undefined`.
+ *
+ * Message range indices are NOT set here; call `patchEvalSpansMessageRangesFromSteps`
+ * after `generateText` resolves to fill them from `result.steps`.
+ */
+export function createEvalSpanIntegration(options: {
+  /** Returns milliseconds elapsed since the prompt started. */
+  rel: () => number;
+  /** Map from tool name → serverId for tool span metadata. */
+  serverIdByTool?: Map<string, string>;
+}): TelemetryIntegration & { getSpans: () => EvalTraceSpanInput[] } {
+  const { rel, serverIdByTool } = options;
+  const sink = createEvalSpanSink(rel);
+
+  return {
+    onStepStart(event: OnStepStartEvent) {
+      sink.onStepStart(event.stepNumber, rel(), {
+        modelId: event.model?.modelId,
+      });
+    },
+
+    onToolCallStart(event: OnToolCallStartEvent) {
+      const toolName = event.toolCall.toolName;
+      sink.onToolStart(
+        event.toolCall.toolCallId,
+        toolName,
+        event.stepNumber,
+        undefined,
+        { serverId: serverIdByTool?.get(toolName) }
+      );
+    },
+
+    onToolCallFinish(event: OnToolCallFinishEvent) {
+      sink.onToolEnd(event.toolCall.toolCallId, {
+        status: event.success ? "ok" : "error",
+      });
+    },
+
+    onStepFinish(event: OnStepFinishEvent) {
+      sink.onStepFinish(event.stepNumber, undefined, {
+        modelId: event.response?.modelId ?? event.model?.modelId,
+        inputTokens: event.usage?.inputTokens,
+        outputTokens: event.usage?.outputTokens,
+        totalTokens: event.usage?.totalTokens,
+        status: "ok",
+      });
+    },
+
+    getSpans() {
+      return sink.getSpans();
+    },
+  };
+}
+
 export function createEvalSpanSink(rel: () => number): EvalSpanSink {
   const recordedSpans: MutableSpan[] = [];
   let activeStep: {
