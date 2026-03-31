@@ -370,7 +370,9 @@ export function computeSectionStatuses(
   const basics: SectionStatusKind =
     nameOk && modelOk ? "complete" : "attention";
 
+  const optionalServerSet = new Set(draft.optionalServerIds);
   const validServerCount = draft.selectedServerIds.filter((id) => {
+    if (optionalServerSet.has(id)) return false;
     const s = workspaceServers.find((w) => w._id === id);
     return s && !isInsecureUrl(s.url);
   }).length;

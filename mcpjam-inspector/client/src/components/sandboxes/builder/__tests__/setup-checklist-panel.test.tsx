@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import {
+  computeSectionStatuses,
   ServerSelectionEditor,
   SetupChecklistPanel,
 } from "../setup-checklist-panel";
@@ -116,5 +117,37 @@ describe("ServerSelectionEditor", () => {
       })[0]!,
     );
     expect(onOptionalChange).toHaveBeenCalledWith(httpServer._id, true);
+  });
+});
+
+describe("computeSectionStatuses", () => {
+  const httpsServer: RemoteServer = {
+    _id: "srv-https",
+    workspaceId: "ws-1",
+    name: "HTTPS MCP",
+    enabled: true,
+    transportType: "http",
+    url: "https://mcp.example.com/mcp",
+    useOAuth: false,
+  };
+
+  it("marks servers as attention when every selected HTTPS server is optional", () => {
+    const draft = {
+      ...baseDraft,
+      selectedServerIds: [httpsServer._id],
+      optionalServerIds: [httpsServer._id],
+    };
+    const statuses = computeSectionStatuses(draft, [httpsServer]);
+    expect(statuses.servers).toBe("attention");
+  });
+
+  it("marks servers as complete when at least one required HTTPS server is selected", () => {
+    const draft = {
+      ...baseDraft,
+      selectedServerIds: [httpsServer._id],
+      optionalServerIds: [],
+    };
+    const statuses = computeSectionStatuses(draft, [httpsServer]);
+    expect(statuses.servers).toBe("complete");
   });
 });
