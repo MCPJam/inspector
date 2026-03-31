@@ -70,7 +70,9 @@ describe("TraceTimeline detail pane", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes("read_me"));
     expect(toolRow).toBeTruthy();
-    expect(toolRow!.textContent).not.toContain("120ms");
+    expect(
+      within(toolRow!).getByTestId("trace-row-label-button"),
+    ).not.toHaveTextContent(/120ms/);
     expect(
       screen
         .getAllByTestId("trace-row-duration-hit")
@@ -331,16 +333,16 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    const toolDurationButton = screen
-      .getAllByTestId("trace-row-duration-hit")
-      .find((el) => el.getAttribute("title")?.includes("Tool · read_me"));
-    expect(toolDurationButton).toBeTruthy();
-    await user.click(toolDurationButton!);
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    expect(toolRow).toBeTruthy();
+    await user.click(within(toolRow!).getByTestId("trace-row-duration-hit"));
     const pane = screen.getByTestId("trace-detail-pane");
     expect(within(pane).getByText("Tool · read_me")).toBeInTheDocument();
   });
 
-  it("labels generic LLM spans as Model and renders latency in the trailing cell", () => {
+  it("labels generic LLM spans as Model and keeps tokens out of the inline row text", () => {
     const spans: EvalTraceSpan[] = [
       {
         id: "llm-a",
@@ -378,15 +380,15 @@ describe("TraceTimeline detail pane", () => {
       el.textContent?.includes("Model"),
     );
     expect(llmRows.length).toBeGreaterThanOrEqual(2);
-    expect(llmRows.some((el) => el.textContent?.includes("100 tok"))).toBe(true);
+    expect(llmRows.some((el) => el.textContent?.includes("100 tok"))).toBe(false);
     const firstLlmRow = llmRows.find(
-      (el) => el.textContent?.includes("100 tok"),
+      (el) => el.textContent?.includes("Model"),
     );
     expect(firstLlmRow).toBeTruthy();
     const firstLlmLabelButton = within(firstLlmRow!).getByTestId(
       "trace-row-label-button",
     );
-    expect(within(firstLlmLabelButton).getByText("100 tok")).toBeInTheDocument();
+    expect(firstLlmLabelButton).not.toHaveTextContent(/100 tok/);
     expect(firstLlmLabelButton).not.toHaveTextContent(/500ms/);
     const firstLlmDuration = screen
       .getAllByTestId("trace-row-duration-hit")
@@ -396,7 +398,7 @@ describe("TraceTimeline detail pane", () => {
     expect(rows.some((el) => el.textContent?.includes("openai/gpt-5.4-nano"))).toBe(false);
   });
 
-  it("shows user message as prompt row label with tokens and trailing latency", () => {
+  it("shows user message as prompt row label without an inline token subtitle", () => {
     const spans: EvalTraceSpan[] = [
       {
         id: "llm-1",
@@ -432,7 +434,7 @@ describe("TraceTimeline detail pane", () => {
       .find((el) => el.textContent?.includes('User: "find it"'));
     expect(promptRow).toBeTruthy();
     const promptLabelButton = within(promptRow!).getByTestId("trace-row-label-button");
-    expect(promptLabelButton).toHaveTextContent(/50 tok/);
+    expect(promptLabelButton).not.toHaveTextContent(/50 tok/);
     expect(promptLabelButton).not.toHaveTextContent(/800ms/);
     const promptDuration = screen
       .getAllByTestId("trace-row-duration-hit")
@@ -441,6 +443,106 @@ describe("TraceTimeline detail pane", () => {
     expect(promptDuration).toHaveTextContent("800ms");
     expect(promptRow!.textContent).not.toMatch(/1 LLM/);
     expect(promptRow!.textContent).not.toMatch(/1 tool/);
+  });
+
+  it("shows wall-clock timestamps and token counts in row hover metadata", async () => {
+    const user = userEvent.setup();
+    const traceStartedAtMs = Date.parse("2026-03-30T02:35:00.000Z");
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-1",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 400,
+        promptIndex: 0,
+        modelId: "openai/gpt-5.4-mini",
+        inputTokens: 223,
+        outputTokens: 38,
+        totalTokens: 261,
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "Draw me a simple flowchart" }]}
+        traceStartedAtMs={traceStartedAtMs}
+        traceEndedAtMs={traceStartedAtMs + 400}
+      />,
+    );
+
+    const promptRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes('User: "Draw me a simple flowchart"'));
+    expect(promptRow).toBeTruthy();
+
+    await user.hover(promptRow!);
+
+    const hoverContent = await screen.findByTestId("trace-row-hover-content");
+    expect(hoverContent).toHaveAttribute("data-side", "left");
+
+    const hoverCard = await screen.findByTestId("trace-row-hover-card");
+    expect(within(hoverCard).getByTestId("trace-row-hover-start")).toHaveTextContent(
+      new Date(traceStartedAtMs).toLocaleString(),
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-end")).toHaveTextContent(
+      new Date(traceStartedAtMs + 400).toLocaleString(),
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-input-tokens")).toHaveTextContent(
+      "223",
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-output-tokens")).toHaveTextContent(
+      "38",
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-total-tokens")).toHaveTextContent(
+      "261",
+    );
+  });
+
+  it("shows hover metadata fallbacks when timestamps or token counts are missing", async () => {
+    const user = userEvent.setup();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 100,
+        endMs: 220,
+        toolName: "read_me",
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const toolRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes("read_me"));
+    expect(toolRow).toBeTruthy();
+
+    await user.hover(toolRow!);
+
+    const hoverCard = await screen.findByTestId("trace-row-hover-card");
+    expect(within(hoverCard).getByTestId("trace-row-hover-start")).toHaveTextContent(
+      "—",
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-end")).toHaveTextContent(
+      "—",
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-input-tokens")).toHaveTextContent(
+      "—",
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-output-tokens")).toHaveTextContent(
+      "—",
+    );
+    expect(within(hoverCard).getByTestId("trace-row-hover-total-tokens")).toHaveTextContent(
+      "—",
+    );
   });
 
   it("LLM span INPUT includes full prior conversation (system + users), not just messages inside messageStartIndex", async () => {

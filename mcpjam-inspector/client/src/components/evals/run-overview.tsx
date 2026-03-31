@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn, getInitials } from "@/lib/utils";
@@ -184,6 +185,10 @@ export function RunOverview({
   userMap,
   canDeleteRuns = true,
 }: RunOverviewProps) {
+  const shouldReduceMotion = useReducedMotion();
+  const runRowWhileTap = shouldReduceMotion
+    ? undefined
+    : { scale: 0.995, transition: { duration: 0.08 } };
   const tableViewportRef = useRef<HTMLDivElement | null>(null);
   const [tableViewportWidth, setTableViewportWidth] = useState(0);
 
@@ -606,22 +611,26 @@ export function RunOverview({
                           aria-label={`Select run ${formatRunId(run._id)}`}
                         />
                       </div>
-                      <button
+                      <motion.button
+                        type="button"
                         onClick={() => onRunClick(run._id)}
+                        whileTap={runRowWhileTap}
                         className="col-[2/-1] grid w-full items-center gap-x-3 rounded-sm text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                         style={{ gridTemplateColumns: rowGridTemplateColumns }}
                       >
                         {runRowCells}
-                      </button>
+                      </motion.button>
                     </div>
                   ) : (
-                    <button
+                    <motion.button
+                      type="button"
                       onClick={() => onRunClick(run._id)}
+                      whileTap={runRowWhileTap}
                       className="grid w-full items-center gap-x-3 px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
                       style={{ gridTemplateColumns: rowGridTemplateColumns }}
                     >
                       {runRowCells}
-                    </button>
+                    </motion.button>
                   );
 
                   return (

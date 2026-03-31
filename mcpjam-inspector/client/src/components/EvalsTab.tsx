@@ -501,9 +501,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                       <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
                         <BreadcrumbPage
                           className="truncate font-medium"
-                          title={`Cases [${selectedServer}]`}
+                          title={selectedServer}
                         >
-                          Cases [{selectedServer}]
+                          {selectedServer}
                         </BreadcrumbPage>
                       </BreadcrumbItem>
                     ) : (
@@ -515,7 +515,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                               onClick={handlePlaygroundBreadcrumbCasesClick}
                               className="inline-flex border-0 bg-transparent p-0 font-medium"
                             >
-                              Cases [{selectedServer}]
+                              {selectedServer}
                             </button>
                           </BreadcrumbLink>
                         </BreadcrumbItem>

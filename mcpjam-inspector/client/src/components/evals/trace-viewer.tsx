@@ -59,6 +59,10 @@ interface TraceViewerProps {
   toolsMetadata?: Record<string, Record<string, any>>;
   toolServerMap?: ToolServerMap;
   connectedServerIds?: string[];
+  /** Wall-clock timestamp for the trace start when available. */
+  traceStartedAtMs?: number | null;
+  /** Wall-clock timestamp for the trace end when available. */
+  traceEndedAtMs?: number | null;
   /** Fallback when the blob has no recorded spans (Convex wall-clock only). */
   estimatedDurationMs?: number | null;
   /** Shown under the toolbar row (e.g. run case insight caption). */
@@ -118,6 +122,8 @@ export function TraceViewer({
   toolsMetadata = {},
   toolServerMap = {},
   connectedServerIds = [],
+  traceStartedAtMs = null,
+  traceEndedAtMs = null,
   estimatedDurationMs = null,
   traceInsight,
   chromeDensity = "default",
@@ -504,6 +510,8 @@ export function TraceViewer({
               recordedSpans?.length ? 0 : traceMessages.length
             }
             transcriptMessages={traceMessages}
+            traceStartedAtMs={traceStartedAtMs}
+            traceEndedAtMs={traceEndedAtMs}
             onRevealInTranscript={handleRevealInTranscript}
             hideToolbar={hasRecordedSpans}
             timelineFilter={hasRecordedSpans ? timelineFilter : undefined}

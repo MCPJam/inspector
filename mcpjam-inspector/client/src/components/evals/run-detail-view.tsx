@@ -1,9 +1,4 @@
 import { useMemo, type ReactNode } from "react";
-import {
-  ChartContainer,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -12,7 +7,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { PieChart, Pie, Label } from "recharts";
+import { motion, useReducedMotion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { IterationDetails } from "./iteration-details";
 import {
@@ -36,7 +31,7 @@ import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import { ArrowUpDown, ExternalLink } from "lucide-react";
-import { RunHeaderCompactStats } from "./run-header-compact-stats";
+import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 
 interface RunDetailViewProps {
@@ -76,7 +71,7 @@ interface RunDetailViewProps {
   runInsightsSelected?: boolean;
   /** Overrides default navigation to test-edit for iteration row edit actions. */
   onEditTestCase?: (testCaseId: string) => void;
-  /** When true, every iteration with testCaseId shows Edit / Edit in Playground. */
+  /** When true, every iteration with testCaseId shows the external-edit icon. */
   alwaysShowEditIterationRows?: boolean;
 }
 
@@ -91,6 +86,13 @@ function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
     default:
       return sortBy;
   }
+}
+
+function normalizeRunPassRatePercent(passRate: number): number {
+  if (passRate > 0 && passRate <= 1) {
+    return Math.round(passRate * 100);
+  }
+  return Math.round(passRate);
 }
 
 function IterationListItem({
@@ -119,6 +121,8 @@ function IterationListItem({
     Boolean(onEditTestCase && iteration.testCaseId) &&
     (alwaysShowEditIterationRows || isFailed);
 
+  const editLabel = isFailed ? "Edit in Playground" : "Edit";
+
   return (
     <div
       className={cn(
@@ -127,47 +131,51 @@ function IterationListItem({
         isPending && "opacity-60",
       )}
     >
-      <button
-        type="button"
-        onClick={onSelect}
-        title={
-          testInfo?.isNegativeTest
-            ? "Negative test — expects the tool NOT to be called"
-            : undefined
-        }
-        aria-label={
-          testInfo?.isNegativeTest
-            ? `Negative test (expects the tool not to be called): ${testInfo?.title || "Iteration"}, ${modelName}`
-            : undefined
-        }
-        className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer ${
+      <div
+        className={cn(
+          "flex w-full min-w-0 items-center gap-0.5",
           isSelected
             ? "bg-primary/10 border-r-2 border-r-primary"
-            : "hover:bg-muted/50"
-        }`}
+            : "hover:bg-muted/50",
+        )}
       >
-        <span className="text-xs font-medium leading-snug line-clamp-2">
-          {testInfo?.title || "Iteration"}
-        </span>
-        <span className="truncate text-[10px] font-mono text-muted-foreground">
-          {modelName}
-        </span>
-      </button>
-      {showEditLink && iteration.testCaseId ? (
-        <div className="px-3 pb-2 -mt-0.5">
+        <button
+          type="button"
+          onClick={onSelect}
+          title={
+            testInfo?.isNegativeTest
+              ? "Negative test — expects the tool NOT to be called"
+              : undefined
+          }
+          aria-label={
+            testInfo?.isNegativeTest
+              ? `Negative test (expects the tool not to be called): ${testInfo?.title || "Iteration"}, ${modelName}`
+              : undefined
+          }
+          className="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
+        >
+          <span className="text-xs font-medium leading-snug line-clamp-2">
+            {testInfo?.title || "Iteration"}
+          </span>
+          <span className="truncate text-[10px] font-mono text-muted-foreground">
+            {modelName}
+          </span>
+        </button>
+        {showEditLink && iteration.testCaseId ? (
           <button
             type="button"
-            className="text-[10px] text-primary hover:underline inline-flex items-center gap-0.5"
+            className="mr-1.5 shrink-0 rounded-md p-1.5 text-primary transition-colors hover:bg-muted/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            title={editLabel}
+            aria-label={editLabel}
             onClick={(e) => {
               e.stopPropagation();
               onEditTestCase!(iteration.testCaseId!);
             }}
           >
-            {isFailed ? "Edit in Playground" : "Edit"}
-            <ExternalLink className="h-2.5 w-2.5 shrink-0 opacity-80" />
+            <ExternalLink className="h-3.5 w-3.5 opacity-90" aria-hidden />
           </button>
-        </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -255,7 +263,7 @@ export function RunIterationsSidebar({
   onEditTestCase?: (testCaseId: string) => void;
   /** When set, shows Run Insights summary above the iteration list (CI sidebar + inline run detail). */
   runForOverview?: EvalSuiteRun | null;
-  /** Optional row below compact stats (e.g. link to full runs table). */
+  /** Optional row below Run Insights (e.g. link to full runs table). */
   runOverviewExtra?: ReactNode;
   /** Opens run-level insights in the main pane (no iteration). */
   onOpenRunInsights?: () => void;
@@ -285,6 +293,14 @@ export function RunIterationsSidebar({
     return { passed, failed, total, passRate };
   }, [runForOverview, caseGroupsForSelectedRun]);
 
+  const overviewPassRateLabel = useMemo(() => {
+    if (!runForOverview) return null;
+    return getSidebarRunInsightsPassRateLabel(
+      runForOverview,
+      overviewStatsOverride,
+    );
+  }, [runForOverview, overviewStatsOverride]);
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
       {runForOverview ? (
@@ -292,16 +308,10 @@ export function RunIterationsSidebar({
           <RunInsightsSidebarSummary
             onClick={onOpenRunInsights}
             selected={runInsightsSelected}
+            trailing={overviewPassRateLabel}
           />
-          <div className="px-4 pb-2">
-            <RunHeaderCompactStats
-              run={runForOverview}
-              statsOverride={overviewStatsOverride}
-              className="justify-end text-right text-xs"
-            />
-          </div>
           {runOverviewExtra ? (
-            <div className="px-4 pb-2">{runOverviewExtra}</div>
+            <div className="border-t px-4 pb-2 pt-2">{runOverviewExtra}</div>
           ) : null}
         </div>
       ) : null}
@@ -423,35 +433,69 @@ export function RunDetailView({
 
   const isRunning = selectedRunDetails.status === "running";
   const expected = selectedRunDetails.expectedIterations;
-  const donutTotal = selectedRunChartData.donutData.reduce(
-    (sum, item) => sum + item.value,
-    0,
-  );
-  const remaining = useMemo(() => {
-    if (expected && isRunning && expected > donutTotal) {
-      return expected - donutTotal;
-    }
-    return 0;
-  }, [expected, isRunning, donutTotal]);
-
-  const progressDonutData = useMemo(() => {
-    if (remaining > 0) {
-      return [
-        ...selectedRunChartData.donutData,
-        {
-          name: "remaining",
-          value: remaining,
-          fill: "hsl(240 3.7% 15.9% / 0.3)",
-        },
-      ];
-    }
-    return selectedRunChartData.donutData;
-  }, [selectedRunChartData.donutData, remaining]);
-
-  const progressPercent =
-    expected && expected > 0 ? Math.round((donutTotal / expected) * 100) : null;
 
   const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
+  const shouldReduceMotion = useReducedMotion();
+  const passRatePercent =
+    computedStats.total > 0
+      ? normalizeRunPassRatePercent(computedStats.passRate)
+      : null;
+  const durationText =
+    selectedRunDetails.completedAt && selectedRunDetails.createdAt
+      ? formatDuration(
+          selectedRunDetails.completedAt - selectedRunDetails.createdAt,
+        )
+      : "—";
+  const totalDisplay =
+    expected && isRunning
+      ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
+      : computedStats.total.toLocaleString();
+  const runOutcomeSummary =
+    computedStats.total === 0
+      ? "No cases recorded yet."
+      : isRunning && expected
+        ? `${computedStats.total.toLocaleString()} of ${expected.toLocaleString()} cases completed`
+        : `${computedStats.passed.toLocaleString()} of ${computedStats.total.toLocaleString()} tests passed`;
+  const runDashboardKpis = [
+    {
+      label: metricLabel,
+      value: passRatePercent !== null ? `${passRatePercent}%` : "—",
+      detail: runOutcomeSummary,
+      valueClass: undefined as string | undefined,
+    },
+    {
+      label: "Passed",
+      value: computedStats.passed.toLocaleString(),
+      detail:
+        computedStats.passed > 0
+          ? "successful cases"
+          : "no passing cases yet",
+      valueClass:
+        computedStats.passed > 0
+          ? "text-emerald-700 dark:text-emerald-300"
+          : undefined,
+    },
+    {
+      label: "Failed",
+      value: computedStats.failed.toLocaleString(),
+      detail:
+        computedStats.failed > 0 ? "needs review" : "nothing failed",
+      valueClass:
+        computedStats.failed > 0 ? "text-destructive" : undefined,
+    },
+    {
+      label: "Total",
+      value: totalDisplay,
+      detail: expected && isRunning ? "completed / expected" : "cases in run",
+      valueClass: undefined,
+    },
+    {
+      label: "Duration",
+      value: durationText,
+      detail: durationText === "—" ? "available when complete" : "wall-clock",
+      valueClass: undefined,
+    },
+  ];
 
   const selectedIteration = useMemo(
     () =>
@@ -518,184 +562,14 @@ export function RunDetailView({
 
   const hasRunBarCharts =
     selectedRunChartData.durationData.length > 0 || hasTokenData;
-
-  const statsOverrideForHeader = {
-    passed: computedStats.passed,
-    failed: computedStats.failed,
-    total: computedStats.total,
-    passRate: computedStats.passRate,
-  };
-
-  const runMetricsDetail = (
-    <>
-      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4 lg:gap-6">
-        {/* Metrics — wrap into multiple lines instead of colliding with the chart row */}
-        <div className="flex min-w-0 flex-1 flex-wrap gap-x-4 gap-y-2 sm:gap-x-6">
-          <div className="min-w-0 space-y-0.5">
-            <div className="text-xs text-muted-foreground">{metricLabel}</div>
-            <div className="text-sm font-semibold tabular-nums">
-              {computedStats.total > 0
-                ? `${Math.round(computedStats.passRate * 100)}%`
-                : "—"}
-            </div>
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className="text-xs text-muted-foreground">Passed</div>
-            <div className="text-sm font-semibold tabular-nums">
-              {computedStats.passed.toLocaleString()}
-            </div>
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className="text-xs text-muted-foreground">Failed</div>
-            <div className="text-sm font-semibold tabular-nums">
-              {computedStats.failed.toLocaleString()}
-            </div>
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className="text-xs text-muted-foreground">Total</div>
-            <div className="text-sm font-semibold tabular-nums">
-              {expected && isRunning
-                ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
-                : computedStats.total.toLocaleString()}
-            </div>
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className="text-xs text-muted-foreground">Duration</div>
-            <div className="text-sm font-semibold tabular-nums break-words">
-              {selectedRunDetails.completedAt && selectedRunDetails.createdAt
-                ? formatDuration(
-                    selectedRunDetails.completedAt -
-                      selectedRunDetails.createdAt,
-                  )
-                : "—"}
-            </div>
-          </div>
-        </div>
-
-        {/* Chart + run status — own row on narrow viewports */}
-        <div className="flex min-w-0 w-full shrink-0 flex-wrap items-center gap-2 sm:w-auto sm:justify-end sm:gap-3">
-          {selectedRunChartData.donutData.length > 0 && (
-            <div className="flex shrink-0 items-center gap-2">
-              <ChartContainer
-                config={{
-                  passed: {
-                    label: "Passed",
-                    color: "hsl(142.1 76.2% 36.3%)",
-                  },
-                  failed: { label: "Failed", color: "hsl(0 84.2% 60.2%)" },
-                  pending: {
-                    label: "Pending",
-                    color: "hsl(45.4 93.4% 47.5%)",
-                  },
-                  cancelled: {
-                    label: "Cancelled",
-                    color: "hsl(240 3.7% 15.9%)",
-                  },
-                  remaining: {
-                    label: "Remaining",
-                    color: "hsl(240 3.7% 15.9% / 0.3)",
-                  },
-                }}
-                className="h-11 w-11 shrink-0 sm:h-12 sm:w-12"
-              >
-                <PieChart>
-                  <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                  <Pie
-                    data={progressDonutData}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={14}
-                    outerRadius={20}
-                    strokeWidth={1}
-                  >
-                    <Label
-                      content={({ viewBox }) => {
-                        if (viewBox && "cx" in viewBox && "cy" in viewBox) {
-                          const cy = viewBox.cy ?? 0;
-                          return (
-                            <text
-                              x={viewBox.cx}
-                              y={viewBox.cy}
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                            >
-                              <tspan
-                                x={viewBox.cx}
-                                y={cy}
-                                className="fill-foreground text-[11px] font-bold sm:text-xs"
-                              >
-                                {expected && isRunning
-                                  ? `${donutTotal}/${expected}`
-                                  : donutTotal}
-                              </tspan>
-                              <tspan
-                                x={viewBox.cx}
-                                y={cy + 10}
-                                className="hidden fill-muted-foreground text-[8px] sm:inline"
-                              >
-                                Total
-                              </tspan>
-                            </text>
-                          );
-                        }
-                      }}
-                    />
-                  </Pie>
-                </PieChart>
-              </ChartContainer>
-            </div>
-          )}
-
-          <span className="text-xs font-medium capitalize text-foreground sm:shrink-0">
-            {isRunning && progressPercent !== null
-              ? `Running (${progressPercent}%)`
-              : selectedRunDetails.status}
-          </span>
-        </div>
-      </div>
-
-      {selectedRunChartData.modelData.length >= 2 && (
-        <div className="flex flex-wrap items-center gap-4 mt-2 pt-2 border-t border-border/50">
-          <span className="text-[10px] text-muted-foreground">By Model:</span>
-          {selectedRunChartData.modelData.map((model) => (
-            <div key={model.model} className="flex items-center gap-1.5">
-              <div
-                className="h-1.5 w-1.5 rounded-full"
-                style={{
-                  backgroundColor:
-                    model.passRate >= 80
-                      ? "hsl(142.1 76.2% 36.3%)"
-                      : model.passRate >= 50
-                        ? "hsl(45.4 93.4% 47.5%)"
-                        : "hsl(0 84.2% 60.2%)",
-                }}
-              />
-              <span className="text-[11px]">{model.model}</span>
-              <span className="text-[11px] font-mono font-medium">
-                {model.passRate}%
-              </span>
-              <span className="text-[10px] text-muted-foreground">
-                ({model.passed}/{model.total})
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {hasRunBarCharts && (
-        <RunMetricsBarCharts
-          durationData={selectedRunChartData.durationData}
-          tokensData={selectedRunChartData.tokensData}
-          hasTokenData={hasTokenData}
-        />
-      )}
-    </>
-  );
+  const hasSecondaryBreakdown =
+    selectedRunChartData.modelData.length >= 2 || hasRunBarCharts;
 
   const runInsightsNarrative =
     selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
       <RunInsightsPrimaryBlock
         embedded
+        className={hasSecondaryBreakdown ? undefined : "border-b-0 pb-0"}
         summary={runInsightsSummary}
         pending={runInsightsPending}
         requested={runInsightsRequested}
@@ -706,18 +580,105 @@ export function RunDetailView({
     ) : null;
 
   const runInsightsBody = (
-    <>
+    <div className="space-y-5">
+      <div className="flex w-full min-w-0 flex-nowrap gap-3 sm:gap-4">
+        {runDashboardKpis.map((stat, index) => (
+          <motion.div
+            key={`${stat.label}-${index}`}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={shouldReduceMotion ? undefined : { opacity: 1, y: 0 }}
+            transition={
+              shouldReduceMotion
+                ? undefined
+                : {
+                    duration: 0.2,
+                    delay: 0.04 * index,
+                    ease: [0.16, 1, 0.3, 1],
+                  }
+            }
+            className="flex min-w-0 flex-1 basis-0 flex-col rounded-xl border border-border/50 bg-background/70 p-3 sm:p-4"
+          >
+            <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+              {stat.label}
+            </div>
+            <div
+              className={cn(
+                "mt-2 text-2xl font-semibold tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
+                stat.valueClass,
+              )}
+            >
+              {stat.value}
+            </div>
+            <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+              {stat.detail}
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
       {runInsightsNarrative}
-      {runMetricsDetail}
-    </>
+
+      {hasSecondaryBreakdown ? (
+        <div className="space-y-3">
+          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            Breakdown
+          </div>
+
+          {selectedRunChartData.modelData.length >= 2 ? (
+            <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-border/50 bg-background/60 px-3 py-3">
+              {selectedRunChartData.modelData.map((model) => (
+                <div
+                  key={model.model}
+                  className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/80 px-2.5 py-1.5"
+                >
+                  <div
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{
+                      backgroundColor:
+                        model.passRate >= 80
+                          ? "hsl(142.1 76.2% 36.3%)"
+                          : model.passRate >= 50
+                            ? "hsl(45.4 93.4% 47.5%)"
+                            : "hsl(0 84.2% 60.2%)",
+                    }}
+                  />
+                  <span className="text-[11px] text-foreground">{model.model}</span>
+                  <span className="text-[11px] font-mono font-medium text-foreground">
+                    {model.passRate}%
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    ({model.passed}/{model.total})
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {hasRunBarCharts ? (
+            <RunMetricsBarCharts
+              durationData={selectedRunChartData.durationData}
+              tokensData={selectedRunChartData.tokensData}
+              hasTokenData={hasTokenData}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
   );
+
+  /** Sidebar layout: only grow the detail stack when an iteration is open (needs scroll). */
+  const detailPaneFillsRemainingSpace =
+    !omitIterationList || selectedIterationId !== null;
 
   return (
     <div
       className={cn(
         "relative flex flex-col",
         omitIterationList
-          ? "min-h-0 flex-1 overflow-hidden px-3 py-3"
+          ? cn(
+              "min-h-0 overflow-hidden px-3 py-3",
+              detailPaneFillsRemainingSpace && "flex-1",
+            )
           : "p-4",
       )}
     >
@@ -751,11 +712,6 @@ export function RunDetailView({
               <span className="text-xs font-medium text-foreground">
                 Run insights
               </span>
-              <RunHeaderCompactStats
-                run={selectedRunDetails}
-                statsOverride={statsOverrideForHeader}
-                className="min-w-0 flex-1 pt-0.5 text-right sm:pl-2"
-              />
             </div>
             <div className="px-3 py-2">{runInsightsBody}</div>
           </div>
@@ -766,12 +722,17 @@ export function RunDetailView({
       <div
         className={cn(
           "flex gap-0 overflow-hidden",
-          omitIterationList ? "mt-3 min-h-0 flex-1 flex-col" : "mt-4",
+          omitIterationList
+            ? cn(
+                "mt-3 min-h-0 flex-col",
+                detailPaneFillsRemainingSpace && "flex-1",
+              )
+            : "mt-4",
           !omitIterationList &&
             "rounded-xl border bg-card text-card-foreground min-h-[400px] h-[calc(100vh-200px)] max-h-[calc(100vh-200px)]",
         )}
         style={
-          omitIterationList
+          omitIterationList && detailPaneFillsRemainingSpace
             ? { minHeight: 400 }
             : undefined
         }
@@ -793,7 +754,12 @@ export function RunDetailView({
           </div>
         ) : null}
 
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-col",
+            detailPaneFillsRemainingSpace ? "flex-1" : "shrink-0",
+          )}
+        >
           {selectedIteration ? (
             <div
               key={selectedIterationId}
@@ -812,12 +778,10 @@ export function RunDetailView({
               />
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-sm text-muted-foreground">
-                {caseGroupsForSelectedRun.length === 0
-                  ? "No iterations in this run yet."
-                  : "Select an iteration to view details"}
-              </div>
+            <div className="flex min-h-[11rem] w-full shrink-0 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
+              {caseGroupsForSelectedRun.length === 0
+                ? "No iterations in this run yet."
+                : "Select an iteration to view details"}
             </div>
           )}
         </div>

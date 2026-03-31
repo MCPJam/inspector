@@ -16,7 +16,7 @@ function RunInsightsNarrativeBody({
   error: string | null;
 }) {
   return (
-    <div className="text-xs leading-relaxed">
+    <div className="text-sm leading-relaxed">
       {pending ? (
         <span className="flex items-center gap-2 text-muted-foreground">
           <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />

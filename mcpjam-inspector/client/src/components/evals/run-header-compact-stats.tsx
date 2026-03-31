@@ -17,6 +17,22 @@ function normalizePassRatePercent(passRate: number): number {
   return Math.round(passRate);
 }
 
+/**
+ * Pass-rate label for the run-detail sidebar "Run Insights" row only.
+ * Returns null when there is no meaningful summary (matches compact-stats empty states).
+ */
+export function getSidebarRunInsightsPassRateLabel(
+  run: EvalSuiteRun,
+  statsOverride?: RunHeaderCompactStatsOverride,
+): string | null {
+  const summary = statsOverride ?? run.summary;
+  if (!summary || summary.total === 0) {
+    return null;
+  }
+  const pct = normalizePassRatePercent(summary.passRate);
+  return `${pct}%`;
+}
+
 export function RunHeaderCompactStats({
   run,
   statsOverride,

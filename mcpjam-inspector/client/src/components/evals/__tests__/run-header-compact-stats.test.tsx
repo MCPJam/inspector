@@ -1,6 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { RunHeaderCompactStats } from "../run-header-compact-stats";
+import {
+  RunHeaderCompactStats,
+  getSidebarRunInsightsPassRateLabel,
+} from "../run-header-compact-stats";
 import type { EvalSuiteRun } from "../types";
 
 function makeRun(overrides: Partial<EvalSuiteRun> = {}): EvalSuiteRun {
@@ -47,6 +50,19 @@ describe("RunHeaderCompactStats", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps percent-based stored summaries compact in sidebar contexts", () => {
+    render(
+      <RunHeaderCompactStats
+        run={makeRun({
+          summary: { total: 7, passed: 6, failed: 1, passRate: 86 },
+        })}
+      />,
+    );
+    expect(
+      screen.getByText(/6 passed · 1 failed · 86% · 2m 15s/),
+    ).toBeInTheDocument();
+  });
+
   it("shows run in progress when status is running", () => {
     render(
       <RunHeaderCompactStats
@@ -58,5 +74,34 @@ describe("RunHeaderCompactStats", () => {
       />,
     );
     expect(screen.getByText(/Run in progress/)).toBeInTheDocument();
+  });
+});
+
+describe("getSidebarRunInsightsPassRateLabel", () => {
+  it("returns rounded percent for completed run summary", () => {
+    expect(getSidebarRunInsightsPassRateLabel(makeRun())).toBe("86%");
+  });
+
+  it("returns null when total is zero", () => {
+    expect(
+      getSidebarRunInsightsPassRateLabel(
+        makeRun({ summary: { total: 0, passed: 0, failed: 0, passRate: 0 } }),
+      ),
+    ).toBeNull();
+  });
+
+  it("returns null when summary is missing", () => {
+    expect(getSidebarRunInsightsPassRateLabel(makeRun({ summary: undefined }))).toBeNull();
+  });
+
+  it("uses statsOverride when provided", () => {
+    expect(
+      getSidebarRunInsightsPassRateLabel(makeRun(), {
+        passed: 5,
+        failed: 2,
+        total: 7,
+        passRate: 5 / 7,
+      }),
+    ).toBe("71%");
   });
 });

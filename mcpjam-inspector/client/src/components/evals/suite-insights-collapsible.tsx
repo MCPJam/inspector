@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Loader2, ChevronDown } from "lucide-react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   Collapsible,
   CollapsibleContent,
@@ -23,6 +24,8 @@ export function SuiteInsightsCollapsible({
   runs,
   title = "Run insights",
 }: SuiteInsightsCollapsibleProps) {
+  const [open, setOpen] = useState(true);
+  const shouldReduceMotion = useReducedMotion();
   const latestCompleted = useMemo(() => pickLatestCompletedRun(runs), [runs]);
 
   const {
@@ -40,28 +43,52 @@ export function SuiteInsightsCollapsible({
 
   return (
     <Collapsible
-      defaultOpen
-      className="group/suite-insights rounded-lg border border-border bg-card text-card-foreground"
+      open={open}
+      onOpenChange={setOpen}
+      className="rounded-lg border border-border bg-card text-card-foreground"
     >
-      <CollapsibleTrigger className="flex w-full items-center gap-2 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring">
-        <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=closed]/suite-insights:-rotate-90 group-data-[state=open]/suite-insights:rotate-0" />
-        <span className="text-xs font-semibold text-muted-foreground">
-          {title}
-        </span>
-        {failedGeneration ? (
-          <button
+      <div className="flex items-stretch gap-0 rounded-t-lg">
+        <CollapsibleTrigger asChild>
+          <motion.button
             type="button"
-            className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-            onClick={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              requestRunInsights(true);
-            }}
+            className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-3 py-2.5 text-left outline-none hover:bg-muted/45 focus-visible:ring-2 focus-visible:ring-ring"
+            whileTap={
+              shouldReduceMotion
+                ? undefined
+                : { scale: 0.992, transition: { duration: 0.08 } }
+            }
+            transition={{ type: "spring", stiffness: 520, damping: 32 }}
           >
-            Retry
-          </button>
+            <motion.span
+              className="inline-flex shrink-0 text-muted-foreground"
+              aria-hidden
+              initial={false}
+              animate={{ rotate: open ? 0 : -90 }}
+              transition={
+                shouldReduceMotion
+                  ? { duration: 0 }
+                  : { type: "spring", stiffness: 420, damping: 28 }
+              }
+            >
+              <ChevronDown className="h-4 w-4" />
+            </motion.span>
+            <span className="text-xs font-semibold text-muted-foreground">
+              {title}
+            </span>
+          </motion.button>
+        </CollapsibleTrigger>
+        {failedGeneration ? (
+          <div className="flex shrink-0 items-center pr-3">
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => requestRunInsights(true)}
+            >
+              Retry
+            </button>
+          </div>
         ) : null}
-      </CollapsibleTrigger>
+      </div>
       <CollapsibleContent>
         <div className="border-t border-border/50 px-3 pb-3 pt-2">
           {pending ? (

@@ -96,7 +96,7 @@ describe("RunDetailView", () => {
     vi.mocked(useRunInsights).mockReturnValue(defaultRunInsightsReturn());
   });
 
-  it("places run insights narrative above metrics and renders bar chart headings in-card", () => {
+  it("places single-row KPI dashboard above the narrative and keeps breakdown charts below", () => {
     render(
       <RunDetailView
         selectedRunDetails={makeRun()}
@@ -114,10 +114,21 @@ describe("RunDetailView", () => {
       "We will add a short summary here when you open a completed run.",
     );
     const accuracyLabel = screen.getByText("Accuracy");
+    const passRateCard = accuracyLabel.parentElement;
+    expect(passRateCard).not.toBeNull();
     expect(
-      narrative.compareDocumentPosition(accuracyLabel) &
+      within(passRateCard as HTMLElement).getByText("100%"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("1 of 1 tests passed")).toBeInTheDocument();
+    expect(screen.getByText("Passed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByText("Total")).toBeInTheDocument();
+    expect(screen.getByText("Duration")).toBeInTheDocument();
+    expect(
+      accuracyLabel.compareDocumentPosition(narrative) &
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(screen.getByText("Breakdown")).toBeVisible();
 
     expect(
       screen.getByRole("heading", { name: "Avg duration by test" }),
@@ -128,6 +139,27 @@ describe("RunDetailView", () => {
     expect(document.querySelectorAll('[data-slot="chart"]').length).toBeGreaterThanOrEqual(
       2,
     );
+  });
+
+  it("does not render compact run stats in the run insights header", () => {
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        selectedRunChartData={chartDataUsable}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+      />,
+    );
+
+    const header = screen.getByText("Run insights").parentElement;
+    expect(header).not.toBeNull();
+    expect(
+      within(header as HTMLElement).queryByText(/1 passed · 0 failed · 100%/),
+    ).not.toBeInTheDocument();
   });
 
   it("hides run-level Run insights card when an iteration is selected", () => {
@@ -352,6 +384,33 @@ describe("RunDetailView", () => {
     );
     expect(
       screen.queryByTestId("run-case-insight-trace-caption"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows pass rate in Run Insights sidebar row and not the full compact stats line", () => {
+    const run = makeRun({
+      summary: { total: 7, passed: 6, failed: 1, passRate: 6 / 7 },
+    });
+    render(
+      <RunIterationsSidebar
+        caseGroupsForSelectedRun={[]}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        runForOverview={run}
+        onOpenRunInsights={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: /Run Insights — show in main panel — 86%/,
+      }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("86%")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/6 passed · 1 failed · 86%/),
     ).not.toBeInTheDocument();
   });
 

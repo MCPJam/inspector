@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useEffect,
   useMemo,
@@ -22,6 +21,11 @@ import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
 import { MemoizedMarkdown } from "@/components/chat-v2/thread/memomized-markdown";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
   ResizableHandle,
@@ -819,41 +823,50 @@ function CategoryGlyph({
   }
 }
 
-function formatTokenHint({
-  inputTokens,
-  outputTokens,
-  totalTokens,
-}: {
+function getRowTokenStats(row: TimelineRow): {
   inputTokens?: number;
   outputTokens?: number;
   totalTokens?: number;
-}): string | null {
-  if (typeof totalTokens === "number") {
-    return `${totalTokens} tok`;
-  }
-  if (
-    typeof inputTokens === "number" ||
-    typeof outputTokens === "number"
-  ) {
-    const input = typeof inputTokens === "number" ? inputTokens : "—";
-    const output = typeof outputTokens === "number" ? outputTokens : "—";
-    return `${input}→${output} tok`;
-  }
-  return null;
-}
-
-function formatRowTokenHint(row: TimelineRow): string | null {
+} {
   return row.kind === "prompt"
-    ? formatTokenHint({
+    ? {
         inputTokens: row.aggregatedInputTokens,
         outputTokens: row.aggregatedOutputTokens,
         totalTokens: row.aggregatedTotalTokens,
-      })
-    : formatTokenHint({
+      }
+    : {
         inputTokens: row.span.inputTokens,
         outputTokens: row.span.outputTokens,
         totalTokens: row.span.totalTokens,
-      });
+      };
+}
+
+function formatTokenCount(value?: number): string {
+  return typeof value === "number" ? value.toLocaleString() : "—";
+}
+
+function formatWallClockTimestamp(timestampMs?: number | null): string {
+  return typeof timestampMs === "number" && Number.isFinite(timestampMs)
+    ? new Date(timestampMs).toLocaleString()
+    : "—";
+}
+
+function getTraceStartAnchorMs({
+  traceStartedAtMs,
+  traceEndedAtMs,
+  traceDurationMs,
+}: {
+  traceStartedAtMs?: number | null;
+  traceEndedAtMs?: number | null;
+  traceDurationMs: number;
+}): number | null {
+  if (typeof traceStartedAtMs === "number" && Number.isFinite(traceStartedAtMs)) {
+    return traceStartedAtMs;
+  }
+  if (typeof traceEndedAtMs === "number" && Number.isFinite(traceEndedAtMs)) {
+    return traceEndedAtMs - traceDurationMs;
+  }
+  return null;
 }
 
 function deriveSpanLabel(
@@ -1299,6 +1312,8 @@ export interface TraceTimelineProps {
   estimatedDurationMs?: number | null;
   transcriptMessageCount?: number;
   transcriptMessages?: TranscriptMessage[];
+  traceStartedAtMs?: number | null;
+  traceEndedAtMs?: number | null;
   onRevealInTranscript?: (range: TranscriptRange) => void;
   /** When true, timeline does not render the recorded toolbar (host provides it). */
   hideToolbar?: boolean;
@@ -1317,6 +1332,8 @@ export function TraceTimeline({
   estimatedDurationMs,
   transcriptMessageCount = 0,
   transcriptMessages = [],
+  traceStartedAtMs = null,
+  traceEndedAtMs = null,
   onRevealInTranscript,
   hideToolbar = false,
   timelineFilter: timelineFilterProp,
@@ -1363,6 +1380,15 @@ export function TraceTimeline({
   );
 
   const timelineZoomMinMs = Math.max(1, Math.round(maxEndMs / 50));
+  const traceStartAnchorMs = useMemo(
+    () =>
+      getTraceStartAnchorMs({
+        traceStartedAtMs,
+        traceEndedAtMs,
+        traceDurationMs: maxEndMs,
+      }),
+    [maxEndMs, traceEndedAtMs, traceStartedAtMs],
+  );
 
   const [internalFilter, setInternalFilter] = useState<TimelineFilter>("all");
   const filter =
@@ -1820,7 +1846,11 @@ export function TraceTimeline({
                   ? (row.conversationLabel ?? row.label)
                   : derivedLabel!.title;
               const durationLabel = formatDuration(durationMs);
-              const tokenHint = formatRowTokenHint(row);
+              const tokenStats = getRowTokenStats(row);
+              const rowStartTimestamp =
+                traceStartAnchorMs !== null ? traceStartAnchorMs + startMs : null;
+              const rowEndTimestamp =
+                traceStartAnchorMs !== null ? traceStartAnchorMs + endMs : null;
               const canToggle = row.kind === "prompt" ? true : row.hasChildren;
               const gridRow = rowIndex + 2;
               const borderAccent = getRowBorderAccentClass(
@@ -1832,156 +1862,210 @@ export function TraceTimeline({
                 spanShowsFailure,
               );
               const selectRow = () => setSelectedRowKey(row.key);
-              const rowSelectionTitle = `${label} · ${durationLabel}`;
               const leftCellClass = isSelected
                 ? cn("trace-waterfall-row-selected", borderAccent)
-                : "border-l-transparent bg-background hover:bg-muted/20";
+                : "border-l-transparent bg-background group-hover:bg-muted/20 hover:bg-muted/20";
               const sharedCellClass = isSelected
                 ? "trace-waterfall-row-selected"
-                : "bg-background hover:bg-muted/20";
+                : "bg-background group-hover:bg-muted/20 hover:bg-muted/20";
 
               return (
-                <Fragment key={row.key}>
-                  <div
-                    data-testid="trace-row"
-                    data-state={isSelected ? "selected" : undefined}
-                    style={{ gridColumn: 1, gridRow }}
-                    className={cn(
-                      "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
-                      leftCellClass,
-                    )}
-                  >
+                <HoverCard key={row.key} openDelay={0} closeDelay={0}>
+                  <HoverCardTrigger asChild>
                     <div
-                      className="flex shrink-0 items-center"
+                      data-testid="trace-row"
+                      data-state={isSelected ? "selected" : undefined}
                       style={{
-                        paddingLeft: row.kind === "prompt" ? 0 : row.depth * 16,
+                        gridColumn: "1 / 4",
+                        gridRow,
+                        gridTemplateColumns:
+                          "minmax(200px, 280px) minmax(0, 1fr) auto",
                       }}
+                      className="group grid min-w-0"
                     >
-                      {canToggle ? (
+                      <div
+                        className={cn(
+                          "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
+                          leftCellClass,
+                        )}
+                      >
+                        <div
+                          className="flex shrink-0 items-center"
+                          style={{
+                            paddingLeft: row.kind === "prompt" ? 0 : row.depth * 16,
+                          }}
+                        >
+                          {canToggle ? (
+                            <button
+                              type="button"
+                              className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                if (row.kind === "prompt") {
+                                  setExpandedPromptIds((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(row.key)) next.delete(row.key);
+                                    else next.add(row.key);
+                                    return next;
+                                  });
+                                  return;
+                                }
+                                setExpandedStepIds((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(row.key)) next.delete(row.key);
+                                  else next.add(row.key);
+                                  return next;
+                                });
+                              }}
+                              aria-label={
+                                row.kind === "prompt"
+                                  ? `${row.isExpanded ? "Collapse" : "Expand"} ${row.label}`
+                                  : `${row.isExpanded ? "Collapse" : "Expand"} ${label}`
+                              }
+                            >
+                              {row.isExpanded ? (
+                                <ChevronDown className="h-3.5 w-3.5" />
+                              ) : (
+                                <ChevronRight className="h-3.5 w-3.5" />
+                              )}
+                            </button>
+                          ) : (
+                            <span className="mr-1 h-5 w-5" />
+                          )}
+                        </div>
                         <button
                           type="button"
-                          className="mr-1 inline-flex h-5 w-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-muted/30 hover:text-foreground"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            if (row.kind === "prompt") {
-                              setExpandedPromptIds((current) => {
-                                const next = new Set(current);
-                                if (next.has(row.key)) next.delete(row.key);
-                                else next.add(row.key);
-                                return next;
-                              });
-                              return;
-                            }
-                            setExpandedStepIds((current) => {
-                              const next = new Set(current);
-                              if (next.has(row.key)) next.delete(row.key);
-                              else next.add(row.key);
-                              return next;
-                            });
-                          }}
-                          aria-label={
-                            row.kind === "prompt"
-                              ? `${row.isExpanded ? "Collapse" : "Expand"} ${row.label}`
-                              : `${row.isExpanded ? "Collapse" : "Expand"} ${label}`
-                          }
+                          data-testid="trace-row-label-button"
+                          className="min-w-0 flex-1 text-left"
+                          onClick={selectRow}
                         >
-                          {row.isExpanded ? (
-                            <ChevronDown className="h-3.5 w-3.5" />
-                          ) : (
-                            <ChevronRight className="h-3.5 w-3.5" />
-                          )}
+                          <div className="flex min-w-0 items-center gap-2">
+                            {row.kind === "prompt" ? (
+                              <CategoryGlyph category="prompt" />
+                            ) : (
+                              <CategoryGlyph category={rowGlyphCategory} />
+                            )}
+                            <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
+                              {label}
+                            </span>
+                            {row.kind === "prompt" && row.hasAnyFailure ? (
+                              <span
+                                className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                                title="Contains errors"
+                                aria-label="Contains errors"
+                              />
+                            ) : null}
+                            {row.kind === "span" && spanShowsFailure ? (
+                              <span
+                                className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
+                                title="Error"
+                                aria-label="Error"
+                              />
+                            ) : null}
+                          </div>
                         </button>
-                      ) : (
-                        <span className="mr-1 h-5 w-5" />
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      data-testid="trace-row-label-button"
-                      className="min-w-0 flex-1 text-left"
-                      title={
-                        row.kind === "prompt"
-                          ? TRACE_PROMPT_STEPS_TITLE
-                          : undefined
-                      }
-                      onClick={selectRow}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        {row.kind === "prompt" ? (
-                          <CategoryGlyph category="prompt" />
-                        ) : (
-                          <CategoryGlyph category={rowGlyphCategory} />
-                        )}
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
-                          {label}
-                        </span>
-                        {row.kind === "prompt" && row.hasAnyFailure ? (
-                          <span
-                            className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
-                            title="Contains errors"
-                            aria-label="Contains errors"
-                          />
-                        ) : null}
-                        {row.kind === "span" && spanShowsFailure ? (
-                          <span
-                            className="inline-block h-2 w-2 shrink-0 rounded-full bg-destructive"
-                            title="Error"
-                            aria-label="Error"
-                          />
-                        ) : null}
                       </div>
-                      {tokenHint ? (
-                        <div className="mt-1 truncate text-[11px] tabular-nums text-muted-foreground">
-                          {tokenHint}
+                      <button
+                        type="button"
+                        data-testid="trace-row-bar-hit"
+                        data-state={isSelected ? "selected" : undefined}
+                        className={cn(
+                          "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
+                          sharedCellClass,
+                        )}
+                        aria-label={`Select on timeline (${formatDuration(durationMs)})`}
+                        onClick={selectRow}
+                      >
+                        <div
+                          data-testid={
+                            row.kind === "span" && spanShowsFailure
+                              ? "trace-row-bar-error"
+                              : "trace-row-bar"
+                          }
+                          className={cn(
+                            "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] transition-[left,width] duration-150",
+                            waterfallBarClass,
+                          )}
+                          style={{
+                            left: `${leftPercent}%`,
+                            width: `max(${widthPercent}%, 3px)`,
+                          }}
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        data-testid="trace-row-duration-hit"
+                        data-state={isSelected ? "selected" : undefined}
+                        className={cn(
+                          "flex h-full min-h-[48px] items-center justify-end whitespace-nowrap border-b border-border/40 px-3 py-2 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
+                          sharedCellClass,
+                        )}
+                        aria-label={`Select row duration (${durationLabel})`}
+                        onClick={selectRow}
+                      >
+                        {durationLabel}
+                      </button>
+                    </div>
+                  </HoverCardTrigger>
+                  <HoverCardContent
+                    data-testid="trace-row-hover-content"
+                    align="start"
+                    side="left"
+                    className="w-72 space-y-3 p-3"
+                  >
+                    <div data-testid="trace-row-hover-card" className="space-y-3">
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Time
                         </div>
-                      ) : null}
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    data-testid="trace-row-bar-hit"
-                    data-state={isSelected ? "selected" : undefined}
-                    style={{ gridColumn: 2, gridRow }}
-                    className={cn(
-                      "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
-                      sharedCellClass,
-                    )}
-                    aria-label={`Select on timeline (${formatDuration(durationMs)})`}
-                    onClick={selectRow}
-                    title={rowSelectionTitle}
-                  >
-                    <div
-                      data-testid={
-                        row.kind === "span" && spanShowsFailure
-                          ? "trace-row-bar-error"
-                          : "trace-row-bar"
-                      }
-                      className={cn(
-                        "absolute top-1/2 z-[1] h-4 min-w-0 -translate-y-1/2 rounded-[3px] transition-[left,width] duration-150",
-                        waterfallBarClass,
-                      )}
-                      style={{
-                        left: `${leftPercent}%`,
-                        width: `max(${widthPercent}%, 3px)`,
-                      }}
-                    />
-                  </button>
-                  <button
-                    type="button"
-                    data-testid="trace-row-duration-hit"
-                    data-state={isSelected ? "selected" : undefined}
-                    style={{ gridColumn: 3, gridRow }}
-                    className={cn(
-                      "flex h-full min-h-[48px] items-center justify-end whitespace-nowrap border-b border-border/40 px-3 py-2 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
-                      sharedCellClass,
-                    )}
-                    aria-label={`Select row duration (${durationLabel})`}
-                    onClick={selectRow}
-                    title={rowSelectionTitle}
-                  >
-                    {durationLabel}
-                  </button>
-                </Fragment>
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                          <dt className="text-muted-foreground">Start</dt>
+                          <dd
+                            data-testid="trace-row-hover-start"
+                            className="text-right font-medium text-foreground"
+                          >
+                            {formatWallClockTimestamp(rowStartTimestamp)}
+                          </dd>
+                          <dt className="text-muted-foreground">End</dt>
+                          <dd
+                            data-testid="trace-row-hover-end"
+                            className="text-right font-medium text-foreground"
+                          >
+                            {formatWallClockTimestamp(rowEndTimestamp)}
+                          </dd>
+                        </dl>
+                      </div>
+                      <div className="space-y-1.5">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Tokens
+                        </div>
+                        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
+                          <dt className="text-muted-foreground">Input</dt>
+                          <dd
+                            data-testid="trace-row-hover-input-tokens"
+                            className="text-right font-medium tabular-nums text-foreground"
+                          >
+                            {formatTokenCount(tokenStats.inputTokens)}
+                          </dd>
+                          <dt className="text-muted-foreground">Output</dt>
+                          <dd
+                            data-testid="trace-row-hover-output-tokens"
+                            className="text-right font-medium tabular-nums text-foreground"
+                          >
+                            {formatTokenCount(tokenStats.outputTokens)}
+                          </dd>
+                          <dt className="text-muted-foreground">Total</dt>
+                          <dd
+                            data-testid="trace-row-hover-total-tokens"
+                            className="text-right font-medium tabular-nums text-foreground"
+                          >
+                            {formatTokenCount(tokenStats.totalTokens)}
+                          </dd>
+                        </dl>
+                      </div>
+                    </div>
+                  </HoverCardContent>
+                </HoverCard>
               );
             })}
                 </div>

@@ -387,6 +387,8 @@ export function IterationDetails({
       ),
     [iteration.updatedAt, iteration.startedAt, iteration.createdAt],
   );
+  const traceStartedAtMs = iteration.startedAt ?? iteration.createdAt;
+  const traceEndedAtMs = iteration.updatedAt;
 
   // Use snapshot values first (reflects what was actually tested, including unsaved edits)
   const expectedToolCalls =
@@ -721,6 +723,8 @@ export function IterationDetails({
             toolsMetadata={toolsMetadata}
             toolServerMap={toolServerMap}
             connectedServerIds={connectedServerIds}
+            traceStartedAtMs={traceStartedAtMs}
+            traceEndedAtMs={traceEndedAtMs}
             estimatedDurationMs={estimatedDurationMs}
             traceInsight={caseInsightSlot}
             chromeDensity={
