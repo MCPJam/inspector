@@ -562,12 +562,30 @@ export function RunDetailView({
     if (!selectedIteration || !selectedRunDetails.serverQuality?.workflowInsights) {
       return null;
     }
-    const caseKey = selectedIteration.testCaseSnapshot?.caseKey;
-    if (!caseKey) return null;
-    return selectedRunDetails.serverQuality.workflowInsights.find(
-      (w) => w.caseKey === caseKey,
-    ) ?? null;
-  }, [selectedIteration, selectedRunDetails]);
+    const list = selectedRunDetails.serverQuality.workflowInsights;
+    const snap = selectedIteration.testCaseSnapshot;
+    // Match using the same key resolution as the backend context builder
+    const caseKey = snap?.caseKey;
+    if (caseKey) {
+      const match = list.find((w) => w.caseKey === caseKey);
+      if (match) return match;
+    }
+    const testCaseId = selectedIteration.testCaseId;
+    if (testCaseId) {
+      const src = source === "sdk" ? "sdk" : "ui";
+      const match = list.find((w) => w.caseKey === `${src}:${testCaseId}`);
+      if (match) return match;
+    }
+    // Fallback: match by title
+    const title = snap?.title;
+    if (title) {
+      const match = list.find(
+        (w) => w.caseKey === `title:${title}` || w.title === title,
+      );
+      if (match) return match;
+    }
+    return null;
+  }, [selectedIteration, selectedRunDetails, source]);
 
   const toolInsightsForSelectedIteration = useMemo(() => {
     if (!selectedIteration || !selectedRunDetails.serverQuality?.toolInsights) {
