@@ -611,7 +611,6 @@ export function RunDetailView({
     selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
       <RunInsightsPrimaryBlock
         embedded
-        className="mt-3"
         summary={runInsightsSummary}
         pending={runInsightsPending}
         requested={runInsightsRequested}
@@ -623,8 +622,8 @@ export function RunDetailView({
 
   const runInsightsBody = (
     <>
-      {runMetricsDetail}
       {runInsightsNarrative}
+      {runMetricsDetail}
     </>
   );
 

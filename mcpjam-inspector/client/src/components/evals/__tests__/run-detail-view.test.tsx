@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import type { EvalIteration, EvalSuiteRun } from "../types";
 
 vi.mock("../use-run-insights", () => ({
@@ -95,7 +95,7 @@ describe("RunDetailView", () => {
     vi.mocked(useRunInsights).mockReturnValue(defaultRunInsightsReturn());
   });
 
-  it("keeps bar charts inside one in-card collapsible; expanding shows both charts", () => {
+  it("places run insights narrative above metrics and renders bar chart headings in-card", () => {
     render(
       <RunDetailView
         selectedRunDetails={makeRun()}
@@ -109,25 +109,24 @@ describe("RunDetailView", () => {
       />,
     );
 
-    const section = screen.getByRole("button", {
-      name: /Duration and token charts/i,
-    });
-    const collapsibleRoot = section.closest('[data-slot="collapsible"]');
+    const narrative = screen.getByText(
+      "We will add a short summary here when you open a completed run.",
+    );
+    const accuracyLabel = screen.getByText("Accuracy");
     expect(
-      collapsibleRoot?.querySelectorAll('[data-slot="chart"]').length,
-    ).toBe(0);
+      narrative.compareDocumentPosition(accuracyLabel) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
 
-    fireEvent.click(section);
-
-    expect(
-      collapsibleRoot?.querySelectorAll('[data-slot="chart"]').length,
-    ).toBe(2);
     expect(
       screen.getByRole("heading", { name: "Avg duration by test" }),
     ).toBeVisible();
     expect(
       screen.getByRole("heading", { name: "Avg tokens by test" }),
     ).toBeVisible();
+    expect(document.querySelectorAll('[data-slot="chart"]').length).toBeGreaterThanOrEqual(
+      2,
+    );
   });
 
   it("hides run-level Run insights card when an iteration is selected", () => {

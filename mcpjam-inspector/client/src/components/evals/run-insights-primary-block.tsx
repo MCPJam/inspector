@@ -48,7 +48,7 @@ function RunInsightsNarrativeBody({
 /**
  * Diff-based run insights (vs prior completed baseline).
  * Standalone card: narrative first, then Sparkles + title row.
- * Embedded (run detail): narrative only + optional Retry; parent places this below the metrics row.
+ * Embedded (run detail): narrative only + optional Retry; parent places this below the Run insights header.
  */
 export function RunInsightsPrimaryBlock({
   summary,
@@ -106,7 +106,7 @@ export function RunInsightsPrimaryBlock({
 
   if (embedded) {
     return (
-      <div className={cn("mt-3 border-t border-border/45 pt-3", className)}>
+      <div className={cn("border-b border-border/45 pb-3", className)}>
         <RunInsightsNarrativeBody
           summary={summary}
           pending={pending}
