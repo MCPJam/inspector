@@ -7,7 +7,7 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { cn } from "@/lib/utils";
 import { IterationDetails } from "./iteration-details";
 import {
@@ -188,6 +188,25 @@ function IterationListItem({
   );
 }
 
+const ITERATION_STAGGER_CAP = 20;
+
+const iterationListVariants: Variants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.03, delayChildren: 0.05 } },
+};
+
+const iterationItemVariants: Variants = {
+  hidden: (i: number) =>
+    i < ITERATION_STAGGER_CAP
+      ? { opacity: 0, x: -6 }
+      : { opacity: 1, x: 0 },
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: { duration: 0.15, ease: [0.16, 1, 0.3, 1] },
+  },
+};
+
 function IterationListWithSections({
   iterations,
   sortBy,
@@ -203,21 +222,34 @@ function IterationListWithSections({
   onEditTestCase?: (testCaseId: string) => void;
   alwaysShowEditIterationRows?: boolean;
 }) {
-  if (sortBy !== "result") {
-    return (
-      <>
-        {iterations.map((iteration) => (
+  const shouldReduceMotion = useReducedMotion();
+
+  const renderItems = (items: EvalIteration[]) => (
+    <motion.div
+      variants={shouldReduceMotion ? undefined : iterationListVariants}
+      initial={shouldReduceMotion ? false : "hidden"}
+      animate="visible"
+    >
+      {items.map((iteration, index) => (
+        <motion.div
+          key={iteration._id}
+          custom={index}
+          variants={shouldReduceMotion ? undefined : iterationItemVariants}
+        >
           <IterationListItem
-            key={iteration._id}
             iteration={iteration}
             isSelected={selectedIterationId === iteration._id}
             onSelect={() => onSelectIteration(iteration._id)}
             onEditTestCase={onEditTestCase}
             alwaysShowEditIterationRows={alwaysShowEditIterationRows}
           />
-        ))}
-      </>
-    );
+        </motion.div>
+      ))}
+    </motion.div>
+  );
+
+  if (sortBy !== "result") {
+    return renderItems(iterations);
   }
 
   const failing = iterations.filter(
@@ -233,20 +265,7 @@ function IterationListWithSections({
 
   const ordered = [...failing, ...passing, ...other];
 
-  return (
-    <>
-      {ordered.map((iteration) => (
-        <IterationListItem
-          key={iteration._id}
-          iteration={iteration}
-          isSelected={selectedIterationId === iteration._id}
-          onSelect={() => onSelectIteration(iteration._id)}
-          onEditTestCase={onEditTestCase}
-          alwaysShowEditIterationRows={alwaysShowEditIterationRows}
-        />
-      ))}
-    </>
-  );
+  return renderItems(ordered);
 }
 
 /** Iteration list + sort (composed inside run detail when the list is not inlined). */
@@ -590,7 +609,7 @@ export function RunDetailView({
     ) : null;
 
   const runInsightsBody = (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <div className="flex w-full min-w-0 flex-nowrap gap-3 sm:gap-4">
         {runDashboardKpis.map((stat, index) => (
           <motion.div
@@ -606,20 +625,20 @@ export function RunDetailView({
                     ease: [0.16, 1, 0.3, 1],
                   }
             }
-            className="flex min-w-0 flex-1 basis-0 flex-col rounded-xl border border-border/50 bg-background/70 p-3 sm:p-4"
+            className="flex min-w-0 flex-1 basis-0 flex-col rounded-xl border border-border/30 bg-gradient-to-b from-background/80 to-background/50 p-3 sm:p-4"
           >
-            <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
               {stat.label}
             </div>
             <div
               className={cn(
-                "mt-2 text-2xl font-semibold tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
+                "mt-2 text-2xl font-semibold leading-none tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
                 stat.valueClass,
               )}
             >
               {stat.value}
             </div>
-            <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+            <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground/70">
               {stat.detail}
             </div>
           </motion.div>
@@ -630,16 +649,16 @@ export function RunDetailView({
 
       {hasSecondaryBreakdown ? (
         <div className="space-y-3">
-          <div className="text-[11px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
             Breakdown
           </div>
 
           {selectedRunChartData.modelData.length >= 2 ? (
-            <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-border/50 bg-background/60 px-3 py-3">
+            <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-border/30 bg-background/60 px-3 py-3">
               {selectedRunChartData.modelData.map((model) => (
                 <div
                   key={model.model}
-                  className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/80 px-2.5 py-1.5"
+                  className="inline-flex items-center gap-2 rounded-full border border-border/30 bg-background/80 px-2 py-1"
                 >
                   <div
                     className="h-1.5 w-1.5 rounded-full"
@@ -717,13 +736,13 @@ export function RunDetailView({
 
         {/* Run-level metrics + narrative: only when no case is selected (dedicated ?insights=1 or choose a case). */}
         {!selectedIterationId ? (
-          <div className="rounded-lg border bg-background/80">
-            <div className="flex w-full flex-wrap items-start gap-2 border-b border-border/80 px-3 py-2">
-              <span className="text-xs font-medium text-foreground">
+          <div className="rounded-xl border border-border/40 bg-background/80 shadow-xs">
+            <div className="flex w-full flex-wrap items-center gap-2 border-b border-border/80 px-4 py-2.5">
+              <span className="text-xs font-semibold tracking-wide text-foreground">
                 Run insights
               </span>
             </div>
-            <div className="px-3 py-2">{runInsightsBody}</div>
+            <div className="px-4 py-4">{runInsightsBody}</div>
           </div>
         ) : null}
       </div>

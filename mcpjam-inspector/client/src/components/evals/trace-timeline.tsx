@@ -5,9 +5,10 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import {
   AlertCircle,
-  Brain,
+  Bot,
   ChevronDown,
   ChevronRight,
   Layers,
@@ -135,6 +136,11 @@ type TranscriptRange = {
   endIndex: number;
 };
 
+export type TraceRevealSelection = {
+  focusSourceIndex: number;
+  highlightSourceIndices: number[];
+};
+
 function categoryRank(category: EvalTraceSpanCategory): number {
   switch (category) {
     case "step":
@@ -167,13 +173,6 @@ function formatAxisLabel(ms: number): string {
   if (ms >= 1000) return `${(ms / 1000).toFixed(2)}s`;
   return `${Math.round(ms)}ms`;
 }
-
-/** Hover hint: waterfall "steps" are span categories, not chat bubbles. */
-const TRACE_PROMPT_STEPS_TITLE =
-  "Trace step spans for this turn (recorder metadata). Transcript message count in Chat can differ.";
-
-const TRACE_STEP_COUNT_BADGE_TITLE =
-  "Recorded step spans (workflow grouping), not transcript messages.";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -392,6 +391,69 @@ function getSpanRowTranscriptRange(row: SpanRow): TranscriptRange | undefined {
     row.span.messageStartIndex,
     row.span.messageEndIndex,
   );
+}
+
+function getSourceIndicesForRange(
+  range: TranscriptRange | undefined,
+): number[] {
+  if (!range) return [];
+  const indices: number[] = [];
+  for (let index = range.startIndex; index <= range.endIndex; index += 1) {
+    indices.push(index);
+  }
+  return indices;
+}
+
+function findMessageIndexInRange(
+  messages: TranscriptMessage[],
+  range: TranscriptRange | undefined,
+  predicate: (message: TranscriptMessage) => boolean,
+): number | undefined {
+  if (!range) return undefined;
+  for (let index = range.startIndex; index <= range.endIndex; index += 1) {
+    const message = messages[index];
+    if (message && predicate(message)) {
+      return index;
+    }
+  }
+  return undefined;
+}
+
+function findUserMessageIndexForRange(
+  messages: TranscriptMessage[],
+  startIndex?: number,
+  endIndex?: number,
+): number | undefined {
+  if (!messages.length) return undefined;
+  const range = getTranscriptRange(startIndex, endIndex);
+  if (!range) {
+    const userMessageIndex = messages.findIndex(
+      (message) => message.role === "user",
+    );
+    return userMessageIndex >= 0 ? userMessageIndex : undefined;
+  }
+  const inRangeIndex = findMessageIndexInRange(
+    messages,
+    range,
+    (message) => message.role === "user",
+  );
+  if (typeof inRangeIndex === "number") {
+    return inRangeIndex;
+  }
+
+  if (range && range.startIndex > 0) {
+    for (let index = range.startIndex - 1; index >= 0; index -= 1) {
+      const message = messages[index]!;
+      if (message.role === "user") {
+        return index;
+      }
+      if (message.role === "assistant") {
+        break;
+      }
+    }
+  }
+
+  return undefined;
 }
 
 function getWaterfallBarClass(
@@ -751,30 +813,14 @@ function promptPreviewForRange(
   startIndex?: number,
   endIndex?: number,
 ): string | undefined {
-  if (!messages.length) return undefined;
-  const range = getTranscriptRange(startIndex, endIndex);
-  const slice = range
-    ? messages.slice(range.startIndex, range.endIndex + 1)
-    : messages;
-  for (const m of slice) {
-    if (m.role === "user") {
-      const t = flattenTextFromMessage(m);
-      if (t) return truncateRowSubtitle(t);
-    }
-  }
-  // Spans often start at the assistant reply; look backwards for the user message
-  if (range && range.startIndex > 0) {
-    for (let i = range.startIndex - 1; i >= 0; i--) {
-      const m = messages[i]!;
-      if (m.role === "user") {
-        const t = flattenTextFromMessage(m);
-        if (t) return truncateRowSubtitle(t);
-      }
-      // Stop searching once we hit another assistant message (prior turn)
-      if (m.role === "assistant") break;
-    }
-  }
-  return undefined;
+  const userMessageIndex = findUserMessageIndexForRange(
+    messages,
+    startIndex,
+    endIndex,
+  );
+  if (typeof userMessageIndex !== "number") return undefined;
+  const text = flattenTextFromMessage(messages[userMessageIndex]!);
+  return text ? truncateRowSubtitle(text) : undefined;
 }
 
 /** Full (non-truncated) user prompt text for the detail pane. */
@@ -783,28 +829,113 @@ function fullUserPromptForRange(
   startIndex?: number,
   endIndex?: number,
 ): string | undefined {
-  if (!messages.length) return undefined;
-  const range = getTranscriptRange(startIndex, endIndex);
-  const slice = range
-    ? messages.slice(range.startIndex, range.endIndex + 1)
-    : messages;
-  for (const m of slice) {
-    if (m.role === "user") {
-      const t = flattenTextFromMessage(m);
-      if (t) return t;
+  const userMessageIndex = findUserMessageIndexForRange(
+    messages,
+    startIndex,
+    endIndex,
+  );
+  if (typeof userMessageIndex !== "number") return undefined;
+  const text = flattenTextFromMessage(messages[userMessageIndex]!);
+  return text || undefined;
+}
+
+function partMatchesToolSpan(
+  part: Record<string, unknown>,
+  span: EvalTraceSpan,
+): boolean {
+  if (typeof span.toolCallId === "string" && part.toolCallId === span.toolCallId) {
+    return true;
+  }
+  const spanToolName = span.toolName?.trim() || span.name?.trim();
+  return Boolean(spanToolName && partToolName(part) === spanToolName);
+}
+
+function findToolFocusSourceIndex(
+  messages: TranscriptMessage[],
+  span: EvalTraceSpan,
+  range: TranscriptRange | undefined,
+): number | undefined {
+  if (!range) return undefined;
+
+  for (let index = range.startIndex; index <= range.endIndex; index += 1) {
+    const message = messages[index];
+    if (!message) continue;
+
+    const parts = getMessageParts(message);
+    const hasToolCall = parts.some(
+      (part) => part.type === "tool-call" && partMatchesToolSpan(part, span),
+    );
+    if (hasToolCall) {
+      return index;
+    }
+
+    const hasToolResult = parts.some(
+      (part) => part.type === "tool-result" && partMatchesToolSpan(part, span),
+    );
+    if (hasToolResult) {
+      return index;
     }
   }
-  if (range && range.startIndex > 0) {
-    for (let i = range.startIndex - 1; i >= 0; i--) {
-      const m = messages[i]!;
-      if (m.role === "user") {
-        const t = flattenTextFromMessage(m);
-        if (t) return t;
-      }
-      if (m.role === "assistant") break;
-    }
-  }
+
   return undefined;
+}
+
+function getPromptRevealSelection(
+  row: PromptRow,
+  transcriptMessages: TranscriptMessage[],
+): TraceRevealSelection | undefined {
+  const userMessageIndex = findUserMessageIndexForRange(
+    transcriptMessages,
+    row.messageStartIndex,
+    row.messageEndIndex,
+  );
+  if (typeof userMessageIndex === "number") {
+    return {
+      focusSourceIndex: userMessageIndex,
+      highlightSourceIndices: [userMessageIndex],
+    };
+  }
+
+  const transcriptRange = getPromptRowTranscriptRange(row);
+  const highlightSourceIndices = getSourceIndicesForRange(transcriptRange);
+  if (highlightSourceIndices.length === 0) {
+    return undefined;
+  }
+
+  return {
+    focusSourceIndex: highlightSourceIndices[0]!,
+    highlightSourceIndices,
+  };
+}
+
+function getSpanRevealSelection(
+  row: SpanRow,
+  transcriptMessages: TranscriptMessage[],
+): TraceRevealSelection | undefined {
+  const transcriptRange = getSpanRowTranscriptRange(row);
+  const highlightSourceIndices = getSourceIndicesForRange(transcriptRange);
+  if (highlightSourceIndices.length === 0) {
+    return undefined;
+  }
+
+  const assistantMessageIndex = findMessageIndexInRange(
+    transcriptMessages,
+    transcriptRange,
+    (message) => message.role === "assistant",
+  );
+  const toolFocusSourceIndex =
+    row.span.category === "tool"
+      ? findToolFocusSourceIndex(transcriptMessages, row.span, transcriptRange)
+      : undefined;
+  const focusSourceIndex =
+    toolFocusSourceIndex ??
+    assistantMessageIndex ??
+    highlightSourceIndices[0]!;
+
+  return {
+    focusSourceIndex,
+    highlightSourceIndices,
+  };
 }
 
 function toolSubtitleFromTranscript(
@@ -837,7 +968,7 @@ function CategoryGlyph({
     case "prompt":
       return <Layers className={iconClass} aria-hidden />;
     case "llm":
-      return <Brain className={iconClass} aria-hidden />;
+      return <Bot className={iconClass} aria-hidden />;
     case "tool":
       return <Wrench className={iconClass} aria-hidden />;
     case "error":
@@ -945,7 +1076,7 @@ function deriveSpanLabel(
       rawName === "Model response" ||
       /·\s*response$/i.test(rawName);
     const baseName = genericLlmName
-      ? "Model"
+      ? "Agent"
       : truncateRowSubtitle(rawName, 64);
     if (assistantPreview?.kind === "text") {
       return {
@@ -1108,7 +1239,7 @@ function TimelineDetailPane({
 }: {
   row: TimelineRow | undefined;
   transcriptMessages: TranscriptMessage[];
-  onRevealInTranscript?: (range: TranscriptRange) => void;
+  onRevealInTranscript?: (selection: TraceRevealSelection) => void;
 }) {
   if (!row) {
     return (
@@ -1132,10 +1263,10 @@ function TimelineDetailPane({
     );
   }
 
-  const transcriptRange =
+  const revealSelection =
     row.kind === "prompt"
-      ? getPromptRowTranscriptRange(row)
-      : getSpanRowTranscriptRange(row);
+      ? getPromptRevealSelection(row, transcriptMessages)
+      : getSpanRevealSelection(row, transcriptMessages);
   const toolData =
     row.kind === "span"
       ? extractToolData(
@@ -1287,13 +1418,13 @@ function TimelineDetailPane({
         </div>
       </div>
 
-      {transcriptRange && onRevealInTranscript ? (
+      {revealSelection && onRevealInTranscript ? (
         <Button
           type="button"
           size="sm"
           variant="outline"
           className="w-full justify-center"
-          onClick={() => onRevealInTranscript(transcriptRange)}
+          onClick={() => onRevealInTranscript(revealSelection)}
         >
           <MessageSquareQuote className="h-3.5 w-3.5" />
           Reveal in Chat
@@ -1348,7 +1479,7 @@ export interface TraceTimelineProps {
   transcriptMessages?: TranscriptMessage[];
   traceStartedAtMs?: number | null;
   traceEndedAtMs?: number | null;
-  onRevealInTranscript?: (range: TranscriptRange) => void;
+  onRevealInTranscript?: (selection: TraceRevealSelection) => void;
   /** When true, timeline does not render the recorded toolbar (host provides it). */
   hideToolbar?: boolean;
   timelineFilter?: TimelineFilter;
@@ -1378,6 +1509,7 @@ export function TraceTimeline({
   onExpandedStepIdsChange,
   viewportMaxMs: viewportMaxMsProp,
 }: TraceTimelineProps) {
+  const shouldReduceMotion = useReducedMotion();
   const mode =
     recordedSpans && recordedSpans.length > 0
       ? "recorded"
@@ -1646,26 +1778,24 @@ export function TraceTimeline({
         const r = rows[idx]!;
         if (r.kind === "prompt") {
           event.preventDefault();
-          setExpandedPromptIds((current) => {
-            const next = new Set(current);
-            if (next.has(r.key)) next.delete(r.key);
-            else next.add(r.key);
-            return next;
-          });
+          const next = new Set(expandedPromptIds);
+          if (next.has(r.key)) next.delete(r.key);
+          else next.add(r.key);
+          setExpandedPromptIds(next);
           return;
         }
         if (r.kind === "span" && r.hasChildren) {
           event.preventDefault();
-          setExpandedStepIds((current) => {
-            const next = new Set(current);
-            if (next.has(r.key)) next.delete(r.key);
-            else next.add(r.key);
-            return next;
-          });
+          const next = new Set(expandedStepIds);
+          if (next.has(r.key)) next.delete(r.key);
+          else next.add(r.key);
+          setExpandedStepIds(next);
         }
       }
     },
     [
+      expandedPromptIds,
+      expandedStepIds,
       rows,
       selectedRowKey,
       setExpandedPromptIds,
@@ -1781,7 +1911,7 @@ export function TraceTimeline({
             minSize={40}
             className="min-h-0 min-w-0 overflow-hidden"
           >
-            <ScrollArea className="max-h-[calc(100vh-8rem)] min-h-0 pr-3">
+            <ScrollArea className="max-h-[calc(100vh-8rem)] min-h-0">
               <div
                 tabIndex={0}
                 role="region"
@@ -1790,7 +1920,7 @@ export function TraceTimeline({
                 className="min-h-0 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
               >
                 <div
-                  className="grid"
+                  className="grid pr-4"
                   style={{
                     gridTemplateColumns:
                       "minmax(140px, 260px) minmax(0, 1fr) auto",
@@ -1906,9 +2036,24 @@ export function TraceTimeline({
               return (
                 <HoverCard key={row.key} openDelay={0} closeDelay={0}>
                   <HoverCardTrigger asChild>
-                    <div
+                    <motion.div
                       data-testid="trace-row"
                       data-state={isSelected ? "selected" : undefined}
+                      initial={
+                        shouldReduceMotion || rowIndex >= 20
+                          ? false
+                          : { opacity: 0, y: 6 }
+                      }
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={
+                        shouldReduceMotion || rowIndex >= 20
+                          ? { duration: 0 }
+                          : {
+                              duration: 0.15,
+                              delay: rowIndex * 0.03 + 0.05,
+                              ease: [0.16, 1, 0.3, 1],
+                            }
+                      }
                       style={{
                         gridColumn: "1 / 4",
                         gridRow,
@@ -1940,20 +2085,16 @@ export function TraceTimeline({
                               onClick={(event) => {
                                 event.stopPropagation();
                                 if (row.kind === "prompt") {
-                                  setExpandedPromptIds((current) => {
-                                    const next = new Set(current);
-                                    if (next.has(row.key)) next.delete(row.key);
-                                    else next.add(row.key);
-                                    return next;
-                                  });
-                                  return;
-                                }
-                                setExpandedStepIds((current) => {
-                                  const next = new Set(current);
+                                  const next = new Set(expandedPromptIds);
                                   if (next.has(row.key)) next.delete(row.key);
                                   else next.add(row.key);
-                                  return next;
-                                });
+                                  setExpandedPromptIds(next);
+                                  return;
+                                }
+                                const next = new Set(expandedStepIds);
+                                if (next.has(row.key)) next.delete(row.key);
+                                else next.add(row.key);
+                                setExpandedStepIds(next);
                               }}
                               aria-label={
                                 row.kind === "prompt"
@@ -2008,7 +2149,7 @@ export function TraceTimeline({
                         data-testid="trace-row-bar-hit"
                         data-state={isSelected ? "selected" : undefined}
                         className={cn(
-                          "relative z-[1] h-full min-h-[48px] w-full border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
+                          "relative z-[1] h-full min-h-[48px] w-full overflow-hidden border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
                           sharedCellClass,
                         )}
                         aria-label={`Select on timeline (${formatDuration(durationMs)})`}
@@ -2043,7 +2184,7 @@ export function TraceTimeline({
                       >
                         {durationLabel}
                       </button>
-                    </div>
+                    </motion.div>
                   </HoverCardTrigger>
                   <HoverCardContent
                     data-testid="trace-row-hover-content"

@@ -6,27 +6,18 @@ import posthog from "posthog-js";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@/components/ui/breadcrumb";
-import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
 import { useEvalsRoute } from "@/lib/evals-router";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
-import { aggregateSuite, formatRunId } from "./evals/helpers";
+import { aggregateSuite } from "./evals/helpers";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
 } from "./evals/create-suite-navigation";
-import { PlaygroundSurfaceToggle } from "./evals/playground-surface-toggle";
 import { RunIterationsSidebar } from "./evals/run-detail-view";
 import { useRunDetailData } from "./evals/use-suite-data";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
@@ -171,37 +162,15 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       activeIterations,
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
-  const latestRunForSidebar = useMemo(() => {
-    if (!runsForSelectedSuite.length) return null;
-    return [...runsForSelectedSuite].sort((a, b) => {
-      const aTime = a.completedAt ?? a.createdAt ?? 0;
-      const bTime = b.completedAt ?? b.createdAt ?? 0;
-      return bTime - aTime;
-    })[0];
-  }, [runsForSelectedSuite]);
-
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
 
-  /** Runs dashboard only: no Explore case sidebar (toggle + breadcrumbs still in header). */
+  /** Runs dashboard only: no Explore case sidebar. */
   const isPlaygroundRunsTableOnly =
     exploreSuite != null &&
     route.type === "suite-overview" &&
     route.suiteId === exploreSuite._id &&
     route.view !== "test-cases";
-
-  const showPlaygroundSurfaceBar = useMemo(() => {
-    if (!selectedServer || !exploreSuite) return false;
-    switch (route.type) {
-      case "suite-overview":
-      case "run-detail":
-      case "test-detail":
-      case "test-edit":
-        return route.suiteId === exploreSuite._id;
-      default:
-        return false;
-    }
-  }, [selectedServer, exploreSuite, route]);
 
   const handleCopyExploreSdkEvalBrief = useCallback(async () => {
     if (!selectedServer || exploreCases.length === 0) return;
@@ -296,47 +265,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     [],
   );
 
-  const goPlaygroundExplore = useCallback(() => {
-    if (!exploreSuite || !selectedServer) return;
-    const first = exploreCases[0];
-    if (first) {
-      playgroundNavigation.toTestEdit(exploreSuite._id, first._id);
-    } else {
-      navigatePlaygroundEvalsRoute({
-        type: "suite-overview",
-        suiteId: exploreSuite._id,
-        view: "test-cases",
-      });
-    }
-  }, [exploreSuite, selectedServer, exploreCases, playgroundNavigation]);
-
-  const goPlaygroundRuns = useCallback(() => {
-    if (!exploreSuite || !selectedServer) return;
-    navigatePlaygroundEvalsRoute({
-      type: "suite-overview",
-      suiteId: exploreSuite._id,
-      view: "runs",
-    });
-  }, [exploreSuite, selectedServer]);
-
-  const goPlaygroundRunsOverview = useCallback(() => {
-    if (!exploreSuite) return;
-    navigatePlaygroundEvalsRoute({
-      type: "suite-overview",
-      suiteId: exploreSuite._id,
-      view: "runs",
-    });
-  }, [exploreSuite]);
-
-  const playgroundSurface =
-    route.type === "run-detail"
-      ? ("runs" as const)
-      : route.type === "suite-overview" && route.view === "test-cases"
-        ? ("explore" as const)
-        : route.type === "suite-overview"
-          ? ("runs" as const)
-          : ("explore" as const);
-
   useEffect(() => {
     if (route.type !== "run-detail") {
       setRunDetailSidebarSortBy("result");
@@ -350,33 +278,44 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   useEffect(() => {
     if (!exploreSuite) return;
     if (route.type !== "list") return;
-
-    const completed = runsForSelectedSuite.filter(
-      (r) => r.status === "completed",
-    );
-    const sorted = [...completed].sort((a, b) => {
-      const aTime = a.completedAt ?? a.createdAt ?? 0;
-      const bTime = b.completedAt ?? b.createdAt ?? 0;
-      return bTime - aTime;
-    });
-    const latest = sorted[0];
-    if (!latest) return;
+    if (queries.isSuiteDetailsLoading) return;
     if (playgroundAutoNavForSuiteRef.current === exploreSuite._id) return;
 
     playgroundAutoNavForSuiteRef.current = exploreSuite._id;
+    const firstExploreCase = exploreCases[0];
+
+    if (firstExploreCase) {
+      playgroundNavigation.toTestEdit(exploreSuite._id, firstExploreCase._id);
+      return;
+    }
+
     navigatePlaygroundEvalsRoute({
-      type: "run-detail",
+      type: "suite-overview",
       suiteId: exploreSuite._id,
-      runId: latest._id,
-      insightsFocus: true,
+      view: "test-cases",
     });
-  }, [exploreSuite, route, runsForSelectedSuite]);
+  }, [
+    exploreCases,
+    exploreSuite,
+    playgroundNavigation,
+    queries.isSuiteDetailsLoading,
+    route.type,
+  ]);
 
   const handleGenerateMore = useCallback(async () => {
     if (!exploreSuite || !selectedServer) return;
     await handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
-    await handlers.handleRerun(exploreSuite);
   }, [exploreSuite, handlers, selectedServer]);
+
+  const handleRunSelectedExploreCase = useCallback(
+    async (testCase: EvalCase) => {
+      if (!exploreSuite) return;
+      await handlers.handleRunTestCase(exploreSuite, testCase, {
+        location: "test_case_list_sidebar",
+      });
+    },
+    [exploreSuite, handlers],
+  );
 
   const showExploreLoading =
     isPreparingExplore ||
@@ -438,6 +377,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           workspaceId={workspaceId}
           navigation={playgroundNavigation}
           canDeleteRuns={canDeleteRuns}
+          hideRunActions
         />
       </div>
     );
@@ -480,54 +420,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {showPlaygroundSurfaceBar ? (
-              <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
-                  <PlaygroundSurfaceToggle
-                    value={playgroundSurface}
-                    onExplore={goPlaygroundExplore}
-                    onRuns={goPlaygroundRuns}
-                  />
-                  {playgroundSurface === "runs" ? (
-                    <Breadcrumb className="min-w-0 flex-1 sm:pt-0">
-                      <BreadcrumbList className="min-w-0 flex-nowrap sm:justify-end">
-                        {route.type === "run-detail" ? (
-                          <>
-                            <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
-                              <BreadcrumbLink asChild>
-                                <button
-                                  type="button"
-                                  onClick={goPlaygroundRunsOverview}
-                                  title={exploreSuite.name}
-                                  className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
-                                >
-                                  {exploreSuite.name}
-                                </button>
-                              </BreadcrumbLink>
-                            </BreadcrumbItem>
-                            <BreadcrumbSeparator />
-                            <BreadcrumbItem>
-                              <BreadcrumbPage className="truncate font-medium">
-                                Run {formatRunId(route.runId)}
-                              </BreadcrumbPage>
-                            </BreadcrumbItem>
-                          </>
-                        ) : (
-                          <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
-                            <BreadcrumbPage
-                              className="truncate font-medium"
-                              title={exploreSuite.name}
-                            >
-                              {exploreSuite.name}
-                            </BreadcrumbPage>
-                          </BreadcrumbItem>
-                        )}
-                      </BreadcrumbList>
-                    </Breadcrumb>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
             {isPlaygroundRunsTableOnly ? (
               <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 {renderExploreMainPanel()}
@@ -607,10 +499,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                       noServerSelected={!isServerConnected}
                       selectedServer={selectedServer}
                       suite={exploreSuite}
-                      latestRun={latestRunForSidebar}
-                      onRerun={handlers.handleRerun}
-                      rerunningSuiteId={handlers.rerunningSuiteId}
                       connectedServerNames={connectedServerNames}
+                      onRunTestCase={handleRunSelectedExploreCase}
+                      runningTestCaseId={handlers.runningTestCaseId}
                       showSelection={false}
                       hideRunInsightsRow
                     />

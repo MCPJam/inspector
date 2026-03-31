@@ -58,13 +58,10 @@ export const RUN_STATUS = {
 
 export type RunStatus = (typeof RUN_STATUS)[keyof typeof RUN_STATUS];
 
-/**
- * Pass/fail foreground text — matches `getStatusColor` in ActiveServerSelector
- * (`bg-green-500` / `dark:bg-green-400` for connected, same scale with red for failed).
- */
+/** Pass/fail foreground text — same semantic tokens as charts/icons (`--success` / `--destructive` in index.css). */
 export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
-  passed: "text-green-500 dark:text-green-400",
-  failed: "text-red-500 dark:text-red-400",
+  passed: "text-success",
+  failed: "text-destructive",
 } as const;
 
 // UI configuration

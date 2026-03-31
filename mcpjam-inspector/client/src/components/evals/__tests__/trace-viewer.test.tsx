@@ -1,6 +1,20 @@
 import type { ReactNode } from "react";
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  beforeEach,
+  afterEach,
+} from "vitest";
+import {
+  act,
+  render,
+  screen,
+  fireEvent,
+  within,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
 
@@ -286,9 +300,149 @@ async function getTraceWaterfallRegion() {
   });
 }
 
+const originalResizeObserver = global.ResizeObserver;
+const originalRequestAnimationFrame = window.requestAnimationFrame;
+const originalCancelAnimationFrame = window.cancelAnimationFrame;
+
+class ControlledResizeObserver {
+  static instances: ControlledResizeObserver[] = [];
+
+  callback: ResizeObserverCallback;
+  observed = new Set<Element>();
+
+  constructor(callback: ResizeObserverCallback) {
+    this.callback = callback;
+    ControlledResizeObserver.instances.push(this);
+  }
+
+  observe = vi.fn((element: Element) => {
+    this.observed.add(element);
+  });
+
+  unobserve = vi.fn((element: Element) => {
+    this.observed.delete(element);
+  });
+
+  disconnect = vi.fn(() => {
+    this.observed.clear();
+  });
+
+  trigger(elements?: Element[]) {
+    const targets = (elements ?? Array.from(this.observed)).filter((element) =>
+      this.observed.has(element),
+    );
+    if (targets.length === 0) return;
+
+    this.callback(
+      targets.map(
+        (target) =>
+          ({
+            target,
+            contentRect: target.getBoundingClientRect(),
+            borderBoxSize: [],
+            contentBoxSize: [],
+            devicePixelContentBoxSize: [],
+          }) as ResizeObserverEntry,
+      ),
+      this as unknown as ResizeObserver,
+    );
+  }
+
+  static latest() {
+    return ControlledResizeObserver.instances[
+      ControlledResizeObserver.instances.length - 1
+    ];
+  }
+
+  static reset() {
+    ControlledResizeObserver.instances = [];
+  }
+}
+
+function installTimerBackedAnimationFrame() {
+  vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+    return window.setTimeout(() => callback(performance.now()), 0);
+  });
+  vi.spyOn(window, "cancelAnimationFrame").mockImplementation((handle) => {
+    window.clearTimeout(handle);
+  });
+}
+
+function mockElementRect(
+  element: Element,
+  { top, height, left = 0, width = 400 }: {
+    top: number;
+    height: number;
+    left?: number;
+    width?: number;
+  },
+) {
+  Object.defineProperty(element, "getBoundingClientRect", {
+    configurable: true,
+    value: () => ({
+      top,
+      bottom: top + height,
+      left,
+      right: left + width,
+      width,
+      height,
+      x: left,
+      y: top,
+      toJSON: () => ({}),
+    }),
+  });
+}
+
+function renderInScrollHost(ui: ReactNode) {
+  const scrollHost = document.createElement("div");
+  scrollHost.setAttribute("data-testid", "trace-scroll-host");
+  scrollHost.style.overflowY = "auto";
+  document.body.appendChild(scrollHost);
+
+  const root = document.createElement("div");
+  scrollHost.appendChild(root);
+
+  const scrollTo = vi.fn();
+  Object.defineProperty(scrollHost, "clientHeight", {
+    configurable: true,
+    value: 200,
+  });
+  Object.defineProperty(scrollHost, "scrollHeight", {
+    configurable: true,
+    value: 1200,
+  });
+  Object.defineProperty(scrollHost, "scrollTop", {
+    configurable: true,
+    writable: true,
+    value: 0,
+  });
+  Object.defineProperty(scrollHost, "scrollTo", {
+    configurable: true,
+    value: scrollTo,
+  });
+  mockElementRect(scrollHost, { top: 100, height: 200 });
+
+  return {
+    scrollHost,
+    scrollTo,
+    ...render(ui, { container: root }),
+  };
+}
+
 describe("TraceViewer", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    window.requestAnimationFrame = originalRequestAnimationFrame;
+    window.cancelAnimationFrame = originalCancelAnimationFrame;
+    global.ResizeObserver = originalResizeObserver;
+    ControlledResizeObserver.reset();
+    document
+      .querySelectorAll('[data-testid="trace-scroll-host"]')
+      .forEach((node) => node.remove());
   });
 
   it("defaults to Timeline tab", async () => {
@@ -403,8 +557,8 @@ describe("TraceViewer", () => {
     ).toBeInTheDocument();
     await waitFor(() => {
       const rows = screen.getAllByTestId("trace-row");
-      // Generic span name "LLM" renders as label "Model" (not "LLM ·")
-      const llmRows = rows.filter((el) => el.textContent?.includes("Model"));
+      // Generic span name "LLM" renders as label "Agent" (not "LLM ·")
+      const llmRows = rows.filter((el) => el.textContent?.includes("Agent"));
       expect(llmRows.length).toBeGreaterThanOrEqual(2);
     });
 
@@ -478,21 +632,176 @@ describe("TraceViewer", () => {
     expect(selectedLabel()).toBe(first);
   });
 
+  it("reveals prompt rows at the exact user message", async () => {
+    const { scrollTo } = renderInScrollHost(
+      <TraceViewer trace={waterfallTrace} />,
+    );
+
+    vi.useFakeTimers();
+    installTimerBackedAnimationFrame();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+
+    expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
+    const focusedUserMessage = document.querySelector(
+      '[data-source-range="0-0"]',
+    ) as HTMLElement | null;
+    const nonTargetMessage = document.querySelector(
+      '[data-source-range="1-2"]',
+    ) as HTMLElement | null;
+
+    expect(focusedUserMessage?.className).toContain("bg-primary/5");
+    expect(nonTargetMessage?.className ?? "").not.toContain("bg-primary/5");
+
+    mockElementRect(focusedUserMessage!, { top: 520, height: 40 });
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        top: 340,
+        behavior: "smooth",
+      }),
+    );
+  });
+
   it("reveals a selected timeline row in chat view", async () => {
-    const user = userEvent.setup();
-    render(<TraceViewer trace={waterfallTrace} />);
+    const { scrollTo } = renderInScrollHost(
+      <TraceViewer trace={waterfallTrace} />,
+    );
 
     const waterfall = await getTraceWaterfallRegion();
-    await user.click(
+    vi.useFakeTimers();
+    installTimerBackedAnimationFrame();
+    fireEvent.click(
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
     );
-    await user.click(
+    fireEvent.click(
       screen.getByRole("button", { name: "Reveal in Chat" }),
     );
 
     expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
-    const focusedMessage = document.querySelector('[data-source-range="1-2"]');
+    const focusedMessage = document.querySelector(
+      '[data-source-range="1-2"]',
+    ) as HTMLElement | null;
     expect(focusedMessage?.className).toContain("bg-primary/5");
+    expect(focusedMessage).not.toBeNull();
+
+    mockElementRect(focusedMessage!, { top: 520, height: 40 });
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        top: 340,
+        behavior: "smooth",
+      }),
+    );
+  });
+
+  it("re-scrolls after resize events until chat layout settles", async () => {
+    const { scrollTo } = renderInScrollHost(
+      <TraceViewer trace={waterfallTrace} />,
+    );
+
+    const waterfall = await getTraceWaterfallRegion();
+    vi.useFakeTimers();
+    installTimerBackedAnimationFrame();
+    global.ResizeObserver =
+      ControlledResizeObserver as unknown as typeof ResizeObserver;
+    fireEvent.click(
+      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+
+    const focusedMessage = document.querySelector(
+      '[data-source-range="1-2"]',
+    ) as HTMLElement | null;
+    expect(focusedMessage).not.toBeNull();
+    mockElementRect(focusedMessage!, { top: 520, height: 40 });
+
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(scrollTo).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        top: 340,
+        behavior: "smooth",
+      }),
+    );
+
+    const resizeObserver = ControlledResizeObserver.latest();
+    expect(resizeObserver).toBeDefined();
+
+    mockElementRect(focusedMessage!, { top: 260, height: 40 });
+    act(() => {
+      resizeObserver?.trigger([focusedMessage!]);
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(scrollTo).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        top: 80,
+        behavior: "auto",
+      }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(120);
+    });
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
+    expect(scrollTo).toHaveBeenNthCalledWith(
+      3,
+      expect.objectContaining({
+        top: 80,
+        behavior: "auto",
+      }),
+    );
+
+    act(() => {
+      vi.advanceTimersByTime(2000);
+    });
+
+    expect(scrollTo).toHaveBeenCalledTimes(3);
+  });
+
+  it("top-anchors tall revealed blocks in trace chat view", async () => {
+    const { scrollTo } = renderInScrollHost(
+      <TraceViewer trace={waterfallTrace} />,
+    );
+
+    const waterfall = await getTraceWaterfallRegion();
+    vi.useFakeTimers();
+    installTimerBackedAnimationFrame();
+    fireEvent.click(
+      within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+
+    const focusedMessage = document.querySelector(
+      '[data-source-range="1-2"]',
+    ) as HTMLElement | null;
+    expect(focusedMessage).not.toBeNull();
+    mockElementRect(focusedMessage!, { top: 520, height: 120 });
+
+    act(() => {
+      vi.advanceTimersByTime(0);
+    });
+
+    expect(scrollTo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        top: 404,
+        behavior: "smooth",
+      }),
+    );
+    expect(screen.getByTestId("transcript-focus-guide")).toBeInTheDocument();
   });
 
   it("legacy trace without spans shows Estimated total only", async () => {

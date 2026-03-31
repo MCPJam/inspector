@@ -80,6 +80,7 @@ interface SuiteHeaderProps {
   availableModels?: ModelDefinition[];
   onUpdateModels?: (models: ModelInfo[]) => Promise<void>;
   readOnlyConfig?: boolean;
+  hideRunActions?: boolean;
   onEditSuite?: () => void;
   onSetupCi?: () => void;
   /** When the parent hides the cases sidebar (e.g. Explore run insights landing). */
@@ -108,6 +109,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     availableModels = [],
     onUpdateModels,
     readOnlyConfig = false,
+    hideRunActions = false,
     onEditSuite,
     onSetupCi,
     casesSidebarHidden = false,
@@ -353,22 +355,24 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           </div>
           <RunHeaderCompactStats run={selectedRunDetails} />
         </div>
-        <RunDetailPlaygroundActions
-          suite={suite}
-          selectedRun={selectedRunDetails}
-          readOnlyConfig={readOnlyConfig}
-          onReplayRun={onReplayRun}
-          onRerun={onRerun}
-          onCancelRun={onCancelRun}
-          rerunningSuiteId={rerunningSuiteId}
-          replayingRunId={replayingRunId}
-          cancellingRunId={cancellingRunId}
-          canRerun={canRerun}
-          hasServersConfigured={hasServersConfigured}
-          missingServers={missingServers}
-          showCloseButton
-          onBackToOverview={() => onViewModeChange("overview")}
-        />
+        {!hideRunActions ? (
+          <RunDetailPlaygroundActions
+            suite={suite}
+            selectedRun={selectedRunDetails}
+            readOnlyConfig={readOnlyConfig}
+            onReplayRun={onReplayRun}
+            onRerun={onRerun}
+            onCancelRun={onCancelRun}
+            rerunningSuiteId={rerunningSuiteId}
+            replayingRunId={replayingRunId}
+            cancellingRunId={cancellingRunId}
+            canRerun={canRerun}
+            hasServersConfigured={hasServersConfigured}
+            missingServers={missingServers}
+            showCloseButton
+            onBackToOverview={() => onViewModeChange("overview")}
+          />
+        ) : null}
       </div>
     );
   }
@@ -606,7 +610,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
         )}
 
         {/* Action buttons */}
-        {(replayableLatestRun || !readOnlyConfig) && (
+        {!hideRunActions && (replayableLatestRun || !readOnlyConfig) && (
           <Tooltip>
             <TooltipTrigger asChild>
               <span>

@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from "react";
-import { motion, useReducedMotion } from "framer-motion";
+import { motion, useReducedMotion, type Variants } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn, getInitials } from "@/lib/utils";
@@ -25,6 +25,23 @@ import { CiMetadataDisplay } from "./ci-metadata-display";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import { toast } from "sonner";
+
+const RUN_ROW_STAGGER_CAP = 20;
+
+const runListVariants: Variants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.03, delayChildren: 0.05 } },
+};
+
+const runItemVariants: Variants = {
+  hidden: (i: number) =>
+    i < RUN_ROW_STAGGER_CAP ? { opacity: 0, y: 6 } : { opacity: 1, y: 0 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: { duration: 0.15, ease: [0.16, 1, 0.3, 1] },
+  },
+};
 
 interface RunOverviewProps {
   suite: { _id: string; name: string; source?: "ui" | "sdk" };
@@ -445,13 +462,19 @@ export function RunOverview({
               </div>
             )}
 
-            <div className="min-h-0 flex-1 divide-y overflow-y-auto">
+            <motion.div
+              key={runs.length > 0 ? "populated" : "empty"}
+              className="min-h-0 flex-1 divide-y overflow-y-auto"
+              variants={shouldReduceMotion ? undefined : runListVariants}
+              initial={shouldReduceMotion ? false : "hidden"}
+              animate="visible"
+            >
               {runs.length === 0 ? (
                 <div className="px-4 py-12 text-center text-sm text-muted-foreground">
                   No runs found.
                 </div>
               ) : (
-                runs.map((run) => {
+                runs.map((run, runIndex) => {
                   const runIterations = allIterations.filter(
                     (iter) => iter.suiteRunId === run._id,
                   );
@@ -634,16 +657,18 @@ export function RunOverview({
                   );
 
                   return (
-                    <div
+                    <motion.div
                       key={run._id}
+                      custom={runIndex}
+                      variants={shouldReduceMotion ? undefined : runItemVariants}
                       className={cn("relative border-l-2", runAccent)}
                     >
                       {runButton}
-                    </div>
+                    </motion.div>
                   );
                 })
               )}
-            </div>
+            </motion.div>
           </div>
         </div>
       </div>

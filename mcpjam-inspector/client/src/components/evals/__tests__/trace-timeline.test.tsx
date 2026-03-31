@@ -342,7 +342,7 @@ describe("TraceTimeline detail pane", () => {
     expect(within(pane).getByText("Tool · read_me")).toBeInTheDocument();
   });
 
-  it("labels generic LLM spans as Model and keeps tokens out of the inline row text", () => {
+  it("labels generic LLM spans as Agent and keeps tokens out of the inline row text", () => {
     const spans: EvalTraceSpan[] = [
       {
         id: "llm-a",
@@ -377,12 +377,12 @@ describe("TraceTimeline detail pane", () => {
 
     const rows = screen.getAllByTestId("trace-row");
     const llmRows = rows.filter((el) =>
-      el.textContent?.includes("Model"),
+      el.textContent?.includes("Agent"),
     );
     expect(llmRows.length).toBeGreaterThanOrEqual(2);
     expect(llmRows.some((el) => el.textContent?.includes("100 tok"))).toBe(false);
     const firstLlmRow = llmRows.find(
-      (el) => el.textContent?.includes("Model"),
+      (el) => el.textContent?.includes("Agent"),
     );
     expect(firstLlmRow).toBeTruthy();
     const firstLlmLabelButton = within(firstLlmRow!).getByTestId(
@@ -447,6 +447,165 @@ describe("TraceTimeline detail pane", () => {
     expect(promptDuration).toHaveTextContent("800ms");
     expect(promptRow!.textContent).not.toMatch(/1 LLM/);
     expect(promptRow!.textContent).not.toMatch(/1 tool/);
+  });
+
+  it("reveals prompt rows using the exact user source message, even when spans start at the assistant", async () => {
+    const user = userEvent.setup();
+    const onRevealInTranscript = vi.fn();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "step-1",
+        name: "Step 1",
+        category: "step",
+        startMs: 0,
+        endMs: 400,
+        promptIndex: 0,
+        messageStartIndex: 1,
+        messageEndIndex: 2,
+      },
+      {
+        id: "tool-1",
+        parentId: "step-1",
+        name: "read_me",
+        category: "tool",
+        startMs: 50,
+        endMs: 200,
+        promptIndex: 0,
+        toolName: "read_me",
+        toolCallId: "call-1",
+        messageStartIndex: 1,
+        messageEndIndex: 2,
+      },
+    ];
+    const transcriptMessages = [
+      { role: "user" as const, content: "Draw me a diagram" },
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool-call" as const,
+            toolCallId: "call-1",
+            toolName: "read_me",
+            input: { path: "README.md" },
+          },
+        ],
+      },
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "call-1",
+            toolName: "read_me",
+            output: "done",
+          },
+        ],
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+        onRevealInTranscript={onRevealInTranscript}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+
+    expect(onRevealInTranscript).toHaveBeenCalledWith({
+      focusSourceIndex: 0,
+      highlightSourceIndices: [0],
+    });
+  });
+
+  it("emits canonical reveal selections for tool and llm rows", async () => {
+    const user = userEvent.setup();
+    const onRevealInTranscript = vi.fn();
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "step-1",
+        name: "Step 1",
+        category: "step",
+        startMs: 0,
+        endMs: 500,
+        promptIndex: 0,
+        messageStartIndex: 1,
+        messageEndIndex: 3,
+      },
+      {
+        id: "tool-1",
+        parentId: "step-1",
+        name: "read_me",
+        category: "tool",
+        startMs: 50,
+        endMs: 200,
+        promptIndex: 0,
+        toolName: "read_me",
+        toolCallId: "call-1",
+        messageStartIndex: 1,
+        messageEndIndex: 2,
+      },
+      {
+        id: "llm-1",
+        parentId: "step-1",
+        name: "Model response",
+        category: "llm",
+        startMs: 200,
+        endMs: 500,
+        promptIndex: 0,
+        messageStartIndex: 1,
+        messageEndIndex: 3,
+      },
+    ];
+    const transcriptMessages = [
+      { role: "user" as const, content: "Need docs" },
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool-call" as const,
+            toolCallId: "call-1",
+            toolName: "read_me",
+            input: { path: "README.md" },
+          },
+        ],
+      },
+      {
+        role: "tool" as const,
+        content: [
+          {
+            type: "tool-result" as const,
+            toolCallId: "call-1",
+            toolName: "read_me",
+            output: "done",
+          },
+        ],
+      },
+      { role: "assistant" as const, content: "Summary ready" },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+        onRevealInTranscript={onRevealInTranscript}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: /Tool · read_me/i }));
+    await user.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+    expect(onRevealInTranscript).toHaveBeenLastCalledWith({
+      focusSourceIndex: 1,
+      highlightSourceIndices: [1, 2],
+    });
+
+    await user.click(screen.getByRole("button", { name: /Agent/i }));
+    await user.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+    expect(onRevealInTranscript).toHaveBeenLastCalledWith({
+      focusSourceIndex: 1,
+      highlightSourceIndices: [1, 2, 3],
+    });
   });
 
   it("shows wall-clock timestamps and token counts in row hover metadata", async () => {
@@ -581,7 +740,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     await user.click(
-      screen.getByRole("button", { name: /Model:/i }),
+      screen.getByRole("button", { name: /Agent:/i }),
     );
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
@@ -615,7 +774,7 @@ describe("TraceTimeline detail pane", () => {
       <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Model:/i }));
+    await user.click(screen.getByRole("button", { name: /Agent:/i }));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputSection = within(pane).getByText("Input").closest("div")
       ?.parentElement;
@@ -668,7 +827,7 @@ describe("TraceTimeline detail pane", () => {
       <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
     );
 
-    await user.click(screen.getByRole("button", { name: /Model:/i }));
+    await user.click(screen.getByRole("button", { name: /Agent:/i }));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
     const inputJson = inputPreview.textContent ?? "";
@@ -711,7 +870,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Model · Calling read_me/i }),
+      screen.getByRole("button", { name: /Agent · Calling read_me/i }),
     ).toBeInTheDocument();
   });
 
@@ -748,7 +907,7 @@ describe("TraceTimeline detail pane", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: /Model: "I'll fetch that\."/i }),
+      screen.getByRole("button", { name: /Agent: "I'll fetch that\."/i }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /Calling read_me/i }),
@@ -794,7 +953,7 @@ describe("TraceTimeline detail pane", () => {
 
     expect(
       screen.getByRole("button", {
-        name: /Model · Calling read_me, create_view/i,
+        name: /Agent · Calling read_me, create_view/i,
       }),
     ).toBeInTheDocument();
   });

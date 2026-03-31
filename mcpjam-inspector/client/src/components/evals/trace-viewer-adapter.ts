@@ -67,6 +67,7 @@ export interface AdaptedTraceResult {
     { startIndex: number; endIndex: number }
   >;
   sourceMessageIndexToUiMessageIds: Record<number, string[]>;
+  sourceMessageIndexToFocusUiMessageId: Record<number, string>;
 }
 
 type ToolResultDisplay = "sibling-text" | "attached-to-tool";
@@ -84,6 +85,7 @@ interface AdaptedUiMessage {
     startIndex: number;
     endIndex: number;
   };
+  focusSourceIndices?: number[];
 }
 
 const EMPTY_TOOL_METADATA: Record<string, unknown> = {};
@@ -172,7 +174,7 @@ function resolveTraceMessages(
       widgetSnapshots = trace.widgetSnapshots as TraceWidgetSnapshot[];
     }
   } else if (isRecord(trace) && typeof trace.role === "string") {
-    messages = [trace as TraceMessage];
+    messages = [trace as unknown as TraceMessage];
   }
 
   return { messages, widgetSnapshots };
@@ -581,6 +583,7 @@ function buildAssistantMessage(params: {
   );
   const resultBuckets = createResultBuckets(toolResultEntries);
   const parts: UIMessage["parts"] = [];
+  const focusSourceIndices = new Set<number>([params.messageIndex]);
 
   assistantParts.forEach((part, partIndex) => {
     if (part.type === "tool-call") {
@@ -591,11 +594,15 @@ function buildAssistantMessage(params: {
           partIndex,
           getToolName(part),
         );
-      const matchedResult = claimMatchingResult(
+      const matchedResultEntry = claimMatchingResult(
         resultBuckets,
         toolCallId,
         !part.toolCallId,
-      )?.part;
+      );
+      if (matchedResultEntry) {
+        focusSourceIndices.add(matchedResultEntry.messageIndex);
+      }
+      const matchedResult = matchedResultEntry?.part;
 
       const toolCallWithId = part.toolCallId ? part : { ...part, toolCallId };
 
@@ -664,6 +671,7 @@ function buildAssistantMessage(params: {
           startIndex: entry.messageIndex,
           endIndex: entry.messageIndex,
         },
+        focusSourceIndices: [entry.messageIndex],
       } satisfies AdaptedUiMessage;
     },
   );
@@ -679,6 +687,7 @@ function buildAssistantMessage(params: {
         startIndex: params.messageIndex,
         endIndex: params.messageIndex + params.toolMessages.length,
       },
+      focusSourceIndices: [...focusSourceIndices],
     },
     extraMessages,
   };
@@ -702,6 +711,7 @@ function buildUserMessage(
       startIndex: messageIndex,
       endIndex: messageIndex,
     },
+    focusSourceIndices: [messageIndex],
   };
 }
 
@@ -717,8 +727,8 @@ function buildOrphanToolMessages(params: {
 }) {
   return params.toolMessages.flatMap((message, messageOffset) =>
     normalizeMessageContent(message)
-      .map((part, partIndex) => {
-        if (part.type !== "tool-result") return null;
+      .flatMap((part, partIndex) => {
+        if (part.type !== "tool-result") return [];
         const toolName = getToolName(part);
         const toolCallId =
           part.toolCallId ??
@@ -728,39 +738,41 @@ function buildOrphanToolMessages(params: {
             toolName,
           );
 
-        return {
-          message: {
-            id: `trace-assistant-orphan-${params.startIndex + messageOffset}-${partIndex}`,
-            role: "assistant",
-            parts: buildToolParts({
-              toolCall: {
-                type: "tool-call",
-                toolCallId,
-                toolName,
-                input: {},
-              },
-              matchedResult: {
-                ...part,
-                toolCallId,
-                toolName,
-              },
-              messageIndex: params.startIndex + messageOffset,
-              partIndex,
-              widgetSnapshotMap: params.widgetSnapshotMap,
-              toolsMetadata: params.toolsMetadata,
-              toolServerMap: params.toolServerMap,
-              connectedServerIds: params.connectedServerIds,
-              toolRenderOverrides: params.toolRenderOverrides,
-              toolResultDisplay: params.toolResultDisplay,
-            }),
-          } satisfies UIMessage,
-          sourceRange: {
-            startIndex: params.startIndex + messageOffset,
-            endIndex: params.startIndex + messageOffset,
-          },
-        } satisfies AdaptedUiMessage;
-      })
-      .filter((entry): entry is AdaptedUiMessage => Boolean(entry)),
+        return [
+          {
+            message: {
+              id: `trace-assistant-orphan-${params.startIndex + messageOffset}-${partIndex}`,
+              role: "assistant",
+              parts: buildToolParts({
+                toolCall: {
+                  type: "tool-call",
+                  toolCallId,
+                  toolName,
+                  input: {},
+                },
+                matchedResult: {
+                  ...part,
+                  toolCallId,
+                  toolName,
+                },
+                messageIndex: params.startIndex + messageOffset,
+                partIndex,
+                widgetSnapshotMap: params.widgetSnapshotMap,
+                toolsMetadata: params.toolsMetadata,
+                toolServerMap: params.toolServerMap,
+                connectedServerIds: params.connectedServerIds,
+                toolRenderOverrides: params.toolRenderOverrides,
+                toolResultDisplay: params.toolResultDisplay,
+              }),
+            } satisfies UIMessage,
+            sourceRange: {
+              startIndex: params.startIndex + messageOffset,
+              endIndex: params.startIndex + messageOffset,
+            },
+            focusSourceIndices: [params.startIndex + messageOffset],
+          } satisfies AdaptedUiMessage,
+        ];
+      }),
   );
 }
 
@@ -782,6 +794,7 @@ export function adaptTraceToUiMessages(params: {
     { startIndex: number; endIndex: number }
   > = {};
   const sourceMessageIndexToUiMessageIds: Record<number, string[]> = {};
+  const sourceMessageIndexToFocusUiMessageId: Record<number, string> = {};
   const toolsMetadata = params.toolsMetadata ?? {};
   const toolServerMap = params.toolServerMap ?? {};
   const connectedServerIds = new Set(params.connectedServerIds ?? []);
@@ -797,6 +810,9 @@ export function adaptTraceToUiMessages(params: {
     ) {
       sourceMessageIndexToUiMessageIds[sourceIndex] ??= [];
       sourceMessageIndexToUiMessageIds[sourceIndex]!.push(entry.message.id);
+    }
+    for (const sourceIndex of entry.focusSourceIndices ?? []) {
+      sourceMessageIndexToFocusUiMessageId[sourceIndex] = entry.message.id;
     }
   }
 
@@ -860,5 +876,6 @@ export function adaptTraceToUiMessages(params: {
     toolRenderOverrides,
     uiMessageSourceRanges,
     sourceMessageIndexToUiMessageIds,
+    sourceMessageIndexToFocusUiMessageId,
   };
 }

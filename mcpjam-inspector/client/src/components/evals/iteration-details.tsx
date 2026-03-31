@@ -9,6 +9,7 @@ import {
   ChevronRight,
   WifiOff,
   AlertCircle,
+  Loader2,
 } from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -707,7 +708,9 @@ export function IterationDetails({
         )}
       >
         {loading ? (
-          <div className="text-xs text-muted-foreground">Loading trace</div>
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
         ) : error ? (
           <TraceBlobLoadErrorPanel
             error={error}

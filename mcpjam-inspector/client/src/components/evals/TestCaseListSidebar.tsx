@@ -26,8 +26,7 @@ import {
 import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import type { EvalCase, EvalSuite, EvalSuiteRun } from "./types";
-import { getSuiteReplayEligibility } from "./replay-eligibility";
+import type { EvalCase, EvalSuite } from "./types";
 import {
   formatCaseTitleForSidebar,
   getEvalCaseSidebarGroupKey,
@@ -56,12 +55,10 @@ interface TestCaseListSidebarProps {
   showingOverview: boolean;
   noServerSelected?: boolean;
   selectedServer?: string;
-  // Rerun props
   suite?: EvalSuite | null;
-  latestRun?: EvalSuiteRun | null;
-  onRerun?: (suite: EvalSuite) => void;
-  rerunningSuiteId?: string | null;
   connectedServerNames?: Set<string>;
+  onRunTestCase?: (testCase: EvalCase) => void;
+  runningTestCaseId?: string | null;
   onNavigateToOverview?: (suiteId: string) => void;
   onSelectTestCase?: (suiteId: string, testCaseId: string) => void;
   heading?: string;
@@ -93,10 +90,9 @@ export function TestCaseListSidebar({
   noServerSelected,
   selectedServer,
   suite,
-  latestRun,
-  onRerun,
-  rerunningSuiteId,
   connectedServerNames,
+  onRunTestCase,
+  runningTestCaseId,
   onNavigateToOverview,
   onSelectTestCase,
   heading = "Cases",
@@ -107,15 +103,21 @@ export function TestCaseListSidebar({
   hideRunInsightsRow = false,
   insightsNavLabel = RUN_INSIGHTS_SIDEBAR_LABEL,
 }: TestCaseListSidebarProps) {
-  // Calculate rerun availability
-  const rerunEligibility = getSuiteReplayEligibility({
-    suiteServers: suite?.environment?.servers,
-    connectedServerNames,
-    latestRun,
-  });
-  const missingServers = rerunEligibility.missingServers;
-  const canRerun = rerunEligibility.canRunNow && suite && onRerun;
-  const isRerunning = rerunningSuiteId === suite?._id;
+  const selectedTestCase = useMemo(
+    () => testCases.find((testCase) => testCase._id === selectedTestId) ?? null,
+    [selectedTestId, testCases],
+  );
+  const suiteServers = suite?.environment?.servers ?? [];
+  const missingServers = suiteServers.filter(
+    (serverName) => !connectedServerNames?.has(serverName),
+  );
+  const canRunSelectedCase =
+    Boolean(selectedTestCase) &&
+    Boolean(selectedTestCase?.models?.length) &&
+    Boolean(suite) &&
+    Boolean(onRunTestCase) &&
+    missingServers.length === 0;
+  const isRunningSelectedCase = runningTestCaseId === selectedTestCase?._id;
   const handleNavigateToOverview = () => {
     if (suiteId) {
       if (onNavigateToOverview) {
@@ -166,22 +168,30 @@ export function TestCaseListSidebar({
                 <Button
                   variant="ghost"
                   size="sm"
-                  aria-label="Run suite"
+                  aria-label="Run selected case"
                   onClick={() => {
-                    if (suite && onRerun) {
-                      posthog.capture("rerun_suite_button_clicked", {
+                    if (selectedTestCase && onRunTestCase) {
+                      posthog.capture("run_selected_case_button_clicked", {
                         location: "test_case_list_sidebar",
                         platform: detectPlatform(),
                         environment: detectEnvironment(),
+                        test_case_id: selectedTestCase._id,
                       });
-                      onRerun(suite);
+                      onRunTestCase(selectedTestCase);
                     }
                   }}
-                  disabled={!canRerun || isRerunning || testCases.length === 0}
+                  disabled={
+                    !canRunSelectedCase ||
+                    isRunningSelectedCase ||
+                    testCases.length === 0
+                  }
                   className="h-7 w-7 p-0"
                 >
                   <RotateCw
-                    className={cn("h-4 w-4", isRerunning && "animate-spin")}
+                    className={cn(
+                      "h-4 w-4",
+                      isRunningSelectedCase && "animate-spin",
+                    )}
                   />
                 </Button>
               </span>
@@ -189,13 +199,15 @@ export function TestCaseListSidebar({
             <TooltipContent>
               {testCases.length === 0
                 ? "Add cases first"
-                : rerunEligibility.canReplayFallback
-                  ? "Run all cases using saved replay config"
-                  : !canRerun && missingServers.length > 0
-                    ? `Connect the following servers: ${missingServers.join(", ")}`
-                    : isRerunning
-                      ? "Running..."
-                      : "Run all cases"}
+                : !selectedTestCase
+                  ? "Select a case first"
+                  : !selectedTestCase.models?.length
+                    ? "Add a model first"
+                    : missingServers.length > 0
+                      ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : isRunningSelectedCase
+                        ? "Running..."
+                        : "Run selected case"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>

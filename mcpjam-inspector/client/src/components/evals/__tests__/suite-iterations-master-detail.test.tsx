@@ -66,7 +66,7 @@ const baseSuite: EvalSuite = {
 
 describe("SuiteIterationsView caseListInSidebar", () => {
   beforeEach(() => {
-    vi.resetAllMocks();
+    vi.clearAllMocks();
     mocks.useMutation.mockReturnValue(vi.fn());
     mocks.useQuery.mockImplementation((_name: string, args: unknown) => {
       if (args === "skip") {
@@ -112,6 +112,44 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       screen.getByText(/Select a case from the list on the left/i),
     ).toBeInTheDocument();
     expect(screen.getByTestId("suite-hero-stats")).toBeInTheDocument();
+  });
+
+  it("replaces run-oriented overview chrome when run actions are hidden", () => {
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
+        navigation={noopNav}
+        caseListInSidebar
+        hideRunActions
+      />,
+    );
+
+    expect(screen.queryByTestId("suite-hero-stats")).toBeNull();
+    expect(
+      screen.getByText(/run it individually/i),
+    ).toBeInTheDocument();
   });
 
   it("still mounts TestCasesOverview without caseListInSidebar", () => {

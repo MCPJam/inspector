@@ -14,7 +14,12 @@ import {
   navigateToCiEvalsRoute,
   type CiEvalsRoute,
 } from "@/lib/ci-evals-router";
-import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
+import type {
+  EvalCase,
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+} from "./types";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
@@ -23,9 +28,14 @@ import {
   buildEvalConvexAuthPayload,
   getEvalApiEndpoints,
   runEvals,
+  runEvalTestCase,
 } from "@/lib/apis/evals-api";
 import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
+import {
+  getDefaultTestCaseModelValue,
+  prepareSingleTestCaseRun,
+} from "./single-test-case-runner";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -61,6 +71,9 @@ export function useEvalHandlers({
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
+  const [runningTestCaseId, setRunningTestCaseId] = useState<string | null>(
+    null,
+  );
   const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
@@ -405,6 +418,87 @@ export function useEvalHandlers({
       workspaceId,
       getSuiteExecutionContext,
       handleReplayRun,
+    ],
+  );
+
+  const handleRunTestCase = useCallback(
+    async (
+      suite: EvalSuite,
+      testCase: EvalCase,
+      options?: { location?: string },
+    ) => {
+      if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
+        return null;
+      }
+
+      const modelValue = getDefaultTestCaseModelValue(testCase);
+      if (!modelValue) {
+        toast.error("Add a model first");
+        return null;
+      }
+
+      setRunningTestCaseId(testCase._id);
+
+      try {
+        const preparedRun = await prepareSingleTestCaseRun({
+          workspaceId,
+          suite,
+          testCase,
+          getAccessToken,
+          getToken,
+          hasToken,
+        });
+
+        posthog.capture("eval_test_case_run_started", {
+          location: options?.location ?? "test_case_list_sidebar",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          test_case_id: testCase._id,
+          model: preparedRun.modelValue,
+        });
+
+        const data = await runEvalTestCase(preparedRun.request);
+        const iteration = data?.iteration;
+
+        if (iteration) {
+          const startedAt = iteration.startedAt ?? iteration.createdAt;
+          const completedAt = iteration.updatedAt ?? iteration.createdAt;
+          const durationMs =
+            startedAt && completedAt
+              ? Math.max(completedAt - startedAt, 0)
+              : 0;
+
+          posthog.capture("eval_test_case_run_completed", {
+            location: options?.location ?? "test_case_list_sidebar",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            suite_id: suite._id,
+            test_case_id: testCase._id,
+            model: preparedRun.modelValue,
+            result: iteration.result || "unknown",
+            duration_ms: durationMs,
+          });
+        }
+
+        toast.success("Test completed successfully!");
+        return data;
+      } catch (error) {
+        console.error("Failed to run test case:", error);
+        toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+        return null;
+      } finally {
+        setRunningTestCaseId(null);
+      }
+    },
+    [
+      runningTestCaseId,
+      rerunningSuiteId,
+      replayingRunId,
+      workspaceId,
+      getAccessToken,
+      getToken,
+      hasToken,
     ],
   );
 
@@ -773,6 +867,7 @@ export function useEvalHandlers({
   return {
     // Handlers
     handleRerun,
+    handleRunTestCase,
     handleReplayRun,
     handleDelete,
     confirmDelete,
@@ -788,6 +883,7 @@ export function useEvalHandlers({
     handleGenerateTests,
     // States
     rerunningSuiteId,
+    runningTestCaseId,
     replayingRunId,
     cancellingRunId,
     deletingSuiteId,

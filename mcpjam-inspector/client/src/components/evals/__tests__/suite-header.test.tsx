@@ -116,6 +116,14 @@ describe("SuiteHeader", () => {
     expect(baseProps.onRerun).not.toHaveBeenCalled();
   });
 
+  it("hides run-detail actions when run actions are suppressed", () => {
+    renderWithProviders(<SuiteHeader {...baseProps} hideRunActions />);
+
+    expect(
+      screen.queryByRole("button", { name: "Replay this run" }),
+    ).toBeNull();
+  });
+
   it("shows replay latest run in overview without hosted-mode gating", () => {
     renderWithProviders(
       <SuiteHeader
@@ -128,6 +136,21 @@ describe("SuiteHeader", () => {
     expect(
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
+  });
+
+  it("hides overview run actions when run actions are suppressed", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        hideRunActions
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Replay latest run" }),
+    ).toBeNull();
   });
 
   it("shows Cases when cases sidebar is hidden on runs overview", async () => {

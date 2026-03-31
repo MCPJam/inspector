@@ -1,10 +1,9 @@
 import {
   lazy,
   Suspense,
-  useEffect,
   useMemo,
-  useRef,
   useState,
+  useEffect,
   type ReactNode,
 } from "react";
 import {
@@ -21,7 +20,7 @@ import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { MessageView } from "@/components/chat-v2/thread/message-view";
+import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
@@ -30,6 +29,7 @@ import {
 import {
   buildPromptGroups,
   collectStepSpanIdsWithChildren,
+  type TraceRevealSelection,
 } from "./trace-timeline";
 import {
   RecordedTraceToolbar,
@@ -46,11 +46,6 @@ const NOOP = (..._args: unknown[]) => {};
 export type TraceViewerEvalToolCall = {
   toolName: string;
   arguments: Record<string, any>;
-};
-
-type TranscriptRange = {
-  startIndex: number;
-  endIndex: number;
 };
 
 interface TraceViewerProps {
@@ -140,11 +135,16 @@ export function TraceViewer({
   const [expandedStepIds, setExpandedStepIds] = useState<Set<string>>(
     () => new Set(),
   );
-  const [highlightedMessageIds, setHighlightedMessageIds] = useState<string[]>(
-    [],
-  );
+  const [transcriptNavigation, setTranscriptNavigation] = useState<{
+    focusMessageId: string | null;
+    highlightedMessageIds: string[];
+    navigationKey: number;
+  }>({
+    focusMessageId: null,
+    highlightedMessageIds: [],
+    navigationKey: 0,
+  });
   const [timelineViewportMaxMs, setTimelineViewportMaxMs] = useState(1);
-  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const resolvedModel: ModelDefinition = model ?? {
     id: "unknown",
     name: "Unknown",
@@ -219,7 +219,11 @@ export function TraceViewer({
   );
 
   useEffect(() => {
-    setHighlightedMessageIds([]);
+    setTranscriptNavigation({
+      focusMessageId: null,
+      highlightedMessageIds: [],
+      navigationKey: 0,
+    });
   }, [trace]);
 
   useEffect(() => {
@@ -228,61 +232,9 @@ export function TraceViewer({
     }
   }, [hasEvalToolCalls]);
 
-  useEffect(() => {
-    if (viewMode !== "chat" || highlightedMessageIds.length === 0) {
-      return;
-    }
-
-    let cancelled = false;
-    const rafId = requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        if (cancelled) return;
-        const el =
-          messageRefs.current[
-            highlightedMessageIds[highlightedMessageIds.length - 1] ?? ""
-          ];
-        if (!el) return;
-        // Find the nearest scrollable ancestor and scroll manually so we only
-        // move *that* container rather than every ancestor (scrollIntoView
-        // can misbehave in deeply nested flex/overflow layouts).
-        let container: HTMLElement | null = el.parentElement;
-        while (container) {
-          const { overflowY } = getComputedStyle(container);
-          if (
-            (overflowY === "auto" || overflowY === "scroll") &&
-            container.scrollHeight > container.clientHeight
-          ) {
-            break;
-          }
-          container = container.parentElement;
-        }
-        if (container) {
-          const elRect = el.getBoundingClientRect();
-          const containerRect = container.getBoundingClientRect();
-          const relativeTop =
-            elRect.top - containerRect.top + container.scrollTop;
-          container.scrollTo({
-            top: relativeTop - container.clientHeight / 2,
-            behavior: "smooth",
-          });
-        } else {
-          el.scrollIntoView({ block: "center", behavior: "smooth" });
-        }
-      });
-    });
-    return () => {
-      cancelled = true;
-      cancelAnimationFrame(rafId);
-    };
-  }, [highlightedMessageIds, viewMode]);
-
-  function handleRevealInTranscript(range: TranscriptRange) {
+  function handleRevealInTranscript(selection: TraceRevealSelection) {
     const highlightedIds = new Set<string>();
-    for (
-      let sourceIndex = range.startIndex;
-      sourceIndex <= range.endIndex;
-      sourceIndex += 1
-    ) {
+    for (const sourceIndex of selection.highlightSourceIndices) {
       for (const messageId of adaptedTrace.sourceMessageIndexToUiMessageIds[
         sourceIndex
       ] ?? []) {
@@ -290,14 +242,30 @@ export function TraceViewer({
       }
     }
 
+    const focusMessageId =
+      adaptedTrace.sourceMessageIndexToFocusUiMessageId[
+        selection.focusSourceIndex
+      ] ??
+      adaptedTrace.sourceMessageIndexToUiMessageIds[
+        selection.focusSourceIndex
+      ]?.[0] ??
+      null;
+    if (focusMessageId) {
+      highlightedIds.add(focusMessageId);
+    }
+
     const orderedIds = adaptedTrace.messages
       .map((message) => message.id)
       .filter((messageId) => highlightedIds.has(messageId));
-    if (orderedIds.length === 0) {
+    if (orderedIds.length === 0 || !focusMessageId) {
       return;
     }
 
-    setHighlightedMessageIds(orderedIds);
+    setTranscriptNavigation((current) => ({
+      focusMessageId,
+      highlightedMessageIds: orderedIds,
+      navigationKey: current.navigationKey + 1,
+    }));
     setViewMode("chat");
   }
 
@@ -539,45 +507,30 @@ export function TraceViewer({
             No messages in trace
           </div>
         ) : (
-          <div className="max-w-4xl space-y-8 px-4 pt-2">
-            {adaptedTrace.messages.map((message) => (
-              <div
-                key={message.id}
-                ref={(element) => {
-                  messageRefs.current[message.id] = element;
-                }}
-                data-source-range={
-                  adaptedTrace.uiMessageSourceRanges[message.id]
-                    ? `${adaptedTrace.uiMessageSourceRanges[message.id]!.startIndex}-${adaptedTrace.uiMessageSourceRanges[message.id]!.endIndex}`
-                    : undefined
-                }
-                className={
-                  highlightedMessageIds.includes(message.id)
-                    ? "rounded-xl border border-primary/30 bg-primary/5 p-2"
-                    : ""
-                }
-              >
-                <MessageView
-                  message={message}
-                  model={resolvedModel}
-                  onSendFollowUp={NOOP}
-                  toolsMetadata={toolsMetadata}
-                  toolServerMap={toolServerMap}
-                  pipWidgetId={null}
-                  fullscreenWidgetId={null}
-                  onRequestPip={NOOP}
-                  onExitPip={NOOP}
-                  onRequestFullscreen={NOOP}
-                  onExitFullscreen={NOOP}
-                  toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-                  showSaveViewButton={false}
-                  minimalMode={true}
-                  interactive={false}
-                  reasoningDisplayMode="collapsed"
-                />
-              </div>
-            ))}
-          </div>
+          <TranscriptThread
+            messages={adaptedTrace.messages}
+            model={resolvedModel}
+            sendFollowUpMessage={NOOP}
+            toolsMetadata={toolsMetadata}
+            toolServerMap={toolServerMap}
+            toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+            showSaveViewButton={false}
+            minimalMode={true}
+            interactive={false}
+            reasoningDisplayMode="collapsed"
+            focusMessageId={transcriptNavigation.focusMessageId}
+            highlightedMessageIds={transcriptNavigation.highlightedMessageIds}
+            navigationKey={transcriptNavigation.navigationKey}
+            contentClassName="max-w-4xl space-y-8 px-4 pt-2"
+            getMessageWrapperProps={({ message }) => {
+              const sourceRange = adaptedTrace.uiMessageSourceRanges[message.id];
+              return {
+                "data-source-range": sourceRange
+                  ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
+                  : undefined,
+              };
+            }}
+          />
         ))}
 
       {viewMode === "tools" && hasEvalToolCalls ? (

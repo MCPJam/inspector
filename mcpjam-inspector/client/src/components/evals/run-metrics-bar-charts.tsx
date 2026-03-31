@@ -34,7 +34,7 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
         <CartesianGrid
           strokeDasharray="3 3"
           vertical={false}
-          stroke="hsl(var(--muted-foreground) / 0.2)"
+          stroke="hsl(var(--muted-foreground) / 0.12)"
         />
         <XAxis
           dataKey="name"
@@ -102,7 +102,7 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
         <CartesianGrid
           strokeDasharray="3 3"
           vertical={false}
-          stroke="hsl(var(--muted-foreground) / 0.2)"
+          stroke="hsl(var(--muted-foreground) / 0.12)"
         />
         <XAxis
           dataKey="name"
@@ -171,21 +171,21 @@ export function RunMetricsBarCharts({
     <div
       className={
         singleChart
-          ? "mt-4 grid grid-cols-1 gap-3"
-          : "mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2"
+          ? "mt-2 grid grid-cols-1 gap-3"
+          : "mt-2 grid grid-cols-1 gap-3 lg:grid-cols-2"
       }
     >
       {showDuration && (
-        <div className="rounded-lg border bg-card p-4">
-          <h3 className="text-sm font-semibold text-foreground mb-3">
+        <div className="rounded-xl border border-border/40 bg-card/80 p-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             Avg duration by test
           </h3>
           <DurationBarBlock data={durationData} />
         </div>
       )}
       {showTokens && (
-        <div className="rounded-lg border bg-card p-4">
-          <h3 className="text-sm font-semibold text-foreground mb-3">
+        <div className="rounded-xl border border-border/40 bg-card/80 p-4">
+          <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
             Avg tokens by test
           </h3>
           <TokensBarBlock data={tokensData} />

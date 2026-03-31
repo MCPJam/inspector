@@ -107,19 +107,19 @@
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
-  /* Eval trace waterfall — pastel bar fills (light) */
-  --trace-waterfall-bar-prompt: oklch(0.89 0.07 292);
-  --trace-waterfall-bar-llm: oklch(0.89 0.065 255);
-  --trace-waterfall-bar-tool: oklch(0.915 0.085 88);
-  --trace-waterfall-bar-step: oklch(0.885 0.04 250);
-  --trace-waterfall-bar-error: oklch(0.885 0.1 25);
+  /* Eval trace waterfall — bar fills (light): slightly richer than before so capsules match icons */
+  --trace-waterfall-bar-prompt: oklch(0.885 0.082 292);
+  --trace-waterfall-bar-llm: oklch(0.885 0.076 255);
+  --trace-waterfall-bar-tool: oklch(0.905 0.105 96);
+  --trace-waterfall-bar-step: oklch(0.88 0.055 250);
+  --trace-waterfall-bar-error: oklch(0.88 0.115 25);
   --trace-waterfall-row-selected: oklch(0.67 0.1 288 / 0.12);
-  /* Glyph + row border accents (light): muted hues matching bars */
-  --trace-waterfall-accent-prompt: oklch(0.57 0.13 292);
-  --trace-waterfall-accent-llm: oklch(0.55 0.115 255);
-  --trace-waterfall-accent-tool: oklch(0.61 0.125 88);
-  --trace-waterfall-accent-step: oklch(0.53 0.06 250);
-  --trace-waterfall-accent-error: oklch(0.57 0.14 25);
+  /* Glyphs/borders: same C+H as bar tokens above; lower L only (fills can be light, strokes cannot). */
+  --trace-waterfall-accent-prompt: oklch(0.52 0.082 292);
+  --trace-waterfall-accent-llm: oklch(0.52 0.076 255);
+  --trace-waterfall-accent-tool: oklch(0.52 0.105 96);
+  --trace-waterfall-accent-step: oklch(0.52 0.055 250);
+  --trace-waterfall-accent-error: oklch(0.52 0.115 25);
 }
 
 .app-theme-scope {
@@ -150,17 +150,17 @@
   --info-foreground: oklch(1 0 0);
   --pending: oklch(0.769 0.188 85.3);
   --pending-foreground: oklch(0.239 0.06 60);
-  --trace-waterfall-bar-prompt: oklch(0.89 0.07 292);
-  --trace-waterfall-bar-llm: oklch(0.89 0.065 255);
-  --trace-waterfall-bar-tool: oklch(0.915 0.085 88);
-  --trace-waterfall-bar-step: oklch(0.885 0.04 250);
-  --trace-waterfall-bar-error: oklch(0.885 0.1 25);
+  --trace-waterfall-bar-prompt: oklch(0.885 0.082 292);
+  --trace-waterfall-bar-llm: oklch(0.885 0.076 255);
+  --trace-waterfall-bar-tool: oklch(0.905 0.105 96);
+  --trace-waterfall-bar-step: oklch(0.88 0.055 250);
+  --trace-waterfall-bar-error: oklch(0.88 0.115 25);
   --trace-waterfall-row-selected: oklch(0.67 0.1 288 / 0.12);
-  --trace-waterfall-accent-prompt: oklch(0.57 0.13 292);
-  --trace-waterfall-accent-llm: oklch(0.55 0.115 255);
-  --trace-waterfall-accent-tool: oklch(0.61 0.125 88);
-  --trace-waterfall-accent-step: oklch(0.53 0.06 250);
-  --trace-waterfall-accent-error: oklch(0.57 0.14 25);
+  --trace-waterfall-accent-prompt: oklch(0.52 0.082 292);
+  --trace-waterfall-accent-llm: oklch(0.52 0.076 255);
+  --trace-waterfall-accent-tool: oklch(0.52 0.105 96);
+  --trace-waterfall-accent-step: oklch(0.52 0.055 250);
+  --trace-waterfall-accent-error: oklch(0.52 0.115 25);
 }
 
 .dark {
@@ -563,6 +563,51 @@
     oklch(0.67 0.13 39 / 0.4) 50%,
     oklch(0.67 0.13 39 / 0.15) 100%
   );
+}
+
+@keyframes ai-insight-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+/* Warm amber wash + slow shimmer for AI-generated run insight copy */
+.ai-insight-glow {
+  background: linear-gradient(
+    105deg,
+    oklch(0.72 0.12 45 / 0.035) 0%,
+    oklch(0.75 0.11 42 / 0.05) 45%,
+    oklch(0.72 0.12 45 / 0.035) 90%
+  );
+  background-size: 200% 100%;
+  animation: ai-insight-shimmer 6s ease-in-out infinite;
+}
+
+.dark .ai-insight-glow {
+  background: linear-gradient(
+    105deg,
+    oklch(0.67 0.13 39 / 0.055) 0%,
+    oklch(0.7 0.12 42 / 0.075) 45%,
+    oklch(0.67 0.13 39 / 0.055) 90%
+  );
+  background-size: 200% 100%;
+}
+
+.ai-sparkle-icon {
+  color: oklch(0.72 0.12 45);
+}
+
+.dark .ai-sparkle-icon {
+  color: oklch(0.75 0.11 42);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ai-insight-glow {
+    animation: none;
+  }
 }
 
 /* JSON syntax highlighting classes */
