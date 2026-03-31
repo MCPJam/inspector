@@ -10,6 +10,13 @@ export interface SandboxBootstrapServer {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  /** When true, excluded from initial OAuth and chat until enabled by the tester. */
+  optional?: boolean;
+}
+
+export interface SandboxWelcomeDialogPayload {
+  enabled: boolean;
+  body?: string;
 }
 
 export interface SandboxBootstrapPayload {
@@ -26,6 +33,8 @@ export interface SandboxBootstrapPayload {
   temperature: number;
   requireToolApproval: boolean;
   servers: SandboxBootstrapServer[];
+  /** When set by bootstrap or playground snapshot, drives hosted welcome copy. */
+  welcomeDialog?: SandboxWelcomeDialogPayload | null;
 }
 
 export interface SandboxSession {
@@ -40,6 +49,16 @@ export const SANDBOX_SIGN_IN_RETURN_PATH_STORAGE_KEY =
   "mcpjam_sandbox_signin_return_path_v1";
 export const SANDBOX_PLAYGROUND_KEY_PREFIX =
   "mcpjam_sandbox_playground_session_v1:";
+
+/** sessionStorage: optional servers the tester enabled for this share-link session. */
+export function sandboxEnabledOptionalStorageKey(sandboxToken: string): string {
+  return `sandbox-enabled-optional:${sandboxToken}`;
+}
+
+/** sessionStorage: optional servers enabled in builder preview for a sandbox id. */
+export function sandboxPreviewEnabledOptionalStorageKey(sandboxId: string): string {
+  return `sandbox-preview-opt-in:${sandboxId}`;
+}
 
 const PLAYGROUND_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -145,7 +164,20 @@ function normalizeSandboxSession(
           oauthScopes: Array.isArray(server.oauthScopes)
             ? server.oauthScopes
             : null,
+          optional: Boolean(server.optional),
         })),
+      welcomeDialog:
+        payload.welcomeDialog &&
+        typeof payload.welcomeDialog === "object" &&
+        typeof payload.welcomeDialog.enabled === "boolean"
+          ? {
+              enabled: payload.welcomeDialog.enabled,
+              body:
+                typeof payload.welcomeDialog.body === "string"
+                  ? payload.welcomeDialog.body
+                  : "",
+            }
+          : undefined,
     },
     surface: parsed.surface === "preview" ? "preview" : "share_link",
   };

@@ -128,6 +128,7 @@ export function CreateSandboxDialog({
         requireToolApproval,
         allowGuestAccess,
         serverIds: selectedServerIds,
+        optionalServerIds: [],
       };
 
       const next = (

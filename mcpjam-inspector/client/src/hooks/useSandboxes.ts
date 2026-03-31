@@ -29,6 +29,8 @@ export interface SandboxServerSettings {
   serverUrl: string | null;
   clientId: string | null;
   oauthScopes: string[] | null;
+  /** When true, server is not connected until the tester enables it (off by default). */
+  optional?: boolean;
 }
 
 export interface SandboxWelcomeDialogSettings {

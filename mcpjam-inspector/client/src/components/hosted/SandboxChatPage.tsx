@@ -19,14 +19,18 @@ import {
   readSandboxSurfaceFromUrl,
   readSandboxSession,
   SANDBOX_OAUTH_PENDING_KEY,
+  sandboxEnabledOptionalStorageKey,
   type SandboxSession,
   writeSandboxSession,
   writeSandboxSignInReturnPath,
 } from "@/lib/sandbox-session";
+import { bootstrapServerToHostedOAuthDescriptor } from "@/components/sandboxes/builder/sandbox-server-optional";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { slugify } from "@/lib/shared-server-session";
 import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { SandboxHostOnboardingOverlays } from "@/components/hosted/SandboxHostOnboardingOverlays";
+import { useSandboxHostIntroGate } from "@/components/hosted/useSandboxHostIntroGate";
 import { getSandboxShellStyle } from "@/lib/sandbox-host-style";
 
 interface SandboxChatPageProps {
@@ -210,40 +214,6 @@ function getSandboxDisplayError(
   };
 }
 
-function getSandboxOAuthRowCopy(status: string): {
-  description: string;
-  buttonLabel: string | null;
-} {
-  switch (status) {
-    case "launching":
-      return {
-        description: "Opening consent screen…",
-        buttonLabel: null,
-      };
-    case "resuming":
-      return {
-        description: "Finishing authorization…",
-        buttonLabel: null,
-      };
-    case "verifying":
-      return {
-        description: "Verifying access…",
-        buttonLabel: null,
-      };
-    case "error":
-      return {
-        description: "Authorization could not be completed. Try again.",
-        buttonLabel: "Authorize again",
-      };
-    case "needs_auth":
-    default:
-      return {
-        description: "You'll return here automatically after consent.",
-        buttonLabel: "Authorize",
-      };
-  }
-}
-
 export function SandboxChatPage({
   pathToken,
   onExitSandboxChat,
@@ -296,12 +266,103 @@ export function SandboxChatPage({
   );
   const [routeError, setRouteError] = useState<SandboxRouteError | null>(null);
 
-  const oauthServers = useMemo(() => session?.payload.servers ?? [], [session]);
+  const sessionServersRequired = useMemo(
+    () => session?.payload.servers.filter((s) => !s.optional) ?? [],
+    [session],
+  );
+
+  const sessionServersOptional = useMemo(
+    () => session?.payload.servers.filter((s) => s.optional) ?? [],
+    [session],
+  );
+
+  const [enabledOptionalServerIds, setEnabledOptionalServerIds] = useState<
+    string[]
+  >([]);
+
+  useEffect(() => {
+    if (!session?.token) return;
+    try {
+      const raw = sessionStorage.getItem(
+        sandboxEnabledOptionalStorageKey(session.token),
+      );
+      if (!raw) {
+        setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      const optionalIdSet = new Set(
+        session.payload.servers.filter((s) => s.optional).map((s) => s.serverId),
+      );
+      const next = parsed.filter(
+        (id): id is string =>
+          typeof id === "string" && optionalIdSet.has(id),
+      );
+      setEnabledOptionalServerIds((prev) => {
+        if (
+          prev.length === next.length &&
+          prev.every((id, i) => id === next[i])
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    } catch {
+      setEnabledOptionalServerIds((prev) => (prev.length === 0 ? prev : []));
+    }
+    // Intentionally only re-hydrate when the share token changes — not when
+    // `payload.servers` gets a new array identity on each render.
+  }, [session?.token]);
+
+  useEffect(() => {
+    if (!session?.token) return;
+    try {
+      const key = sandboxEnabledOptionalStorageKey(session.token);
+      const serialized = JSON.stringify(enabledOptionalServerIds);
+      if (sessionStorage.getItem(key) === serialized) return;
+      sessionStorage.setItem(key, serialized);
+    } catch {
+      // ignore
+    }
+  }, [session?.token, enabledOptionalServerIds]);
+
+  const sessionServersActive = useMemo(() => {
+    if (!session) return [];
+    const enabled = new Set(enabledOptionalServerIds);
+    const optionalActive = session.payload.servers.filter(
+      (s) => s.optional && enabled.has(s.serverId),
+    );
+    return [...sessionServersRequired, ...optionalActive];
+  }, [session, sessionServersRequired, enabledOptionalServerIds]);
+
+  const oauthServers = useMemo(
+    () => sessionServersActive.map(bootstrapServerToHostedOAuthDescriptor),
+    [sessionServersActive],
+  );
+
+  const handleEnableSandboxOptionalServer = useCallback((serverId: string) => {
+    setEnabledOptionalServerIds((prev) =>
+      prev.includes(serverId) ? prev : [...prev, serverId],
+    );
+  }, []);
+
+  const sandboxOptionalInventory = useMemo(() => {
+    const enabled = new Set(enabledOptionalServerIds);
+    return sessionServersOptional
+      .filter((s) => !enabled.has(s.serverId))
+      .map((s) => ({
+        serverId: s.serverId,
+        serverName: s.serverName,
+        useOAuth: s.useOAuth,
+      }));
+  }, [sessionServersOptional, enabledOptionalServerIds]);
   const {
     oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
+    hasBusyOAuth,
   } = useHostedOAuthGate({
     surface: "sandbox",
     pendingKey: SANDBOX_OAUTH_PENDING_KEY,
@@ -312,7 +373,7 @@ export function SandboxChatPage({
     if (!session) return {};
 
     return Object.fromEntries(
-      session.payload.servers.map((server) => [
+      sessionServersActive.map((server) => [
         server.serverName,
         {
           name: server.serverName,
@@ -326,23 +387,23 @@ export function SandboxChatPage({
         } satisfies ServerWithName,
       ]),
     );
-  }, [session]);
+  }, [session, sessionServersActive]);
 
   const hostedServerIdsByName = useMemo(() => {
     if (!session) return {};
 
     return Object.fromEntries(
-      session.payload.servers.flatMap((server) => [
+      sessionServersActive.flatMap((server) => [
         [server.serverName, server.serverId],
         [server.serverId, server.serverId],
       ]),
     );
-  }, [session]);
+  }, [session, sessionServersActive]);
 
   const oauthTokensForChat = useMemo(() => {
     if (!session) return undefined;
 
-    const entries = session.payload.servers
+    const entries = sessionServersActive
       .map((server) => {
         const token = getStoredTokens(server.serverName)?.access_token;
         return token ? ([server.serverId, token] as const) : null;
@@ -352,7 +413,7 @@ export function SandboxChatPage({
       );
 
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, session]);
+  }, [oauthStateByServerId, session, sessionServersActive]);
 
   useHostedApiContext({
     workspaceId: session?.payload.workspaceId ?? null,
@@ -556,6 +617,14 @@ export function SandboxChatPage({
   const hostStyle = session?.payload.hostStyle ?? "claude";
   const shellStyle = getSandboxShellStyle(hostStyle, themeMode);
   const displayError = getSandboxDisplayError(routeError);
+  const oauthPending = pendingOAuthServers.length > 0;
+  const introGate = useSandboxHostIntroGate({
+    sandboxId: session?.payload.sandboxId ?? "",
+    servers: sessionServersRequired,
+    oauthPending,
+    hasBusyOAuth,
+    pendingOAuthServers,
+  });
   const isFinishingOAuth =
     pendingOAuthServers.length > 0 &&
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
@@ -602,68 +671,17 @@ export function SandboxChatPage({
       );
     }
 
-    if (pendingOAuthServers.length > 0) {
-      return (
-        <div className="flex flex-1 items-center justify-center px-4">
-          <div className="w-full max-w-xl rounded-lg border border-border bg-card p-6">
-            <h2 className="text-center text-base font-semibold text-foreground">
-              {isFinishingOAuth
-                ? "Finishing authorization"
-                : "Authorization Required"}
-            </h2>
-            <p className="mt-2 text-center text-sm text-muted-foreground">
-              {isFinishingOAuth
-                ? "Finishing authorization for the required sandbox servers."
-                : "Authorize the required sandbox servers to continue."}
-            </p>
-            <div className="mt-5 space-y-3">
-              {pendingOAuthServers.map(({ server, state }) => {
-                const rowCopy = getSandboxOAuthRowCopy(state.status);
-                return (
-                  <div
-                    key={server.serverId}
-                    className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
-                  >
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">
-                        {server.serverName}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        {state.status === "error" && state.errorMessage
-                          ? state.errorMessage
-                          : rowCopy.description}
-                      </p>
-                    </div>
-                    {rowCopy.buttonLabel ? (
-                      <Button
-                        size="sm"
-                        onClick={() => void authorizeServer(server)}
-                      >
-                        {rowCopy.buttonLabel}
-                      </Button>
-                    ) : (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      );
-    }
-
     return (
-      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 flex-1 flex-col">
         <ChatTabV2
           connectedOrConnectingServerConfigs={sandboxServerConfigs}
-          selectedServerNames={session.payload.servers.map(
+          selectedServerNames={sessionServersActive.map(
             (server) => server.serverName,
           )}
           minimalMode
           reasoningDisplayMode="hidden"
           hostedWorkspaceIdOverride={session.payload.workspaceId}
-          hostedSelectedServerIdsOverride={session.payload.servers.map(
+          hostedSelectedServerIdsOverride={sessionServersActive.map(
             (server) => server.serverId,
           )}
           hostedOAuthTokensOverride={oauthTokensForChat}
@@ -674,6 +692,23 @@ export function SandboxChatPage({
           initialTemperature={session.payload.temperature}
           initialRequireToolApproval={session.payload.requireToolApproval}
           onOAuthRequired={handleOAuthRequired}
+          sandboxComposerBlocked={introGate.composerBlocked}
+          sandboxComposerBlockedReason="Get started or authorize to send messages…"
+          sandboxOptionalInventory={sandboxOptionalInventory}
+          onEnableSandboxOptionalServer={handleEnableSandboxOptionalServer}
+        />
+        <SandboxHostOnboardingOverlays
+          showWelcome={introGate.showWelcome}
+          onGetStarted={introGate.dismissIntro}
+          welcomeBody={
+            session.payload.welcomeDialog?.enabled ?? true
+              ? session.payload.welcomeDialog?.body
+              : undefined
+          }
+          showAuthPanel={introGate.showAuthPanel}
+          pendingOAuthServers={pendingOAuthServers}
+          authorizeServer={authorizeServer}
+          isFinishingOAuth={isFinishingOAuth}
         />
       </div>
     );

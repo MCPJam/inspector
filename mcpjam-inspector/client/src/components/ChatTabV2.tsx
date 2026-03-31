@@ -62,6 +62,16 @@ interface ChatTabProps {
   initialRequireToolApproval?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
+  /** When true, blocks sending until sandbox onboarding/OAuth completes. */
+  sandboxComposerBlocked?: boolean;
+  sandboxComposerBlockedReason?: string;
+  /** Optional (off-by-default) servers the tester can attach from minimal chat. */
+  sandboxOptionalInventory?: Array<{
+    serverId: string;
+    serverName: string;
+    useOAuth: boolean;
+  }>;
+  onEnableSandboxOptionalServer?: (serverId: string) => void;
 }
 
 function ScrollToBottomButton() {
@@ -99,6 +109,10 @@ export function ChatTabV2({
   initialRequireToolApproval,
   reasoningDisplayMode = "inline",
   onOAuthRequired,
+  sandboxComposerBlocked = false,
+  sandboxComposerBlockedReason,
+  sandboxOptionalInventory,
+  onEnableSandboxOptionalServer,
 }: ChatTabProps) {
   const { signUp } = useAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -442,12 +456,15 @@ export function ChatTabV2({
 
   // Submit blocking with server check
   const submitBlocked = baseSubmitBlocked;
-  const inputDisabled = status !== "ready" || submitBlocked;
+  const inputDisabled =
+    status !== "ready" || submitBlocked || sandboxComposerBlocked;
 
   let placeholder = minimalMode
     ? "Message…"
     : 'Ask something… Use Slash "/" commands for Skills & MCP prompts';
-  if (isAuthLoading) {
+  if (sandboxComposerBlocked && sandboxComposerBlockedReason) {
+    placeholder = sandboxComposerBlockedReason;
+  } else if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
     placeholder = "Sign in to use free chat";
@@ -632,6 +649,11 @@ export function ChatTabV2({
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
     minimalMode,
+    sandboxAttachableServers:
+      sandboxOptionalInventory && sandboxOptionalInventory.length > 0
+        ? sandboxOptionalInventory
+        : undefined,
+    onAttachSandboxServer: onEnableSandboxOptionalServer,
   };
 
   const showStarterPrompts =

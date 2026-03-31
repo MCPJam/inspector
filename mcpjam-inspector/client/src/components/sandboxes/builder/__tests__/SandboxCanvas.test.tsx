@@ -34,6 +34,7 @@ describe("SandboxCanvas", () => {
         allowGuestAccess: false,
         mode: "any_signed_in_with_link",
         selectedServerIds: ["srv1"],
+        optionalServerIds: [],
         welcomeDialog: { enabled: true, body: "" },
         feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
       },
@@ -64,8 +65,8 @@ describe("SandboxCanvas", () => {
       </ReactFlowProvider>,
     );
 
-    const hostTitle = screen.getByText("Sandbox chat");
-    expect(hostTitle).toHaveAttribute("title", "Sandbox chat");
+    const hostTitle = screen.getByText("Chat Interface");
+    expect(hostTitle).toHaveAttribute("title", "Chat Interface");
 
     const nameSubtitle = screen.getByText(
       "My very long sandbox name that might truncate in the UI",

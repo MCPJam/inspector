@@ -26,6 +26,14 @@ function getCanvasSource(
   return context.draft ?? context.sandbox;
 }
 
+function optionalServerIdsFromSource(
+  source: SandboxSettings | SandboxDraftConfig | null,
+): string[] {
+  if (!source) return [];
+  if ("optionalServerIds" in source) return source.optionalServerIds;
+  return source.servers.filter((s) => s.optional).map((s) => s.serverId);
+}
+
 function createNode(
   id: string,
   x: number,
@@ -57,8 +65,8 @@ function resolveHostState(
   const hostStyle = source?.hostStyle ?? "claude";
   return {
     kind: "host",
-    title: "Sandbox chat",
-    eyebrow: "Preview",
+    title: "Chat Interface",
+    eyebrow: "Isolated Environment",
     subtitle: source?.name?.trim() || "Untitled sandbox",
     detailLine: `Model · ${modelName}`,
     hostStyle,
@@ -77,21 +85,27 @@ function resolveServerState(
       ? source.servers.map((server) => server.serverId)
       : source.selectedServerIds
     : [];
+  const optionalIds = optionalServerIdsFromSource(source);
   const server =
     context.workspaceServers.find((item) => item._id === serverId) ?? null;
   const insecure = server?.url?.startsWith("http://") ?? false;
+
+  const chips: SandboxBuilderNodeData["chips"] = [
+    chip(server?.useOAuth ? "OAuth" : "Direct"),
+    chip(
+      insecure ? "Requires HTTPS" : "HTTPS",
+      insecure ? "warning" : "success",
+    ),
+  ];
+  if (optionalIds.includes(serverId)) {
+    chips.push(chip("Optional", "info"));
+  }
 
   return {
     kind: "server",
     title: server?.name ?? "Server",
     subtitle: server?.url ?? "Workspace server",
-    chips: [
-      chip(server?.useOAuth ? "OAuth" : "Direct"),
-      chip(
-        insecure ? "Requires HTTPS" : "HTTPS",
-        insecure ? "warning" : "success",
-      ),
-    ],
+    chips,
     state: !selected.includes(serverId)
       ? "draft"
       : insecure

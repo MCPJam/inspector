@@ -14,6 +14,7 @@ const baseDraft = (): SandboxDraftConfig => ({
   allowGuestAccess: false,
   mode: "any_signed_in_with_link",
   selectedServerIds: ["srv-draft"],
+  optionalServerIds: [],
   welcomeDialog: { enabled: true, body: "" },
   feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
 });

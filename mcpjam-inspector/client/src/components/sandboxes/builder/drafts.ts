@@ -46,6 +46,7 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
       allowGuestAccess: false,
       mode: "invited_only",
       selectedServerIds: [],
+      optionalServerIds: [],
       welcomeDialog: { enabled: true, body: "" },
       feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
     }),
@@ -70,6 +71,7 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
       allowGuestAccess: false,
       mode: "any_signed_in_with_link",
       selectedServerIds: [],
+      optionalServerIds: [],
       welcomeDialog: { enabled: true, body: "" },
       feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
     }),
@@ -91,6 +93,7 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
       allowGuestAccess: false,
       mode: "any_signed_in_with_link",
       selectedServerIds: [],
+      optionalServerIds: [],
       welcomeDialog: { enabled: true, body: "" },
       feedbackDialog: { enabled: true, everyNToolCalls: 1, promptHint: "" },
     }),
@@ -109,6 +112,9 @@ export function toDraftConfig(sandbox: SandboxSettings): SandboxDraftConfig {
     allowGuestAccess: sandbox.allowGuestAccess,
     mode: sandbox.mode,
     selectedServerIds: sandbox.servers.map((server) => server.serverId),
+    optionalServerIds: sandbox.servers
+      .filter((server) => server.optional)
+      .map((server) => server.serverId),
     welcomeDialog: {
       enabled: sandbox.welcomeDialog?.enabled ?? true,
       body: sandbox.welcomeDialog?.body ?? "",

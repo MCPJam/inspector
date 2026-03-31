@@ -34,6 +34,7 @@ vi.mock("@/hooks/hosted/use-hosted-oauth-gate", () => ({
     pendingOAuthServers: [],
     authorizeServer: vi.fn(),
     markOAuthRequired: vi.fn(),
+    hasBusyOAuth: false,
   }),
 }));
 

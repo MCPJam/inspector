@@ -39,6 +39,7 @@ import {
 import { isMCPJamProvidedModel, SUPPORTED_MODELS } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import type { SandboxDraftConfig } from "./types";
+import { countRequiredServers } from "./sandbox-server-optional";
 
 export type SetupSectionId =
   | "basics"
@@ -150,18 +151,23 @@ function updateSelectedServerIds(
 export function ServerSelectionEditor({
   workspaceServers,
   selectedServerIds,
+  optionalServerIds,
   onToggleSelection,
+  onOptionalChange,
   onOpenAdd,
 }: {
   workspaceServers: RemoteServer[];
   selectedServerIds: string[];
+  optionalServerIds: string[];
   onToggleSelection: (serverId: string, checked: boolean) => void;
+  onOptionalChange: (serverId: string, optional: boolean) => void;
   onOpenAdd: () => void;
 }) {
   const availableServers = workspaceServers.filter(
     (server) => server.transportType === "http",
   );
   const selectedServerSet = new Set(selectedServerIds);
+  const optionalServerSet = new Set(optionalServerIds);
   const selectedServers = availableServers.filter((server) =>
     selectedServerSet.has(server._id),
   );
@@ -172,7 +178,8 @@ export function ServerSelectionEditor({
         <div>
           <h3 className="text-sm font-semibold">MCP servers</h3>
           <p className="text-xs text-muted-foreground">
-            Attach HTTPS MCP servers to this sandbox.
+            Attach HTTPS MCP servers. Mark servers as optional if testers should
+            turn them on only when needed.
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={onOpenAdd}>
@@ -262,38 +269,87 @@ export function ServerSelectionEditor({
         </Card>
       ) : (
         <div className="space-y-3">
-          {selectedServers.map((server) => (
-            <Card key={server._id} className="rounded-2xl p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{server.name}</p>
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">
-                    {server.url ?? "Workspace server"}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Badge variant="outline">
-                      {server.useOAuth ? "OAuth" : "Direct"}
-                    </Badge>
-                    <Badge
-                      variant={
-                        isInsecureUrl(server.url) ? "secondary" : "outline"
-                      }
+          {selectedServers.map((server) => {
+            const isOptional = optionalServerSet.has(server._id);
+            const requiredCount = countRequiredServers(
+              selectedServerIds,
+              optionalServerIds,
+            );
+            const cannotMarkOptional =
+              !isOptional && requiredCount === 1;
+
+            return (
+              <Card key={server._id} className="rounded-2xl p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium">{server.name}</p>
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
+                      {server.url ?? "Workspace server"}
+                    </p>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <Badge variant="outline">
+                        {server.useOAuth ? "OAuth" : "Direct"}
+                      </Badge>
+                      <Badge
+                        variant={
+                          isInsecureUrl(server.url) ? "secondary" : "outline"
+                        }
+                      >
+                        {isInsecureUrl(server.url) ? "Requires HTTPS" : "HTTPS"}
+                      </Badge>
+                      {isOptional ? (
+                        <Badge variant="secondary" className="text-[10px]">
+                          Optional
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-[10px]">
+                          Required
+                        </Badge>
+                      )}
+                    </div>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    onClick={() => onToggleSelection(server._id, false)}
+                  >
+                    Remove
+                  </Button>
+                </div>
+                <div className="mt-4 flex items-start justify-between gap-3 border-t border-border/50 pt-4">
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium">Default for testers</p>
+                    <p className="text-[11px] text-muted-foreground">
+                      Required servers connect and authorize first. Optional
+                      servers stay off until the tester adds them from Add server
+                      in the chat bar.
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col items-end gap-1">
+                    <Label
+                      htmlFor={`optional-${server._id}`}
+                      className="sr-only"
                     >
-                      {isInsecureUrl(server.url) ? "Requires HTTPS" : "HTTPS"}
-                    </Badge>
+                      Optional server (off by default)
+                    </Label>
+                    <Switch
+                      id={`optional-${server._id}`}
+                      checked={isOptional}
+                      disabled={cannotMarkOptional}
+                      onCheckedChange={(checked) =>
+                        onOptionalChange(server._id, checked === true)
+                      }
+                      aria-label="Optional server, off by default for testers"
+                    />
+                    <span className="text-[10px] text-muted-foreground">
+                      Optional
+                    </span>
                   </div>
                 </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => onToggleSelection(server._id, false)}
-                >
-                  Remove
-                </Button>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         </div>
       )}
     </div>
@@ -351,6 +407,7 @@ export function SetupChecklistPanel({
   onDraftChange,
   onOpenAddServer,
   onToggleServer,
+  onServerOptionalChange,
   onCloseMobile,
 }: {
   sandboxDraft: SandboxDraftConfig;
@@ -364,6 +421,7 @@ export function SetupChecklistPanel({
   ) => void;
   onOpenAddServer: () => void;
   onToggleServer: (serverId: string, checked: boolean) => void;
+  onServerOptionalChange: (serverId: string, optional: boolean) => void;
   onCloseMobile?: () => void;
 }) {
   const statuses = useMemo(
@@ -579,7 +637,9 @@ export function SetupChecklistPanel({
                   <ServerSelectionEditor
                     workspaceServers={workspaceServers}
                     selectedServerIds={sandboxDraft.selectedServerIds}
+                    optionalServerIds={sandboxDraft.optionalServerIds}
                     onToggleSelection={onToggleServer}
+                    onOptionalChange={onServerOptionalChange}
                     onOpenAdd={onOpenAddServer}
                   />
                 </div>

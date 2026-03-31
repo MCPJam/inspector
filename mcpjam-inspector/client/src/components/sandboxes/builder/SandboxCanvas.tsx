@@ -23,9 +23,15 @@ import {
   type NodeProps,
   type EdgeProps,
 } from "@xyflow/react";
-import { Bot, ChevronRight, Network, Plus, Server } from "lucide-react";
+import { Bot, CircleHelp, Network, Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { MCPIcon } from "@/components/ui/mcp-icon";
 import { getSandboxHostLogo } from "@/lib/sandbox-host-style";
 import { cn } from "@/lib/utils";
@@ -127,17 +133,14 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
       )}
       {isHostPreview ? (
         <>
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-2 flex items-center justify-center gap-2">
             {data.eyebrow ? (
               <Badge
                 variant="secondary"
-                className="rounded-md px-2 py-0 text-[10px] font-medium uppercase tracking-wide text-muted-foreground"
+                className="max-w-[min(100%,11rem)] whitespace-normal rounded-md px-2 py-0.5 text-center text-[10px] font-medium uppercase leading-tight tracking-wide text-muted-foreground"
               >
                 {data.eyebrow}
               </Badge>
-            ) : null}
-            {selected ? (
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
             ) : null}
           </div>
           <div className="flex gap-3">
@@ -173,11 +176,6 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
               ) : null}
             </div>
           </div>
-          <p className="mt-3 rounded-lg border border-dashed border-border/50 bg-background/50 px-2.5 py-2 text-[11px] leading-snug text-muted-foreground">
-            Hosted chat preview — mirrors{" "}
-            {hostStyle === "chatgpt" ? "ChatGPT" : "Claude"}-style host in
-            Setup.
-          </p>
         </>
       ) : (
         <>
@@ -200,9 +198,6 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
                 ) : null}
               </div>
             </div>
-            {selected ? (
-              <ChevronRight className="mt-0.5 size-4 text-muted-foreground" />
-            ) : null}
           </div>
 
           {data.chips.length > 0 ? (
@@ -400,8 +395,32 @@ export function SandboxCanvas({
     <SandboxCanvasContext.Provider value={ctxValue}>
       <div
         ref={canvasRef}
-        className="sandbox-builder-grid h-full w-full rounded-[28px] border border-border/70 bg-background"
+        className="sandbox-builder-grid relative h-full w-full rounded-[28px] border border-border/70 bg-background"
       >
+        <div className="pointer-events-none absolute right-3 top-3 z-10">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="pointer-events-auto size-10 shrink-0 text-muted-foreground"
+                aria-label="About the sandbox layout"
+              >
+                <CircleHelp className="size-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              align="end"
+              className="max-w-[300px] text-balance text-sm"
+            >
+              This diagram maps your sandbox: servers, tools, and the chat
+              experience. Choose a Claude-style or ChatGPT-style host and other
+              behavior in Setup. Preview shows what end users will see.
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <ReactFlow
           nodes={nodes}
           edges={viewModel.edges}
