@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -150,9 +144,7 @@ function SandboxBuilderChrome({
   onModeChange: (mode: ViewMode) => void;
 }) {
   const saveDisabled =
-    isSaving ||
-    (!isDirty && hasSavedSandbox) ||
-    setupHasBlockingSections;
+    isSaving || (!isDirty && hasSavedSandbox) || setupHasBlockingSections;
   const showCopyLink = hasSavedSandbox;
 
   return (
@@ -573,17 +565,14 @@ export function SandboxBuilderView({
         sandboxPreviewEnabledOptionalStorageKey(introSandboxId),
       );
       if (!raw) {
-        setPreviewEnabledOptionalIds((prev) =>
-          prev.length === 0 ? prev : [],
-        );
+        setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
         return;
       }
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       const optionalSet = new Set(draftSandboxConfig.optionalServerIds);
       const next = parsed.filter(
-        (id): id is string =>
-          typeof id === "string" && optionalSet.has(id),
+        (id): id is string => typeof id === "string" && optionalSet.has(id),
       );
       setPreviewEnabledOptionalIds((prev) => {
         if (
@@ -595,9 +584,7 @@ export function SandboxBuilderView({
         return next;
       });
     } catch {
-      setPreviewEnabledOptionalIds((prev) =>
-        prev.length === 0 ? prev : [],
-      );
+      setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
     }
   }, [introSandboxId, optionalServerIdsKey]);
 
@@ -675,8 +662,7 @@ export function SandboxBuilderView({
   }, [activePreviewServers, workspaceServers]);
 
   const previewOAuthGateServers = useMemo(
-    () =>
-      activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
+    () => activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
     [activePreviewServers],
   );
 
@@ -894,7 +880,11 @@ export function SandboxBuilderView({
         const requiredIds = current.selectedServerIds.filter(
           (id) => !current.optionalServerIds.includes(id),
         );
-        if (optional && requiredIds.length === 1 && requiredIds[0] === serverId) {
+        if (
+          optional &&
+          requiredIds.length === 1 &&
+          requiredIds[0] === serverId
+        ) {
           toast.error(
             "Add another required server or mark another as required first.",
           );

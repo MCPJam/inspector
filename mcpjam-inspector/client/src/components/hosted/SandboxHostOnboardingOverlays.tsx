@@ -154,7 +154,11 @@ export function SandboxHostOnboardingOverlays({
                 <p className="text-sm text-muted-foreground">
                   This is taking longer than expected.
                 </p>
-                <Button type="button" variant="secondary" onClick={() => window.location.reload()}>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => window.location.reload()}
+                >
                   Retry
                 </Button>
               </div>

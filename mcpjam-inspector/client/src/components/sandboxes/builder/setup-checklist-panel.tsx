@@ -196,9 +196,7 @@ export function WorkspaceServerPickerList({
           <label
             key={server._id}
             className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
-            title={
-              insecure ? "Sandboxes require HTTPS server URLs" : undefined
-            }
+            title={insecure ? "Sandboxes require HTTPS server URLs" : undefined}
           >
             <Checkbox
               checked={!insecure && selectedServerSet.has(server._id)}
@@ -319,8 +317,7 @@ export function ServerSelectionEditor({
               selectedServerIds,
               optionalServerIds,
             );
-            const cannotMarkOptional =
-              !isOptional && requiredCount === 1;
+            const cannotMarkOptional = !isOptional && requiredCount === 1;
 
             return (
               <Card
@@ -334,7 +331,10 @@ export function ServerSelectionEditor({
                       {server.url ?? "Workspace server"}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-1.5">
-                      <Badge variant="outline" className="text-[11px] font-normal">
+                      <Badge
+                        variant="outline"
+                        className="text-[11px] font-normal"
+                      >
                         {server.useOAuth ? "OAuth" : "Direct"}
                       </Badge>
                       <Badge
@@ -361,7 +361,8 @@ export function ServerSelectionEditor({
                     className="text-xs font-medium leading-snug text-muted-foreground"
                     id={`server-startup-${server._id}`}
                   >
-                    Require server to connect at start or allow tester to add later
+                    Require server to connect at start or allow tester to add
+                    later
                   </p>
                   <ToggleGroup
                     type="single"

@@ -442,7 +442,9 @@ export function ChatInput({
                       className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
                       onClick={() => onAttachSandboxServer(s.serverId)}
                     >
-                      <span className="truncate font-medium">{s.serverName}</span>
+                      <span className="truncate font-medium">
+                        {s.serverName}
+                      </span>
                       {s.useOAuth ? (
                         <span className="shrink-0 text-[10px] text-muted-foreground">
                           OAuth

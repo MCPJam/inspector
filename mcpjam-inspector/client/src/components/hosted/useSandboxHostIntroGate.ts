@@ -38,8 +38,7 @@ export function useSandboxHostIntroGate({
     [servers],
   );
 
-  const nonOAuthFirstVisit =
-    servers.length > 0 && oauthServerCount === 0;
+  const nonOAuthFirstVisit = servers.length > 0 && oauthServerCount === 0;
 
   const [introDismissed, setIntroDismissed] = useState(() => {
     try {
@@ -77,8 +76,7 @@ export function useSandboxHostIntroGate({
   const showWelcome =
     !introDismissed &&
     !hasBusyOAuth &&
-    (nonOAuthFirstVisit ||
-      (oauthServerCount > 0 && onlyNeedsAuthIdle));
+    (nonOAuthFirstVisit || (oauthServerCount > 0 && onlyNeedsAuthIdle));
 
   const showAuthPanel = oauthPending && !showWelcome;
 

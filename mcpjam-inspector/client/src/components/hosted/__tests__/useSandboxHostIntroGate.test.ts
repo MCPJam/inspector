@@ -16,7 +16,13 @@ describe("useSandboxHostIntroGate", () => {
         oauthPending: true,
         hasBusyOAuth: false,
         pendingOAuthServers: [
-          { state: { status: "needs_auth", errorMessage: null, serverUrl: null } },
+          {
+            state: {
+              status: "needs_auth",
+              errorMessage: null,
+              serverUrl: null,
+            },
+          },
         ],
       }),
     );
@@ -34,7 +40,9 @@ describe("useSandboxHostIntroGate", () => {
         oauthPending: true,
         hasBusyOAuth: true,
         pendingOAuthServers: [
-          { state: { status: "verifying", errorMessage: null, serverUrl: null } },
+          {
+            state: { status: "verifying", errorMessage: null, serverUrl: null },
+          },
         ],
       }),
     );
@@ -51,7 +59,13 @@ describe("useSandboxHostIntroGate", () => {
         oauthPending: true,
         hasBusyOAuth: false,
         pendingOAuthServers: [
-          { state: { status: "needs_auth", errorMessage: null, serverUrl: null } },
+          {
+            state: {
+              status: "needs_auth",
+              errorMessage: null,
+              serverUrl: null,
+            },
+          },
         ],
       }),
     );

@@ -44,7 +44,9 @@ const workspaceServers = [
   },
 ];
 
-function minimalSandbox(overrides: Partial<SandboxSettings> = {}): SandboxSettings {
+function minimalSandbox(
+  overrides: Partial<SandboxSettings> = {},
+): SandboxSettings {
   return {
     sandboxId: "sb1",
     workspaceId: "ws",

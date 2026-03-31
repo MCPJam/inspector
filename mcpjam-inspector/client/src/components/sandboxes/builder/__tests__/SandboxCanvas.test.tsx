@@ -152,7 +152,9 @@ describe("SandboxCanvas", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("HTTPS Server")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Add server to workspace/ }));
+    fireEvent.click(
+      screen.getByRole("button", { name: /Add server to workspace/ }),
+    );
     expect(onOpenAdd).toHaveBeenCalledTimes(1);
   });
 });

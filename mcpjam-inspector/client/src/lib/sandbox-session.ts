@@ -56,7 +56,9 @@ export function sandboxEnabledOptionalStorageKey(sandboxToken: string): string {
 }
 
 /** sessionStorage: optional servers enabled in builder preview for a sandbox id. */
-export function sandboxPreviewEnabledOptionalStorageKey(sandboxId: string): string {
+export function sandboxPreviewEnabledOptionalStorageKey(
+  sandboxId: string,
+): string {
   return `sandbox-preview-opt-in:${sandboxId}`;
 }
 

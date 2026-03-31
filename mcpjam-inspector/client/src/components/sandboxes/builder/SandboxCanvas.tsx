@@ -188,7 +188,10 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
                 <Icon className="size-3.5" />
               </div>
               <div className="min-w-0">
-                <p className="truncate text-sm font-semibold" title={data.title}>
+                <p
+                  className="truncate text-sm font-semibold"
+                  title={data.title}
+                >
                   {data.title}
                 </p>
                 {data.subtitle ? (
@@ -357,12 +360,8 @@ function CanvasViewportController({
   containerRef,
   layoutSignature,
 }: CanvasViewportControllerProps) {
-  const {
-    fitBounds,
-    getNode,
-    getNodesBounds,
-    viewportInitialized,
-  } = useReactFlow();
+  const { fitBounds, getNode, getNodesBounds, viewportInitialized } =
+    useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const [containerBox, setContainerBox] = useState<{
     width: number;

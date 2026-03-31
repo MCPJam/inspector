@@ -122,8 +122,7 @@ export function CreateSandboxDialog({
         ? sandbox.servers
             .filter(
               (s) =>
-                s.optional === true &&
-                selectedServerIds.includes(s.serverId),
+                s.optional === true && selectedServerIds.includes(s.serverId),
             )
             .map((s) => s.serverId)
         : [];

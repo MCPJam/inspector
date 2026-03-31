@@ -293,11 +293,12 @@ export function SandboxChatPage({
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       const optionalIdSet = new Set(
-        session.payload.servers.filter((s) => s.optional).map((s) => s.serverId),
+        session.payload.servers
+          .filter((s) => s.optional)
+          .map((s) => s.serverId),
       );
       const next = parsed.filter(
-        (id): id is string =>
-          typeof id === "string" && optionalIdSet.has(id),
+        (id): id is string => typeof id === "string" && optionalIdSet.has(id),
       );
       setEnabledOptionalServerIds((prev) => {
         if (
@@ -701,7 +702,7 @@ export function SandboxChatPage({
           showWelcome={introGate.showWelcome}
           onGetStarted={introGate.dismissIntro}
           welcomeBody={
-            session.payload.welcomeDialog?.enabled ?? true
+            (session.payload.welcomeDialog?.enabled ?? true)
               ? session.payload.welcomeDialog?.body
               : undefined
           }

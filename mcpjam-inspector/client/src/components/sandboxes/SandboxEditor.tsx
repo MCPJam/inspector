@@ -248,17 +248,14 @@ export function SandboxEditor({
         sandboxPreviewEnabledOptionalStorageKey(sandbox.sandboxId),
       );
       if (!raw) {
-        setPreviewEnabledOptionalIds((prev) =>
-          prev.length === 0 ? prev : [],
-        );
+        setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
         return;
       }
       const parsed = JSON.parse(raw) as unknown;
       if (!Array.isArray(parsed)) return;
       const optionalSet = new Set(optionalServerIds);
       const next = parsed.filter(
-        (id): id is string =>
-          typeof id === "string" && optionalSet.has(id),
+        (id): id is string => typeof id === "string" && optionalSet.has(id),
       );
       setPreviewEnabledOptionalIds((prev) => {
         if (
@@ -270,9 +267,7 @@ export function SandboxEditor({
         return next;
       });
     } catch {
-      setPreviewEnabledOptionalIds((prev) =>
-        prev.length === 0 ? prev : [],
-      );
+      setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
     }
   }, [sandbox?.sandboxId, optionalServerIdsKey]);
 
@@ -362,7 +357,12 @@ export function SandboxEditor({
         } satisfies SandboxBootstrapServer;
       })
       .filter((server) => !!server.serverId && !!server.serverName);
-  }, [availableServers, optionalServerIds, sandbox?.servers, selectedServerIds]);
+  }, [
+    availableServers,
+    optionalServerIds,
+    sandbox?.servers,
+    selectedServerIds,
+  ]);
 
   const requiredPreviewServers = useMemo(
     () => selectedPreviewServers.filter((s) => !s.optional),
@@ -400,8 +400,7 @@ export function SandboxEditor({
   }, [activePreviewServers]);
 
   const previewOAuthGateServers = useMemo(
-    () =>
-      activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
+    () => activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
     [activePreviewServers],
   );
 
@@ -1186,7 +1185,7 @@ export function SandboxEditor({
                   showWelcome={introGate.showWelcome}
                   onGetStarted={introGate.dismissIntro}
                   welcomeBody={
-                    sandbox.welcomeDialog?.enabled ?? true
+                    (sandbox.welcomeDialog?.enabled ?? true)
                       ? sandbox.welcomeDialog?.body
                       : undefined
                   }
