@@ -1,10 +1,6 @@
 import type { ReactNode } from "react";
 import { createRef } from "react";
-import {
-  act,
-  render,
-  screen,
-} from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
@@ -159,10 +155,7 @@ function mockElementRect(
   });
 }
 
-function renderInScrollHost(
-  ui: ReactNode,
-  options?: { overflowY?: string },
-) {
+function renderInScrollHost(ui: ReactNode, options?: { overflowY?: string }) {
   const scrollHost = document.createElement("div");
   scrollHost.setAttribute("data-testid", "transcript-scroll-host");
   scrollHost.style.overflowY = options?.overflowY ?? "auto";

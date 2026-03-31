@@ -54,9 +54,7 @@ describe("RunDetailPlaygroundActions", () => {
         missingServers={[]}
       />,
     );
-    await user.click(
-      screen.getByRole("button", { name: /replay this run/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /replay this run/i }));
     expect(onReplayRun).toHaveBeenCalledWith(suite, baseRun);
   });
 });

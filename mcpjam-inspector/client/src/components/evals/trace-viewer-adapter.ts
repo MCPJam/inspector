@@ -726,53 +726,52 @@ function buildOrphanToolMessages(params: {
   toolResultDisplay: ToolResultDisplay;
 }) {
   return params.toolMessages.flatMap((message, messageOffset) =>
-    normalizeMessageContent(message)
-      .flatMap((part, partIndex) => {
-        if (part.type !== "tool-result") return [];
-        const toolName = getToolName(part);
-        const toolCallId =
-          part.toolCallId ??
-          buildSyntheticToolCallId(
-            params.startIndex + messageOffset,
-            partIndex,
-            toolName,
-          );
+    normalizeMessageContent(message).flatMap((part, partIndex) => {
+      if (part.type !== "tool-result") return [];
+      const toolName = getToolName(part);
+      const toolCallId =
+        part.toolCallId ??
+        buildSyntheticToolCallId(
+          params.startIndex + messageOffset,
+          partIndex,
+          toolName,
+        );
 
-        return [
-          {
-            message: {
-              id: `trace-assistant-orphan-${params.startIndex + messageOffset}-${partIndex}`,
-              role: "assistant",
-              parts: buildToolParts({
-                toolCall: {
-                  type: "tool-call",
-                  toolCallId,
-                  toolName,
-                  input: {},
-                },
-                matchedResult: {
-                  ...part,
-                  toolCallId,
-                  toolName,
-                },
-                messageIndex: params.startIndex + messageOffset,
-                partIndex,
-                widgetSnapshotMap: params.widgetSnapshotMap,
-                toolsMetadata: params.toolsMetadata,
-                toolServerMap: params.toolServerMap,
-                connectedServerIds: params.connectedServerIds,
-                toolRenderOverrides: params.toolRenderOverrides,
-                toolResultDisplay: params.toolResultDisplay,
-              }),
-            } satisfies UIMessage,
-            sourceRange: {
-              startIndex: params.startIndex + messageOffset,
-              endIndex: params.startIndex + messageOffset,
-            },
-            focusSourceIndices: [params.startIndex + messageOffset],
-          } satisfies AdaptedUiMessage,
-        ];
-      }),
+      return [
+        {
+          message: {
+            id: `trace-assistant-orphan-${params.startIndex + messageOffset}-${partIndex}`,
+            role: "assistant",
+            parts: buildToolParts({
+              toolCall: {
+                type: "tool-call",
+                toolCallId,
+                toolName,
+                input: {},
+              },
+              matchedResult: {
+                ...part,
+                toolCallId,
+                toolName,
+              },
+              messageIndex: params.startIndex + messageOffset,
+              partIndex,
+              widgetSnapshotMap: params.widgetSnapshotMap,
+              toolsMetadata: params.toolsMetadata,
+              toolServerMap: params.toolServerMap,
+              connectedServerIds: params.connectedServerIds,
+              toolRenderOverrides: params.toolRenderOverrides,
+              toolResultDisplay: params.toolResultDisplay,
+            }),
+          } satisfies UIMessage,
+          sourceRange: {
+            startIndex: params.startIndex + messageOffset,
+            endIndex: params.startIndex + messageOffset,
+          },
+          focusSourceIndices: [params.startIndex + messageOffset],
+        } satisfies AdaptedUiMessage,
+      ];
+    }),
   );
 }
 

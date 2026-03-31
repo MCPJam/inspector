@@ -199,9 +199,7 @@ const iterationListVariants: Variants = {
 
 const iterationItemVariants: Variants = {
   hidden: (i: number) =>
-    i < ITERATION_STAGGER_CAP
-      ? { opacity: 0, x: -6 }
-      : { opacity: 1, x: 0 },
+    i < ITERATION_STAGGER_CAP ? { opacity: 0, x: -6 } : { opacity: 1, x: 0 },
   visible: {
     opacity: 1,
     x: 0,
@@ -506,9 +504,7 @@ export function RunDetailView({
       label: "Passed",
       value: computedStats.passed.toLocaleString(),
       detail:
-        computedStats.passed > 0
-          ? "successful cases"
-          : "no passing cases yet",
+        computedStats.passed > 0 ? "successful cases" : "no passing cases yet",
       valueClass:
         computedStats.passed > 0
           ? EVAL_OUTCOME_STATUS_TEXT_CLASS.passed
@@ -517,8 +513,7 @@ export function RunDetailView({
     {
       label: "Failed",
       value: computedStats.failed.toLocaleString(),
-      detail:
-        computedStats.failed > 0 ? "needs review" : "nothing failed",
+      detail: computedStats.failed > 0 ? "needs review" : "nothing failed",
       valueClass:
         computedStats.failed > 0
           ? EVAL_OUTCOME_STATUS_TEXT_CLASS.failed
@@ -701,7 +696,9 @@ export function RunDetailView({
                             : "hsl(0 84.2% 60.2%)",
                     }}
                   />
-                  <span className="text-[11px] text-foreground">{model.model}</span>
+                  <span className="text-[11px] text-foreground">
+                    {model.model}
+                  </span>
                   <span className="text-[11px] font-mono font-medium text-foreground">
                     {model.passRate}%
                   </span>

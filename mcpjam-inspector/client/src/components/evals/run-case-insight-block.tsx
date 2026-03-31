@@ -61,7 +61,9 @@ export function RunCaseInsightTraceCaption({
     );
   } else if (requested || pending) {
     body = (
-      <span className={cn("flex items-center gap-2 text-xs text-muted-foreground")}>
+      <span
+        className={cn("flex items-center gap-2 text-xs text-muted-foreground")}
+      >
         <Loader2 className="h-3.5 w-3.5 animate-spin shrink-0" />
         Generating insights…
       </span>

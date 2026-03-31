@@ -147,9 +147,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     );
 
     expect(screen.queryByTestId("suite-hero-stats")).toBeNull();
-    expect(
-      screen.getByText(/run it individually/i),
-    ).toBeInTheDocument();
+    expect(screen.getByText(/run it individually/i)).toBeInTheDocument();
   });
 
   it("still mounts TestCasesOverview without caseListInSidebar", () => {

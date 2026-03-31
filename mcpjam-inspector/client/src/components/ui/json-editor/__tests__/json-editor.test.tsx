@@ -128,12 +128,7 @@ describe("JsonEditor", () => {
   describe("collapsible tree view sizing", () => {
     it("applies numeric height to the tree scroll container", () => {
       const { container } = render(
-        <JsonEditor
-          value={{ a: 1 }}
-          viewOnly
-          collapsible
-          height={200}
-        />,
+        <JsonEditor value={{ a: 1 }} viewOnly collapsible height={200} />,
       );
 
       const treeRoot = container.querySelector(".overflow-auto.pl-7");
@@ -191,7 +186,9 @@ describe("JsonEditor", () => {
         />,
       );
 
-      const viewport = container.querySelector(".overflow-auto.overscroll-none");
+      const viewport = container.querySelector(
+        ".overflow-auto.overscroll-none",
+      );
       expect(viewport).toBeTruthy();
       expect(viewport?.className).toContain("items-start");
       expect(viewport?.className).toContain("z-10");

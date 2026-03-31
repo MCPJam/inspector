@@ -42,8 +42,7 @@ export function RunHeaderCompactStats({
   statsOverride?: RunHeaderCompactStatsOverride;
   className?: string;
 }) {
-  const isInProgress =
-    run.status === "running" || run.status === "pending";
+  const isInProgress = run.status === "running" || run.status === "pending";
 
   const durationText =
     run.completedAt && run.createdAt
@@ -53,10 +52,7 @@ export function RunHeaderCompactStats({
   if (isInProgress) {
     return (
       <p
-        className={cn(
-          "text-xs text-muted-foreground tabular-nums",
-          className,
-        )}
+        className={cn("text-xs text-muted-foreground tabular-nums", className)}
       >
         Run in progress
         {statsOverride || run.summary
@@ -70,10 +66,7 @@ export function RunHeaderCompactStats({
   if (!summary || summary.total === 0) {
     return (
       <p
-        className={cn(
-          "text-xs text-muted-foreground tabular-nums",
-          className,
-        )}
+        className={cn("text-xs text-muted-foreground tabular-nums", className)}
       >
         {summary && summary.total === 0
           ? "No cases in run"
@@ -86,12 +79,7 @@ export function RunHeaderCompactStats({
   const pct = normalizePassRatePercent(summary.passRate);
 
   return (
-    <p
-      className={cn(
-        "text-xs text-muted-foreground tabular-nums",
-        className,
-      )}
-    >
+    <p className={cn("text-xs text-muted-foreground tabular-nums", className)}>
       {summary.passed.toLocaleString()} passed ·{" "}
       {summary.failed.toLocaleString()} failed · {pct}% · {durationText}
     </p>

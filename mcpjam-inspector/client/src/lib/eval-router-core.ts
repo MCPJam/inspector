@@ -3,7 +3,10 @@ import type { EvalRoute } from "./eval-route-types";
 
 export type EvalRouterPrefix = "/evals" | "/ci-evals";
 
-function normalizeHashForPrefix(rawHash: string, prefix: EvalRouterPrefix): string {
+function normalizeHashForPrefix(
+  rawHash: string,
+  prefix: EvalRouterPrefix,
+): string {
   let hash = rawHash.replace(/^#/, "");
   if (prefix === "/ci-evals" && !hash.startsWith("/")) {
     hash = `/${hash}`;
@@ -173,10 +176,7 @@ export function createEvalRouter(prefix: EvalRouterPrefix) {
 
   function navigate(route: EvalRoute, options?: { replace?: boolean }) {
     const hash = build(route);
-    if (
-      options?.replace &&
-      (prefix === "/ci-evals" || prefix === "/evals")
-    ) {
+    if (options?.replace && (prefix === "/ci-evals" || prefix === "/evals")) {
       history.replaceState({}, "", `/${hash}`);
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     } else {

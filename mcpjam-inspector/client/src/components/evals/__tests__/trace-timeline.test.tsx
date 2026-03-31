@@ -376,14 +376,12 @@ describe("TraceTimeline detail pane", () => {
     );
 
     const rows = screen.getAllByTestId("trace-row");
-    const llmRows = rows.filter((el) =>
-      el.textContent?.includes("Agent"),
-    );
+    const llmRows = rows.filter((el) => el.textContent?.includes("Agent"));
     expect(llmRows.length).toBeGreaterThanOrEqual(2);
-    expect(llmRows.some((el) => el.textContent?.includes("100 tok"))).toBe(false);
-    const firstLlmRow = llmRows.find(
-      (el) => el.textContent?.includes("Agent"),
+    expect(llmRows.some((el) => el.textContent?.includes("100 tok"))).toBe(
+      false,
     );
+    const firstLlmRow = llmRows.find((el) => el.textContent?.includes("Agent"));
     expect(firstLlmRow).toBeTruthy();
     const firstLlmLabelButton = within(firstLlmRow!).getByTestId(
       "trace-row-label-button",
@@ -395,7 +393,9 @@ describe("TraceTimeline detail pane", () => {
       .find((el) => el.textContent?.includes("500ms"));
     expect(firstLlmDuration).toBeTruthy();
     expect(firstLlmDuration).toHaveTextContent("500ms");
-    expect(rows.some((el) => el.textContent?.includes("openai/gpt-5.4-nano"))).toBe(false);
+    expect(
+      rows.some((el) => el.textContent?.includes("openai/gpt-5.4-nano")),
+    ).toBe(false);
   });
 
   it("shows user message as prompt row label without an inline token subtitle", () => {
@@ -434,10 +434,12 @@ describe("TraceTimeline detail pane", () => {
       .find((el) => el.textContent?.includes('User: "find it"'));
     expect(promptRow).toBeTruthy();
     expect(promptRow!).toHaveClass("trace-waterfall-row-selected");
-    expect(
-      within(promptRow!).getByTestId("trace-row-bar-hit"),
-    ).not.toHaveClass("trace-waterfall-row-selected");
-    const promptLabelButton = within(promptRow!).getByTestId("trace-row-label-button");
+    expect(within(promptRow!).getByTestId("trace-row-bar-hit")).not.toHaveClass(
+      "trace-waterfall-row-selected",
+    );
+    const promptLabelButton = within(promptRow!).getByTestId(
+      "trace-row-label-button",
+    );
     expect(promptLabelButton).not.toHaveTextContent(/50 tok/);
     expect(promptLabelButton).not.toHaveTextContent(/800ms/);
     const promptDuration = screen
@@ -629,7 +631,9 @@ describe("TraceTimeline detail pane", () => {
     render(
       <TraceTimeline
         recordedSpans={spans}
-        transcriptMessages={[{ role: "user", content: "Draw me a simple flowchart" }]}
+        transcriptMessages={[
+          { role: "user", content: "Draw me a simple flowchart" },
+        ]}
         traceStartedAtMs={traceStartedAtMs}
         traceEndedAtMs={traceStartedAtMs + 400}
       />,
@@ -637,7 +641,9 @@ describe("TraceTimeline detail pane", () => {
 
     const promptRow = screen
       .getAllByTestId("trace-row")
-      .find((el) => el.textContent?.includes('User: "Draw me a simple flowchart"'));
+      .find((el) =>
+        el.textContent?.includes('User: "Draw me a simple flowchart"'),
+      );
     expect(promptRow).toBeTruthy();
 
     await user.hover(promptRow!);
@@ -646,21 +652,21 @@ describe("TraceTimeline detail pane", () => {
     expect(hoverContent).toHaveAttribute("data-side", "left");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
-    expect(within(hoverCard).getByTestId("trace-row-hover-start")).toHaveTextContent(
-      new Date(traceStartedAtMs).toLocaleString(),
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-end")).toHaveTextContent(
-      new Date(traceStartedAtMs + 400).toLocaleString(),
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-input-tokens")).toHaveTextContent(
-      "223",
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-output-tokens")).toHaveTextContent(
-      "38",
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-total-tokens")).toHaveTextContent(
-      "261",
-    );
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-start"),
+    ).toHaveTextContent(new Date(traceStartedAtMs).toLocaleString());
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-end"),
+    ).toHaveTextContent(new Date(traceStartedAtMs + 400).toLocaleString());
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-input-tokens"),
+    ).toHaveTextContent("223");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-output-tokens"),
+    ).toHaveTextContent("38");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
+    ).toHaveTextContent("261");
   });
 
   it("shows hover metadata fallbacks when timestamps or token counts are missing", async () => {
@@ -691,21 +697,21 @@ describe("TraceTimeline detail pane", () => {
     await user.hover(toolRow!);
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
-    expect(within(hoverCard).getByTestId("trace-row-hover-start")).toHaveTextContent(
-      "—",
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-end")).toHaveTextContent(
-      "—",
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-input-tokens")).toHaveTextContent(
-      "—",
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-output-tokens")).toHaveTextContent(
-      "—",
-    );
-    expect(within(hoverCard).getByTestId("trace-row-hover-total-tokens")).toHaveTextContent(
-      "—",
-    );
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-start"),
+    ).toHaveTextContent("—");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-end"),
+    ).toHaveTextContent("—");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-input-tokens"),
+    ).toHaveTextContent("—");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-output-tokens"),
+    ).toHaveTextContent("—");
+    expect(
+      within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
+    ).toHaveTextContent("—");
   });
 
   it("LLM span INPUT includes full prior conversation (system + users), not just messages inside messageStartIndex", async () => {
@@ -739,9 +745,7 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    await user.click(
-      screen.getByRole("button", { name: /Agent:/i }),
-    );
+    await user.click(screen.getByRole("button", { name: /Agent:/i }));
     const pane = screen.getByTestId("trace-detail-pane");
     const inputPreview = within(pane).getAllByTestId("json-editor")[0];
     const inputJson = inputPreview.textContent ?? "";
@@ -771,13 +775,17 @@ describe("TraceTimeline detail pane", () => {
     ];
 
     render(
-      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: /Agent:/i }));
     const pane = screen.getByTestId("trace-detail-pane");
-    const inputSection = within(pane).getByText("Input").closest("div")
-      ?.parentElement;
+    const inputSection = within(pane)
+      .getByText("Input")
+      .closest("div")?.parentElement;
     expect(inputSection).toBeTruthy();
     expect(within(inputSection!).getByText("None")).toBeInTheDocument();
   });
@@ -824,7 +832,10 @@ describe("TraceTimeline detail pane", () => {
     ];
 
     render(
-      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
     );
 
     await user.click(screen.getByRole("button", { name: /Agent:/i }));
@@ -866,7 +877,10 @@ describe("TraceTimeline detail pane", () => {
     ];
 
     render(
-      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
     );
 
     expect(
@@ -903,7 +917,10 @@ describe("TraceTimeline detail pane", () => {
     ];
 
     render(
-      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
     );
 
     expect(
@@ -948,7 +965,10 @@ describe("TraceTimeline detail pane", () => {
     ];
 
     render(
-      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
     );
 
     expect(

@@ -11,12 +11,16 @@ export function useRunInsights(
   run: EvalSuiteRun | null,
   options?: { autoRequest?: boolean },
 ) {
-  const hook = useInsight(run, {
-    getStatus: (r) => r.runInsightsStatus,
-    getResult: (r) => r.runInsights,
-    requestMutation: "runInsights:requestRunInsights",
-    cancelMutation: "runInsights:cancelRunInsights",
-  }, options);
+  const hook = useInsight(
+    run,
+    {
+      getStatus: (r) => r.runInsightsStatus,
+      getResult: (r) => r.runInsights,
+      requestMutation: "runInsights:requestRunInsights",
+      cancelMutation: "runInsights:cancelRunInsights",
+    },
+    options,
+  );
 
   // Preserve the original API shape for existing consumers.
   return {

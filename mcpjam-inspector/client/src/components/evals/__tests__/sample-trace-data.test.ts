@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { adaptTraceToUiMessages } from "@/components/evals/trace-viewer-adapter";
-import { SAMPLE_TRACE, SAMPLE_TRACE_VIEWER_MODEL } from "@/components/evals/sample-trace-data";
+import {
+  SAMPLE_TRACE,
+  SAMPLE_TRACE_VIEWER_MODEL,
+} from "@/components/evals/sample-trace-data";
 
 describe("sample trace data", () => {
   it("adapts to UI messages with greet tool and multiple turns", () => {

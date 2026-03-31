@@ -116,7 +116,10 @@ function scrollMessageToViewportPosition(params: {
 }) {
   const viewport = resolveScrollViewport(params.element, params.viewportRef);
   if (!viewport) {
-    params.element.scrollIntoView({ block: "center", behavior: params.behavior });
+    params.element.scrollIntoView({
+      block: "center",
+      behavior: params.behavior,
+    });
     return;
   }
 
@@ -131,7 +134,8 @@ function scrollMessageToViewportPosition(params: {
   );
   const centeredOffset = Math.max(
     0,
-    (viewport.clientHeight - Math.min(targetRect.height, viewport.clientHeight)) /
+    (viewport.clientHeight -
+      Math.min(targetRect.height, viewport.clientHeight)) /
       2,
   );
   const shouldTopAnchor =
@@ -139,7 +143,10 @@ function scrollMessageToViewportPosition(params: {
   const desiredTop =
     viewportRect.top + (shouldTopAnchor ? topInset : centeredOffset);
   const correction = targetRect.top - desiredTop;
-  const maxScrollTop = Math.max(0, viewport.scrollHeight - viewport.clientHeight);
+  const maxScrollTop = Math.max(
+    0,
+    viewport.scrollHeight - viewport.clientHeight,
+  );
   const nextScrollTop = Math.min(
     maxScrollTop,
     Math.max(0, viewport.scrollTop + correction),

@@ -81,9 +81,7 @@ describe("CommitDetailView", () => {
       />,
     );
 
-    expect(
-      screen.getByText(/Select a suite from the sidebar/i),
-    ).toBeVisible();
+    expect(screen.getByText(/Select a suite from the sidebar/i)).toBeVisible();
     expect(screen.queryByTestId("run-detail-view")).not.toBeInTheDocument();
     expect(routerMocks.navigateToCiEvalsRoute).not.toHaveBeenCalled();
   });
@@ -101,9 +99,7 @@ describe("CommitDetailView", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("heading", { name: /Run run-1/ }),
-    ).toBeVisible();
+    expect(screen.getByRole("heading", { name: /Run run-1/ })).toBeVisible();
     expect(screen.getByTestId("run-detail-view")).toBeVisible();
     expect(screen.queryByText(/Suites ·/)).not.toBeInTheDocument();
     expect(screen.queryByText("Commit insights")).not.toBeInTheDocument();

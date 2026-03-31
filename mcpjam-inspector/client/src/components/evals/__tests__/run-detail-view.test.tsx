@@ -136,9 +136,9 @@ describe("RunDetailView", () => {
     expect(
       screen.getByRole("heading", { name: "Avg tokens by test" }),
     ).toBeVisible();
-    expect(document.querySelectorAll('[data-slot="chart"]').length).toBeGreaterThanOrEqual(
-      2,
-    );
+    expect(
+      document.querySelectorAll('[data-slot="chart"]').length,
+    ).toBeGreaterThanOrEqual(2);
   });
 
   it("does not render compact run stats in the run insights header", () => {
@@ -320,9 +320,7 @@ describe("RunDetailView", () => {
       />,
     );
     const caption = screen.getByTestId("run-case-insight-trace-caption");
-    expect(
-      within(caption).getByText("Generating insights…"),
-    ).toBeVisible();
+    expect(within(caption).getByText("Generating insights…")).toBeVisible();
   });
 
   it("shows failed generation copy on case block when insights failed", () => {

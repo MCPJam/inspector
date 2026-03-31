@@ -273,7 +273,9 @@ export function SuiteHeroStats({
                     <RotateCw
                       className={`h-4 w-4 ${isReplayingLatestRun ? "animate-spin" : ""}`}
                     />
-                    {isReplayingLatestRun ? "Replaying..." : "Replay latest run"}
+                    {isReplayingLatestRun
+                      ? "Replaying..."
+                      : "Replay latest run"}
                   </Button>
                 </span>
               </TooltipTrigger>

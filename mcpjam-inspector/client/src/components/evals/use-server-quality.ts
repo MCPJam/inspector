@@ -9,12 +9,16 @@ export function useServerQuality(
   run: EvalSuiteRun | null,
   options?: { autoRequest?: boolean },
 ) {
-  const hook = useInsight(run, {
-    getStatus: (r) => r.serverQualityStatus,
-    getResult: (r) => r.serverQuality,
-    requestMutation: "serverQuality:requestServerQuality",
-    cancelMutation: "serverQuality:cancelServerQuality",
-  }, options);
+  const hook = useInsight(
+    run,
+    {
+      getStatus: (r) => r.serverQualityStatus,
+      getResult: (r) => r.serverQuality,
+      requestMutation: "serverQuality:requestServerQuality",
+      cancelMutation: "serverQuality:cancelServerQuality",
+    },
+    options,
+  );
 
   return {
     canRequest: hook.canRequest,
