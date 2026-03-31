@@ -290,7 +290,14 @@ export function TraceViewer({
   const compactChrome = chromeDensity === "compact";
 
   return (
-    <div className={compactChrome ? "space-y-2" : "space-y-3"}>
+    <div
+      className={cn(
+        compactChrome ? "space-y-2" : "space-y-3",
+        viewMode === "tools" &&
+          hasEvalToolCalls &&
+          "flex min-h-0 flex-1 flex-col",
+      )}
+    >
       <div
         className={cn(
           "rounded-lg border border-border/50 bg-muted/15",
@@ -541,11 +548,11 @@ export function TraceViewer({
 
       {viewMode === "tools" && hasEvalToolCalls ? (
         <div
-          className="grid gap-3 md:grid-cols-2"
+          className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row"
           data-testid="trace-viewer-tools-compare"
         >
-          <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
-            <div className="text-xs font-medium text-muted-foreground uppercase">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+            <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
               Expected
             </div>
             {expectedToolCalls.length === 0 ? (
@@ -553,20 +560,21 @@ export function TraceViewer({
                 No expected tool calls
               </div>
             ) : (
-              <div className="overflow-hidden rounded-md border border-border/30 bg-background/50">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
                 <JsonEditor
                   value={expectedToolCalls}
                   viewOnly
                   collapsible
                   defaultExpandDepth={2}
                   collapseStringsAfterLength={160}
-                  className="min-h-[160px] max-h-72"
+                  height="100%"
+                  className="min-h-0"
                 />
               </div>
             )}
           </div>
-          <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
-            <div className="text-xs font-medium text-muted-foreground uppercase">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+            <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
               Actual
             </div>
             {actualToolCalls.length === 0 ? (
@@ -574,14 +582,15 @@ export function TraceViewer({
                 No tool calls made
               </div>
             ) : (
-              <div className="overflow-hidden rounded-md border border-border/30 bg-background/50">
+              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
                 <JsonEditor
                   value={actualToolCalls}
                   viewOnly
                   collapsible
                   defaultExpandDepth={2}
                   collapseStringsAfterLength={160}
-                  className="min-h-[160px] max-h-72"
+                  height="100%"
+                  className="min-h-0"
                 />
               </div>
             )}

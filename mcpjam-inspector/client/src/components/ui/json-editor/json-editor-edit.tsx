@@ -611,7 +611,7 @@ export function JsonEditorEdit({
                 "relative self-start flex-1 min-w-0",
                 readOnlyAutoHeight
                   ? "overflow-visible"
-                  : "overflow-x-auto overflow-y-hidden",
+                  : "overflow-x-auto overflow-y-clip",
               )}
             >
               {/* Read-only mode: Use JsonHighlighter with per-value copy */}

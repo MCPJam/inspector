@@ -125,6 +125,33 @@ describe("JsonEditor", () => {
     });
   });
 
+  describe("collapsible tree view sizing", () => {
+    it("applies numeric height to the tree scroll container", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ a: 1 }}
+          viewOnly
+          collapsible
+          height={200}
+        />,
+      );
+
+      const treeRoot = container.querySelector(".overflow-auto.pl-7");
+      expect(treeRoot).toBeTruthy();
+      expect((treeRoot as HTMLElement).style.height).toBe("200px");
+    });
+
+    it("defaults collapsible view height to 100% on the tree container", () => {
+      const { container } = render(
+        <JsonEditor value={{ a: 1 }} viewOnly collapsible />,
+      );
+
+      const treeRoot = container.querySelector(".overflow-auto.pl-7");
+      expect(treeRoot).toBeTruthy();
+      expect((treeRoot as HTMLElement).style.height).toBe("100%");
+    });
+  });
+
   describe("expandJsonStrings", () => {
     it("expands stringified JSON in viewOnly mode", () => {
       render(
@@ -183,6 +210,26 @@ describe("JsonEditor", () => {
 
       const pre = container.querySelector("pre");
       expect(pre?.className).not.toContain("overflow-auto");
+    });
+
+    it("read-only inner JSON column uses overflow-y-clip for vertical wheel scroll chaining", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ items: [{ id: 1 }] }}
+          viewOnly
+          height={200}
+        />,
+      );
+
+      const innerCol = container.querySelector(
+        ".overflow-x-auto.overflow-y-clip",
+      );
+      expect(innerCol).toBeTruthy();
+      expect(innerCol?.className).not.toContain("overflow-y-hidden");
+
+      expect(
+        container.querySelector(".overflow-y-auto.overscroll-none"),
+      ).toBeTruthy();
     });
 
     it("can disable wrapping in view-only mode", () => {

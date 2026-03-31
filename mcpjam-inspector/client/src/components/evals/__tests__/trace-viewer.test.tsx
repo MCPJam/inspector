@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { TraceViewer } from "../trace-viewer";
 
@@ -390,18 +390,20 @@ describe("TraceViewer", () => {
   it("renders prompt-grouped waterfall rows with detail pane", async () => {
     render(<TraceViewer trace={waterfallTrace} />);
 
-    expect((await screen.findAllByText("Prompt 1")).length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Prompt 2").length).toBeGreaterThan(0);
+    // Prompt rows show user message as primary label, with "Prompt N" in subtitle
+    expect((await screen.findAllByText(/User: "Need docs"/)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/User: "Summarize it"/).length).toBeGreaterThan(0);
     expect(screen.getByTestId("trace-detail-pane")).toBeInTheDocument();
 
     const waterfall = await getTraceWaterfallRegion();
     expect(
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
     ).toBeInTheDocument();
-    expect(screen.getAllByText("Model response").length).toBeGreaterThanOrEqual(
-      2,
-    );
-    expect(screen.getAllByText("Prompt 2 · Step 1").length).toBeGreaterThan(0);
+    await waitFor(() => {
+      const rows = screen.getAllByTestId("trace-row");
+      const llmRows = rows.filter((el) => el.textContent?.includes("LLM ·"));
+      expect(llmRows.length).toBeGreaterThanOrEqual(2);
+    });
 
     fireEvent.click(
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
@@ -429,7 +431,7 @@ describe("TraceViewer", () => {
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
     ).toBeInTheDocument();
     expect(screen.queryByText("Generation error")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Prompt 1").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/User: "Need docs"/).length).toBeGreaterThan(0);
   });
 
   it("Reset restores timeline filter to All and shows hidden rows again", async () => {
@@ -465,7 +467,14 @@ describe("TraceViewer", () => {
     await user.click(
       within(waterfall).getByRole("button", { name: /Tool · read_docs/i }),
     );
-    await user.click(screen.getByTestId("trace-detail-copy-span-id"));
+    const detail = screen.getByTestId("trace-detail-pane");
+    await user.click(
+      within(detail).getByRole("button", { name: /^Advanced$/i }),
+    );
+    const copyBtn = await within(detail).findByTestId(
+      "trace-detail-copy-span-id",
+    );
+    await user.click(copyBtn);
     expect(writeText).toHaveBeenCalledWith("p0-tool0");
     vi.unstubAllGlobals();
   });

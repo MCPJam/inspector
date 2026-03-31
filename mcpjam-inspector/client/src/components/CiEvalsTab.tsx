@@ -27,8 +27,6 @@ import {
   formatRunId,
   groupRunsByCommit,
 } from "./evals/helpers";
-import { getSuiteReplayEligibility } from "./evals/replay-eligibility";
-import { RunDetailPlaygroundActions } from "./evals/run-detail-playground-actions";
 import { RunIterationsSidebar } from "./evals/run-detail-view";
 import { useRunDetailData } from "./evals/use-suite-data";
 import { useEvalMutations } from "./evals/use-eval-mutations";
@@ -210,69 +208,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
   });
-
-  const ciRunDetailSidebarFooter = useMemo(() => {
-    if (
-      route.type !== "run-detail" ||
-      !selectedSuite ||
-      !selectedRunForSidebar
-    ) {
-      return null;
-    }
-    const latestRun =
-      [...queries.runsForSelectedSuite].sort((a, b) => {
-        const aTime = a.completedAt ?? a.createdAt ?? 0;
-        const bTime = b.completedAt ?? b.createdAt ?? 0;
-        return bTime - aTime;
-      })[0] ?? null;
-    const { canRunNow, hasServersConfigured, missingServers } =
-      getSuiteReplayEligibility({
-        suiteServers: selectedSuite.environment?.servers || [],
-        connectedServerNames,
-        latestRun,
-      });
-    const readOnlyConfig = !HOSTED_MODE;
-    return (
-      <div className="flex flex-col gap-2">
-        <RunDetailPlaygroundActions
-          suite={selectedSuite}
-          selectedRun={selectedRunForSidebar}
-          readOnlyConfig={readOnlyConfig}
-          onReplayRun={handlers.handleReplayRun}
-          onRerun={handlers.handleRerun}
-          onCancelRun={handlers.handleCancelRun}
-          rerunningSuiteId={handlers.rerunningSuiteId}
-          replayingRunId={handlers.replayingRunId}
-          cancellingRunId={handlers.cancellingRunId}
-          canRerun={canRunNow}
-          hasServersConfigured={hasServersConfigured}
-          missingServers={missingServers}
-          className="w-full flex-col items-stretch"
-        />
-        <button
-          type="button"
-          onClick={() =>
-            navigateToCiEvalsRoute({
-              type: "run-detail",
-              suiteId: selectedSuite._id,
-              runId: route.runId,
-              insightsFocus: true,
-            })
-          }
-          className="text-left text-[10px] font-medium text-primary hover:underline"
-        >
-          Full run insights
-        </button>
-      </div>
-    );
-  }, [
-    route,
-    selectedSuite,
-    selectedRunForSidebar,
-    connectedServerNames,
-    queries.runsForSelectedSuite,
-    handlers,
-  ]);
 
   const suiteAggregate = useMemo(() => {
     if (!selectedSuite || !queries.suiteDetails) return null;
@@ -548,7 +483,22 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 });
               }}
               runForOverview={selectedRunForSidebar}
-              runOverviewExtra={ciRunDetailSidebarFooter}
+              onOpenRunInsights={
+                route.type === "run-detail"
+                  ? () =>
+                      navigateToCiEvalsRoute({
+                        type: "run-detail",
+                        suiteId: route.suiteId,
+                        runId: route.runId,
+                        insightsFocus: true,
+                      })
+                  : undefined
+              }
+              runInsightsSelected={
+                route.type === "run-detail"
+                  ? Boolean(route.insightsFocus && !route.iteration)
+                  : false
+              }
               onEditTestCase={(testCaseId) =>
                 navigateToCiEvalsRoute({
                   type: "test-edit",

@@ -1,10 +1,4 @@
-import { ChevronDown } from "lucide-react";
 import { ChartContainer, ChartTooltip } from "@/components/ui/chart";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
 import { BarChart, Bar, CartesianGrid, XAxis, YAxis } from "recharts";
 import { formatDuration } from "./helpers";
 
@@ -161,7 +155,7 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
   );
 }
 
-/** In-card collapsible charts (default collapsed). Full-width stacked charts when expanded. */
+/** Railway-style chart cards — always visible, side-by-side grid. */
 export function RunMetricsBarCharts({
   durationData,
   tokensData,
@@ -171,34 +165,32 @@ export function RunMetricsBarCharts({
   const showTokens = hasTokenData;
   if (!showDuration && !showTokens) return null;
 
+  const singleChart = (showDuration ? 1 : 0) + (showTokens ? 1 : 0) === 1;
+
   return (
-    <div className="mt-3 pt-3 border-t border-border/50">
-      <Collapsible defaultOpen={false} className="group">
-        <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-md py-2 -mx-1 px-1 text-left outline-none transition-colors hover:bg-muted/40 focus-visible:ring-2 focus-visible:ring-ring/60">
-          <span className="text-xs font-medium text-muted-foreground">
-            Duration and token charts
-          </span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground/70 transition-transform group-data-[state=closed]:-rotate-90" />
-        </CollapsibleTrigger>
-        <CollapsibleContent className="pt-4 space-y-10">
-          {showDuration && (
-            <div className="min-w-0 w-full">
-              <h3 className="text-sm font-semibold text-foreground mb-3">
-                Avg duration by test
-              </h3>
-              <DurationBarBlock data={durationData} />
-            </div>
-          )}
-          {showTokens && (
-            <div className="min-w-0 w-full">
-              <h3 className="text-sm font-semibold text-foreground mb-3">
-                Avg tokens by test
-              </h3>
-              <TokensBarBlock data={tokensData} />
-            </div>
-          )}
-        </CollapsibleContent>
-      </Collapsible>
+    <div
+      className={
+        singleChart
+          ? "mt-4 grid grid-cols-1 gap-3"
+          : "mt-4 grid grid-cols-1 gap-3 lg:grid-cols-2"
+      }
+    >
+      {showDuration && (
+        <div className="rounded-lg border bg-card p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-3">
+            Avg duration by test
+          </h3>
+          <DurationBarBlock data={durationData} />
+        </div>
+      )}
+      {showTokens && (
+        <div className="rounded-lg border bg-card p-4">
+          <h3 className="text-sm font-semibold text-foreground mb-3">
+            Avg tokens by test
+          </h3>
+          <TokensBarBlock data={tokensData} />
+        </div>
+      )}
     </div>
   );
 }

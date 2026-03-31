@@ -263,6 +263,7 @@ export function useEvalHandlers({
             type: "run-detail",
             suiteId: result.suiteId,
             runId: result.runId,
+            insightsFocus: true,
           });
         }
 

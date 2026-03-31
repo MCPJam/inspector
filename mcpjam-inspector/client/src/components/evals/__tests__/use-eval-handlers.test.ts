@@ -283,6 +283,7 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-123",
         runId: "run-replay",
+        insightsFocus: true,
       });
     });
 
@@ -345,6 +346,7 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-123",
         runId: "run-replay",
+        insightsFocus: true,
       });
     });
 
@@ -639,6 +641,7 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-456",
         runId: "run-new",
+        insightsFocus: true,
       });
     });
   });

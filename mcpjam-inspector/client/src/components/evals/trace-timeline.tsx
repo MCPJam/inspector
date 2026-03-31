@@ -73,6 +73,8 @@ type PromptRow = {
   key: string;
   promptIndex: number;
   label: string;
+  /** User message preview when available, e.g. `User: "Draw me a flowchart..."` */
+  conversationLabel?: string;
   startMs: number;
   endMs: number;
   messageStartIndex?: number;
@@ -136,6 +138,13 @@ function formatAxisLabel(ms: number): string {
 function formatOffset(ms: number): string {
   return `+${formatAxisLabel(ms)}`;
 }
+
+/** Hover hint: waterfall "steps" are span categories, not chat bubbles. */
+const TRACE_PROMPT_STEPS_TITLE =
+  "Trace step spans for this turn (recorder metadata). Transcript message count in Chat can differ.";
+
+const TRACE_STEP_COUNT_BADGE_TITLE =
+  "Recorded step spans (workflow grouping), not transcript messages.";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -649,6 +658,87 @@ function promptPreviewForLlmSpan(
   return undefined;
 }
 
+/** Best-effort one-line preview of the model's output text for an LLM span. */
+function responsePreviewForLlmSpan(
+  messages: TranscriptMessage[],
+  span: EvalTraceSpan,
+): string | undefined {
+  if (!messages.length) return undefined;
+  const range = getTranscriptRange(span.messageStartIndex, span.messageEndIndex);
+  if (!range) return undefined;
+  const slice = messages.slice(range.startIndex, range.endIndex + 1);
+  for (let i = slice.length - 1; i >= 0; i--) {
+    const m = slice[i]!;
+    if (m.role === "assistant") {
+      const t = flattenTextFromMessage(m);
+      if (t) return truncateRowSubtitle(t);
+    }
+  }
+  return undefined;
+}
+
+/** Best-effort one-line preview of the user prompt for a prompt group's message range. */
+function promptPreviewForRange(
+  messages: TranscriptMessage[],
+  startIndex?: number,
+  endIndex?: number,
+): string | undefined {
+  if (!messages.length) return undefined;
+  const range = getTranscriptRange(startIndex, endIndex);
+  const slice = range
+    ? messages.slice(range.startIndex, range.endIndex + 1)
+    : messages;
+  for (const m of slice) {
+    if (m.role === "user") {
+      const t = flattenTextFromMessage(m);
+      if (t) return truncateRowSubtitle(t);
+    }
+  }
+  // Spans often start at the assistant reply; look backwards for the user message
+  if (range && range.startIndex > 0) {
+    for (let i = range.startIndex - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === "user") {
+        const t = flattenTextFromMessage(m);
+        if (t) return truncateRowSubtitle(t);
+      }
+      // Stop searching once we hit another assistant message (prior turn)
+      if (m.role === "assistant") break;
+    }
+  }
+  return undefined;
+}
+
+/** Full (non-truncated) user prompt text for the detail pane. */
+function fullUserPromptForRange(
+  messages: TranscriptMessage[],
+  startIndex?: number,
+  endIndex?: number,
+): string | undefined {
+  if (!messages.length) return undefined;
+  const range = getTranscriptRange(startIndex, endIndex);
+  const slice = range
+    ? messages.slice(range.startIndex, range.endIndex + 1)
+    : messages;
+  for (const m of slice) {
+    if (m.role === "user") {
+      const t = flattenTextFromMessage(m);
+      if (t) return t;
+    }
+  }
+  if (range && range.startIndex > 0) {
+    for (let i = range.startIndex - 1; i >= 0; i--) {
+      const m = messages[i]!;
+      if (m.role === "user") {
+        const t = flattenTextFromMessage(m);
+        if (t) return t;
+      }
+      if (m.role === "assistant") break;
+    }
+  }
+  return undefined;
+}
+
 function toolSubtitleFromTranscript(
   messages: TranscriptMessage[],
   span: EvalTraceSpan,
@@ -745,46 +835,60 @@ function deriveSpanLabel(
   }
 
   if (span.category === "llm") {
-    const preview = promptPreviewForLlmSpan(transcriptMessages, span);
+    const responsePreview = responsePreviewForLlmSpan(transcriptMessages, span);
     const genericLlmName =
       !rawName ||
       /^assistant$/i.test(rawName) ||
       /^llm$/i.test(rawName) ||
       /^model$/i.test(rawName) ||
-      rawName === "Model response";
-    const title = genericLlmName
-      ? "Model response"
+      rawName === "Model response" ||
+      /·\s*response$/i.test(rawName);
+    const baseName = genericLlmName
+      ? "LLM call"
       : truncateRowSubtitle(rawName, 64);
-    if (preview) {
+    if (responsePreview) {
       return {
-        title,
-        subtitle: modelHint ? `${preview} · ${modelHint}` : preview,
+        title: `${baseName}: "${responsePreview}"`,
+        subtitle: modelHint,
       };
     }
-    return {
-      title,
-      subtitle: modelHint ?? `Prompt ${promptIndex + 1}`,
-    };
+    return { title: baseName, subtitle: modelHint };
   }
 
   if (span.category === "tool") {
     const name = (span.toolName ?? span.name).trim() || "tool";
     const title = `Tool · ${name}`;
     const toolSub = toolSubtitleFromTranscript(transcriptMessages, span);
-    if (toolSub) {
+    // Skip trivial subtitles like "{}" for empty tool inputs
+    const isTrivialSub = !toolSub || toolSub === "{}" || toolSub === "None";
+    if (toolSub && !isTrivialSub) {
       return { title, subtitle: toolSub };
+    }
+    // When input is empty/trivial, try to show output summary instead
+    if (isTrivialSub) {
+      const data = extractToolData(
+        transcriptMessages,
+        span.toolCallId,
+        span.toolName ?? span.name,
+      );
+      if (data.output != null) {
+        const outputPreview = summarizeValue(data.output);
+        if (outputPreview && outputPreview !== "None" && outputPreview !== "{}") {
+          return { title, subtitle: truncateRowSubtitle(outputPreview) };
+        }
+      }
     }
     if (typeof span.stepIndex === "number") {
       return {
         title,
         subtitle: modelHint
           ? `${modelHint} · step ${span.stepIndex + 1}`
-          : `Step ${span.stepIndex + 1}`,
+          : `step ${span.stepIndex + 1}`,
       };
     }
     return {
       title,
-      subtitle: modelHint ?? `Prompt ${promptIndex + 1}`,
+      subtitle: modelHint,
     };
   }
 
@@ -792,8 +896,10 @@ function deriveSpanLabel(
     title: span.name,
     subtitle:
       typeof span.stepIndex === "number"
-        ? `Prompt ${promptIndex + 1} · Step ${span.stepIndex + 1}`
-        : `Prompt ${promptIndex + 1}`,
+        ? modelHint
+          ? `${modelHint} · step ${span.stepIndex + 1}`
+          : `step ${span.stepIndex + 1}`
+        : modelHint,
   };
 }
 
@@ -994,9 +1100,13 @@ function TimelineDetailPane({
   const { startMs, endMs, durationMs } = getRowTiming(row);
   const spanLabel =
     row.kind === "span" ? deriveSpanLabel(row, transcriptMessages) : null;
-  const label = row.kind === "prompt" ? row.label : spanLabel!.title;
+  const label = row.kind === "prompt" ? (row.conversationLabel ?? row.label) : spanLabel!.title;
   const subtitle =
-    row.kind === "prompt" ? formatOffset(row.startMs) : spanLabel!.subtitle;
+    row.kind === "prompt"
+      ? row.conversationLabel
+        ? `${row.label} · ${formatOffset(row.startMs)}`
+        : formatOffset(row.startMs)
+      : spanLabel!.subtitle;
   const status =
     row.kind === "prompt"
       ? row.hasAnyFailure
@@ -1053,6 +1163,16 @@ function TimelineDetailPane({
             ? row.span.name
             : null;
 
+  // Extract the full user prompt text for the detail pane (not truncated)
+  const promptUserMessage =
+    row.kind === "prompt"
+      ? fullUserPromptForRange(
+          transcriptMessages,
+          row.messageStartIndex,
+          row.messageEndIndex,
+        )
+      : undefined;
+
   const showIoTabs = row.kind === "span";
 
   async function handleCopySpanId(spanId: string) {
@@ -1093,7 +1213,7 @@ function TimelineDetailPane({
                   aria-label="Error"
                 />
               ) : null}
-              {row.kind === "span" && row.span.modelId ? (
+              {row.kind === "span" && row.span.modelId && row.span.category !== "llm" ? (
                 <Badge
                   variant="outline"
                   className="max-w-[min(100%,14rem)] truncate text-[10px] font-medium text-foreground"
@@ -1102,17 +1222,9 @@ function TimelineDetailPane({
                   {row.span.modelId}
                 </Badge>
               ) : null}
-              {row.kind === "span" && row.span.toolName ? (
-                <span className="inline-flex flex-wrap items-center gap-x-1.5 text-[11px] text-muted-foreground">
-                  <Wrench className="h-3 w-3 shrink-0 text-amber-600 dark:text-amber-400" />
-                  <span className="font-medium text-foreground">
-                    {row.span.toolName}
-                  </span>
-                  {row.span.serverId ? (
-                    <span className="text-muted-foreground">
-                      · {row.span.serverId}
-                    </span>
-                  ) : null}
+              {row.kind === "span" && row.span.category === "tool" && row.span.serverId ? (
+                <span className="text-[11px] text-muted-foreground">
+                  {row.span.serverId}
                 </span>
               ) : null}
             </div>
@@ -1120,79 +1232,35 @@ function TimelineDetailPane({
               <p className="text-xs text-muted-foreground">{subtitle}</p>
             ) : null}
 
-            <div className="flex flex-wrap items-center gap-1.5">
-              <Badge variant="secondary" className="tabular-nums font-normal">
-                <span className="font-medium">{formatDuration(durationMs)}</span>
-                <span className="text-muted-foreground">
-                  {" "}
-                  · {formatOffset(startMs)} – {formatOffset(endMs)}
-                </span>
-              </Badge>
+            <div className="text-xs tabular-nums text-muted-foreground">
+              <span className="font-medium text-foreground">{formatDuration(durationMs)}</span>
+              {" · "}{formatOffset(startMs)} – {formatOffset(endMs)}
               {row.kind === "prompt" ? (
                 <>
-                  <Badge
-                    variant="outline"
-                    className="border-slate-400/50 bg-slate-500/5 text-[10px] font-normal text-slate-800 dark:text-slate-200"
-                  >
-                    {row.counts.step} step{row.counts.step === 1 ? "" : "s"}
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className="border-blue-400/50 bg-blue-500/5 text-[10px] font-normal text-blue-800 dark:text-blue-200"
-                  >
-                    {row.counts.llm} LLM
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className="border-amber-400/50 bg-amber-500/5 text-[10px] font-normal text-amber-900 dark:text-amber-200"
-                  >
-                    {row.counts.tool} tool{row.counts.tool === 1 ? "" : "s"}
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className="border-red-400/50 bg-red-500/5 text-[10px] font-normal text-red-800 dark:text-red-200"
-                  >
-                    {row.counts.error} error{row.counts.error === 1 ? "" : "s"}
-                  </Badge>
+                  {" · "}{row.counts.llm} LLM · {row.counts.tool} tool{row.counts.tool === 1 ? "" : "s"}
                 </>
               ) : hasTokenStats ? (
                 <>
-                  {typeof row.span.inputTokens === "number" ? (
-                    <Badge variant="outline" className="tabular-nums text-[10px] font-normal">
-                      {row.span.inputTokens} in
-                    </Badge>
-                  ) : null}
-                  {typeof row.span.outputTokens === "number" ? (
-                    <Badge variant="outline" className="tabular-nums text-[10px] font-normal">
-                      {row.span.outputTokens} out
-                    </Badge>
-                  ) : null}
-                  {typeof row.span.totalTokens === "number" ? (
-                    <Badge variant="outline" className="tabular-nums text-[10px] font-normal">
-                      {row.span.totalTokens} total
-                    </Badge>
-                  ) : null}
+                  {typeof row.span.inputTokens === "number" ? ` · ${row.span.inputTokens} in` : ""}
+                  {typeof row.span.outputTokens === "number" ? ` → ${row.span.outputTokens} out` : ""}
+                  {typeof row.span.totalTokens === "number" ? ` (${row.span.totalTokens} total)` : ""}
                 </>
               ) : null}
             </div>
-
-            {row.kind === "span" ? (
-              <Badge
-                variant="outline"
-                data-testid="trace-detail-copy-span-id"
-                className="max-w-full cursor-pointer gap-1 font-mono text-[10px] font-normal"
-                title={row.span.id}
-                onClick={() => void handleCopySpanId(row.span.id)}
-              >
-                <Copy className="size-3 shrink-0" aria-hidden />
-                <span className="min-w-0 truncate">
-                  {truncateIdForBadge(row.span.id)}
-                </span>
-              </Badge>
-            ) : null}
           </div>
         </div>
       </div>
+
+      {row.kind === "prompt" && promptUserMessage ? (
+        <div className="space-y-1.5">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            User prompt
+          </div>
+          <div className="max-h-36 overflow-auto rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs leading-relaxed text-foreground">
+            {promptUserMessage}
+          </div>
+        </div>
+      ) : null}
 
       {showIoTabs ? (
         <Tabs defaultValue="input" className="w-full gap-3">
@@ -1297,6 +1365,25 @@ function TimelineDetailPane({
           <ChevronDown className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[state=open]:rotate-180" />
         </CollapsibleTrigger>
         <CollapsibleContent className="space-y-2 border-t border-border/40 px-3 py-3 text-xs">
+          {row.kind === "span" ? (
+            <div>
+              <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                Span ID
+              </div>
+              <Badge
+                variant="outline"
+                data-testid="trace-detail-copy-span-id"
+                className="mt-1 max-w-full cursor-pointer gap-1 font-mono text-[10px] font-normal"
+                title={row.span.id}
+                onClick={() => void handleCopySpanId(row.span.id)}
+              >
+                <Copy className="size-3 shrink-0" aria-hidden />
+                <span className="min-w-0 truncate">
+                  {truncateIdForBadge(row.span.id)}
+                </span>
+              </Badge>
+            </div>
+          ) : null}
           <div>
             <div className="text-[10px] uppercase tracking-wide text-muted-foreground">
               Transcript indices
@@ -1480,6 +1567,17 @@ export function TraceTimeline({
         };
       }
 
+      // Skip overhead LLM spans (framework routing/dispatch, no actual generation)
+      const isOverheadLlm =
+        node.span.category === "llm" &&
+        typeof node.span.totalTokens !== "number" &&
+        typeof node.span.inputTokens !== "number" &&
+        typeof node.span.outputTokens !== "number" &&
+        node.span.endMs - node.span.startMs < 50;
+      if (isOverheadLlm) {
+        return { hasVisibleContent: false, rows: [] };
+      }
+
       const showSelf = rowSelfVisible(node.span) || hasVisibleChildren;
 
       if (!showSelf) {
@@ -1524,11 +1622,20 @@ export function TraceTimeline({
         spanIndicatesTranscriptFailure(span, transcriptMessages),
       );
 
+      const userPreview = promptPreviewForRange(
+        transcriptMessages,
+        group.messageStartIndex,
+        group.messageEndIndex,
+      );
+
       nextRows.push({
         kind: "prompt",
         key: group.key,
         promptIndex: group.promptIndex,
         label: group.label,
+        conversationLabel: userPreview
+          ? `User: "${userPreview}"`
+          : undefined,
         startMs: group.startMs,
         endMs: group.endMs,
         messageStartIndex: group.messageStartIndex,
@@ -1841,10 +1948,14 @@ export function TraceTimeline({
                   ? deriveSpanLabel(row, transcriptMessages)
                   : null;
               const label =
-                row.kind === "prompt" ? row.label : derivedLabel!.title;
+                row.kind === "prompt"
+                  ? (row.conversationLabel ?? row.label)
+                  : derivedLabel!.title;
               const subtitle =
                 row.kind === "prompt"
-                  ? `${formatOffset(row.startMs)} · ${row.counts.step} step${row.counts.step === 1 ? "" : "s"}`
+                  ? row.conversationLabel
+                    ? `${row.label} · ${row.counts.llm} LLM · ${row.counts.tool} tool${row.counts.tool === 1 ? "" : "s"} · ${formatDuration(row.endMs - row.startMs)}`
+                    : `${formatOffset(row.startMs)} · ${row.counts.llm} LLM · ${row.counts.tool} tool${row.counts.tool === 1 ? "" : "s"}`
                   : derivedLabel!.subtitle;
               const canToggle = row.kind === "prompt" ? true : row.hasChildren;
               const gridRow = rowIndex + 2;
@@ -1916,6 +2027,11 @@ export function TraceTimeline({
                       type="button"
                       data-testid="trace-row-label-button"
                       className="min-w-0 flex-1 text-left"
+                      title={
+                        row.kind === "prompt"
+                          ? TRACE_PROMPT_STEPS_TITLE
+                          : undefined
+                      }
                       onClick={() => setSelectedRowKey(row.key)}
                     >
                       <div className="flex flex-wrap items-center gap-2">
@@ -1995,7 +2111,7 @@ export function TraceTimeline({
                             aria-hidden
                             className="min-w-0 truncate text-[10px] font-medium leading-none text-primary-foreground"
                           >
-                            {label}
+                            {subtitle || label}
                           </span>
                           <span
                             aria-hidden

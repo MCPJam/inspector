@@ -287,4 +287,85 @@ describe("TraceTimeline detail pane", () => {
     expect(tablist).toHaveClass("grid-cols-3");
     expect(within(tablist).getByRole("tab", { name: "Input" })).toBeInTheDocument();
   });
+
+  it("labels generic LLM spans as LLM · short model (not Model response)", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-a",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 500,
+        promptIndex: 0,
+        modelId: "openai/gpt-5.4-nano",
+        stepIndex: 0,
+        totalTokens: 100,
+      },
+      {
+        id: "llm-b",
+        name: "openai/gpt-5.4-nano · response",
+        category: "llm",
+        startMs: 600,
+        endMs: 1200,
+        promptIndex: 0,
+        modelId: "openai/gpt-5.4-nano",
+        stepIndex: 1,
+        totalTokens: 200,
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const rows = screen.getAllByTestId("trace-row");
+    const llmRows = rows.filter((el) =>
+      el.textContent?.includes("LLM call"),
+    );
+    expect(llmRows.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("shows user message as prompt row label with stats subtitle", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-1",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 400,
+        promptIndex: 0,
+        modelId: "anthropic/claude-3-haiku",
+        totalTokens: 50,
+      },
+      {
+        id: "tool-1",
+        name: "grep",
+        category: "tool",
+        startMs: 400,
+        endMs: 800,
+        promptIndex: 0,
+        toolName: "grep",
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "find it" }]}
+      />,
+    );
+
+    // User message should be promoted to the primary label
+    const promptRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes('User: "find it"'));
+    expect(promptRow).toBeTruthy();
+    // Stats subtitle should include prompt number and counts
+    expect(promptRow!.textContent).toMatch(/Prompt 1/);
+    expect(promptRow!.textContent).toMatch(/1 LLM/);
+    expect(promptRow!.textContent).toMatch(/1 tool/);
+  });
 });

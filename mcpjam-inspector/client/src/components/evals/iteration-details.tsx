@@ -682,6 +682,7 @@ export function IterationDetails({
     <div
       className={cn(
         "flex flex-col",
+        layoutMode === "full" && "min-h-0 flex-1",
         layoutMode === "full" ? "gap-1" : "gap-1.5",
       )}
       data-testid="iteration-trace-section"
@@ -693,6 +694,10 @@ export function IterationDetails({
         className={cn(
           layoutMode === "compact" &&
             "rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto",
+          layoutMode === "full" &&
+            iteration.blob &&
+            !error &&
+            "flex min-h-0 flex-1 flex-col",
           layoutMode === "full" &&
             error &&
             !loading &&
@@ -740,6 +745,7 @@ export function IterationDetails({
     <div
       className={cn(
         "flex flex-col",
+        layoutMode === "full" && "min-h-0 flex-1",
         layoutMode === "full" ? "gap-3" : "gap-4 py-2",
       )}
     >

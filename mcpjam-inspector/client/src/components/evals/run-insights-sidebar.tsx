@@ -1,11 +1,5 @@
-import type { ReactNode } from "react";
 import { BarChart3 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  RunHeaderCompactStats,
-  type RunHeaderCompactStatsOverride,
-} from "./run-header-compact-stats";
-import type { EvalSuiteRun } from "./types";
 
 /** Shared label for the playground nav row and CI run-detail sidebar summary. */
 export const RUN_INSIGHTS_SIDEBAR_LABEL = "Run Insights";
@@ -47,39 +41,50 @@ export function RunInsightsNavRow({
   );
 }
 
-/**
- * CI (and inline) run-detail sidebar: compact stats for the current run, same
- * uppercase section label + {@link RunHeaderCompactStats} as the playground uses for metrics copy.
- */
+/** CI / playground run-detail sidebar: opens run-level insights (vs. per-iteration detail). */
 export function RunInsightsSidebarSummary({
-  run,
-  statsOverride,
-  footer,
   className,
+  onClick,
+  selected,
 }: {
-  run: EvalSuiteRun;
-  statsOverride?: RunHeaderCompactStatsOverride;
-  footer?: ReactNode;
   className?: string;
+  onClick?: () => void;
+  /** True when the main pane is showing run insights (no iteration selected). */
+  selected?: boolean;
 }) {
+  const interactive = Boolean(onClick);
   return (
     <div
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onClick={interactive ? onClick : undefined}
+      onKeyDown={
+        interactive
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onClick?.();
+              }
+            }
+          : undefined
+      }
       className={cn(
-        "shrink-0 border-b bg-muted/25 px-4 py-2.5",
+        "flex shrink-0 items-center gap-2 border-b bg-muted/25 px-4 py-2.5 text-sm transition-colors",
+        interactive && "cursor-pointer hover:bg-accent/50",
+        selected && "bg-accent font-medium",
         className,
       )}
+      aria-label={
+        interactive ? `${RUN_INSIGHTS_SIDEBAR_LABEL} — show in main panel` : undefined
+      }
     >
-      <div className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        {RUN_INSIGHTS_SIDEBAR_LABEL}
-      </div>
-      <RunHeaderCompactStats
-        run={run}
-        statsOverride={statsOverride}
-        className="text-[11px] leading-snug"
+      <BarChart3
+        className="h-4 w-4 shrink-0 text-muted-foreground"
+        aria-hidden
       />
-      {footer ? (
-        <div className="mt-2 border-t border-border/60 pt-2">{footer}</div>
-      ) : null}
+      <span className="font-medium text-foreground">
+        {RUN_INSIGHTS_SIDEBAR_LABEL}
+      </span>
     </div>
   );
 }

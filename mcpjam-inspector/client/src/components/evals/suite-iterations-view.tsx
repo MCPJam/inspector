@@ -312,7 +312,9 @@ export function SuiteIterationsView({
   };
 
   const handleRunClick = (runId: string) => {
-    navigation.toRunDetail(suite._id, runId);
+    navigation.toRunDetail(suite._id, runId, undefined, {
+      insightsFocus: true,
+    });
   };
 
   const handleBackToOverview = () => {
@@ -414,7 +416,9 @@ export function SuiteIterationsView({
                       navigation.toSuiteOverview(suite._id, "test-cases")
                     }
                     onViewRun={(runId) =>
-                      navigation.toRunDetail(suite._id, runId)
+                      navigation.toRunDetail(suite._id, runId, undefined, {
+                        insightsFocus: true,
+                      })
                     }
                   />
                 </div>
@@ -519,6 +523,22 @@ export function SuiteIterationsView({
                 onSelectIteration={handleSelectIteration}
                 hideReplayLineage
                 omitIterationList={omitRunIterationList}
+                onOpenRunInsights={
+                  route.type === "run-detail"
+                    ? () =>
+                        navigation.toRunDetail(
+                          route.suiteId,
+                          route.runId,
+                          undefined,
+                          { insightsFocus: true },
+                        )
+                    : undefined
+                }
+                runInsightsSelected={
+                  route.type === "run-detail"
+                    ? Boolean(route.insightsFocus && !route.iteration)
+                    : false
+                }
               />
             </div>
           ) : null}
