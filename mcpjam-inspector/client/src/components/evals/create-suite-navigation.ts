@@ -28,11 +28,11 @@ export function navigatePlaygroundEvalsRoute(
   applyPlaygroundEvalsHash(route, options);
 }
 
-/** Playground: suite overview in sidebar context navigates to evals list; other routes use testing-surface hash. */
+/** Playground: same suite-overview / drill-down hash shapes as CI, wrapped with `withTestingSurface`. */
 export function createPlaygroundSuiteNavigation(): SuiteNavigation {
   return {
-    toSuiteOverview: () => {
-      applyPlaygroundEvalsHash({ type: "list" });
+    toSuiteOverview: (suiteId, view) => {
+      applyPlaygroundEvalsHash({ type: "suite-overview", suiteId, view });
     },
     toRunDetail: (suiteId, runId, iteration, options) => {
       applyPlaygroundEvalsHash(

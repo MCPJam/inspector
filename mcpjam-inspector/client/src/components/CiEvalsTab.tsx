@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { GitBranch, Loader2 } from "lucide-react";
+import { Eye, GitBranch, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import {
   Breadcrumb,
@@ -16,6 +16,14 @@ import {
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
@@ -41,7 +49,13 @@ import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import type { EvalSuite } from "./evals/types";
+import {
+  SAMPLE_TRACE,
+  SAMPLE_TRACE_STARTED_AT_MS,
+  SAMPLE_TRACE_VIEWER_MODEL,
+} from "./evals/sample-trace-data";
 import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
+import { TraceViewer } from "./evals/trace-viewer";
 import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
 interface CiEvalsTabProps {
@@ -62,6 +76,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const [runDetailSidebarSortBy, setRunDetailSidebarSortBy] = useState<
     "model" | "test" | "result"
   >("result");
+  const [showSampleTrace, setShowSampleTrace] = useState(false);
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -435,6 +450,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
       user={user}
       workspaceId={convexWorkspaceId}
     >
+      <>
       <div className="h-full flex flex-col overflow-hidden">
       {showCiSuiteDrilldownSidebar && selectedSuite ? (
         <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
@@ -582,28 +598,33 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
             <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
               <div className="mx-auto w-full max-w-3xl px-6 py-8 pb-12">
                 <div className="mb-8 text-center">
-                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
-                    <GitBranch className="h-7 w-7 text-muted-foreground" />
+                  <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
+                    <GitBranch className="h-7 w-7 text-primary" />
                   </div>
-                  <h2 className="mb-2 text-lg font-semibold text-foreground">
-                    No runs yet
+                  <h2 className="mb-2 text-lg font-semibold tracking-tight text-foreground">
+                    Run your first eval from the repo
                   </h2>
-                  <p className="text-sm text-muted-foreground">
-                    Run the quickstart below with{" "}
+                  <p className="mx-auto max-w-lg text-sm leading-relaxed text-muted-foreground">
+                    Three steps below wire up{" "}
                     <span className="font-medium text-foreground">
                       @mcpjam/sdk
                     </span>{" "}
-                    to upload your first suite and run. Or use Explore to build
-                    cases in the app first.
+                    so Vitest can push a suite and run to this view. Prefer
+                    designing cases in the UI first? Use Explore, then come back
+                    for CI.
                   </p>
+                  <div className="mt-5 flex justify-center">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowSampleTrace(true)}
+                    >
+                      <Eye className="mr-2 size-4" />
+                      View sample trace
+                    </Button>
+                  </div>
                 </div>
                 <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
-                <p className="mt-10 text-center text-sm text-muted-foreground">
-                  Switch to{" "}
-                  <span className="font-medium text-foreground">Explore</span>{" "}
-                  in the Testing header to create and save suites. Re-run a
-                  saved suite to see manual and CI-backed history here.
-                </p>
               </div>
             </div>
           ) : route.type === "list" || !selectedSuite ? (
@@ -677,6 +698,27 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
         </ResizablePanel>
       </ResizablePanelGroup>
     </div>
+
+      <Dialog open={showSampleTrace} onOpenChange={setShowSampleTrace}>
+        <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4 overflow-hidden sm:max-w-5xl">
+          <DialogHeader>
+            <DialogTitle>Sample trace</DialogTitle>
+            <DialogDescription>
+              Example of an eval iteration with tool calls and timing — same
+              tabs as a real run (Timeline, Chat, Raw).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            <TraceViewer
+              trace={SAMPLE_TRACE}
+              model={SAMPLE_TRACE_VIEWER_MODEL}
+              traceStartedAtMs={SAMPLE_TRACE_STARTED_AT_MS}
+              chromeDensity="compact"
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+      </>
     </EvalTabGate>
   );
 }

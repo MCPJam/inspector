@@ -167,7 +167,10 @@ export function createEvalSpanIntegration(options: {
   rel: () => number;
   /** Map from tool name → serverId for tool span metadata. */
   serverIdByTool?: Map<string, string>;
-}): TelemetryIntegration & { getSpans: () => EvalTraceSpanInput[] } {
+}): TelemetryIntegration & {
+  getSpans: () => EvalTraceSpanInput[];
+  finalizeFailure: (errorLabel?: string) => void;
+} {
   const { rel, serverIdByTool } = options;
   const sink = createEvalSpanSink(rel);
 
@@ -203,6 +206,10 @@ export function createEvalSpanIntegration(options: {
         totalTokens: event.usage?.totalTokens,
         status: "ok",
       });
+    },
+
+    finalizeFailure(errorLabel?: string) {
+      sink.finalizeFailure(errorLabel);
     },
 
     getSpans() {

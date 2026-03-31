@@ -21,12 +21,12 @@ import {
 import { useEvalsRoute } from "@/lib/evals-router";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { aggregateSuite, formatRunId } from "./evals/helpers";
-import { formatCaseTitleForSidebar } from "./evals/case-name-utils";
 import { EvalTabGate } from "./evals/EvalTabGate";
 import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
 } from "./evals/create-suite-navigation";
+import { PlaygroundSurfaceToggle } from "./evals/playground-surface-toggle";
 import { RunIterationsSidebar } from "./evals/run-detail-view";
 import { useRunDetailData } from "./evals/use-suite-data";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
@@ -183,7 +183,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
 
-  const showPlaygroundBreadcrumbs = useMemo(() => {
+  const showPlaygroundSurfaceBar = useMemo(() => {
     if (!selectedServer || !exploreSuite) return false;
     switch (route.type) {
       case "suite-overview":
@@ -195,17 +195,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
         return false;
     }
   }, [selectedServer, exploreSuite, route]);
-
-  const playgroundBreadcrumbCaseTitle = useMemo(() => {
-    if (route.type !== "test-edit" && route.type !== "test-detail") {
-      return "";
-    }
-    if (!exploreSuite || route.suiteId !== exploreSuite._id) {
-      return "";
-    }
-    const c = exploreCases.find((t) => t._id === route.testId);
-    return formatCaseTitleForSidebar(c?.title ?? "").fullTitle;
-  }, [route, exploreCases, exploreSuite]);
 
   const handleCopyExploreSdkEvalBrief = useCallback(async () => {
     if (!selectedServer || exploreCases.length === 0) return;
@@ -300,52 +289,46 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     [],
   );
 
-  const handlePlaygroundBreadcrumbCasesClick = useCallback(() => {
+  const goPlaygroundExplore = useCallback(() => {
     if (!exploreSuite || !selectedServer) return;
-    if (route.type === "run-detail") {
-      const first = exploreCases[0];
-      if (first) {
-        playgroundNavigation.toTestEdit(exploreSuite._id, first._id);
-      } else {
-        navigatePlaygroundEvalsRoute({
-          type: "suite-overview",
-          suiteId: exploreSuite._id,
-        });
-      }
-      return;
-    }
-    if (route.type === "test-edit" || route.type === "test-detail") {
-      const completed = runsForSelectedSuite.filter(
-        (r) => r.status === "completed",
-      );
-      const sorted = [...completed].sort((a, b) => {
-        const aTime = a.completedAt ?? a.createdAt ?? 0;
-        const bTime = b.completedAt ?? b.createdAt ?? 0;
-        return bTime - aTime;
+    const first = exploreCases[0];
+    if (first) {
+      playgroundNavigation.toTestEdit(exploreSuite._id, first._id);
+    } else {
+      navigatePlaygroundEvalsRoute({
+        type: "suite-overview",
+        suiteId: exploreSuite._id,
+        view: "test-cases",
       });
-      const latest = sorted[0];
-      if (latest) {
-        navigatePlaygroundEvalsRoute({
-          type: "run-detail",
-          suiteId: exploreSuite._id,
-          runId: latest._id,
-          insightsFocus: true,
-        });
-      } else {
-        navigatePlaygroundEvalsRoute({
-          type: "suite-overview",
-          suiteId: exploreSuite._id,
-        });
-      }
     }
-  }, [
-    exploreSuite,
-    selectedServer,
-    route.type,
-    exploreCases,
-    runsForSelectedSuite,
-    playgroundNavigation,
-  ]);
+  }, [exploreSuite, selectedServer, exploreCases, playgroundNavigation]);
+
+  const goPlaygroundRuns = useCallback(() => {
+    if (!exploreSuite || !selectedServer) return;
+    navigatePlaygroundEvalsRoute({
+      type: "suite-overview",
+      suiteId: exploreSuite._id,
+      view: "runs",
+    });
+  }, [exploreSuite, selectedServer]);
+
+  const goPlaygroundRunsOverview = useCallback(() => {
+    if (!exploreSuite) return;
+    navigatePlaygroundEvalsRoute({
+      type: "suite-overview",
+      suiteId: exploreSuite._id,
+      view: "runs",
+    });
+  }, [exploreSuite]);
+
+  const playgroundSurface =
+    route.type === "run-detail"
+      ? ("runs" as const)
+      : route.type === "suite-overview" && route.view === "test-cases"
+        ? ("explore" as const)
+        : route.type === "suite-overview"
+          ? ("runs" as const)
+          : ("explore" as const);
 
   useEffect(() => {
     if (route.type !== "run-detail") {
@@ -359,10 +342,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
 
   useEffect(() => {
     if (!exploreSuite) return;
-    if (route.type !== "list" && route.type !== "suite-overview") return;
-    if (route.type === "suite-overview" && route.suiteId !== exploreSuite._id) {
-      return;
-    }
+    if (route.type !== "list") return;
 
     const completed = runsForSelectedSuite.filter(
       (r) => r.status === "completed",
@@ -493,55 +473,64 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            {showPlaygroundBreadcrumbs ? (
+            {showPlaygroundSurfaceBar ? (
               <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-                <Breadcrumb className="min-w-0 flex-1">
-                  <BreadcrumbList className="min-w-0 flex-nowrap">
-                    {route.type === "suite-overview" ? (
-                      <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
-                        <BreadcrumbPage
-                          className="truncate font-medium"
-                          title={selectedServer}
-                        >
-                          {selectedServer}
-                        </BreadcrumbPage>
-                      </BreadcrumbItem>
-                    ) : (
-                      <>
+                <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                  <PlaygroundSurfaceToggle
+                    value={playgroundSurface}
+                    onExplore={goPlaygroundExplore}
+                    onRuns={goPlaygroundRuns}
+                  />
+                  {playgroundSurface === "runs" ? (
+                    <Breadcrumb className="min-w-0 flex-1 sm:pt-0">
+                      <BreadcrumbList className="min-w-0 flex-nowrap sm:justify-end">
                         <BreadcrumbItem>
                           <BreadcrumbLink asChild>
                             <button
                               type="button"
-                              onClick={handlePlaygroundBreadcrumbCasesClick}
+                              onClick={goPlaygroundExplore}
                               className="inline-flex border-0 bg-transparent p-0 font-medium"
                             >
-                              {selectedServer}
+                              Explore
                             </button>
                           </BreadcrumbLink>
                         </BreadcrumbItem>
                         <BreadcrumbSeparator />
-                        <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
-                          <BreadcrumbPage
-                            className="truncate font-medium"
-                            title={
-                              route.type === "run-detail"
-                                ? `Run ${formatRunId(route.runId)}`
-                                : route.type === "test-edit"
-                                  ? `Edit: ${playgroundBreadcrumbCaseTitle}`
-                                  : playgroundBreadcrumbCaseTitle
-                            }
-                          >
-                            {route.type === "run-detail"
-                              ? `Run ${formatRunId(route.runId)}`
-                              : route.type === "test-edit"
-                                ? `Edit: ${playgroundBreadcrumbCaseTitle}`
-                                : playgroundBreadcrumbCaseTitle}
-                          </BreadcrumbPage>
-                        </BreadcrumbItem>
-                      </>
-                    )}
-                  </BreadcrumbList>
-                </Breadcrumb>
+                        {route.type === "run-detail" ? (
+                          <>
+                            <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+                              <BreadcrumbLink asChild>
+                                <button
+                                  type="button"
+                                  onClick={goPlaygroundRunsOverview}
+                                  title={exploreSuite.name}
+                                  className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                                >
+                                  {exploreSuite.name}
+                                </button>
+                              </BreadcrumbLink>
+                            </BreadcrumbItem>
+                            <BreadcrumbSeparator />
+                            <BreadcrumbItem>
+                              <BreadcrumbPage className="truncate font-medium">
+                                Run {formatRunId(route.runId)}
+                              </BreadcrumbPage>
+                            </BreadcrumbItem>
+                          </>
+                        ) : (
+                          <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                            <BreadcrumbPage
+                              className="truncate font-medium"
+                              title={exploreSuite.name}
+                            >
+                              {exploreSuite.name}
+                            </BreadcrumbPage>
+                          </BreadcrumbItem>
+                        )}
+                      </BreadcrumbList>
+                    </Breadcrumb>
+                  ) : null}
+                </div>
               </div>
             ) : null}
             <ResizablePanelGroup
@@ -590,7 +579,8 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                 />
               ) : (
                 <TestCaseListSidebar
-                  heading="Cases"
+                  heading="Explore"
+                  insightsNavLabel="Runs"
                   emptyLabel="No cases yet"
                   testCases={exploreCases}
                   suiteId={exploreSuite._id}
@@ -623,30 +613,8 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                   rerunningSuiteId={handlers.rerunningSuiteId}
                   connectedServerNames={connectedServerNames}
                   showSelection={false}
-                  hideRunInsightsRow
-                  onNavigateToOverview={(suiteId) => {
-                    const completed = runsForSelectedSuite.filter(
-                      (r) => r.status === "completed",
-                    );
-                    const sorted = [...completed].sort((a, b) => {
-                      const aTime = a.completedAt ?? a.createdAt ?? 0;
-                      const bTime = b.completedAt ?? b.createdAt ?? 0;
-                      return bTime - aTime;
-                    });
-                    const latest = sorted[0];
-                    if (latest) {
-                      navigatePlaygroundEvalsRoute({
-                        type: "run-detail",
-                        suiteId,
-                        runId: latest._id,
-                        insightsFocus: true,
-                      });
-                    } else {
-                      navigatePlaygroundEvalsRoute({
-                        type: "suite-overview",
-                        suiteId,
-                      });
-                    }
+                  onNavigateToOverview={() => {
+                    goPlaygroundRuns();
                   }}
                 />
               )}

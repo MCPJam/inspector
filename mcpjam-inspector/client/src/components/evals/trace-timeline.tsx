@@ -665,6 +665,19 @@ function flattenTextFromMessage(message: TranscriptMessage): string {
     .join(" ");
 }
 
+function toolCallNamesFromAssistantMessage(
+  message: TranscriptMessage,
+): string[] {
+  const parts = getMessageParts(message);
+  const names: string[] = [];
+  for (const part of parts) {
+    if (part.type === "tool-call") {
+      names.push(partToolName(part) ?? "tool");
+    }
+  }
+  return names;
+}
+
 /** Best-effort one-line preview of the prompt / context for an LLM or step span. */
 function promptPreviewForLlmSpan(
   messages: TranscriptMessage[],
@@ -701,20 +714,32 @@ function promptPreviewForLlmSpan(
   return undefined;
 }
 
-/** Best-effort one-line preview of the model's output text for an LLM span. */
-function responsePreviewForLlmSpan(
+type LlmAssistantRowPreview =
+  | { kind: "text"; preview: string }
+  | { kind: "tools"; preview: string };
+
+/** Preview from the last assistant message(s) in-range: user-visible text, else tool-call names. */
+function assistantPreviewForLlmSpan(
   messages: TranscriptMessage[],
   span: EvalTraceSpan,
-): string | undefined {
+): LlmAssistantRowPreview | undefined {
   if (!messages.length) return undefined;
   const range = getTranscriptRange(span.messageStartIndex, span.messageEndIndex);
   if (!range) return undefined;
   const slice = messages.slice(range.startIndex, range.endIndex + 1);
   for (let i = slice.length - 1; i >= 0; i--) {
     const m = slice[i]!;
-    if (m.role === "assistant") {
-      const t = flattenTextFromMessage(m);
-      if (t) return truncateRowSubtitle(t);
+    if (m.role !== "assistant") continue;
+    const t = flattenTextFromMessage(m);
+    if (t) {
+      return { kind: "text", preview: truncateRowSubtitle(t) };
+    }
+    const toolNames = toolCallNamesFromAssistantMessage(m);
+    if (toolNames.length > 0) {
+      return {
+        kind: "tools",
+        preview: truncateRowSubtitle(`Calling ${toolNames.join(", ")}`),
+      };
     }
   }
   return undefined;
@@ -908,7 +933,10 @@ function deriveSpanLabel(
   }
 
   if (span.category === "llm") {
-    const responsePreview = responsePreviewForLlmSpan(transcriptMessages, span);
+    const assistantPreview = assistantPreviewForLlmSpan(
+      transcriptMessages,
+      span,
+    );
     const genericLlmName =
       !rawName ||
       /^assistant$/i.test(rawName) ||
@@ -919,9 +947,15 @@ function deriveSpanLabel(
     const baseName = genericLlmName
       ? "Model"
       : truncateRowSubtitle(rawName, 64);
-    if (responsePreview) {
+    if (assistantPreview?.kind === "text") {
       return {
-        title: `${baseName}: "${responsePreview}"`,
+        title: `${baseName}: "${assistantPreview.preview}"`,
+        subtitle: modelHint,
+      };
+    }
+    if (assistantPreview?.kind === "tools") {
+      return {
+        title: `${baseName} · ${assistantPreview.preview}`,
         subtitle: modelHint,
       };
     }
@@ -1863,10 +1897,10 @@ export function TraceTimeline({
               );
               const selectRow = () => setSelectedRowKey(row.key);
               const leftCellClass = isSelected
-                ? cn("trace-waterfall-row-selected", borderAccent)
+                ? cn("bg-transparent", borderAccent)
                 : "border-l-transparent bg-background group-hover:bg-muted/20 hover:bg-muted/20";
               const sharedCellClass = isSelected
-                ? "trace-waterfall-row-selected"
+                ? "bg-transparent"
                 : "bg-background group-hover:bg-muted/20 hover:bg-muted/20";
 
               return (
@@ -1881,11 +1915,15 @@ export function TraceTimeline({
                         gridTemplateColumns:
                           "minmax(200px, 280px) minmax(0, 1fr) auto",
                       }}
-                      className="group grid min-w-0"
+                      className={cn(
+                        "group grid min-w-0",
+                        isSelected &&
+                          "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
+                      )}
                     >
                       <div
                         className={cn(
-                          "flex items-start gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
+                          "flex items-center gap-2 border-b border-border/40 px-4 py-2 transition-all duration-150 border-l-2",
                           leftCellClass,
                         )}
                       >

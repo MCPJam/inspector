@@ -26,6 +26,65 @@ jest.mock("../src/model-factory", () => ({
 import { generateText, hasToolCall, jsonSchema, stepCountIs } from "ai";
 import { createModelFromString } from "../src/model-factory";
 
+const mockModelInfo = { modelId: "gpt-4o", provider: "openai" } as const;
+
+const telemetryEventBase = {
+  messages: [],
+  abortSignal: undefined,
+  functionId: undefined,
+  metadata: undefined,
+  experimental_context: undefined,
+};
+
+/** Replays `experimental_telemetry.integrations` like real `generateText` (Jest mocks `ai` only). */
+async function replayEvalSpanStepFinish(params: any, stepResult: any) {
+  for (const integration of params.experimental_telemetry?.integrations ??
+    []) {
+    await integration.onStepFinish?.(stepResult);
+  }
+}
+
+/** Wraps a tool execution with `onToolCallStart` / `onToolCallFinish` on span integrations. */
+async function replayEvalSpanToolCall(
+  params: any,
+  spec: {
+    toolName: string;
+    toolCallId: string;
+    input: Record<string, unknown>;
+    stepNumber?: number;
+  },
+  execute: () => Promise<unknown>
+) {
+  const integrations = params.experimental_telemetry?.integrations ?? [];
+  const stepNumber = spec.stepNumber ?? 0;
+  const toolCall = {
+    type: "tool-call" as const,
+    toolCallId: spec.toolCallId,
+    toolName: spec.toolName,
+    input: spec.input,
+  };
+  for (const integration of integrations) {
+    await integration.onToolCallStart?.({
+      stepNumber,
+      model: mockModelInfo,
+      toolCall,
+      ...telemetryEventBase,
+    });
+  }
+  const output = await execute();
+  for (const integration of integrations) {
+    await integration.onToolCallFinish?.({
+      stepNumber,
+      model: mockModelInfo,
+      toolCall,
+      ...telemetryEventBase,
+      durationMs: 1,
+      success: true as const,
+      output,
+    });
+  }
+}
+
 const mockGenerateText = generateText as jest.MockedFunction<
   typeof generateText
 >;
@@ -237,6 +296,7 @@ describe("TestAgent", () => {
       mockGenerateText.mockImplementationOnce(async (params: any) => {
         const stepResult = {
           stepNumber: 0,
+          model: mockModelInfo,
           text: "All done",
           usage: {
             inputTokens: 3,
@@ -255,6 +315,7 @@ describe("TestAgent", () => {
         };
 
         params.onStepFinish?.(stepResult);
+        await replayEvalSpanStepFinish(params, stepResult);
 
         return {
           text: "All done",
@@ -280,13 +341,22 @@ describe("TestAgent", () => {
 
     it("captures tool spans even when step start hooks are skipped", async () => {
       mockGenerateText.mockImplementationOnce(async (params: any) => {
-        await params.tools.add.execute(
-          { a: 2, b: 3 },
-          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+        await replayEvalSpanToolCall(
+          params,
+          { toolName: "add", toolCallId: "call-1", input: { a: 2, b: 3 } },
+          () =>
+            params.tools.add.execute(
+              { a: 2, b: 3 },
+              {
+                toolCallId: "call-1",
+                abortSignal: { throwIfAborted: jest.fn() },
+              }
+            )
         );
 
         const stepResult = {
           stepNumber: 0,
+          model: mockModelInfo,
           text: "The result is 5",
           usage: {
             inputTokens: 5,
@@ -330,6 +400,7 @@ describe("TestAgent", () => {
         };
 
         params.onStepFinish?.(stepResult);
+        await replayEvalSpanStepFinish(params, stepResult);
 
         return {
           text: "The result is 5",
@@ -384,9 +455,17 @@ describe("TestAgent", () => {
 
     it("adds an error span when a tool path fails after starting", async () => {
       mockGenerateText.mockImplementationOnce(async (params: any) => {
-        await params.tools.add.execute(
-          { a: 2, b: 3 },
-          { toolCallId: "call-1", abortSignal: { throwIfAborted: jest.fn() } }
+        await replayEvalSpanToolCall(
+          params,
+          { toolName: "add", toolCallId: "call-1", input: { a: 2, b: 3 } },
+          () =>
+            params.tools.add.execute(
+              { a: 2, b: 3 },
+              {
+                toolCallId: "call-1",
+                abortSignal: { throwIfAborted: jest.fn() },
+              }
+            )
         );
 
         throw new Error("tool path failed");

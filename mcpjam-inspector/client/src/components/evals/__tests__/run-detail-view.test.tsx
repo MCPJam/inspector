@@ -437,4 +437,22 @@ describe("RunDetailView", () => {
 
     expect(onSortChange).toHaveBeenCalledWith("result");
   });
+
+  it("exposes view-iteration aria-label on the full iteration row button", () => {
+    render(
+      <RunIterationsSidebar
+        caseGroupsForSelectedRun={[makeIteration()]}
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: "View iteration details: Test A, gpt-4",
+      }),
+    ).toBeInTheDocument();
+  });
 });

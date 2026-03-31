@@ -33,7 +33,10 @@ import {
   getEvalCaseSidebarGroupKey,
   groupEvalCasesForSidebar,
 } from "./case-name-utils";
-import { RunInsightsNavRow } from "./run-insights-sidebar";
+import {
+  RUN_INSIGHTS_SIDEBAR_LABEL,
+  RunInsightsNavRow,
+} from "./run-insights-sidebar";
 
 interface TestCaseListSidebarProps {
   testCases: EvalCase[];
@@ -68,6 +71,8 @@ interface TestCaseListSidebarProps {
   showSelection?: boolean;
   /** Playground: hide suite-level Run Insights row (replaced by breadcrumbs + run-detail sidebar). */
   hideRunInsightsRow?: boolean;
+  /** Overrides nav row label below the header (playground uses e.g. "Runs"). */
+  insightsNavLabel?: string;
 }
 
 export function TestCaseListSidebar({
@@ -100,6 +105,7 @@ export function TestCaseListSidebar({
   selectedCaseIds = [],
   showSelection = false,
   hideRunInsightsRow = false,
+  insightsNavLabel = RUN_INSIGHTS_SIDEBAR_LABEL,
 }: TestCaseListSidebarProps) {
   // Calculate rerun availability
   const rerunEligibility = getSuiteReplayEligibility({
@@ -281,6 +287,7 @@ export function TestCaseListSidebar({
         <RunInsightsNavRow
           selected={showingOverview}
           onClick={handleNavigateToOverview}
+          label={insightsNavLabel}
         />
       ) : null}
 

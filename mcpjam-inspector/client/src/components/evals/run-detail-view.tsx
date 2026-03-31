@@ -15,6 +15,7 @@ import {
   formatDuration,
   formatRunId,
 } from "./helpers";
+import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";
 import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
 import {
   computeIterationResult,
@@ -30,7 +31,7 @@ import {
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { useRunInsights } from "./use-run-insights";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
-import { ArrowUpDown, ExternalLink } from "lucide-react";
+import { ArrowUpDown, ChevronRight, ExternalLink } from "lucide-react";
 import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
 import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 
@@ -123,6 +124,11 @@ function IterationListItem({
 
   const editLabel = isFailed ? "Edit in Playground" : "Edit";
 
+  const caseTitle = testInfo?.title || "Iteration";
+  const iterationAriaLabel = testInfo?.isNegativeTest
+    ? `Negative test (expects the tool not to be called): ${caseTitle}, ${modelName}. View iteration details.`
+    : `View iteration details: ${caseTitle}, ${modelName}`;
+
   return (
     <div
       className={cn(
@@ -147,19 +153,21 @@ function IterationListItem({
               ? "Negative test — expects the tool NOT to be called"
               : undefined
           }
-          aria-label={
-            testInfo?.isNegativeTest
-              ? `Negative test (expects the tool not to be called): ${testInfo?.title || "Iteration"}, ${modelName}`
-              : undefined
-          }
-          className="flex min-w-0 flex-1 flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
+          aria-label={iterationAriaLabel}
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
         >
-          <span className="text-xs font-medium leading-snug line-clamp-2">
-            {testInfo?.title || "Iteration"}
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="text-xs font-medium leading-snug line-clamp-2">
+              {caseTitle}
+            </span>
+            <span className="truncate text-[10px] font-mono text-muted-foreground">
+              {modelName}
+            </span>
           </span>
-          <span className="truncate text-[10px] font-mono text-muted-foreground">
-            {modelName}
-          </span>
+          <ChevronRight
+            className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-70"
+            aria-hidden
+          />
         </button>
         {showEditLink && iteration.testCaseId ? (
           <button
@@ -472,7 +480,7 @@ export function RunDetailView({
           : "no passing cases yet",
       valueClass:
         computedStats.passed > 0
-          ? "text-emerald-700 dark:text-emerald-300"
+          ? EVAL_OUTCOME_STATUS_TEXT_CLASS.passed
           : undefined,
     },
     {
@@ -481,7 +489,9 @@ export function RunDetailView({
       detail:
         computedStats.failed > 0 ? "needs review" : "nothing failed",
       valueClass:
-        computedStats.failed > 0 ? "text-destructive" : undefined,
+        computedStats.failed > 0
+          ? EVAL_OUTCOME_STATUS_TEXT_CLASS.failed
+          : undefined,
     },
     {
       label: "Total",

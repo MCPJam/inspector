@@ -6,6 +6,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { Check, X, AlertTriangle, CheckCircle2, XCircle } from "lucide-react";
+import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";
 import { EvalSuiteRun } from "./types";
 
 interface PassCriteriaBadgeProps {
@@ -42,8 +43,14 @@ export function PassCriteriaBadge({
     const surface = passedWithFailures
       ? "border-amber-200/90 bg-amber-500/[0.07] text-amber-950 hover:bg-amber-500/[0.11] dark:border-amber-500/22 dark:bg-amber-400/[0.06] dark:text-amber-50 dark:hover:bg-amber-400/[0.1]"
       : passed
-        ? "border-emerald-200/90 bg-emerald-600/[0.07] text-emerald-950 hover:bg-emerald-600/[0.11] dark:border-emerald-500/22 dark:bg-emerald-400/[0.07] dark:text-emerald-50 dark:hover:bg-emerald-400/[0.1]"
-        : "border-rose-200/90 bg-rose-600/[0.07] text-rose-950 hover:bg-rose-600/[0.11] dark:border-rose-500/22 dark:bg-rose-400/[0.07] dark:text-rose-50 dark:hover:bg-rose-400/[0.1]";
+        ? cn(
+            "border-green-500/25 bg-green-500/[0.07] hover:bg-green-500/[0.11] dark:border-green-400/25 dark:bg-green-400/[0.08] dark:hover:bg-green-400/[0.12]",
+            EVAL_OUTCOME_STATUS_TEXT_CLASS.passed,
+          )
+        : cn(
+            "border-red-500/25 bg-red-500/[0.07] hover:bg-red-500/[0.11] dark:border-red-400/25 dark:bg-red-400/[0.08] dark:hover:bg-red-400/[0.12]",
+            EVAL_OUTCOME_STATUS_TEXT_CLASS.failed,
+          );
 
     return (
       <Tooltip>

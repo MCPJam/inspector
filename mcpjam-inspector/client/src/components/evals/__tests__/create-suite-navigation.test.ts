@@ -56,12 +56,16 @@ describe("createPlaygroundSuiteNavigation", () => {
     );
   });
 
-  it("toSuiteOverview uses list route with testing surface wrapper", () => {
+  it("toSuiteOverview uses suite-overview with testing surface wrapper", () => {
     const nav = createPlaygroundSuiteNavigation();
-    nav.toSuiteOverview("ignored", "runs");
-    expect(evalsRouter.buildEvalsHash).toHaveBeenCalledWith({ type: "list" });
+    nav.toSuiteOverview("suite-1", "runs");
+    expect(evalsRouter.buildEvalsHash).toHaveBeenCalledWith({
+      type: "suite-overview",
+      suiteId: "suite-1",
+      view: "runs",
+    });
     expect(testingSurface.withTestingSurface).toHaveBeenCalledWith(
-      '{"type":"list"}',
+      '{"type":"suite-overview","suiteId":"suite-1","view":"runs"}',
     );
   });
 });

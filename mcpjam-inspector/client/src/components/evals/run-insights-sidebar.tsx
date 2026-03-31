@@ -13,10 +13,13 @@ export function RunInsightsNavRow({
   selected,
   onClick,
   className,
+  label = RUN_INSIGHTS_SIDEBAR_LABEL,
 }: {
   selected?: boolean;
   onClick: () => void;
   className?: string;
+  /** Defaults to {@link RUN_INSIGHTS_SIDEBAR_LABEL}; playground may pass e.g. "Runs". */
+  label?: string;
 }) {
   return (
     <div
@@ -37,7 +40,7 @@ export function RunInsightsNavRow({
       )}
     >
       <BarChart3 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-      <span>{RUN_INSIGHTS_SIDEBAR_LABEL}</span>
+      <span>{label}</span>
     </div>
   );
 }

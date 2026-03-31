@@ -637,6 +637,7 @@ export class TestAgent implements EvalAgent {
             : error instanceof Error
               ? error.message
               : String(error);
+      spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },
         ...lastCompletedStepMessages,

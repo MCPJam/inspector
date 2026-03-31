@@ -58,6 +58,15 @@ export const RUN_STATUS = {
 
 export type RunStatus = (typeof RUN_STATUS)[keyof typeof RUN_STATUS];
 
+/**
+ * Pass/fail foreground text — matches `getStatusColor` in ActiveServerSelector
+ * (`bg-green-500` / `dark:bg-green-400` for connected, same scale with red for failed).
+ */
+export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
+  passed: "text-green-500 dark:text-green-400",
+  failed: "text-red-500 dark:text-red-400",
+} as const;
+
 // UI configuration
 export const UI_CONFIG = {
   MAX_TITLE_LENGTH: 100,

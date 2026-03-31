@@ -172,9 +172,11 @@ export type { FinalizeEvalPassedParams } from "./eval-tool-execution.js";
 
 // Eval result mapping utilities
 export type {
+  PromptsToEvalResultOverrides,
   RunToEvalResultsOptions,
   SuiteRunToEvalResultsOptions,
 } from "./eval-result-mapping.js";
+export { promptsToEvalResult } from "./eval-result-mapping.js";
 
 // Core SDK types
 export type {

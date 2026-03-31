@@ -132,6 +132,74 @@ describe("TestCaseListSidebar", () => {
     ).toBeNull();
   });
 
+  it("shows Run Insights row by default and calls onNavigateToOverview when clicked", async () => {
+    const onNavigateToOverview = vi.fn();
+    const user = userEvent.setup();
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[
+          {
+            _id: "case-1",
+            testSuiteId: "suite-1",
+            createdBy: "user-1",
+            title: "Test case",
+            query: "Run a test",
+            models: [{ model: "gpt-4o", provider: "openai" }],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ]}
+        suiteId="suite-1"
+        selectedTestId={null}
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        onNavigateToOverview={onNavigateToOverview}
+      />,
+    );
+
+    const row = screen.getByRole("button", { name: RUN_INSIGHTS_SIDEBAR_LABEL });
+    expect(row).toBeVisible();
+    await user.click(row);
+    expect(onNavigateToOverview).toHaveBeenCalledTimes(1);
+    expect(onNavigateToOverview).toHaveBeenCalledWith("suite-1");
+  });
+
+  it("uses insightsNavLabel for the nav row", () => {
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[
+          {
+            _id: "case-1",
+            testSuiteId: "suite-1",
+            createdBy: "user-1",
+            title: "Test case",
+            query: "Run a test",
+            models: [{ model: "gpt-4o", provider: "openai" }],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ]}
+        suiteId="suite-1"
+        selectedTestId={null}
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        insightsNavLabel="Runs"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Runs" })).toBeVisible();
+  });
+
   it("disables Copy SDK eval agent brief when there are no cases", () => {
     renderWithProviders(
       <TestCaseListSidebar

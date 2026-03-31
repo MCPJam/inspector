@@ -433,6 +433,10 @@ describe("TraceTimeline detail pane", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes('User: "find it"'));
     expect(promptRow).toBeTruthy();
+    expect(promptRow!).toHaveClass("trace-waterfall-row-selected");
+    expect(
+      within(promptRow!).getByTestId("trace-row-bar-hit"),
+    ).not.toHaveClass("trace-waterfall-row-selected");
     const promptLabelButton = within(promptRow!).getByTestId("trace-row-label-button");
     expect(promptLabelButton).not.toHaveTextContent(/50 tok/);
     expect(promptLabelButton).not.toHaveTextContent(/800ms/);
@@ -672,5 +676,126 @@ describe("TraceTimeline detail pane", () => {
     expect(inputJson).toContain("lookup");
     expect(inputJson).toContain("lookup ok");
     expect(inputJson).not.toContain("here is the summary");
+  });
+
+  it("LLM span row shows Calling … when assistant message is tool-call only", () => {
+    const transcriptMessages = [
+      { role: "user" as const, content: "read the file" },
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool-call" as const,
+            toolCallId: "call-rm",
+            toolName: "read_me",
+            input: { path: "README.md" },
+          },
+        ],
+      },
+    ];
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-tools-only",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 200,
+        messageStartIndex: 1,
+        messageEndIndex: 1,
+        modelId: "anthropic/claude-3-haiku",
+      },
+    ];
+
+    render(
+      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Model · Calling read_me/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("LLM span row prefers assistant text over tool calls in the same message", () => {
+    const transcriptMessages = [
+      { role: "user" as const, content: "go" },
+      {
+        role: "assistant" as const,
+        content: [
+          { type: "text" as const, text: "I'll fetch that." },
+          {
+            type: "tool-call" as const,
+            toolCallId: "call-rm",
+            toolName: "read_me",
+            input: {},
+          },
+        ],
+      },
+    ];
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-text-and-tool",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 200,
+        messageStartIndex: 1,
+        messageEndIndex: 1,
+      },
+    ];
+
+    render(
+      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Model: "I'll fetch that\."/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Calling read_me/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("LLM span row lists multiple tool calls in Calling … preview", () => {
+    const transcriptMessages = [
+      { role: "user" as const, content: "do both" },
+      {
+        role: "assistant" as const,
+        content: [
+          {
+            type: "tool-call" as const,
+            toolCallId: "a",
+            toolName: "read_me",
+            input: {},
+          },
+          {
+            type: "tool-call" as const,
+            toolCallId: "b",
+            toolName: "create_view",
+            input: {},
+          },
+        ],
+      },
+    ];
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "llm-multi-tool",
+        name: "Model response",
+        category: "llm",
+        startMs: 0,
+        endMs: 200,
+        messageStartIndex: 1,
+        messageEndIndex: 1,
+      },
+    ];
+
+    render(
+      <TraceTimeline recordedSpans={spans} transcriptMessages={transcriptMessages} />,
+    );
+
+    expect(
+      screen.getByRole("button", {
+        name: /Model · Calling read_me, create_view/i,
+      }),
+    ).toBeInTheDocument();
   });
 });
