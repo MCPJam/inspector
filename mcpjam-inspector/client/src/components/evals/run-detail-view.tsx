@@ -554,7 +554,10 @@ export function RunDetailView({
   }, [selectedIteration, selectedRunDetails]);
 
   const workflowInsightForSelectedIteration = useMemo(() => {
-    if (!selectedIteration || !selectedRunDetails.serverQuality?.workflowInsights) {
+    if (
+      !selectedIteration ||
+      !selectedRunDetails.serverQuality?.workflowInsights
+    ) {
       return null;
     }
     const list = selectedRunDetails.serverQuality.workflowInsights;
@@ -630,18 +633,21 @@ export function RunDetailView({
       wf && isCompleted ? (
         <div className="text-xs leading-relaxed">
           <div className="flex items-baseline gap-1.5">
-            <span className={cn(
-              "font-medium",
-              wf.efficiency === "optimal" || wf.efficiency === "acceptable"
-                ? "text-muted-foreground"
-                : "text-orange-500",
-            )}>
+            <span
+              className={cn(
+                "font-medium",
+                wf.efficiency === "optimal" || wf.efficiency === "acceptable"
+                  ? "text-muted-foreground"
+                  : "text-orange-500",
+              )}
+            >
               Workflow: {wf.efficiency}
             </span>
             {wf.toolCallCount > 0 && (
               <span className="text-muted-foreground">
                 · {wf.toolCallCount} call{wf.toolCallCount !== 1 ? "s" : ""}
-                {wf.optimalCallCount != null && wf.optimalCallCount !== wf.toolCallCount
+                {wf.optimalCallCount != null &&
+                wf.optimalCallCount !== wf.toolCallCount
                   ? ` (optimal: ~${wf.optimalCallCount})`
                   : ""}
               </span>
@@ -657,7 +663,9 @@ export function RunDetailView({
             <div className="mt-1 space-y-0.5">
               {problemTools.map((t) => (
                 <p key={t.toolName} className="text-muted-foreground">
-                  <span className="font-medium text-orange-500">{t.toolName}</span>
+                  <span className="font-medium text-orange-500">
+                    {t.toolName}
+                  </span>
                   {t.suggestions.length > 0 ? `: ${t.suggestions[0]}` : ""}
                 </p>
               ))}
