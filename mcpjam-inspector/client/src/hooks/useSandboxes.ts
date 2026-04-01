@@ -40,6 +40,7 @@ export interface SandboxWelcomeDialogSettings {
 
 export interface SandboxFeedbackDialogSettings {
   enabled: boolean;
+  /** Completed tool calls between feedback prompts in hosted sessions (not user message count). */
   everyNToolCalls?: number;
   promptHint?: string;
 }

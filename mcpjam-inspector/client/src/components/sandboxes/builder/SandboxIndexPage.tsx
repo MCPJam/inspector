@@ -1,14 +1,15 @@
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
 import {
   CreditCard,
+  Building2,
+  Globe,
+  Info,
   LayoutGrid,
   List,
   Loader2,
   Plus,
   Search,
   Sparkles,
-  Users,
-  Wand2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -16,6 +17,11 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardInteractive } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { SandboxListItem } from "@/hooks/useSandboxes";
 import {
   getSandboxHostLogo,
@@ -23,7 +29,10 @@ import {
 } from "@/lib/sandbox-host-style";
 import { SandboxDeleteConfirmDialog } from "@/components/sandboxes/SandboxDeleteConfirmDialog";
 import { SandboxIndexRowActionsMenu } from "./sandbox-index-row-actions";
-import { SANDBOX_STARTERS } from "./drafts";
+import {
+  SANDBOX_BLANK_STARTER,
+  SANDBOX_TEMPLATE_STARTERS,
+} from "./drafts";
 import type { SandboxStarterDefinition } from "./types";
 
 export type SandboxOpenOptions = {
@@ -108,10 +117,77 @@ function SandboxSummaryCard({
 }
 
 const STARTER_ICONS = {
-  "internal-qa": Users,
-  "icp-demo": Sparkles,
-  blank: Wand2,
+  "internal-qa": Building2,
+  "icp-demo": Globe,
 } as const;
+
+function FirstRunTemplateTile({
+  starter,
+  onSelectStarter,
+}: {
+  starter: SandboxStarterDefinition;
+  onSelectStarter: (starter: SandboxStarterDefinition) => void;
+}) {
+  const Icon = STARTER_ICONS[starter.id] ?? Sparkles;
+  const tooltip = starter.templateTooltip;
+
+  const tileInner = (
+    <>
+      <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35 transition-colors duration-200 group-hover:border-primary/35 group-hover:bg-primary/10">
+        <Icon className="size-5 text-muted-foreground transition-colors duration-200 group-hover:text-primary" />
+      </span>
+      <span className="mt-4 font-semibold leading-snug transition-colors group-hover:text-foreground">
+        {starter.title}
+      </span>
+      <span className="mt-2 line-clamp-3 text-sm text-muted-foreground">
+        {starter.description}
+      </span>
+    </>
+  );
+
+  if (!tooltip) {
+    return (
+      <button
+        type="button"
+        onClick={() => onSelectStarter(starter)}
+        className="group flex flex-col rounded-[28px] border border-border/70 bg-card/70 p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:bg-primary/5 hover:shadow-lg"
+      >
+        {tileInner}
+      </button>
+    );
+  }
+
+  return (
+    <div className="group relative rounded-[28px] border border-border/70 bg-card/70 shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:bg-primary/5 hover:shadow-lg">
+      <button
+        type="button"
+        onClick={() => onSelectStarter(starter)}
+        className="flex w-full flex-col rounded-[28px] p-5 pr-12 text-left"
+      >
+        {tileInner}
+      </button>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="absolute top-3 right-3 z-10 rounded-full p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-label="What this template includes"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <Info className="size-4" aria-hidden />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent
+          side="left"
+          sideOffset={6}
+          className="max-w-[220px] px-2.5 py-1.5 text-left text-xs leading-snug text-balance"
+        >
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // SandboxIndexPage
@@ -308,42 +384,58 @@ export function SandboxIndexPage({
                 Create your first sandbox
               </h3>
               <p className="mt-2 text-sm text-muted-foreground">
-                Pick a starter to open the builder with realistic defaults, or
-                start blank. You can change everything before saving.
+                Templates include defaults for common flows—usually the fastest
+                way to get started. Prefer an empty builder? Use Create New
+                under the templates. You can change everything before saving.
               </p>
             </div>
-            <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
-              {SANDBOX_STARTERS.map((starter) => {
-                const Icon = STARTER_ICONS[starter.id] ?? Sparkles;
-                return (
-                  <button
+
+            <div className="flex flex-col gap-4">
+              <h4 className="text-sm font-semibold text-foreground">
+                Recommended templates
+              </h4>
+              <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-2">
+                {SANDBOX_TEMPLATE_STARTERS.map((starter) => (
+                  <FirstRunTemplateTile
                     key={starter.id}
-                    type="button"
-                    onClick={() => onSelectStarter(starter)}
-                    className="flex flex-col rounded-[28px] border border-border/70 bg-card/70 p-5 text-left shadow-sm transition-colors hover:border-primary/35 hover:bg-card"
-                  >
-                    <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35">
-                      <Icon className="size-5 text-muted-foreground" />
-                    </span>
-                    <span className="mt-4 font-semibold leading-snug">
-                      {starter.title}
-                    </span>
-                    <span className="mt-2 line-clamp-3 text-sm text-muted-foreground">
-                      {starter.description}
-                    </span>
-                  </button>
-                );
-              })}
+                    starter={starter}
+                    onSelectStarter={onSelectStarter}
+                  />
+                ))}
+              </div>
             </div>
-            <div className="flex justify-center pb-4">
+
+            <div className="flex flex-col gap-2">
+              <h4 className="text-sm font-medium text-muted-foreground">
+                Or start from scratch
+              </h4>
+              <div className="w-full max-w-md">
+                <button
+                  type="button"
+                  onClick={() => onSelectStarter(SANDBOX_BLANK_STARTER)}
+                  className="flex w-full flex-col gap-3 rounded-2xl border border-border/70 bg-card/70 p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:bg-card hover:shadow-md"
+                >
+                  <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35">
+                    <Plus className="size-5 text-muted-foreground" aria-hidden />
+                  </span>
+                  <span className="text-base font-semibold leading-snug text-foreground">
+                    Create New
+                  </span>
+                  <span className="line-clamp-3 text-sm text-muted-foreground">
+                    {SANDBOX_BLANK_STARTER.description}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex pb-4">
               <Button
                 variant="outline"
                 size="lg"
                 className="rounded-xl"
                 onClick={onOpenStarterLauncher}
               >
-                <Plus className="mr-2 size-4" />
-                More options
+                Browse all starters
               </Button>
             </div>
           </div>

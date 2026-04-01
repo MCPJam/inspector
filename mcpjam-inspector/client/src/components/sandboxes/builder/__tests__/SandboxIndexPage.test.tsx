@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { SandboxIndexPage } from "../SandboxIndexPage";
-import { SANDBOX_STARTERS } from "../drafts";
+import { SANDBOX_BLANK_STARTER, SANDBOX_STARTERS } from "../drafts";
 
 const openLauncher = vi.fn();
 const selectStarter = vi.fn();
@@ -44,11 +44,41 @@ describe("SandboxIndexPage", () => {
     expect(
       screen.queryByPlaceholderText(/Search sandboxes/),
     ).not.toBeInTheDocument();
-    expect(screen.getByText("Internal QA sandbox")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Create New/i })).toBeInTheDocument();
     expect(
-      screen.getByText("ICP demo / share-link sandbox"),
+      screen.getByRole("heading", { name: "Recommended templates" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Blank sandbox")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Or start from scratch" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Internal QA")).toBeInTheDocument();
+    expect(
+      screen.getByText("External Beta Test"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Browse all starters")).toBeInTheDocument();
+  });
+
+  it("shows template details in a tooltip when hovering the info icon on a first-run starter tile", async () => {
+    const user = userEvent.setup();
+    render(
+      <SandboxIndexPage
+        sandboxes={[]}
+        isLoading={false}
+        onOpenSandbox={openSandbox}
+        onDuplicateSandbox={duplicateSandbox}
+        onDeleteSandbox={deleteSandbox}
+        onOpenStarterLauncher={openLauncher}
+        onSelectStarter={selectStarter}
+      />,
+    );
+
+    const infoButtons = screen.getAllByRole("button", {
+      name: /What this template includes/i,
+    });
+    await user.hover(infoButtons[0]!);
+
+    const matches = await screen.findAllByText(/Claude-style host/i);
+    expect(matches.length).toBeGreaterThan(0);
   });
 
   it("invokes starter selection when a first-run tile is clicked", () => {
@@ -64,11 +94,29 @@ describe("SandboxIndexPage", () => {
       />,
     );
 
-    fireEvent.click(screen.getByText("Internal QA sandbox"));
+    fireEvent.click(screen.getByText("Internal QA"));
     expect(selectStarter).toHaveBeenCalledTimes(1);
     expect(selectStarter).toHaveBeenCalledWith(
       SANDBOX_STARTERS.find((s) => s.id === "internal-qa"),
     );
+  });
+
+  it("invokes blank starter when Create New is clicked", () => {
+    render(
+      <SandboxIndexPage
+        sandboxes={[]}
+        isLoading={false}
+        onOpenSandbox={openSandbox}
+        onDuplicateSandbox={duplicateSandbox}
+        onDeleteSandbox={deleteSandbox}
+        onOpenStarterLauncher={openLauncher}
+        onSelectStarter={selectStarter}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Create New/i }));
+    expect(selectStarter).toHaveBeenCalledTimes(1);
+    expect(selectStarter).toHaveBeenCalledWith(SANDBOX_BLANK_STARTER);
   });
 
   it("shows search-empty state when filters match nothing but sandboxes exist", async () => {
