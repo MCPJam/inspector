@@ -67,6 +67,7 @@ interface SuiteHeaderProps {
   onDeleteRun: (runId: string) => void;
   onViewModeChange: (mode: "overview") => void;
   connectedServerNames: Set<string>;
+  canDeleteSuite: boolean;
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;
   cancellingRunId: string | null;
@@ -100,6 +101,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     onCancelRun,
     onViewModeChange,
     connectedServerNames,
+    canDeleteSuite,
     rerunningSuiteId,
     replayingRunId = null,
     cancellingRunId,
@@ -655,7 +657,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             </TooltipContent>
           </Tooltip>
         )}
-        {!readOnlyConfig && (
+        {canDeleteSuite && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
