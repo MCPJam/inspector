@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { usePostHog } from "posthog-js/react";
+import { useFeatureFlagEnabled, usePostHog } from "posthog-js/react";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import {
   Dialog,
@@ -10,8 +10,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { getInitials } from "@/lib/utils";
-import { ChevronDown, Clock, Globe, Lock } from "lucide-react";
+import { ChevronDown, Clock, CreditCard, Globe, Lock } from "lucide-react";
 import { toast } from "sonner";
 import {
   DropdownMenu,
@@ -31,6 +32,16 @@ import {
 import { useConvexAuth } from "convex/react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { serializeServersForSharing } from "@/lib/workspace-serialization";
+import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import {
+  BILLING_GATES,
+  resolveBillingGateState,
+} from "@/lib/billing-gates";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  getBillingUpsellCtaLabel,
+  getBillingUpsellTeaser,
+} from "@/lib/billing-upsell";
 import type { WorkspaceVisibility } from "@/state/app-types";
 import type { User } from "@workos-inc/authkit-js";
 
@@ -120,6 +131,35 @@ export function ShareWorkspaceDialog({
     workspaceId: sharedWorkspaceId || null,
   });
 
+  // Billing gate for member invites
+  const billingUiFlag = useFeatureFlagEnabled("billing-entitlements-ui");
+  const billingUiEnabled = billingUiFlag === true;
+  const {
+    billingStatus,
+    organizationPremiumness,
+    planCatalog,
+    isLoadingBilling,
+    isLoadingOrganizationPremiumness,
+  } = useOrganizationBilling(organizationId ?? null);
+  const memberInviteGate = resolveBillingGateState({
+    billingUiEnabled,
+    organizationId: organizationId ?? null,
+    billingStatus,
+    premiumness: organizationPremiumness,
+    gate: BILLING_GATES.memberInvites,
+    isLoading:
+      billingUiEnabled &&
+      (isLoadingBilling || isLoadingOrganizationPremiumness),
+  });
+  const memberUpsellTeaser = getBillingUpsellTeaser({
+    planCatalog,
+    upgradePlan: memberInviteGate.upgradePlan,
+    intent: "members",
+  });
+  const memberUpsellCtaLabel = getBillingUpsellCtaLabel(
+    memberInviteGate.upgradePlan,
+  );
+
   useEffect(() => {
     setCurrentVisibility(visibility ?? "public");
   }, [visibility]);
@@ -174,6 +214,14 @@ export function ShareWorkspaceDialog({
 
   const handleInvite = async () => {
     if (!email.trim() || !canManageMembers) return;
+    if (memberInviteGate.isLoading) return;
+    if (memberInviteGate.isDenied) {
+      toast.error(
+        memberInviteGate.denialMessage ??
+          "Upgrade required to add more members",
+      );
+      return;
+    }
 
     setIsInviting(true);
     try {
@@ -209,7 +257,9 @@ export function ShareWorkspaceDialog({
         environment: detectEnvironment(),
       });
     } catch (error) {
-      toast.error((error as Error).message || "Failed to invite member");
+      toast.error(
+        getBillingErrorMessage(error, "Failed to invite member"),
+      );
     } finally {
       setIsInviting(false);
     }
@@ -342,11 +392,54 @@ export function ShareWorkspaceDialog({
                 </div>
                 <Button
                   onClick={() => void handleInvite()}
-                  disabled={!email.trim() || isInviting}
+                  disabled={
+                    !email.trim() ||
+                    isInviting ||
+                    memberInviteGate.isLoading ||
+                    memberInviteGate.isDenied
+                  }
                 >
                   {isInviting ? "..." : "Invite"}
                 </Button>
               </div>
+
+              {memberInviteGate.isDenied && (
+                <Alert
+                  className="border-primary/20 bg-primary/[0.04]"
+                  data-testid="member-limit-upsell"
+                >
+                  <CreditCard className="size-4 text-primary" />
+                  <AlertTitle>Need more members?</AlertTitle>
+                  <AlertDescription className="gap-2">
+                    {memberInviteGate.denialMessage ? (
+                      <p>{memberInviteGate.denialMessage}</p>
+                    ) : null}
+                    {memberUpsellTeaser ? (
+                      <p className="text-foreground/80">
+                        {memberUpsellTeaser}
+                      </p>
+                    ) : null}
+                    {billingStatus?.canManageBilling ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        className="mt-1"
+                        onClick={() => {
+                          if (organizationId) {
+                            window.location.hash = `organizations/${organizationId}/billing`;
+                          }
+                        }}
+                      >
+                        {memberUpsellCtaLabel}
+                      </Button>
+                    ) : (
+                      <p className="font-medium text-foreground/80">
+                        Ask an organization owner to review billing options.
+                      </p>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
             </div>
           )}
 
