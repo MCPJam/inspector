@@ -855,12 +855,12 @@ function OrganizationPage({
                         >
                           View plans
                         </Button>
+                        {!billingStatus.canManageBilling ? (
+                          <p className="min-w-0 text-sm font-medium text-primary">
+                            Only organization owners can manage billing.
+                          </p>
+                        ) : null}
                       </div>
-                      {!billingStatus.canManageBilling ? (
-                        <p className="text-xs text-muted-foreground">
-                          Only organization owners can manage billing.
-                        </p>
-                      ) : null}
                     </>
                   ) : null}
                   {billingError ? (

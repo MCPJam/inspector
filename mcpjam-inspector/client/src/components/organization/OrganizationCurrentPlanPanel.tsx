@@ -236,14 +236,12 @@ export function OrganizationCurrentPlanPanel({
           </div>
         </div>
 
-        {currentPlan !== "free" ? (
+        {currentPlan !== "free" && canManageBilling ? (
           <Button
             variant="outline"
             className="shrink-0 gap-2 self-start sm:self-center"
             onClick={() => void onManageBilling()}
-            disabled={
-              !canManageBilling || !billingConfigured || isOpeningPortal
-            }
+            disabled={!billingConfigured || isOpeningPortal}
           >
             {isOpeningPortal ? (
               <>

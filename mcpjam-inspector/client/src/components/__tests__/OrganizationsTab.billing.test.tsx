@@ -367,6 +367,34 @@ describe("OrganizationsTab billing", () => {
     ).toBeInTheDocument();
   });
 
+  it("overview billing card hides Manage plan for non-owners and shows owner-only copy beside View plans", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripeCurrentPeriodEnd: 1_705_000_000_000,
+          stripePriceId: "price_team",
+          canManageBilling: false,
+          isOwner: false,
+        }),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" />);
+
+    expect(screen.queryByRole("button", { name: "Manage plan" })).toBeNull();
+    const viewPlans = screen.getByRole("button", { name: "View plans" });
+    const ownerCopy = screen.getByText(
+      "Only organization owners can manage billing.",
+    );
+    expect(ownerCopy).toBeInTheDocument();
+    expect(viewPlans.parentElement).toContainElement(ownerCopy);
+  });
+
   it("shows trial messaging without paid Starter pricing copy for active trials", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
