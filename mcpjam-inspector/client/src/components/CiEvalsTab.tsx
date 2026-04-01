@@ -587,7 +587,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 </div>
               ) : !hasVisibleSuites ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-                  <div className="mx-auto w-full max-w-2xl px-6 py-8 pb-12">
+                  <div className="mx-auto w-full max-w-4xl px-6 py-8 pb-12">
                     <div className="mb-6 flex gap-6 items-start rounded-xl border border-border bg-muted/60 px-6 py-5">
                       <h2 className="w-2/5 shrink-0 pt-1 text-2xl font-bold tracking-tight text-foreground">
                         Follow these steps to connect to an MCP server, run an

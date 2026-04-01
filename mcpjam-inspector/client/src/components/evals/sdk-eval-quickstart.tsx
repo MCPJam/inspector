@@ -544,7 +544,7 @@ export function SdkEvalQuickstart({
   const dotenvEnv = buildDotEnvSnippet(plaintextKey);
 
   return (
-    <div className="w-full max-w-2xl space-y-3">
+    <div className="w-full max-w-4xl space-y-3">
       {/* Step 1: Set up project */}
       <StepCard step={1} title="Create a project and install the SDK">
         <QuickstartCodeBlock
