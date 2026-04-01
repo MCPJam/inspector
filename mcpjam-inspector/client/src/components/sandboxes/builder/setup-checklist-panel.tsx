@@ -535,37 +535,6 @@ export function SetupChecklistPanel({
     el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }, [focusedSection]);
 
-  // #region agent log
-  useEffect(() => {
-    if (!accessDialogOpen) return;
-    fetch("http://127.0.0.1:7376/ingest/e375a10a-5c9d-4716-b882-11948fb54027", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "ce7567",
-      },
-      body: JSON.stringify({
-        sessionId: "ce7567",
-        runId: "post-fix",
-        hypothesisId: "H2",
-        location: "setup-checklist-panel.tsx:accessDialogOpen",
-        message: "Access dialog open — invite UI gates",
-        data: {
-          draftMode: sandboxDraft.mode,
-          invitedOnly: sandboxDraft.mode === "invited_only",
-          hasInviteSandboxMember: typeof inviteSandboxMember === "function",
-          inviteInputDisabled: typeof inviteSandboxMember !== "function",
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }, [
-    accessDialogOpen,
-    sandboxDraft.mode,
-    inviteSandboxMember,
-  ]);
-  // #endregion
-
   const hostedModels = useMemo(
     () =>
       SUPPORTED_MODELS.filter((model) =>

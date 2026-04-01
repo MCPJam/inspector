@@ -353,11 +353,14 @@ export function SandboxBuilderView({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
+  const [canvasViewportRefitNonce, setCanvasViewportRefitNonce] = useState(0);
   const panelGroupContainerRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
   const isInitialMountRef = useRef(true);
   const pendingRestartRef = useRef(false);
   const prevViewModeRef = useRef(viewMode);
+  const prevViewModeForCanvasRefitRef = useRef<ViewMode>(viewMode);
+  const prevMobileSetupSheetForCanvasRef = useRef(isSetupSheetOpen);
 
   // Sync builder session to sessionStorage so it survives OAuth redirects
   useEffect(() => {
@@ -433,6 +436,25 @@ export function SandboxBuilderView({
       setChatKey((k) => k + 1);
     }
   }, [viewMode]);
+
+  useEffect(() => {
+    const prev = prevViewModeForCanvasRefitRef.current;
+    prevViewModeForCanvasRefitRef.current = viewMode;
+    if (viewMode === "setup" && prev !== "setup") {
+      setCanvasViewportRefitNonce((n) => n + 1);
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (!isMobile || viewMode !== "setup") {
+      prevMobileSetupSheetForCanvasRef.current = isSetupSheetOpen;
+      return;
+    }
+    if (prevMobileSetupSheetForCanvasRef.current !== isSetupSheetOpen) {
+      setCanvasViewportRefitNonce((n) => n + 1);
+    }
+    prevMobileSetupSheetForCanvasRef.current = isSetupSheetOpen;
+  }, [isMobile, viewMode, isSetupSheetOpen]);
 
   // Playground snapshot writer — keeps localStorage in sync with draft config
   useEffect(() => {
@@ -712,28 +734,6 @@ export function SandboxBuilderView({
   );
 
   const saveSandbox = useCallback(async (): Promise<boolean> => {
-    // #region agent log
-    fetch("http://127.0.0.1:7376/ingest/e375a10a-5c9d-4716-b882-11948fb54027", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "ce7567",
-      },
-      body: JSON.stringify({
-        sessionId: "ce7567",
-        runId: "post-fix",
-        hypothesisId: "H3",
-        location: "SandboxBuilderView.tsx:saveSandbox:entry",
-        message: "saveSandbox entry",
-        data: {
-          propSandboxId: sandboxId ?? null,
-          convexSandboxLoaded: Boolean(sandbox),
-          loadedSandboxId: sandbox?.sandboxId ?? null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     const trimmedName = draftSandboxConfig.name.trim();
     if (!trimmedName) {
       toast.error("Sandbox name is required");
@@ -791,32 +791,6 @@ export function SandboxBuilderView({
         }
         toast.success("Sandbox created");
         setViewMode("preview");
-        // #region agent log
-        fetch(
-          "http://127.0.0.1:7376/ingest/e375a10a-5c9d-4716-b882-11948fb54027",
-          {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              "X-Debug-Session-Id": "ce7567",
-            },
-            body: JSON.stringify({
-              sessionId: "ce7567",
-              runId: "post-fix",
-              hypothesisId: "H3",
-              location: "SandboxBuilderView.tsx:saveSandbox:afterCreate",
-              message: "createSandbox success, calling onSavedDraft",
-              data: {
-                createdSandboxId:
-                  typeof created.sandboxId === "string"
-                    ? created.sandboxId
-                    : String(created.sandboxId),
-              },
-              timestamp: Date.now(),
-            }),
-          },
-        ).catch(() => {});
-        // #endregion
         onSavedDraft(created);
         return true;
       }
@@ -838,7 +812,6 @@ export function SandboxBuilderView({
     draftSandboxConfig,
     onSavedDraft,
     sandbox,
-    sandboxId,
     setSandboxMode,
     updateSandbox,
     workspaceId,
@@ -1010,31 +983,6 @@ export function SandboxBuilderView({
     setPlaygroundId(nextId);
     setChatKey((k) => k + 1);
   }, []);
-
-  // #region agent log
-  useEffect(() => {
-    fetch("http://127.0.0.1:7376/ingest/e375a10a-5c9d-4716-b882-11948fb54027", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Debug-Session-Id": "ce7567",
-      },
-      body: JSON.stringify({
-        sessionId: "ce7567",
-        runId: "post-fix",
-        hypothesisId: "H1",
-        location: "SandboxBuilderView.tsx:propsEffect",
-        message: "builder sandboxId vs convex sandbox",
-        data: {
-          propSandboxId: sandboxId ?? null,
-          inviteCallbackWillBeDefined: Boolean(sandboxId),
-          loadedSandboxId: sandbox?.sandboxId ?? null,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-  }, [sandboxId, sandbox?.sandboxId]);
-  // #endregion
 
   const setupPanelSharedProps = {
     sandboxDraft: draftSandboxConfig,
@@ -1327,6 +1275,7 @@ export function SandboxBuilderView({
                           <SandboxCanvas
                             viewModel={viewModel}
                             selectedNodeId={selectedNodeId}
+                            canvasViewportRefitNonce={canvasViewportRefitNonce}
                             canvasServerPicker={{
                               workspaceServers,
                               selectedServerIds:
