@@ -39,6 +39,10 @@ export const BILLING_GATES = {
     gateKey: "maxWorkspaces",
     feature: null,
   },
+  serverCreation: {
+    gateKey: "maxServersPerWorkspace",
+    feature: null,
+  },
 } as const satisfies Record<string, BillingGateDefinition>;
 
 export interface ResolvedBillingGate {
