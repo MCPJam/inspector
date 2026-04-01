@@ -3,6 +3,7 @@ import {
   Blocks,
   BookOpen,
   Database,
+  FlaskConical,
   GitBranch,
   Globe,
   Lightbulb,
@@ -120,6 +121,42 @@ export const LEARNING_GROUPS: LearningGroup[] = [
         totalSteps: 7,
         category: "Extensions",
         estimatedMinutes: 4,
+      },
+    ],
+  },
+  {
+    title: "Try MCP",
+    subtitle: "Connect to a live server and explore interactively",
+    modules: [
+      {
+        id: "learning-tools",
+        title: "Explore Tools",
+        description:
+          "Connect to a learning server and browse, invoke, and inspect MCP tools in real time.",
+        icon: Wrench,
+        totalSteps: 1,
+        category: "Interactive",
+        estimatedMinutes: 5,
+      },
+      {
+        id: "learning-resources",
+        title: "Explore Resources",
+        description:
+          "Browse and read MCP resources from a live learning server — URIs, templates, and content types.",
+        icon: Database,
+        totalSteps: 1,
+        category: "Interactive",
+        estimatedMinutes: 5,
+      },
+      {
+        id: "learning-prompts",
+        title: "Explore Prompts",
+        description:
+          "List and execute MCP prompts on a live learning server — arguments, messages, and slash commands.",
+        icon: FlaskConical,
+        totalSteps: 1,
+        category: "Interactive",
+        estimatedMinutes: 5,
       },
     ],
   },

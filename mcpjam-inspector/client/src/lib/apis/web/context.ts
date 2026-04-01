@@ -32,6 +32,36 @@ const EMPTY_CONTEXT: HostedApiContext = {
 let hostedApiContext: HostedApiContext = EMPTY_CONTEXT;
 let cachedBearerToken: { token: string; expiresAt: number } | null = null;
 
+/**
+ * Module-scoped registry for runtime server configs (e.g. the learning sandbox).
+ *
+ * This is intentionally module-scoped mutable state for the single-provider /
+ * fixed-server-id v1 design. If multiple learning providers are ever needed,
+ * the registry must be namespaced or ref-counted.
+ *
+ * Registered configs are checked by `buildHostedServerRequest` before the
+ * Convex server-ID lookup so runtime servers work without a persisted workspace entry.
+ */
+const runtimeServerConfigs: Record<string, unknown> = {};
+
+/**
+ * Register a runtime server config so hosted request builders can resolve it
+ * without a Convex server ID.
+ */
+export function registerRuntimeServerConfig(
+  serverName: string,
+  config: unknown,
+): void {
+  runtimeServerConfigs[serverName] = config;
+}
+
+/**
+ * Remove a previously registered runtime server config.
+ */
+export function unregisterRuntimeServerConfig(serverName: string): void {
+  delete runtimeServerConfigs[serverName];
+}
+
 const TOKEN_CACHE_TTL_MS = 30_000;
 
 export function resetTokenCache() {
@@ -267,6 +297,17 @@ function getHostedAccessScope(): HostedAccessScope | undefined {
 export function buildHostedServerRequest(
   serverNameOrId: string,
 ): Record<string, unknown> {
+  // Runtime-config path: check module-scoped registry for runtime servers
+  // (e.g. the learning sandbox) before guest/Convex paths.
+  const runtimeConfig = runtimeServerConfigs[serverNameOrId];
+  if (runtimeConfig) {
+    return buildGuestServerRequest(
+      runtimeConfig,
+      undefined,
+      hostedApiContext.clientCapabilities,
+    );
+  }
+
   // Guest path: use directly-provided server config (no Convex)
   if (isGuestMode()) {
     const config = hostedApiContext.serverConfigs?.[serverNameOrId];

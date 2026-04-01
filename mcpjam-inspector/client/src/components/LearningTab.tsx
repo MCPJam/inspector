@@ -40,6 +40,12 @@ import { McpToolsArticle } from "@/components/mcp-tools/McpToolsArticle";
 import { McpResourcesArticle } from "@/components/mcp-resources/McpResourcesArticle";
 import { McpPromptsArticle } from "@/components/mcp-prompts/McpPromptsArticle";
 import { useLearningProgress } from "@/hooks/use-learning-progress";
+import { LearningStateProvider } from "@/state/LearningStateProvider";
+import { LearningToolsExplorer } from "@/components/learning-sandbox/LearningToolsExplorer";
+import { LearningResourcesExplorer } from "@/components/learning-sandbox/LearningResourcesExplorer";
+import { LearningPromptsExplorer } from "@/components/learning-sandbox/LearningPromptsExplorer";
+import { ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 /**
  * Sentinel value used as `currentStep` when the lifecycle walkthrough is at step 0.
@@ -332,6 +338,67 @@ function AppsSdkWalkthrough({
 }
 
 // ---------------------------------------------------------------------------
+// Interactive sandbox shell — wraps explorer in LearningStateProvider
+// ---------------------------------------------------------------------------
+
+const INTERACTIVE_MODULE_IDS = new Set([
+  "learning-tools",
+  "learning-resources",
+  "learning-prompts",
+]);
+
+function InteractiveSandboxShell({
+  moduleId,
+  onBack,
+  onComplete,
+}: {
+  moduleId: string;
+  onBack: () => void;
+  onComplete: () => void;
+}) {
+  const labels: Record<string, string> = {
+    "learning-tools": "Explore Tools",
+    "learning-resources": "Explore Resources",
+    "learning-prompts": "Explore Prompts",
+  };
+
+  return (
+    <LearningStateProvider>
+      <div className="flex h-full flex-col">
+        <div className="flex shrink-0 items-center gap-2 border-b px-4 py-2">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2"
+            onClick={onBack}
+          >
+            <ArrowLeft className="h-3.5 w-3.5" />
+            Back
+          </Button>
+          <span className="text-sm font-medium">
+            {labels[moduleId] ?? "Try MCP"}
+          </span>
+          <div className="flex-1" />
+          <Button
+            variant="secondary"
+            size="sm"
+            className="h-7"
+            onClick={onComplete}
+          >
+            Mark complete
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-hidden">
+          {moduleId === "learning-tools" && <LearningToolsExplorer />}
+          {moduleId === "learning-resources" && <LearningResourcesExplorer />}
+          {moduleId === "learning-prompts" && <LearningPromptsExplorer />}
+        </div>
+      </div>
+    </LearningStateProvider>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // LearningTab — routes to the selected concept
 // ---------------------------------------------------------------------------
 
@@ -341,6 +408,20 @@ export function LearningTab() {
     useLearningProgress();
 
   const goBack = useCallback(() => setSelectedConcept(null), []);
+
+  // Interactive sandbox modules — routed through LearningStateProvider
+  if (selectedConcept && INTERACTIVE_MODULE_IDS.has(selectedConcept)) {
+    return (
+      <InteractiveSandboxShell
+        moduleId={selectedConcept}
+        onBack={goBack}
+        onComplete={() => {
+          markComplete(selectedConcept);
+          goBack();
+        }}
+      />
+    );
+  }
 
   if (selectedConcept === "why-mcp") {
     return (

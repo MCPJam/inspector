@@ -181,6 +181,55 @@ export async function getInitializationInfo(serverId: string) {
   return res.json();
 }
 
+/**
+ * Connect a runtime server using an explicit config (no workspace persistence).
+ * In hosted mode, uses the runtime-config registry for validation.
+ */
+export async function testRuntimeServerConnection(
+  serverConfig: MCPServerConfig,
+  serverId: string,
+) {
+  if (HOSTED_MODE) {
+    // Runtime servers register their config in the hosted runtime registry
+    // so buildHostedServerRequest can resolve them without a Convex server ID.
+    return safeValidateHostedServer(serverId, serverConfig);
+  }
+
+  const res = await authFetchWithTimeout(
+    "/api/mcp/connect",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverConfig, serverId }),
+    },
+    20000,
+  );
+  return res.json();
+}
+
+/**
+ * Reconnect a runtime server using an explicit config.
+ */
+export async function reconnectRuntimeServer(
+  serverId: string,
+  serverConfig: MCPServerConfig,
+) {
+  if (HOSTED_MODE) {
+    return safeValidateHostedServer(serverId, serverConfig);
+  }
+
+  const res = await authFetchWithTimeout(
+    "/api/mcp/servers/reconnect",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ serverId, serverConfig }),
+    },
+    20000,
+  );
+  return res.json();
+}
+
 export async function setServerLoggingLevel(
   serverId: string,
   level: LoggingLevel,
