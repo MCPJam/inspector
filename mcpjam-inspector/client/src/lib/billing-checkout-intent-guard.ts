@@ -1,4 +1,7 @@
-import type { OrganizationPlan } from "@/hooks/useOrganizationBilling";
+import type {
+  OrganizationBillingStatus,
+  OrganizationPlan,
+} from "@/hooks/useOrganizationBilling";
 
 const PLAN_RANK: Record<OrganizationPlan, number> = {
   free: 0,
@@ -17,14 +20,24 @@ export type CheckoutIntentGuardResult =
       currentPlan: OrganizationPlan;
     };
 
+type BillingStatusForCheckoutGuard = Pick<
+  OrganizationBillingStatus,
+  "effectivePlan" | "source"
+>;
+
 /**
- * Compares the org's effective plan to a deep-link checkout tier.
- * Blocks checkout when the user is already on that tier or on a higher self-serve tier.
+ * Compares billing status to a deep-link checkout tier.
+ * Trial orgs may still purchase Starter or Team immediately.
  */
-export function guardCheckoutIntentAgainstEffectivePlan(
-  effectivePlan: OrganizationPlan,
+export function guardCheckoutIntentAgainstBillingStatus(
+  billingStatus: BillingStatusForCheckoutGuard,
   requestedTier: CheckoutPlanTier,
 ): CheckoutIntentGuardResult {
+  if (billingStatus.source === "trial") {
+    return { proceed: true };
+  }
+
+  const { effectivePlan } = billingStatus;
   if (effectivePlan === requestedTier) {
     return {
       proceed: false,

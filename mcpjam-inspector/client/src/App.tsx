@@ -582,9 +582,13 @@ export default function App() {
   }, [navPremiumness]);
   const billingGateEnforcementActive =
     billingUiEnabled && isBillingEnforcementActive(navPremiumness);
-  const isCreateWorkspaceDisabled = workspaceCreationGate.isDenied;
-  const createWorkspaceDisabledReason =
-    workspaceCreationGate.denialMessage ?? undefined;
+  const guestWorkspaceLimitReached =
+    !isAuthenticated && Object.keys(workspaces).length >= 1;
+  const isCreateWorkspaceDisabled =
+    workspaceCreationGate.isDenied || guestWorkspaceLimitReached;
+  const createWorkspaceDisabledReason = guestWorkspaceLimitReached
+    ? "Sign in to create more workspaces"
+    : workspaceCreationGate.denialMessage ?? undefined;
   const showTrialDecisionModal =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&

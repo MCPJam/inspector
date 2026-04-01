@@ -32,7 +32,7 @@ import type {
   PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
-import { guardCheckoutIntentAgainstEffectivePlan } from "@/lib/billing-checkout-intent-guard";
+import { guardCheckoutIntentAgainstBillingStatus } from "@/lib/billing-checkout-intent-guard";
 import {
   getAnnualDiscountPercent,
   getDisplayPriceCentsForPlan,
@@ -561,8 +561,8 @@ export function OrganizationBillingSection({
         return;
       }
 
-      const intentGuard = guardCheckoutIntentAgainstEffectivePlan(
-        billingStatus.effectivePlan,
+      const intentGuard = guardCheckoutIntentAgainstBillingStatus(
+        billingStatus,
         checkoutIntent.plan,
       );
       if (!intentGuard.proceed) {

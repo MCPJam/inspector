@@ -10,6 +10,10 @@ const mockAddToolApprovalResponse = vi.fn();
 const mockAuthFetch = vi.fn();
 const mockGetSessionAuthHeaders = vi.fn(() => ({}));
 const mockGetAccessToken = vi.fn(async () => null);
+const mockConvexAuth = {
+  isAuthenticated: true,
+  isLoading: false,
+};
 const mockTransportInstances: Array<{
   options: any;
   sendMessages: ReturnType<typeof vi.fn>;
@@ -25,7 +29,7 @@ const mcpJamModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
-const nonGuestMcpJamModel = {
+const guestParityMcpJamModel = {
   id: "openai/gpt-oss-120b",
   name: "GPT OSS 120B",
   provider: "openai" as const,
@@ -114,10 +118,7 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => ({
-    isAuthenticated: true,
-    isLoading: false,
-  }),
+  useConvexAuth: () => mockConvexAuth,
 }));
 
 vi.mock("@ai-sdk/react", async () => {
@@ -210,6 +211,8 @@ vi.mock("ai", () => ({
 describe("useChatSession minimal mode parity", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConvexAuth.isAuthenticated = true;
+    mockConvexAuth.isLoading = false;
     mockModelState.availableModels = [baseModel];
     mockModelState.selectedModelId = "gpt-4";
     mockGetSessionAuthHeaders.mockReturnValue({});
@@ -328,10 +331,11 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("adds explicit Authorization transport headers for the non-hosted non-guest MCPJam model path", async () => {
-    mockModelState.availableModels = [nonGuestMcpJamModel];
-    mockModelState.selectedModelId = nonGuestMcpJamModel.id;
-    mockGetAccessToken.mockResolvedValue("convex-token");
+  it("keeps guest-parity MCPJam models on the unauthenticated non-hosted path", async () => {
+    mockModelState.availableModels = [guestParityMcpJamModel];
+    mockModelState.selectedModelId = guestParityMcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
     const selectedServers = ["server-1"];
 
     const { result } = renderHook(() =>
@@ -348,16 +352,8 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
-      Authorization: "Bearer convex-token",
-    });
-
-    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
-      Authorization: "Bearer convex-token",
-    });
-    expect(
-      await resolveConfig(latestTransport.options.headers),
-    ).not.toHaveProperty("X-MCP-Session-Auth");
+    expect(await resolveConfig(latestTransport.options.headers)).toBeUndefined();
+    expect(result.current.disableForAuthentication).toBe(false);
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 });

@@ -1,37 +1,92 @@
 import { describe, expect, it } from "vitest";
-import { guardCheckoutIntentAgainstEffectivePlan } from "../billing-checkout-intent-guard";
+import { guardCheckoutIntentAgainstBillingStatus } from "../billing-checkout-intent-guard";
 
-describe("guardCheckoutIntentAgainstEffectivePlan", () => {
+type BillingStatusGuardFixture = Parameters<
+  typeof guardCheckoutIntentAgainstBillingStatus
+>[0];
+
+function billingStatusFixture(
+  overrides: Partial<BillingStatusGuardFixture> = {},
+): BillingStatusGuardFixture {
+  return {
+    effectivePlan: "free",
+    source: "free",
+    ...overrides,
+  };
+}
+
+describe("guardCheckoutIntentAgainstBillingStatus", () => {
   it("allows upgrade from free to starter", () => {
     expect(
-      guardCheckoutIntentAgainstEffectivePlan("free", "starter"),
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture(),
+        "starter",
+      ),
     ).toEqual({ proceed: true });
   });
 
   it("allows upgrade from free to team", () => {
-    expect(guardCheckoutIntentAgainstEffectivePlan("free", "team")).toEqual({
-      proceed: true,
-    });
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(billingStatusFixture(), "team"),
+    ).toEqual({ proceed: true });
   });
 
   it("allows upgrade from starter to team", () => {
-    expect(guardCheckoutIntentAgainstEffectivePlan("starter", "team")).toEqual(
-      { proceed: true },
-    );
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({
+          effectivePlan: "starter",
+          source: "subscription",
+        }),
+        "team",
+      ),
+    ).toEqual({ proceed: true });
+  });
+
+  it("allows starter checkout during an active starter trial", () => {
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({ effectivePlan: "starter", source: "trial" }),
+        "starter",
+      ),
+    ).toEqual({ proceed: true });
+  });
+
+  it("allows team checkout during an active starter trial", () => {
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({ effectivePlan: "starter", source: "trial" }),
+        "team",
+      ),
+    ).toEqual({ proceed: true });
   });
 
   it("blocks when already on requested starter", () => {
-    expect(guardCheckoutIntentAgainstEffectivePlan("starter", "starter")).toEqual(
-      {
-        proceed: false,
-        reason: "already_on",
-        currentPlan: "starter",
-      },
-    );
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({
+          effectivePlan: "starter",
+          source: "subscription",
+        }),
+        "starter",
+      ),
+    ).toEqual({
+      proceed: false,
+      reason: "already_on",
+      currentPlan: "starter",
+    });
   });
 
   it("blocks when already on requested team", () => {
-    expect(guardCheckoutIntentAgainstEffectivePlan("team", "team")).toEqual({
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({
+          effectivePlan: "team",
+          source: "subscription",
+        }),
+        "team",
+      ),
+    ).toEqual({
       proceed: false,
       reason: "already_on",
       currentPlan: "team",
@@ -39,7 +94,15 @@ describe("guardCheckoutIntentAgainstEffectivePlan", () => {
   });
 
   it("blocks starter link when on team", () => {
-    expect(guardCheckoutIntentAgainstEffectivePlan("team", "starter")).toEqual({
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({
+          effectivePlan: "team",
+          source: "subscription",
+        }),
+        "starter",
+      ),
+    ).toEqual({
       proceed: false,
       reason: "already_higher",
       currentPlan: "team",
@@ -48,7 +111,13 @@ describe("guardCheckoutIntentAgainstEffectivePlan", () => {
 
   it("blocks starter link when on enterprise", () => {
     expect(
-      guardCheckoutIntentAgainstEffectivePlan("enterprise", "starter"),
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({
+          effectivePlan: "enterprise",
+          source: "subscription",
+        }),
+        "starter",
+      ),
     ).toEqual({
       proceed: false,
       reason: "already_higher",
@@ -57,12 +126,18 @@ describe("guardCheckoutIntentAgainstEffectivePlan", () => {
   });
 
   it("blocks team link when on enterprise", () => {
-    expect(guardCheckoutIntentAgainstEffectivePlan("enterprise", "team")).toEqual(
-      {
-        proceed: false,
-        reason: "already_higher",
-        currentPlan: "enterprise",
-      },
-    );
+    expect(
+      guardCheckoutIntentAgainstBillingStatus(
+        billingStatusFixture({
+          effectivePlan: "enterprise",
+          source: "subscription",
+        }),
+        "team",
+      ),
+    ).toEqual({
+      proceed: false,
+      reason: "already_higher",
+      currentPlan: "enterprise",
+    });
   });
 });

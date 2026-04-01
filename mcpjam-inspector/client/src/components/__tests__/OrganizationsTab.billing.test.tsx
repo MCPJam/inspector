@@ -1467,6 +1467,111 @@ describe("OrganizationsTab billing", () => {
     openSpy.mockRestore();
   });
 
+  it("auto-checks out starter deep links during an active starter trial", async () => {
+    const startPlanChange = vi.fn().mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://stripe.test/checkout",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "starter",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "starter",
+          trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
+          trialDaysRemaining: 7,
+        }),
+        startPlanChange,
+      }),
+    );
+
+    const navigateBillingInSameTab = vi.fn();
+    const onCheckoutIntentConsumed = vi.fn();
+
+    renderAutoCheckoutTab({
+      checkoutIntent: {
+        organizationId: "org-1",
+        plan: "starter",
+        interval: "annual",
+      },
+      onCheckoutIntentConsumed,
+      navigateBillingInSameTab,
+    });
+
+    expect(
+      screen.getByTestId("billing-deep-link-redirect"),
+    ).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(startPlanChange).toHaveBeenCalledWith(
+        expect.stringContaining("#organizations/org-1/billing"),
+        "starter",
+        "annual",
+        { confirmPaidPlanChange: false },
+      );
+    });
+    await waitFor(() => {
+      expect(onCheckoutIntentConsumed).toHaveBeenCalled();
+    });
+    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
+      "https://stripe.test/checkout",
+    );
+    expect(
+      screen.queryByText("You’re already on this plan"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("auto-checks out team deep links during an active starter trial", async () => {
+    const startPlanChange = vi.fn().mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://stripe.test/checkout",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "free",
+          effectivePlan: "starter",
+          source: "trial",
+          trialStatus: "active",
+          trialPlan: "starter",
+          trialEndsAt: Date.parse("2026-04-08T00:00:00.000Z"),
+          trialDaysRemaining: 7,
+        }),
+        startPlanChange,
+      }),
+    );
+
+    const navigateBillingInSameTab = vi.fn();
+    const onCheckoutIntentConsumed = vi.fn();
+
+    renderAutoCheckoutTab({
+      checkoutIntent: {
+        organizationId: "org-1",
+        plan: "team",
+        interval: "monthly",
+      },
+      onCheckoutIntentConsumed,
+      navigateBillingInSameTab,
+    });
+
+    await waitFor(() => {
+      expect(startPlanChange).toHaveBeenCalledWith(
+        expect.stringContaining("#organizations/org-1/billing"),
+        "team",
+        "monthly",
+        { confirmPaidPlanChange: false },
+      );
+    });
+    await waitFor(() => {
+      expect(onCheckoutIntentConsumed).toHaveBeenCalled();
+    });
+    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
+      "https://stripe.test/checkout",
+    );
+  });
+
   it("consumes billing deep-link checkout intent when billing is unavailable", async () => {
     const startPlanChange = vi.fn();
     mockUseOrganizationBilling.mockReturnValue(

@@ -289,7 +289,8 @@ export function useChatSession({
       const mcpjamModels = models.filter((model) =>
         isMCPJamProvidedModel(String(model.id)),
       );
-      // Guest users only see the free guest models
+      // Guests should see the same MCPJam-hosted free model set as signed-in
+      // free users. Shared billing/feature entitlements still require auth.
       if (guestMode) {
         return mcpjamModels.filter((m) =>
           GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
@@ -792,8 +793,8 @@ export function useChatSession({
   // Shared chats are guest-capable even though they are scoped to a workspace,
   // while direct guests have no workspace at all.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
-  // In non-hosted mode: only require auth for non-guest MCPJam models
-  // (server injects production guest token for guest-allowed models).
+  // In non-hosted mode: auth is only needed if a future MCPJam model opts out
+  // of guest access. Current free-tier MCPJam models run on guest auth.
   const requiresAuthForChat = HOSTED_MODE
     ? true
     : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));
