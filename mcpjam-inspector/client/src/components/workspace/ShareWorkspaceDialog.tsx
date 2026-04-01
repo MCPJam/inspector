@@ -33,10 +33,7 @@ import { useConvexAuth } from "convex/react";
 import { useProfilePicture } from "@/hooks/useProfilePicture";
 import { serializeServersForSharing } from "@/lib/workspace-serialization";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
-import {
-  BILLING_GATES,
-  resolveBillingGateState,
-} from "@/lib/billing-gates";
+import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   getBillingUpsellCtaLabel,
@@ -257,9 +254,7 @@ export function ShareWorkspaceDialog({
         environment: detectEnvironment(),
       });
     } catch (error) {
-      toast.error(
-        getBillingErrorMessage(error, "Failed to invite member"),
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to invite member"));
     } finally {
       setIsInviting(false);
     }
@@ -415,9 +410,7 @@ export function ShareWorkspaceDialog({
                       <p>{memberInviteGate.denialMessage}</p>
                     ) : null}
                     {memberUpsellTeaser ? (
-                      <p className="text-foreground/80">
-                        {memberUpsellTeaser}
-                      </p>
+                      <p className="text-foreground/80">{memberUpsellTeaser}</p>
                     ) : null}
                     {billingStatus?.canManageBilling ? (
                       <Button
