@@ -104,14 +104,14 @@ const {
 });
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => mockConvexAuthState,
+  useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: mockUseQuery,
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => mockWorkOsAuthState,
+  useAuth: (...args: unknown[]) => mockUseAuth(...args),
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -254,7 +254,7 @@ vi.mock("../components/oauth/OAuthDebugCallback", () => ({
   default: () => <div />,
 }));
 vi.mock("../components/mcp-sidebar", () => ({
-  MCPSidebar: () => <div data-testid="mcp-sidebar" />,
+  MCPSidebar: (props: unknown) => mockMCPSidebar(props),
 }));
 vi.mock("../components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children?: ReactNode }) => (
@@ -312,19 +312,11 @@ describe("App hosted OAuth callback handling", () => {
     vi.stubGlobal("__APP_VERSION__", "test");
     window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
     mockUseAuth.mockReset();
-    mockUseAuth.mockReturnValue({
-      getAccessToken: vi.fn(),
-      signIn: vi.fn(),
-      user: null,
-      isLoading: false,
-    });
+    mockUseAuth.mockReturnValue(mockWorkOsAuthState);
     mockUseAppState.mockReset();
     mockUseAppState.mockImplementation(createAppStateMock);
     mockUseConvexAuth.mockReset();
-    mockUseConvexAuth.mockReturnValue({
-      isAuthenticated: true,
-      isLoading: false,
-    });
+    mockUseConvexAuth.mockReturnValue(mockConvexAuthState);
     mockUseFeatureFlagEnabled.mockReset();
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
@@ -342,7 +334,7 @@ describe("App hosted OAuth callback handling", () => {
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
     mockMCPSidebar.mockReset();
-    mockMCPSidebar.mockImplementation(() => <div />);
+    mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockPosthogCapture.mockReset();
     mockAppBuilderTabMounts.mockReset();
     mockHandleOAuthCallback.mockImplementation(
@@ -1070,7 +1062,7 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("renders the billing upsell gate on the sandboxes route when workspace premiumness denies access", async () => {
+  it("still renders the sandboxes tab when workspace premiumness denies sandbox creation", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
     window.history.replaceState({}, "", "/#sandboxes");
@@ -1105,31 +1097,6 @@ describe("App hosted OAuth callback handling", () => {
         ];
       }
 
-      if (name === "billing:getOrganizationBillingStatus") {
-        return {
-          organizationId: "org-1",
-          organizationName: "Org One",
-          plan: "free",
-          effectivePlan: "free",
-          source: "free",
-          billingInterval: null,
-          billingConfigured: true,
-          subscriptionStatus: null,
-          canManageBilling: true,
-          isOwner: true,
-          hasCustomer: false,
-          stripeCurrentPeriodEnd: null,
-          stripePriceId: null,
-          trialStatus: "none",
-          trialPlan: null,
-          trialStartedAt: null,
-          trialEndsAt: null,
-          trialDaysRemaining: null,
-          decisionRequired: false,
-          trialDecision: null,
-        };
-      }
-
       if (name === "billing:getWorkspacePremiumness") {
         return {
           plan: "free",
@@ -1157,10 +1124,10 @@ describe("App hosted OAuth callback handling", () => {
 
     render(<App />);
 
+    // Sandboxes tab is NOT blocked at tab level — creation is gated inline
     await waitFor(() => {
-      expect(screen.getByTestId("billing-upsell-gate")).toBeInTheDocument();
+      expect(screen.getByText("Sandboxes Tab")).toBeInTheDocument();
     });
-    expect(screen.queryByText("Sandboxes Tab")).not.toBeInTheDocument();
   });
 
   it("navigates back to the sandboxes tab after callback completion", async () => {
