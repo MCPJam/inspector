@@ -54,6 +54,7 @@ describe("SuiteHeader", () => {
     onDeleteRun: vi.fn(),
     onViewModeChange: vi.fn(),
     connectedServerNames: new Set<string>(),
+    canDeleteSuite: false,
     rerunningSuiteId: null,
     cancellingRunId: null,
     deletingSuiteId: null,
@@ -173,7 +174,7 @@ describe("SuiteHeader", () => {
     expect(onShowCasesSidebar).toHaveBeenCalled();
   });
 
-  it("shows Delete suite in overview when editable and calls onDelete", async () => {
+  it("shows Delete suite in read-only overview when canDeleteSuite is true", async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
 
@@ -182,14 +183,28 @@ describe("SuiteHeader", () => {
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-        readOnlyConfig={false}
+        canDeleteSuite
         onDelete={onDelete}
-        onEditSuite={() => {}}
       />,
     );
 
     await user.click(screen.getByRole("button", { name: "Delete suite" }));
 
     expect(onDelete).toHaveBeenCalledWith(baseSuite);
+  });
+
+  it("hides Delete suite in read-only overview when canDeleteSuite is false", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        canDeleteSuite={false}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Delete suite" }),
+    ).toBeNull();
   });
 });

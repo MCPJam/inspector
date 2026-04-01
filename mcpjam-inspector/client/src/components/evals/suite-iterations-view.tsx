@@ -72,6 +72,7 @@ export function SuiteIterationsView({
   runDetailSortByOverride,
   onRunDetailSortByChange,
   omitRunIterationList = false,
+  canDeleteSuite,
   canDeleteRuns = true,
   readOnlyConfig = false,
   hideRunActions = false,
@@ -113,6 +114,8 @@ export function SuiteIterationsView({
   onRunDetailSortByChange?: (sort: "model" | "test" | "result") => void;
   /** When true, hide the iteration list in run detail (shown in a parent sidebar instead). */
   omitRunIterationList?: boolean;
+  /** When true, show suite delete affordances. */
+  canDeleteSuite: boolean;
   /** Workspace admins only: run list batch delete and selection. */
   canDeleteRuns?: boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
@@ -380,6 +383,7 @@ export function SuiteIterationsView({
             onDeleteRun={onDeleteRun}
             onViewModeChange={handleBackToOverview}
             connectedServerNames={connectedServerNames}
+            canDeleteSuite={canDeleteSuite}
             rerunningSuiteId={rerunningSuiteId}
             replayingRunId={replayingRunId}
             cancellingRunId={cancellingRunId}
@@ -716,29 +720,31 @@ export function SuiteIterationsView({
               availableModels={availableModels}
             />
 
-            <div className="border-t border-border pt-8 space-y-3">
-              <h2 className="text-base font-semibold text-destructive">
-                Danger zone
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                Deleting removes this suite from the workspace. Run history and
-                cases cannot be recovered.
-              </p>
-              <Button
-                type="button"
-                variant="outline"
-                className="border-destructive/50 text-destructive hover:bg-destructive/10"
-                onClick={() => onDelete(suite)}
-                disabled={deletingSuiteId === suite._id}
-              >
-                {deletingSuiteId === suite._id ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                ) : (
-                  <Trash2 className="h-4 w-4 mr-2" />
-                )}
-                Delete suite
-              </Button>
-            </div>
+            {canDeleteSuite ? (
+              <div className="border-t border-border pt-8 space-y-3">
+                <h2 className="text-base font-semibold text-destructive">
+                  Danger zone
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Deleting removes this suite from the workspace. Run history
+                  and cases cannot be recovered.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                  onClick={() => onDelete(suite)}
+                  disabled={deletingSuiteId === suite._id}
+                >
+                  {deletingSuiteId === suite._id ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Trash2 className="h-4 w-4 mr-2" />
+                  )}
+                  Delete suite
+                </Button>
+              </div>
+            ) : null}
           </div>
         </div>
       )}
