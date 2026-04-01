@@ -39,9 +39,7 @@ import {
 } from "@/lib/billing-entitlements";
 import { cn } from "@/lib/utils";
 import { buildComparePlanSectionsFromCatalog } from "@/components/organization/billing-compare-view-model";
-import {
-  type ComparePlanCell,
-} from "@/components/organization/compare-plan-marketing";
+import { type ComparePlanCell } from "@/components/organization/compare-plan-marketing";
 
 const PLAN_ORDER: OrganizationPlan[] = [
   "free",
@@ -136,9 +134,7 @@ function getPlanColumnCta(params: {
     return {
       label: "Upgrade",
       disabled:
-        !billingConfigured ||
-        !canManageBilling ||
-        isBillingActionPending,
+        !billingConfigured || !canManageBilling || isBillingActionPending,
       variant: "default",
       onClick: () => void onStartPlanChange(plan, billingInterval),
     };
@@ -380,10 +376,7 @@ function ComparePlanMatrixCell({ cell }: { cell: ComparePlanCell }) {
   if (cell.kind === "check") {
     return (
       <span className="flex w-full justify-center">
-        <Check
-          className="size-4 shrink-0 text-emerald-600"
-          aria-hidden
-        />
+        <Check className="size-4 shrink-0 text-emerald-600" aria-hidden />
         <span className="sr-only">Included</span>
       </span>
     );
@@ -566,10 +559,7 @@ export function OrganizationBillingSection({
         checkoutIntent.plan,
       );
       if (!intentGuard.proceed) {
-        if (
-          !cancelled &&
-          autoCheckoutStartedForKeyRef.current !== intentKey
-        ) {
+        if (!cancelled && autoCheckoutStartedForKeyRef.current !== intentKey) {
           autoCheckoutStartedForKeyRef.current = intentKey;
           const currentEntry = planCatalog.plans[intentGuard.currentPlan];
           const requestedEntry = planCatalog.plans[checkoutIntent.plan];
@@ -833,7 +823,11 @@ export function OrganizationBillingSection({
                           ? formatPerSeatCadence(plan, entry, billingInterval)
                           : plan === "free"
                             ? "No credit card required"
-                            : formatPerSeatCadence(plan, entry, billingInterval);
+                            : formatPerSeatCadence(
+                                plan,
+                                entry,
+                                billingInterval,
+                              );
                         const cta = getPlanColumnCta({
                           plan,
                           currentPlan,
@@ -841,7 +835,10 @@ export function OrganizationBillingSection({
                           billingConfigured,
                           canManageBilling,
                           isBillingActionPending,
-                          onDowngradePlan: (targetPlan, targetBillingInterval) =>
+                          onDowngradePlan: (
+                            targetPlan,
+                            targetBillingInterval,
+                          ) =>
                             void onDowngradePlan(
                               targetPlan,
                               targetBillingInterval,
@@ -851,7 +848,8 @@ export function OrganizationBillingSection({
                         });
                         const showPlanChangeSpinner =
                           pendingPlanChangeTarget === plan &&
-                          (cta.label === "Upgrade" || cta.label === "Downgrade") &&
+                          (cta.label === "Upgrade" ||
+                            cta.label === "Downgrade") &&
                           (plan === "starter" || plan === "team");
                         const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;

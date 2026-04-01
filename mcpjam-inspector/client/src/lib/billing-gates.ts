@@ -118,7 +118,8 @@ export function useWorkspaceBillingGate({
   const { isAuthenticated } = useConvexAuth();
   const billingUiFlag = useFeatureFlagEnabled("billing-entitlements-ui");
   const billingUiEnabled = billingUiFlag === true;
-  const shouldResolve = isAuthenticated && billingUiFlag !== false && !!workspaceId;
+  const shouldResolve =
+    isAuthenticated && billingUiFlag !== false && !!workspaceId;
   const { workspaces, isLoading: isLoadingWorkspaces } = useWorkspaceQueries({
     isAuthenticated,
   });

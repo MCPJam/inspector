@@ -37,6 +37,8 @@ describe("BillingUpsellGate", () => {
     );
 
     expect(screen.getByText(/Ask your admin to upgrade/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /upgrade/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /upgrade/i }),
+    ).not.toBeInTheDocument();
   });
 });

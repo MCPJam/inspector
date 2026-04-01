@@ -1,4 +1,7 @@
-import type { OrganizationPlan, PlanCatalog } from "@/hooks/useOrganizationBilling";
+import type {
+  OrganizationPlan,
+  PlanCatalog,
+} from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
 
 type BillingUpsellIntent = "members" | "sandboxes";

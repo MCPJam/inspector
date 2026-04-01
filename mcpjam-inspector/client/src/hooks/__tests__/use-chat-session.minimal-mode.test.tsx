@@ -352,7 +352,9 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(await resolveConfig(latestTransport.options.headers)).toBeUndefined();
+    expect(
+      await resolveConfig(latestTransport.options.headers),
+    ).toBeUndefined();
     expect(result.current.disableForAuthentication).toBe(false);
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });

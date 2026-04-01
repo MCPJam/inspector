@@ -45,9 +45,7 @@ describe("CreateOrganizationDialog", () => {
       ),
     );
 
-    render(
-      <CreateOrganizationDialog open={true} onOpenChange={vi.fn()} />,
-    );
+    render(<CreateOrganizationDialog open={true} onOpenChange={vi.fn()} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Create" }));
 

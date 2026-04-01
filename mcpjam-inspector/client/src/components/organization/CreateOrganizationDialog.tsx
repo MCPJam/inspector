@@ -60,7 +60,9 @@ export function CreateOrganizationDialog({
       onOpenChange(false);
       onCreated?.(organizationId);
     } catch (error) {
-      toast.error(getBillingErrorMessage(error, "Failed to create organization"));
+      toast.error(
+        getBillingErrorMessage(error, "Failed to create organization"),
+      );
     } finally {
       setIsCreating(false);
     }

@@ -29,7 +29,7 @@ export function getAnnualDiscountPercent(
   if (monthly == null || annual == null || monthly <= 0) {
     return 0;
   }
-  return Math.round((((monthly * 12) - annual) / (monthly * 12)) * 100);
+  return Math.round(((monthly * 12 - annual) / (monthly * 12)) * 100);
 }
 
 export const BILLING_FEATURE_BY_TAB = {

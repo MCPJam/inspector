@@ -16,9 +16,9 @@ import {
 
 describe("readCheckoutIntentFromSearch", () => {
   it("parses starter + annual", () => {
-    expect(readCheckoutIntentFromSearch("?plan=starter&interval=annual")).toEqual(
-      { plan: "starter", interval: "annual" },
-    );
+    expect(
+      readCheckoutIntentFromSearch("?plan=starter&interval=annual"),
+    ).toEqual({ plan: "starter", interval: "annual" });
   });
 
   it("defaults interval to monthly when omitted", () => {
@@ -126,9 +126,9 @@ describe("resolveCheckoutOrganizationId", () => {
   });
 
   it("returns sole org", () => {
-    expect(resolveCheckoutOrganizationId([{ _id: "only" }], undefined, undefined)).toBe(
-      "only",
-    );
+    expect(
+      resolveCheckoutOrganizationId([{ _id: "only" }], undefined, undefined),
+    ).toBe("only");
   });
 
   it("prefers active organization when valid", () => {

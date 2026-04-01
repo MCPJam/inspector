@@ -541,8 +541,8 @@ describe("OrganizationsTab billing", () => {
         stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
         canCancelScheduledBillingChange: true,
       }),
-      cancelScheduledBillingChange: cancelScheduledBillingChange.mockImplementation(
-        async () => {
+      cancelScheduledBillingChange:
+        cancelScheduledBillingChange.mockImplementation(async () => {
           hookState.billingStatus = billingStatusFixture({
             plan: "team",
             effectivePlan: "team",
@@ -556,8 +556,7 @@ describe("OrganizationsTab billing", () => {
             plan: "team",
             billingInterval: "annual",
           };
-        },
-      ),
+        }),
     });
     mockUseOrganizationBilling.mockImplementation(() => hookState);
 
@@ -616,12 +615,11 @@ describe("OrganizationsTab billing", () => {
         stripeScheduledEffectiveAt: Date.parse("2027-04-01T12:00:00.000Z"),
         canCancelScheduledBillingChange: true,
       }),
-      cancelScheduledBillingChange: cancelScheduledBillingChange.mockResolvedValue(
-        {
+      cancelScheduledBillingChange:
+        cancelScheduledBillingChange.mockResolvedValue({
           plan: "team",
           billingInterval: "annual",
-        },
-      ),
+        }),
     });
     mockUseOrganizationBilling.mockImplementation(() => hookState);
 
@@ -1377,9 +1375,7 @@ describe("OrganizationsTab billing", () => {
       }),
     );
 
-    expect(
-      screen.getByText("Return to Free at renewal?"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Return to Free at renewal?")).toBeInTheDocument();
     expect(
       screen.getByText("This cancellation takes effect at renewal, not now."),
     ).toBeInTheDocument();

@@ -1,10 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SandboxesTab } from "../SandboxesTab";
-import {
-  readBuilderSession,
-  writeBuilderSession,
-} from "@/lib/sandbox-session";
+import { readBuilderSession, writeBuilderSession } from "@/lib/sandbox-session";
 
 const mockBuilderViewProps = vi.fn();
 const mockUseFeatureFlagEnabled = vi.fn(() => true);
@@ -354,7 +351,9 @@ describe("SandboxesTab", () => {
 
     render(<SandboxesTab workspaceId="ws-1" />);
 
-    expect(await screen.findByTestId("billing-upsell-gate")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("billing-upsell-gate"),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: "New sandbox" }),
     ).not.toBeInTheDocument();
@@ -400,7 +399,9 @@ describe("SandboxesTab", () => {
 
     render(<SandboxesTab workspaceId="ws-1" />);
 
-    expect(await screen.findByTestId("billing-upsell-gate")).toBeInTheDocument();
+    expect(
+      await screen.findByTestId("billing-upsell-gate"),
+    ).toBeInTheDocument();
     await waitFor(() => {
       expect(readBuilderSession("ws-1")).toBeNull();
     });
@@ -467,9 +468,7 @@ describe("SandboxesTab", () => {
     expect(
       screen.getByRole("button", { name: "Upgrade to Team" }),
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "New sandbox" }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "New sandbox" })).toBeDisabled();
     expect(screen.getByText("Alpha")).toBeInTheDocument();
   });
 

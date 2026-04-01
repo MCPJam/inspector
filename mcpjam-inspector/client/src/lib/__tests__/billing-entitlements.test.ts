@@ -11,7 +11,9 @@ import type {
   PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
 
-const minimalCatalogEntry = (prices: PlanCatalogEntry["prices"]): PlanCatalogEntry =>
+const minimalCatalogEntry = (
+  prices: PlanCatalogEntry["prices"],
+): PlanCatalogEntry =>
   ({
     plan: "starter",
     displayName: "Starter",
@@ -288,9 +290,7 @@ describe("getDisplayPriceCentsForPlan", () => {
     expect(getDisplayPriceCentsForPlan("starter", "annual", drifted)).toBe(
       29000,
     );
-    expect(getDisplayPriceCentsForPlan("team", "monthly", drifted)).toBe(
-      6100,
-    );
+    expect(getDisplayPriceCentsForPlan("team", "monthly", drifted)).toBe(6100);
   });
 
   it("falls back to catalog for other plans", () => {

@@ -183,7 +183,9 @@ function getScheduledBillingChangeCancellationState(
     return null;
   }
 
-  const currentIntervalLabel = formatBillingIntervalLabel(currentBillingInterval);
+  const currentIntervalLabel = formatBillingIntervalLabel(
+    currentBillingInterval,
+  );
   const scheduledIntervalLabel = formatBillingIntervalLabel(
     scheduledBillingInterval,
   );
@@ -481,8 +483,10 @@ function OrganizationPage({
   const [isDeleting, setIsDeleting] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
-  const [scheduledBillingChangeConfirmOpen, setScheduledBillingChangeConfirmOpen] =
-    useState(false);
+  const [
+    scheduledBillingChangeConfirmOpen,
+    setScheduledBillingChangeConfirmOpen,
+  ] = useState(false);
   const [pendingPaidUpgradeConfirmation, setPendingPaidUpgradeConfirmation] =
     useState<PendingPaidUpgradeConfirmation | null>(null);
   const [pendingDowngradeConfirmation, setPendingDowngradeConfirmation] =
@@ -1546,8 +1550,8 @@ function OrganizationPage({
                     .
                   </span>
                   <span className="block">
-                    {pendingDowngradeCurrentLabel ?? "Your current plan"} remains
-                    active until then.
+                    {pendingDowngradeCurrentLabel ?? "Your current plan"}{" "}
+                    remains active until then.
                   </span>
                 </>
               )}

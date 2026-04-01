@@ -246,8 +246,10 @@ export function useOrganizationBilling(
     "starter" | "team" | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
-  const [isCancelingScheduledBillingChange, setIsCancelingScheduledBillingChange] =
-    useState(false);
+  const [
+    isCancelingScheduledBillingChange,
+    setIsCancelingScheduledBillingChange,
+  ] = useState(false);
   const [isSelectingFreeAfterTrial, setIsSelectingFreeAfterTrial] =
     useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -408,7 +410,8 @@ export function useOrganizationBilling(
     entitlements,
     planCatalog,
     isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
-    isLoadingEntitlements: shouldQueryOrganization && entitlements === undefined,
+    isLoadingEntitlements:
+      shouldQueryOrganization && entitlements === undefined,
     isLoadingOrganizationPremiumness,
     isLoadingWorkspacePremiumness,
     isLoadingPlanCatalog: shouldQueryOrganization && planCatalog === undefined,

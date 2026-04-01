@@ -96,7 +96,8 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockPosthogCapture,
   }),
-  useFeatureFlagEnabled: (...args: unknown[]) => mockUseFeatureFlagEnabled(...args),
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 vi.mock("sonner", () => ({
@@ -728,11 +729,13 @@ describe("App hosted OAuth callback handling", () => {
           "organizationId" in props &&
           "section" in props &&
           "checkoutIntent" in props &&
-          (props as {
-            organizationId?: string;
-            section?: string;
-            checkoutIntent?: { plan?: string; interval?: string };
-          }).organizationId === "org-1" &&
+          (
+            props as {
+              organizationId?: string;
+              section?: string;
+              checkoutIntent?: { plan?: string; interval?: string };
+            }
+          ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "starter" &&
@@ -810,11 +813,13 @@ describe("App hosted OAuth callback handling", () => {
           "organizationId" in props &&
           "section" in props &&
           "checkoutIntent" in props &&
-          (props as {
-            organizationId?: string;
-            section?: string;
-            checkoutIntent?: { plan?: string; interval?: string };
-          }).organizationId === "org-1" &&
+          (
+            props as {
+              organizationId?: string;
+              section?: string;
+              checkoutIntent?: { plan?: string; interval?: string };
+            }
+          ).organizationId === "org-1" &&
           (props as { section?: string }).section === "billing" &&
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "starter" &&

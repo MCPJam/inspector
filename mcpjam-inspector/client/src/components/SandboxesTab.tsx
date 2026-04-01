@@ -1,6 +1,9 @@
 import { Suspense, lazy, useEffect } from "react";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
-import { getBillingUpsellCtaLabel, getBillingUpsellTeaser } from "@/lib/billing-upsell";
+import {
+  getBillingUpsellCtaLabel,
+  getBillingUpsellTeaser,
+} from "@/lib/billing-upsell";
 import { Loader2 } from "lucide-react";
 import { BillingGateSurface } from "@/components/billing/BillingGateSurface";
 import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";

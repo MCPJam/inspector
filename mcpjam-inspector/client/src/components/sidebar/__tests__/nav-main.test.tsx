@@ -89,8 +89,6 @@ describe("NavMain", () => {
     expect(
       screen.getByRole("button", { name: "Sandboxes" }),
     ).toBeInTheDocument();
-    expect(
-      screen.queryByText("Plan upgrade required"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Plan upgrade required")).not.toBeInTheDocument();
   });
 });

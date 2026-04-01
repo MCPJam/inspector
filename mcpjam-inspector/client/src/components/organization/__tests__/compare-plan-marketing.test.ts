@@ -36,17 +36,17 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
     const orgWorkspaces = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Organization & workspaces",
     );
-    expect(orgWorkspaces?.rows.find((r) => r.label === "Seat limit")?.starter).toEqual(
-      {
-        kind: "text",
-        text: "3",
-      },
-    );
+    expect(
+      orgWorkspaces?.rows.find((r) => r.label === "Seat limit")?.starter,
+    ).toEqual({
+      kind: "text",
+      text: "3",
+    });
     const security = COMPARE_PLAN_MARKETING_SECTIONS.find(
       (s) => s.title === "Security & Compliance",
     );
-    expect(security?.rows.find((r) => r.label === "SSO / SAML")?.enterprise).toEqual(
-      { kind: "check" },
-    );
+    expect(
+      security?.rows.find((r) => r.label === "SSO / SAML")?.enterprise,
+    ).toEqual({ kind: "check" });
   });
 });

@@ -19,9 +19,7 @@ const VALID_PLANS = new Set<CheckoutPlanTier>(["starter", "team"]);
 const VALID_INTERVALS = new Set<BillingInterval>(["monthly", "annual"]);
 
 function parseSearchParams(search: string): URLSearchParams {
-  return new URLSearchParams(
-    search.startsWith("?") ? search : `?${search}`,
-  );
+  return new URLSearchParams(search.startsWith("?") ? search : `?${search}`);
 }
 
 function isValidPlan(value: string | null): value is CheckoutPlanTier {
@@ -62,7 +60,9 @@ export function hasInvalidCheckoutIntervalParam(search: string): boolean {
 /**
  * Read validated checkout intent from a query string (e.g. `window.location.search`).
  */
-export function readCheckoutIntentFromSearch(search: string): CheckoutIntent | null {
+export function readCheckoutIntentFromSearch(
+  search: string,
+): CheckoutIntent | null {
   const params = parseSearchParams(search);
   const planRaw = params.get("plan");
   const intervalRaw = params.get("interval");

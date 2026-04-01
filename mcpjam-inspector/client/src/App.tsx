@@ -157,11 +157,7 @@ function getHostedOAuthCallbackErrorMessage(): string {
   );
 }
 
-function BillingHandoffLoading({
-  overlay = false,
-}: {
-  overlay?: boolean;
-}) {
+function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
   return (
     <div
       className={
@@ -169,7 +165,9 @@ function BillingHandoffLoading({
           ? "fixed inset-0 z-[100] flex items-center justify-center bg-background"
           : "min-h-screen bg-background flex items-center justify-center"
       }
-      data-testid={overlay ? "billing-handoff-overlay" : "billing-handoff-loading"}
+      data-testid={
+        overlay ? "billing-handoff-overlay" : "billing-handoff-loading"
+      }
     >
       <div className="text-center">
         <Loader2 className="mx-auto size-12 animate-spin text-muted-foreground" />
@@ -526,7 +524,7 @@ export default function App() {
   ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
   const routeScopedOrganizationId = hasRouteOrganization
-    ? currentHashRoute.organizationId ?? null
+    ? (currentHashRoute.organizationId ?? null)
     : null;
   const rawBillingOrganizationId =
     routeScopedOrganizationId ??
@@ -588,7 +586,7 @@ export default function App() {
     workspaceCreationGate.isDenied || guestWorkspaceLimitReached;
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
-    : workspaceCreationGate.denialMessage ?? undefined;
+    : (workspaceCreationGate.denialMessage ?? undefined);
   const showTrialDecisionModal =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
@@ -985,29 +983,30 @@ export default function App() {
     !isHostedChatRoute &&
     isBillingEntryPathname(window.location.pathname) &&
     pendingCheckoutIntent !== null;
-  const checkoutIntentForBilling = useMemo((): CheckoutIntentWithOrganization | null => {
-    if (
-      !billingUiEnabled ||
-      activeTab !== "organizations" ||
-      !currentHashRoute.organizationId ||
-      currentHashRoute.organizationSection !== "billing" ||
-      !pendingCheckoutIntent
-    ) {
-      return null;
-    }
-    return {
-      plan: pendingCheckoutIntent.plan,
-      interval: pendingCheckoutIntent.interval,
-      organizationId: currentHashRoute.organizationId,
-    };
-  }, [
-    billingUiEnabled,
-    activeTab,
-    currentHashRoute.organizationId,
-    currentHashRoute.organizationSection,
-    pendingCheckoutIntent?.interval,
-    pendingCheckoutIntent?.plan,
-  ]);
+  const checkoutIntentForBilling =
+    useMemo((): CheckoutIntentWithOrganization | null => {
+      if (
+        !billingUiEnabled ||
+        activeTab !== "organizations" ||
+        !currentHashRoute.organizationId ||
+        currentHashRoute.organizationSection !== "billing" ||
+        !pendingCheckoutIntent
+      ) {
+        return null;
+      }
+      return {
+        plan: pendingCheckoutIntent.plan,
+        interval: pendingCheckoutIntent.interval,
+        organizationId: currentHashRoute.organizationId,
+      };
+    }, [
+      billingUiEnabled,
+      activeTab,
+      currentHashRoute.organizationId,
+      currentHashRoute.organizationSection,
+      pendingCheckoutIntent?.interval,
+      pendingCheckoutIntent?.plan,
+    ]);
 
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
@@ -1459,7 +1458,9 @@ export default function App() {
         >
           <HostedShellGate
             state={
-              isHostedChatRoute ? hostedChatShellGateState : hostedShellGateState
+              isHostedChatRoute
+                ? hostedChatShellGateState
+                : hostedShellGateState
             }
             onSignIn={() => {
               if (sharedPathToken) {
@@ -1486,7 +1487,9 @@ export default function App() {
             )}
           </HostedShellGate>
         </div>
-        {shouldShowBillingHandoffOverlay ? <BillingHandoffLoading overlay /> : null}
+        {shouldShowBillingHandoffOverlay ? (
+          <BillingHandoffLoading overlay />
+        ) : null}
       </AppStateProvider>
     </PreferencesStoreProvider>
   );
