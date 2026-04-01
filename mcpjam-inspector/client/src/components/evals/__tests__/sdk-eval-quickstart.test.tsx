@@ -53,7 +53,7 @@ describe("SdkEvalQuickstart", () => {
   it("renders all four step cards with content visible", () => {
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    expect(screen.getByText("Set up project")).toBeTruthy();
+    expect(screen.getByText("Create a project and install the SDK")).toBeTruthy();
     expect(screen.getByText("Set environment")).toBeTruthy();
     expect(
       screen.getByText("Add mcp-eval.quickstart.test.ts to your project"),
@@ -61,9 +61,6 @@ describe("SdkEvalQuickstart", () => {
     expect(screen.getByText("Run the demo test")).toBeTruthy();
 
     // All content visible without expansion
-    expect(document.body.textContent).toContain(
-      "mkdir my-first-eval && cd my-first-eval",
-    );
     expect(document.body.textContent).toContain("npm install @mcpjam/sdk");
     expect(document.body.textContent).toContain("workspace-api-key");
     expect(document.body.textContent).toContain("learn.mcpjam.com");

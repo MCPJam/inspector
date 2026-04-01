@@ -69,8 +69,7 @@ export function buildDotEnvSnippet(
 }
 
 /** Snippet strings exported for tests and consistency with copy targets. */
-export const SDK_EVAL_QUICKSTART_INSTALL =
-  "mkdir my-first-eval && cd my-first-eval\nnpm install @mcpjam/sdk";
+export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 
 /** Placeholder shell env (no workspace key injected). */
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
@@ -550,7 +549,7 @@ export function SdkEvalQuickstart({
   return (
     <div className="w-full max-w-2xl space-y-3">
       {/* Step 1: Set up project */}
-      <StepCard step={1} title="Set up project">
+      <StepCard step={1} title="Create a project and install the SDK">
         <QuickstartCodeBlock
           code={SDK_EVAL_QUICKSTART_INSTALL}
           copyLabel="Copy install command"
