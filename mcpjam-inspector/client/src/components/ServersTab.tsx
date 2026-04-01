@@ -41,10 +41,7 @@ import {
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
-import {
-  BILLING_GATES,
-  useWorkspaceBillingGate,
-} from "@/lib/billing-gates";
+import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
 import {
   ResizablePanelGroup,
   ResizablePanel,
