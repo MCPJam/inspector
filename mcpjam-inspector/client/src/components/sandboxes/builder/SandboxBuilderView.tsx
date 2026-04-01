@@ -37,12 +37,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { useServerMutations, type RemoteServer } from "@/hooks/useWorkspaces";
 import { copyToClipboard } from "@/lib/clipboard";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import {
-  getSandboxHostLabel,
-  getSandboxHostLogo,
-  getSandboxHostStyleShortLabel,
-  type SandboxHostStyle,
-} from "@/lib/sandbox-host-style";
+import { getSandboxHostStyleShortLabel } from "@/lib/sandbox-host-style";
 import { ChatTabV2 } from "@/components/ChatTabV2";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";

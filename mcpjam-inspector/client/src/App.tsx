@@ -1,4 +1,4 @@
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import {
   useCallback,
   useEffect,
@@ -115,6 +115,8 @@ import {
 } from "./lib/hosted-navigation";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
+  formatBillingFeatureName,
+  formatPlanName,
   getPremiumnessGateForTab,
   getRequiredBillingFeatureForTab,
   getUpgradePlanForDeniedGate,
@@ -490,7 +492,6 @@ export default function App() {
     handleUpdateWorkspace,
     handleUpdateClientConfig,
     handleDeleteWorkspace,
-    handleLeaveWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -1032,7 +1033,7 @@ export default function App() {
     if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
-          billingEntitlements?.plan,
+          shellBillingStatus?.plan,
         )} plan. Upgrade the organization to continue.`,
       );
       applyNavigation("servers", { updateHash: true });

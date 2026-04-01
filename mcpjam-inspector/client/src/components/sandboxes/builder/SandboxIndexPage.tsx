@@ -200,7 +200,7 @@ export function SandboxIndexPage({
               </Button>
             </div>
           </div>
-        </div>
+        ) : null}
 
         {createSandboxUpsell ? (
           <Alert
