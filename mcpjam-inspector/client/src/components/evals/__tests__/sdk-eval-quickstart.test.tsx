@@ -53,7 +53,9 @@ describe("SdkEvalQuickstart", () => {
   it("renders all four step cards with content visible", () => {
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    expect(screen.getByText("Create a project and install the SDK")).toBeTruthy();
+    expect(
+      screen.getByText("Create a project and install the SDK"),
+    ).toBeTruthy();
     expect(screen.getByText("Set environment")).toBeTruthy();
     expect(
       screen.getByText("Add mcp-eval.quickstart.test.ts to your project"),
