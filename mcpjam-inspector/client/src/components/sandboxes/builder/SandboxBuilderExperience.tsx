@@ -92,17 +92,20 @@ export default function SandboxBuilderExperience({
     });
   }, [isCreateSandboxDisabled, isCreateSandboxLoading, workspaceId]);
 
-  const applyStarterDraft = useCallback((starter: SandboxStarterDefinition) => {
-    if (isCreateSandboxDisabled || isCreateSandboxLoading) {
-      return;
-    }
-    startTransition(() => {
-      setSelectedSandboxId(null);
-      setDraft(starter.createDraft(getDefaultHostedModelId()));
-      setRestoredViewMode(undefined);
-      setStarterLauncherOpen(false);
-    });
-  }, [isCreateSandboxDisabled, isCreateSandboxLoading]);
+  const applyStarterDraft = useCallback(
+    (starter: SandboxStarterDefinition) => {
+      if (isCreateSandboxDisabled || isCreateSandboxLoading) {
+        return;
+      }
+      startTransition(() => {
+        setSelectedSandboxId(null);
+        setDraft(starter.createDraft(getDefaultHostedModelId()));
+        setRestoredViewMode(undefined);
+        setStarterLauncherOpen(false);
+      });
+    },
+    [isCreateSandboxDisabled, isCreateSandboxLoading],
+  );
 
   const handleOpenStarterLauncher = useCallback(() => {
     setStarterLauncherOpen(true);

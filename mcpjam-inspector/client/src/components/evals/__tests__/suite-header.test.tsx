@@ -203,8 +203,6 @@ describe("SuiteHeader", () => {
       />,
     );
 
-    expect(
-      screen.queryByRole("button", { name: "Delete suite" }),
-    ).toBeNull();
+    expect(screen.queryByRole("button", { name: "Delete suite" })).toBeNull();
   });
 });

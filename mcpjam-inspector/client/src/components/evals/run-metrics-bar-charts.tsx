@@ -155,7 +155,9 @@ export function RunMetricsBarCharts({
             <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Avg duration by test
             </h3>
-            <span className="text-[10px] text-muted-foreground/60">Hover bars to see test names</span>
+            <span className="text-[10px] text-muted-foreground/60">
+              Hover bars to see test names
+            </span>
           </div>
           <DurationBarBlock data={durationData} />
         </div>
@@ -166,7 +168,9 @@ export function RunMetricsBarCharts({
             <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
               Avg tokens by test
             </h3>
-            <span className="text-[10px] text-muted-foreground/60">Hover bars to see test names</span>
+            <span className="text-[10px] text-muted-foreground/60">
+              Hover bars to see test names
+            </span>
           </div>
           <TokensBarBlock data={tokensData} />
         </div>
