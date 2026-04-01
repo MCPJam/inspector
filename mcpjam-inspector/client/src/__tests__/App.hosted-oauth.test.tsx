@@ -7,7 +7,14 @@ import {
   writeHostedOAuthPendingMarker,
 } from "../lib/hosted-oauth-callback";
 import {
+  readBillingSignInReturnPath,
+  readPersistedCheckoutIntent,
+  persistCheckoutIntent,
+  writeBillingSignInReturnPath,
+} from "../lib/billing-deep-link";
+import {
   clearSandboxSession,
+  writeSandboxSignInReturnPath,
   writeSandboxSession,
 } from "../lib/sandbox-session";
 
@@ -17,9 +24,13 @@ const {
   mockConvexAuthState,
   mockHandleOAuthCallback,
   mockHostedShellGateState,
+  mockMCPSidebar,
   mockOrganizationsTab,
   mockPosthogCapture,
+  mockUseAuth,
   mockUseAppState,
+  mockUseConvexAuth,
+  mockUseFeatureFlagEnabled,
   mockUseQuery,
   mockWorkOsAuthState,
 } = vi.hoisted(() => {
@@ -75,9 +86,13 @@ const {
         | "workspace-loading"
         | "logged-out",
     },
+    mockMCPSidebar: vi.fn(() => <div />),
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
+    mockUseAuth: vi.fn(),
     mockUseAppState: vi.fn(createAppStateMock),
+    mockUseConvexAuth: vi.fn(),
+    mockUseFeatureFlagEnabled: vi.fn(),
     mockUseQuery: vi.fn(() => undefined),
     mockWorkOsAuthState: {
       getAccessToken: vi.fn(),
@@ -89,19 +104,22 @@ const {
 });
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: () => mockConvexAuthState,
+  useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
   useQuery: mockUseQuery,
+  useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => mockWorkOsAuthState,
+  useAuth: (...args: unknown[]) => mockUseAuth(...args),
 }));
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockPosthogCapture,
   }),
-  useFeatureFlagEnabled: () => false,
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
 }));
 
 vi.mock("sonner", () => ({
@@ -236,7 +254,7 @@ vi.mock("../components/oauth/OAuthDebugCallback", () => ({
   default: () => <div />,
 }));
 vi.mock("../components/mcp-sidebar", () => ({
-  MCPSidebar: () => <div data-testid="mcp-sidebar" />,
+  MCPSidebar: (props: unknown) => mockMCPSidebar(props),
 }));
 vi.mock("../components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children?: ReactNode }) => (
@@ -293,8 +311,14 @@ describe("App hosted OAuth callback handling", () => {
     sessionStorage.clear();
     vi.stubGlobal("__APP_VERSION__", "test");
     window.history.replaceState({}, "", "/oauth/callback?code=oauth-code");
+    mockUseAuth.mockReset();
+    mockUseAuth.mockReturnValue(mockWorkOsAuthState);
     mockUseAppState.mockReset();
     mockUseAppState.mockImplementation(createAppStateMock);
+    mockUseConvexAuth.mockReset();
+    mockUseConvexAuth.mockReturnValue(mockConvexAuthState);
+    mockUseFeatureFlagEnabled.mockReset();
+    mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation((ref: string) =>
       ref === "users:getCurrentUser" ? null : undefined,
@@ -309,6 +333,8 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
+    mockMCPSidebar.mockReset();
+    mockMCPSidebar.mockImplementation(() => <div data-testid="mcp-sidebar" />);
     mockPosthogCapture.mockReset();
     mockAppBuilderTabMounts.mockReset();
     mockHandleOAuthCallback.mockImplementation(
@@ -379,12 +405,16 @@ describe("App hosted OAuth callback handling", () => {
     const entitlementsCall = mockUseQuery.mock.calls.find(
       ([name]) => name === "billing:getOrganizationEntitlements",
     );
-    const rolloutCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getBillingRolloutState",
+    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationPremiumness",
+    );
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
-    expect(rolloutCall?.[1]).toBe("skip");
+    expect(orgPremiumnessCall?.[1]).toBe("skip");
+    expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
   it("skips billing queries while a workspace org id is still unvalidated", () => {
@@ -407,12 +437,16 @@ describe("App hosted OAuth callback handling", () => {
     const entitlementsCall = mockUseQuery.mock.calls.find(
       ([name]) => name === "billing:getOrganizationEntitlements",
     );
-    const rolloutCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getBillingRolloutState",
+    const orgPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getOrganizationPremiumness",
+    );
+    const wsPremiumnessCall = mockUseQuery.mock.calls.find(
+      ([name]) => name === "billing:getWorkspacePremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
-    expect(rolloutCall?.[1]).toBe("skip");
+    expect(orgPremiumnessCall?.[1]).toBe("skip");
+    expect(wsPremiumnessCall?.[1]).toBe("skip");
   });
 
   it("does not auto-select the first organization without an explicit org route", async () => {
@@ -453,6 +487,540 @@ describe("App hosted OAuth callback handling", () => {
     expect(setActiveOrganizationId).not.toHaveBeenCalled();
   });
 
+  it("passes the valid organization route into app state for workspace actions", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-3");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-1",
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-3",
+            name: "Org Three",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockUseAppState).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockUseAppState.mock.calls[mockUseAppState.mock.calls.length - 1];
+    expect(lastCall?.[0]).toMatchObject({
+      routeOrganizationId: "org-3",
+    });
+  });
+
+  it("disables sidebar workspace creation when the routed org is free and at cap", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#organizations/org-3");
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-1",
+    }));
+    mockUseQuery.mockImplementation((name: string, args?: any) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+          {
+            _id: "org-3",
+            name: "Org Three",
+            updatedAt: 2,
+            createdAt: 2,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+      if (
+        name === "billing:getOrganizationBillingStatus" &&
+        args?.organizationId === "org-3"
+      ) {
+        return {
+          organizationId: "org-3",
+          organizationName: "Org Three",
+          plan: "free",
+          effectivePlan: "free",
+          source: "free",
+          billingInterval: null,
+          billingConfigured: true,
+          subscriptionStatus: null,
+          canManageBilling: true,
+          isOwner: true,
+          hasCustomer: false,
+          stripeCurrentPeriodEnd: null,
+          stripePriceId: null,
+          trialStatus: "none",
+          trialPlan: null,
+          trialStartedAt: null,
+          trialEndsAt: null,
+          trialDaysRemaining: null,
+          decisionRequired: false,
+          trialDecision: null,
+        };
+      }
+      if (
+        name === "billing:getOrganizationPremiumness" &&
+        args?.organizationId === "org-3"
+      ) {
+        return {
+          plan: "free",
+          effectivePlan: "free",
+          billingInterval: null,
+          source: "free",
+          enforcementState: "active",
+          decisionRequired: false,
+          gates: [
+            {
+              gateKey: "maxWorkspaces",
+              kind: "limit",
+              scope: "organization",
+              canAccess: false,
+              shouldShowUpsell: true,
+              upgradePlan: "starter",
+              reason: "limit_reached",
+              currentValue: 1,
+              allowedValue: 1,
+            },
+          ],
+        };
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const lastCall =
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
+    expect(lastCall?.[0]).toMatchObject({
+      isCreateWorkspaceDisabled: true,
+      createWorkspaceDisabledReason:
+        "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+    });
+  });
+
+  it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState(
+      {},
+      "",
+      "/billing?plan=starter&interval=annual",
+    );
+
+    const signIn = vi.fn();
+    mockUseAuth.mockReturnValue({
+      getAccessToken: vi.fn(),
+      signIn,
+      user: null,
+      isLoading: false,
+    });
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+
+    render(<App />);
+
+    expect(screen.getByTestId("billing-handoff-loading")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(signIn).toHaveBeenCalled();
+    });
+    expect(readPersistedCheckoutIntent()).toEqual({
+      plan: "starter",
+      interval: "annual",
+    });
+    expect(readBillingSignInReturnPath()).toBe("/billing");
+    expect(mockOrganizationsTab).not.toHaveBeenCalled();
+  });
+
+  it("restores the billing callback back into the billing flow when session intent exists", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    sessionStorage.clear();
+    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    writeBillingSignInReturnPath("/billing");
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/billing");
+      expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
+    });
+    expect(readBillingSignInReturnPath()).toBeNull();
+  });
+
+  it("falls back to the default callback destination when billing session intent is missing", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    sessionStorage.clear();
+    writeBillingSignInReturnPath("/billing");
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/");
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+    expect(readBillingSignInReturnPath()).toBeNull();
+  });
+
+  it("keeps a persisted billing resume alive when /billing returns without query params", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    sessionStorage.clear();
+    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    window.history.replaceState({}, "", "/billing");
+
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
+      expect(mockOrganizationsTab).toHaveBeenCalled();
+    });
+
+    expect(
+      mockOrganizationsTab.mock.calls.some(
+        ([props]) =>
+          props &&
+          typeof props === "object" &&
+          "organizationId" in props &&
+          "section" in props &&
+          "checkoutIntent" in props &&
+          (
+            props as {
+              organizationId?: string;
+              section?: string;
+              checkoutIntent?: { plan?: string; interval?: string };
+            }
+          ).organizationId === "org-1" &&
+          (props as { section?: string }).section === "billing" &&
+          (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
+            ?.plan === "starter" &&
+          (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
+            ?.interval === "annual",
+      ),
+    ).toBe(true);
+  });
+
+  it("prefers sandbox callback restoration over billing callback restoration", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    sessionStorage.clear();
+    persistCheckoutIntent({ plan: "starter", interval: "annual" });
+    writeBillingSignInReturnPath("/billing");
+    writeSandboxSignInReturnPath("/sandbox/demo/token-123");
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+
+    const replaceStateSpy = vi.spyOn(window.history, "replaceState");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(replaceStateSpy).toHaveBeenCalledWith(
+        {},
+        "",
+        "/sandbox/demo/token-123",
+      );
+    });
+  });
+
+  it("keeps billing resume behind the checkout spinner for signed-in users", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState(
+      {},
+      "",
+      "/billing?plan=starter&interval=annual",
+    );
+
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    expect(screen.getByText("Preparing checkout...")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
+      expect(mockOrganizationsTab).toHaveBeenCalled();
+    });
+
+    expect(
+      mockOrganizationsTab.mock.calls.some(
+        ([props]) =>
+          props &&
+          typeof props === "object" &&
+          "organizationId" in props &&
+          "section" in props &&
+          "checkoutIntent" in props &&
+          (
+            props as {
+              organizationId?: string;
+              section?: string;
+              checkoutIntent?: { plan?: string; interval?: string };
+            }
+          ).organizationId === "org-1" &&
+          (props as { section?: string }).section === "billing" &&
+          (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
+            ?.plan === "starter" &&
+          (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
+            ?.interval === "annual",
+      ),
+    ).toBe(true);
+  });
+
+  it("drops the billing overlay when checkout intent is consumed", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState(
+      {},
+      "",
+      "/billing?plan=starter&interval=annual",
+    );
+
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    mockOrganizationsTab.mockImplementation(
+      (props: { onCheckoutIntentConsumed?: () => void }) => (
+        <button
+          type="button"
+          data-testid="consume-checkout-intent"
+          onClick={() => props.onCheckoutIntentConsumed?.()}
+        >
+          Consume checkout intent
+        </button>
+      ),
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
+      expect(screen.getByTestId("consume-checkout-intent")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("consume-checkout-intent"));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("billing-handoff-overlay"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("drops the billing overlay when checkout navigation starts", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState(
+      {},
+      "",
+      "/billing?plan=starter&interval=annual",
+    );
+
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      return undefined;
+    });
+    mockOrganizationsTab.mockImplementation(
+      (props: { onCheckoutIntentNavigationStarted?: () => void }) => (
+        <button
+          type="button"
+          data-testid="start-checkout-navigation"
+          onClick={() => props.onCheckoutIntentNavigationStarted?.()}
+        >
+          Start checkout navigation
+        </button>
+      ),
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
+      expect(
+        screen.getByTestId("start-checkout-navigation"),
+      ).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByTestId("start-checkout-navigation"));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("billing-handoff-overlay"),
+      ).not.toBeInTheDocument();
+    });
+    expect(readPersistedCheckoutIntent()).toBeNull();
+  });
+
+  it("clears billing handoff state when no organization is available", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState(
+      {},
+      "",
+      "/billing?plan=starter&interval=annual",
+    );
+
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [];
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+
+    expect(
+      screen.queryByTestId("billing-handoff-loading"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("billing-handoff-overlay"),
+    ).not.toBeInTheDocument();
+    expect(mockOrganizationsTab).not.toHaveBeenCalled();
+  });
+
   it("renders the organization route from the hash even before active org state catches up", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
@@ -491,6 +1059,74 @@ describe("App hosted OAuth callback handling", () => {
     expect(lastCall?.[0]).toMatchObject({
       organizationId: "org-1",
       section: "overview",
+    });
+  });
+
+  it("still renders the sandboxes tab when workspace premiumness denies sandbox creation", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#sandboxes");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      workspaces: {
+        ws_local: {
+          id: "ws_local",
+          name: "Workspace One",
+          sharedWorkspaceId: "shared-ws-1",
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "billing-entitlements-ui",
+    );
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "organizations:getMyOrganizations") {
+        return [
+          {
+            _id: "org-1",
+            name: "Org One",
+            updatedAt: 1,
+            createdAt: 1,
+            createdBy: "user-1",
+            myRole: "owner",
+          },
+        ];
+      }
+
+      if (name === "billing:getWorkspacePremiumness") {
+        return {
+          plan: "free",
+          enforcementState: "active",
+          effectivePlan: "free",
+          billingInterval: null,
+          source: "free",
+          decisionRequired: false,
+          gates: [
+            {
+              gateKey: "sandboxes",
+              kind: "feature",
+              scope: "organization",
+              canAccess: false,
+              shouldShowUpsell: true,
+              upgradePlan: "starter",
+              reason: "feature_not_included",
+            },
+          ],
+        };
+      }
+
+      return undefined;
+    });
+
+    render(<App />);
+
+    // Sandboxes tab is NOT blocked at tab level — creation is gated inline
+    await waitFor(() => {
+      expect(screen.getByText("Sandboxes Tab")).toBeInTheDocument();
     });
   });
 

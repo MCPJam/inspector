@@ -1,5 +1,6 @@
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
 import {
+  CreditCard,
   LayoutGrid,
   List,
   Loader2,
@@ -10,6 +11,7 @@ import {
   Wand2,
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardInteractive } from "@/components/ui/card";
@@ -94,6 +96,16 @@ interface SandboxIndexPageProps {
   onOpenStarterLauncher: () => void;
   /** Creates a builder draft from a starter (inline tiles or launcher). */
   onSelectStarter: (starter: SandboxStarterDefinition) => void;
+  isCreateSandboxDisabled?: boolean;
+  isCreateSandboxLoading?: boolean;
+  createSandboxUpsell?: {
+    title: string;
+    message: string;
+    teaser?: string | null;
+    canManageBilling: boolean;
+    ctaLabel: string;
+    onNavigateToBilling: () => void;
+  } | null;
 }
 
 export function SandboxIndexPage({
@@ -102,6 +114,9 @@ export function SandboxIndexPage({
   onOpenSandbox,
   onOpenStarterLauncher,
   onSelectStarter,
+  isCreateSandboxDisabled = false,
+  isCreateSandboxLoading = false,
+  createSandboxUpsell = null,
 }: SandboxIndexPageProps) {
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
@@ -142,6 +157,7 @@ export function SandboxIndexPage({
             size="lg"
             className="gap-2 rounded-xl"
             onClick={onOpenStarterLauncher}
+            disabled={isCreateSandboxDisabled || isCreateSandboxLoading}
           >
             <Plus className="size-4" />
             New sandbox
@@ -184,6 +200,43 @@ export function SandboxIndexPage({
               </Button>
             </div>
           </div>
+        ) : null}
+
+        {createSandboxUpsell ? (
+          <Alert
+            className="mt-4 border-primary/20 bg-primary/[0.04]"
+            data-testid="sandbox-limit-upsell"
+          >
+            <CreditCard className="size-4 text-primary" />
+            <AlertTitle>{createSandboxUpsell.title}</AlertTitle>
+            <AlertDescription className="gap-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div className="space-y-1">
+                  <p>{createSandboxUpsell.message}</p>
+                  {createSandboxUpsell.teaser ? (
+                    <p className="text-foreground/80">
+                      {createSandboxUpsell.teaser}
+                    </p>
+                  ) : null}
+                  {!createSandboxUpsell.canManageBilling ? (
+                    <p className="font-medium text-foreground/80">
+                      Ask an organization owner to review billing options.
+                    </p>
+                  ) : null}
+                </div>
+                {createSandboxUpsell.canManageBilling ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="md:self-end"
+                    onClick={createSandboxUpsell.onNavigateToBilling}
+                  >
+                    {createSandboxUpsell.ctaLabel}
+                  </Button>
+                ) : null}
+              </div>
+            </AlertDescription>
+          </Alert>
         ) : null}
       </div>
 

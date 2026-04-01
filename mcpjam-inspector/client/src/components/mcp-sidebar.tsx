@@ -114,24 +114,44 @@ export function filterByFeatureFlags(
     .filter((section) => section.items.length > 0);
 }
 
-export function filterByBillingEntitlements(
+/**
+ * Keeps billed nav items visible; marks them disabled when the gate denies access
+ * and enforcement is enabled (not soft/disabled).
+ *
+ * Not used in the main sidebar pipeline — items stay clickable so the shell can
+ * show the billing upsell gate. Retained for tests and optional future use.
+ */
+export function applyBillingGateNavState(
   sections: NavSection[],
-  billingFeatureAvailability: Partial<Record<BillingFeatureName, boolean>>,
-  enforcementActive: boolean,
+  options: {
+    billingUiEnabled: boolean;
+    /** When true, feature is denied by premiumness (locked). */
+    gateDenied: Partial<Record<BillingFeatureName, boolean>>;
+    enforcementActive: boolean;
+  },
 ): NavSection[] {
-  if (!enforcementActive) {
+  const { billingUiEnabled, gateDenied, enforcementActive } = options;
+  if (!billingUiEnabled || !enforcementActive) {
     return sections;
   }
 
-  return sections
-    .map((section) => ({
-      ...section,
-      items: section.items.filter((item) => {
-        if (!item.billingFeature) return true;
-        return billingFeatureAvailability[item.billingFeature] !== false;
-      }),
-    }))
-    .filter((section) => section.items.length > 0);
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) => {
+      if (!item.billingFeature) {
+        return item;
+      }
+      const denied = gateDenied[item.billingFeature] === true;
+      if (!denied) {
+        return item;
+      }
+      return {
+        ...item,
+        disabled: true,
+        disabledTooltip: `${item.title} requires a plan upgrade.`,
+      };
+    }),
+  }));
 }
 
 export function shouldPrefetchSidebarTools(options: {
@@ -318,8 +338,11 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   activeOrganizationId?: string;
-  billingFeatureAvailability?: Partial<Record<BillingFeatureName, boolean>>;
-  billingEnforcementActive?: boolean;
+  billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
+  billingGateEnforcementActive?: boolean;
+  billingUiEnabled?: boolean;
+  isCreateWorkspaceDisabled?: boolean;
+  createWorkspaceDisabledReason?: string;
 }
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
@@ -452,8 +475,11 @@ export function MCPSidebar({
   onDeleteWorkspace,
   isLoadingWorkspaces,
   activeOrganizationId,
-  billingFeatureAvailability = {},
-  billingEnforcementActive = false,
+  billingGateDenied = {},
+  billingGateEnforcementActive = false,
+  billingUiEnabled = false,
+  isCreateWorkspaceDisabled = false,
+  createWorkspaceDisabledReason,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -575,13 +601,9 @@ export function MCPSidebar({
       isAuthenticated,
     ],
   );
-  const visibleNavigationSections = filterByBillingEntitlements(
-    filterByFeatureFlags(
-      HOSTED_MODE ? hostedNavigationSections : navigationSections,
-      featureFlags,
-    ),
-    billingFeatureAvailability,
-    billingEnforcementActive,
+  const visibleNavigationSections = filterByFeatureFlags(
+    HOSTED_MODE ? hostedNavigationSections : navigationSections,
+    featureFlags,
   );
 
   return (
@@ -621,6 +643,8 @@ export function MCPSidebar({
             onDeleteWorkspace={onDeleteWorkspace}
             isLoading={isLoadingWorkspaces}
             onNavigateToSettings={() => handleNavClick("#workspace-settings")}
+            isCreateDisabled={isCreateWorkspaceDisabled}
+            createDisabledReason={createWorkspaceDisabledReason}
             onLearnMoreExpand={
               learnMoreEnabled ? learnMore.openExpandedModal : undefined
             }

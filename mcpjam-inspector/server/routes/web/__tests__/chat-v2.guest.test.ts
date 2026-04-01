@@ -48,7 +48,6 @@ vi.mock("@/shared/types", async () => {
   return {
     ...actual,
     isMCPJamProvidedModel: vi.fn().mockReturnValue(true),
-    isGuestAllowedModel: vi.fn().mockReturnValue(true),
   };
 });
 
@@ -212,6 +211,34 @@ describe("web routes — chat-v2 guest mode", () => {
         modelId: "anthropic/claude-haiku-4.5",
         authHeader: `Bearer ${token}`,
         selectedServers: [],
+      }),
+    );
+  });
+
+  it("allows hosted guests to use MCPJam free-tier models beyond the previous guest subset", async () => {
+    const { app } = createWebTestApp();
+    const { token } = issueGuestToken();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
+        model: {
+          id: "openai/gpt-oss-120b",
+          provider: "openai",
+          name: "GPT-OSS 120B (Free)",
+        },
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        modelId: "openai/gpt-oss-120b",
+        authHeader: `Bearer ${token}`,
       }),
     );
   });

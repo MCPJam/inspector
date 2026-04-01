@@ -67,6 +67,7 @@ import {
   getSandboxHostLogo,
   type SandboxHostStyle,
 } from "@/lib/sandbox-host-style";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   SANDBOX_OAUTH_PENDING_KEY,
   buildPlaygroundSandboxLink,
@@ -538,9 +539,7 @@ export function SandboxEditor({
       toast.success(`Server "${formData.name}" added`);
       setIsAddServerOpen(false);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to add server",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to add server"));
     }
   };
 
@@ -602,9 +601,7 @@ export function SandboxEditor({
       toast.success(isCreateMode ? "Sandbox created" : "Sandbox updated");
       onSaved?.(result as SandboxSettings);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to save sandbox",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to save sandbox"));
     } finally {
       setIsSaving(false);
     }
@@ -622,9 +619,7 @@ export function SandboxEditor({
       toast.success("Sandbox deleted");
       onDeleted?.();
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete sandbox",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete sandbox"));
     }
   };
 

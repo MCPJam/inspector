@@ -186,21 +186,43 @@ describe("OrganizationsTab member management", () => {
         organizationId: "org-1",
         organizationName: "Acme Org",
         plan: "free",
+        effectivePlan: "free",
+        source: "free",
         billingInterval: null,
         billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: true,
         isOwner: true,
         hasCustomer: false,
+        stripeScheduledPlan: null,
+        stripeScheduledBillingInterval: null,
+        stripeScheduledPriceId: null,
+        stripeScheduledEffectiveAt: null,
+        stripeCancelAtPeriodEnd: false,
+        stripeCancelAt: null,
+        stripeCanceledAt: null,
         stripeCurrentPeriodEnd: null,
         stripePriceId: null,
+        trialStatus: "none",
+        trialPlan: null,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+        decisionRequired: false,
+        trialDecision: null,
       },
+      organizationPremiumness: undefined,
       isLoadingBilling: false,
-      isStartingCheckout: false,
+      isStartingPlanChange: false,
+      pendingPlanChangeTarget: null,
       isOpeningPortal: false,
+      isCancelingScheduledBillingChange: false,
       error: null,
-      startCheckout: vi.fn(),
+      startPlanChange: vi.fn(),
       openPortal: vi.fn(),
+      openIntervalChangePortal: vi.fn(),
+      cancelScheduledBillingChange: vi.fn(),
+      selectFreeAfterTrial: vi.fn(),
     });
 
     mockUpdateOrganization.mockResolvedValue(undefined);
@@ -277,21 +299,43 @@ describe("OrganizationsTab member management", () => {
         organizationId: "org-1",
         organizationName: "Acme Org",
         plan: "free",
+        effectivePlan: "free",
+        source: "free",
         billingInterval: null,
         billingConfigured: true,
         subscriptionStatus: null,
         canManageBilling: false,
         isOwner: false,
         hasCustomer: false,
+        stripeScheduledPlan: null,
+        stripeScheduledBillingInterval: null,
+        stripeScheduledPriceId: null,
+        stripeScheduledEffectiveAt: null,
+        stripeCancelAtPeriodEnd: false,
+        stripeCancelAt: null,
+        stripeCanceledAt: null,
         stripeCurrentPeriodEnd: null,
         stripePriceId: null,
+        trialStatus: "none",
+        trialPlan: null,
+        trialStartedAt: null,
+        trialEndsAt: null,
+        trialDaysRemaining: null,
+        decisionRequired: false,
+        trialDecision: null,
       },
+      organizationPremiumness: undefined,
       isLoadingBilling: false,
-      isStartingCheckout: false,
+      isStartingPlanChange: false,
+      pendingPlanChangeTarget: null,
       isOpeningPortal: false,
+      isCancelingScheduledBillingChange: false,
       error: null,
-      startCheckout: vi.fn(),
+      startPlanChange: vi.fn(),
       openPortal: vi.fn(),
+      openIntervalChangePortal: vi.fn(),
+      cancelScheduledBillingChange: vi.fn(),
+      selectFreeAfterTrial: vi.fn(),
     });
 
     render(<OrganizationsTab organizationId="org-1" />);
@@ -305,5 +349,32 @@ describe("OrganizationsTab member management", () => {
     expect(
       screen.getByRole("button", { name: "Go to Servers" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the sign-in prompt instead of mounting organization billing while Convex auth is unavailable", () => {
+    const signIn = vi.fn();
+
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: { email: "owner@example.com" },
+      signIn,
+    });
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [organization],
+      isLoading: false,
+    });
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      screen.getByText("Sign in to manage organizations"),
+    ).toBeInTheDocument();
+    expect(mockUseOrganizationBilling).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+    expect(signIn).toHaveBeenCalledTimes(1);
   });
 });

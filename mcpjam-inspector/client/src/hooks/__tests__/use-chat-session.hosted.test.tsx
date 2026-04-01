@@ -41,6 +41,11 @@ const guestModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
+const freeParityGuestModel = {
+  id: "openai/gpt-oss-120b",
+  name: "GPT OSS 120B",
+  provider: "openai" as const,
+};
 const premiumModel = {
   id: "anthropic/claude-sonnet-4.5",
   name: "Claude Sonnet 4.5",
@@ -52,7 +57,11 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => [premiumModel, guestModel]),
+  buildAvailableModels: vi.fn(() => [
+    premiumModel,
+    freeParityGuestModel,
+    guestModel,
+  ]),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
 }));
 
@@ -285,6 +294,7 @@ describe("useChatSession hosted mode", () => {
     });
 
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "openai/gpt-oss-120b",
       "openai/gpt-5-mini",
     ]);
     expect(result.current.isAuthReady).toBe(true);

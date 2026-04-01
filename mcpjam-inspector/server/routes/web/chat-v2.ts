@@ -86,7 +86,7 @@ chatV2.post("/", async (c) => {
           throw new WebRouteError(
             403,
             ErrorCode.UNAUTHORIZED,
-            "Sign in to use this model. Guest users can use: claude-haiku-4.5, gpt-5-mini, gemini-2.5-flash.",
+            "This MCPJam model is not available for guest access. Sign in to continue.",
           );
         }
         if (!process.env.CONVEX_HTTP_URL) {

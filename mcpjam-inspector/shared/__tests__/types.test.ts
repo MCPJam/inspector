@@ -6,7 +6,9 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("openai/gpt-4o-mini")).toBe(true);
   });
 
-  it("does not expose openai/gpt-4o-mini as guest-allowed", () => {
+  it("matches the backend guest-allowed free model set", () => {
+    expect(isGuestAllowedModel("openai/gpt-oss-120b")).toBe(true);
+    expect(isGuestAllowedModel("openai/gpt-5-nano")).toBe(true);
     expect(isGuestAllowedModel("openai/gpt-4o-mini")).toBe(false);
   });
 });

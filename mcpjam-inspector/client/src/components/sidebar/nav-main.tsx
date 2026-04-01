@@ -119,7 +119,9 @@ export function NavMain({
                 className={getButtonClassName(item)}
               >
                 {item.icon && <item.icon className="h-4 w-4" />}
-                <span>{item.title}</span>
+                <span className="flex min-w-0 flex-1 items-center gap-1.5">
+                  <span className="truncate">{item.title}</span>
+                </span>
               </SidebarMenuButton>
             );
 

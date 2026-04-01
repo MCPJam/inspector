@@ -20,10 +20,23 @@ import type { SandboxDraftConfig, SandboxStarterDefinition } from "./types";
 
 interface SandboxBuilderExperienceProps {
   workspaceId: string | null;
+  isCreateSandboxDisabled?: boolean;
+  isCreateSandboxLoading?: boolean;
+  createSandboxUpsell?: {
+    title: string;
+    message: string;
+    teaser?: string | null;
+    canManageBilling: boolean;
+    ctaLabel: string;
+    onNavigateToBilling: () => void;
+  } | null;
 }
 
 export default function SandboxBuilderExperience({
   workspaceId,
+  isCreateSandboxDisabled = false,
+  isCreateSandboxLoading = false,
+  createSandboxUpsell = null,
 }: SandboxBuilderExperienceProps) {
   const { isAuthenticated } = useConvexAuth();
   const { sandboxes, isLoading } = useSandboxList({
@@ -54,11 +67,16 @@ export default function SandboxBuilderExperience({
   const restoredForWorkspaceRef = useRef<string | null>(null);
   useEffect(() => {
     if (!workspaceId) return;
+    if (isCreateSandboxLoading) return;
     if (restoredForWorkspaceRef.current === workspaceId) return;
     restoredForWorkspaceRef.current = workspaceId;
 
     const session = readBuilderSession(workspaceId);
     if (!session || (!session.sandboxId && !session.draft)) return;
+    if (!session.sandboxId && isCreateSandboxDisabled) {
+      clearBuilderSession();
+      return;
+    }
 
     startTransition(() => {
       setSelectedSandboxId(session.sandboxId);
@@ -72,16 +90,22 @@ export default function SandboxBuilderExperience({
         setRestoredViewMode(vm as "setup" | "preview" | "usage" | undefined);
       }
     });
-  }, [workspaceId]);
+  }, [isCreateSandboxDisabled, isCreateSandboxLoading, workspaceId]);
 
-  const applyStarterDraft = useCallback((starter: SandboxStarterDefinition) => {
-    startTransition(() => {
-      setSelectedSandboxId(null);
-      setDraft(starter.createDraft(getDefaultHostedModelId()));
-      setRestoredViewMode(undefined);
-      setStarterLauncherOpen(false);
-    });
-  }, []);
+  const applyStarterDraft = useCallback(
+    (starter: SandboxStarterDefinition) => {
+      if (isCreateSandboxDisabled || isCreateSandboxLoading) {
+        return;
+      }
+      startTransition(() => {
+        setSelectedSandboxId(null);
+        setDraft(starter.createDraft(getDefaultHostedModelId()));
+        setRestoredViewMode(undefined);
+        setStarterLauncherOpen(false);
+      });
+    },
+    [isCreateSandboxDisabled, isCreateSandboxLoading],
+  );
 
   const handleOpenStarterLauncher = useCallback(() => {
     setStarterLauncherOpen(true);
@@ -151,6 +175,9 @@ export default function SandboxBuilderExperience({
           }
           onOpenStarterLauncher={handleOpenStarterLauncher}
           onSelectStarter={applyStarterDraft}
+          isCreateSandboxDisabled={isCreateSandboxDisabled}
+          isCreateSandboxLoading={isCreateSandboxLoading}
+          createSandboxUpsell={createSandboxUpsell}
         />
       )}
     </>

@@ -1,10 +1,36 @@
 import { ConvexError } from "convex/values";
 import type {
   BillingFeatureName,
-  BillingRolloutState,
-  OrganizationEntitlements,
+  BillingInterval,
+  BillingLimitName,
+  GateDecision,
   OrganizationPlan,
+  PlanCatalog,
+  PlanCatalogEntry,
+  PremiumnessGateKey,
+  PremiumnessState,
 } from "@/hooks/useOrganizationBilling";
+export function getDisplayPriceCentsForPlan(
+  plan: OrganizationPlan,
+  interval: BillingInterval,
+  catalogEntry: PlanCatalogEntry,
+): number | null {
+  return catalogEntry.prices[interval];
+}
+
+export function getAnnualDiscountPercent(
+  planCatalog: PlanCatalog | undefined,
+): number {
+  if (!planCatalog) {
+    return 0;
+  }
+  const monthly = planCatalog.plans.starter.prices.monthly;
+  const annual = planCatalog.plans.starter.prices.annual;
+  if (monthly == null || annual == null || monthly <= 0) {
+    return 0;
+  }
+  return Math.round(((monthly * 12 - annual) / (monthly * 12)) * 100);
+}
 
 export const BILLING_FEATURE_BY_TAB = {
   evals: "evals",
@@ -19,28 +45,84 @@ export function getRequiredBillingFeatureForTab(
   );
 }
 
-export function isBillingGracePeriodActive(
-  rolloutState: BillingRolloutState | null | undefined,
-): boolean {
-  return (
-    !!rolloutState?.enforcementConfigured && !rolloutState.enforcementActive
-  );
+/** Maps inspector tabs to premiumness gate keys (feature gates only). */
+export function getPremiumnessGateForTab(
+  tab: string,
+): PremiumnessGateKey | null {
+  const feature = getRequiredBillingFeatureForTab(tab);
+  if (!feature) return null;
+  return feature as PremiumnessGateKey;
 }
 
-export function isBillingFeatureLocked(params: {
+export function isBillingEnforcementActive(
+  premiumness: PremiumnessState | undefined,
+): boolean {
+  return !!premiumness && premiumness.enforcementState !== "disabled";
+}
+
+export function isGateAccessDenied(
+  premiumness: PremiumnessState | undefined,
+  gateKey: PremiumnessGateKey,
+): boolean {
+  const decision = getGateDecision(premiumness, gateKey);
+  if (!decision) {
+    return false;
+  }
+  if (!isBillingEnforcementActive(premiumness)) {
+    return false;
+  }
+  return decision.canAccess === false;
+}
+
+/**
+ * When a workspace exists, workspace premiumness governs shell tabs; otherwise
+ * organization premiumness applies.
+ */
+export function isPremiumnessGateDeniedForShell(params: {
   billingUiEnabled: boolean;
-  entitlements: OrganizationEntitlements | null | undefined;
-  rolloutState: BillingRolloutState | null | undefined;
-  feature: BillingFeatureName | null;
+  workspacePremiumness: PremiumnessState | undefined;
+  organizationPremiumness: PremiumnessState | undefined;
+  hasWorkspace: boolean;
+  gateKey: PremiumnessGateKey | null;
 }): boolean {
-  const { billingUiEnabled, entitlements, rolloutState, feature } = params;
-  if (!billingUiEnabled || !feature || !rolloutState?.enforcementActive) {
+  const {
+    billingUiEnabled,
+    workspacePremiumness,
+    organizationPremiumness,
+    hasWorkspace,
+    gateKey,
+  } = params;
+  if (!billingUiEnabled || !gateKey) {
     return false;
   }
-  if (!entitlements) {
-    return false;
+  const premiumness =
+    hasWorkspace && workspacePremiumness
+      ? workspacePremiumness
+      : organizationPremiumness;
+  return isGateAccessDenied(premiumness, gateKey);
+}
+
+export function getUpgradePlanForDeniedGate(
+  premiumness: PremiumnessState | undefined,
+  gateKey: PremiumnessGateKey | null,
+): OrganizationPlan | null {
+  const decision = gateKey ? getGateDecision(premiumness, gateKey) : null;
+  if (!decision || decision.canAccess !== false) {
+    return null;
   }
-  return entitlements.features[feature] === false;
+  return decision.upgradePlan ?? null;
+}
+
+export function getGateDecision(
+  premiumness: PremiumnessState | undefined,
+  gateKey: PremiumnessGateKey,
+): GateDecision | null {
+  if (!premiumness) {
+    return null;
+  }
+  return (
+    premiumness.gates.find((decision) => decision.gateKey === gateKey) ?? null
+  );
 }
 
 export function formatBillingFeatureName(feature: BillingFeatureName): string {
@@ -64,6 +146,28 @@ export function formatBillingFeatureName(feature: BillingFeatureName): string {
   }
 }
 
+export function formatPremiumnessGateKey(gateKey: PremiumnessGateKey): string {
+  switch (gateKey) {
+    case "evals":
+    case "sandboxes":
+    case "cicd":
+    case "auditLog":
+      return formatBillingFeatureName(gateKey as BillingFeatureName);
+    case "maxMembers":
+      return "Members";
+    case "maxWorkspaces":
+      return "Workspaces";
+    case "maxServersPerWorkspace":
+      return "Servers per workspace";
+    case "maxSandboxesPerWorkspace":
+      return "Sandboxes per workspace";
+    case "maxEvalRunsPerMonth":
+      return "Eval runs per month";
+    default:
+      return gateKey;
+  }
+}
+
 export function formatPlanName(
   plan: OrganizationPlan | null | undefined,
 ): string {
@@ -81,29 +185,13 @@ export function formatPlanName(
   }
 }
 
-export function formatGracePeriodEndsAt(
-  value: string | null | undefined,
-): string | null {
-  if (!value) {
-    return null;
-  }
-
-  const timestamp = Date.parse(value);
-  if (Number.isNaN(timestamp)) {
-    return null;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  }).format(new Date(timestamp));
-}
-
 type BillingErrorPayload = {
   code?: string;
   message?: string;
   feature?: BillingFeatureName;
+  gateKey?: PremiumnessGateKey;
+  upgradePlan?: OrganizationPlan;
+  enforcementState?: string;
   plan?: OrganizationPlan;
   canManageBilling?: boolean;
   limit?: string;
@@ -163,6 +251,49 @@ function extractBillingErrorPayload(
   return null;
 }
 
+function resolveFeatureLabel(payload: BillingErrorPayload): string | null {
+  if (payload.feature) {
+    return formatBillingFeatureName(payload.feature);
+  }
+  if (payload.gateKey) {
+    return formatPremiumnessGateKey(payload.gateKey);
+  }
+  return null;
+}
+
+export function formatBillingLimitReachedMessage(
+  limitName: BillingLimitName | string | undefined,
+  allowedValue: number | null | undefined,
+  canManageBilling = true,
+): string | null {
+  if (typeof allowedValue !== "number") {
+    return null;
+  }
+
+  if (limitName === "maxEvalRunsPerMonth") {
+    return canManageBilling
+      ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
+      : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "maxSandboxesPerWorkspace") {
+    return canManageBilling
+      ? `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`
+      : `This workspace has reached its sandbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "maxMembers") {
+    return canManageBilling
+      ? `This organization has reached its member limit (${allowedValue}). Upgrade to add more members.`
+      : `This organization has reached its member limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "maxWorkspaces") {
+    return canManageBilling
+      ? `This organization has reached its workspace limit (${allowedValue}). Upgrade to create more workspaces.`
+      : `This organization has reached its workspace limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+
+  return null;
+}
+
 export function getBillingErrorMessage(
   error: unknown,
   fallback: string,
@@ -173,12 +304,21 @@ export function getBillingErrorMessage(
     return error instanceof Error ? error.message : fallback;
   }
 
-  if (payload.code === "billing_feature_not_included" && payload.feature) {
-    const featureName = formatBillingFeatureName(payload.feature);
-    const planName = formatPlanName(payload.plan);
-    return canManageBilling
-      ? `${featureName} is not included in the ${planName} plan. Upgrade the organization to continue.`
-      : `${featureName} is not included in the ${planName} plan. Ask an organization owner to upgrade.`;
+  if (payload.code === "billing_feature_not_included") {
+    const featureName = resolveFeatureLabel(payload);
+    const currentPlanName = formatPlanName(payload.plan);
+    const upgradePlanName = payload.upgradePlan
+      ? formatPlanName(payload.upgradePlan)
+      : null;
+    if (featureName) {
+      return canManageBilling
+        ? upgradePlanName
+          ? `${featureName} is not included in the ${currentPlanName} plan. Upgrade to ${upgradePlanName} to continue.`
+          : `${featureName} is not included in the ${currentPlanName} plan. Upgrade the organization to continue.`
+        : upgradePlanName
+          ? `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade to ${upgradePlanName}.`
+          : `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade.`;
+    }
   }
 
   if (payload.code === "billing_limit_reached") {
@@ -190,22 +330,13 @@ export function getBillingErrorMessage(
           ? payload.current
           : null;
     const canManage = payload.canManageBilling ?? canManageBilling;
-
-    if (
-      limitName === "maxEvalRunsPerMonth" &&
-      typeof allowedValue === "number"
-    ) {
-      return canManage
-        ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
-        : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
-    }
-    if (
-      limitName === "maxSandboxesPerWorkspace" &&
-      typeof allowedValue === "number"
-    ) {
-      return canManage
-        ? `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`
-        : `This workspace has reached its sandbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+    const message = formatBillingLimitReachedMessage(
+      limitName,
+      allowedValue,
+      canManage,
+    );
+    if (message) {
+      return message;
     }
   }
 
