@@ -69,7 +69,8 @@ export function buildDotEnvSnippet(
 }
 
 /** Snippet strings exported for tests and consistency with copy targets. */
-export const SDK_EVAL_QUICKSTART_INSTALL = "mkdir my-first-eval && cd my-first-eval\nnpm install @mcpjam/sdk";
+export const SDK_EVAL_QUICKSTART_INSTALL =
+  "mkdir my-first-eval && cd my-first-eval\nnpm install @mcpjam/sdk";
 
 /** Placeholder shell env (no workspace key injected). */
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
@@ -600,7 +601,10 @@ export function SdkEvalQuickstart({
       </StepCard>
 
       {/* Step 3: Copy the demo test */}
-      <StepCard step={3} title="Add mcp-eval.quickstart.test.ts to your project">
+      <StepCard
+        step={3}
+        title="Add mcp-eval.quickstart.test.ts to your project"
+      >
         <QuickstartCodeBlock
           code={SDK_EVAL_QUICKSTART_RUN}
           copyLabel="Copy quickstart test file"

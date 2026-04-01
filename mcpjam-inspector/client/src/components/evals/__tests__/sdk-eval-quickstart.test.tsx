@@ -61,7 +61,9 @@ describe("SdkEvalQuickstart", () => {
     expect(screen.getByText("Run the demo test")).toBeTruthy();
 
     // All content visible without expansion
-    expect(document.body.textContent).toContain("mkdir my-first-eval && cd my-first-eval");
+    expect(document.body.textContent).toContain(
+      "mkdir my-first-eval && cd my-first-eval",
+    );
     expect(document.body.textContent).toContain("npm install @mcpjam/sdk");
     expect(document.body.textContent).toContain("workspace-api-key");
     expect(document.body.textContent).toContain("learn.mcpjam.com");

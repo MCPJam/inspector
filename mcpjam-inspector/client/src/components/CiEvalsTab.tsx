@@ -590,9 +590,13 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                   <div className="mx-auto w-full max-w-2xl px-6 py-8 pb-12">
                     <div className="mb-6 flex gap-6 items-start rounded-xl border border-border bg-muted/60 px-6 py-5">
                       <h2 className="w-2/5 shrink-0 pt-1 text-2xl font-bold tracking-tight text-foreground">
-                        Follow these steps to connect to an MCP server, run an eval, and see your first run appear in MCPJam.
+                        Follow these steps to connect to an MCP server, run an
+                        eval, and see your first run appear in MCPJam.
                       </h2>
-                      <div className="flex-1 relative aspect-[16/9] overflow-hidden rounded-xl group cursor-pointer" onClick={() => setShowSampleTrace(true)}>
+                      <div
+                        className="flex-1 relative aspect-[16/9] overflow-hidden rounded-xl group cursor-pointer"
+                        onClick={() => setShowSampleTrace(true)}
+                      >
                         <img
                           src={SAMPLE_TRACE_PREVIEW_IMAGE_URL}
                           alt="Sample eval trace preview"
@@ -605,8 +609,13 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                           </div>
                         </div>
                         <div className="pointer-events-none absolute bottom-3 left-4">
-                          <p className="text-white text-sm font-semibold drop-shadow-md">View sample trace</p>
-                          <p className="text-white/70 text-xs">See what a completed eval looks like before you start.</p>
+                          <p className="text-white text-sm font-semibold drop-shadow-md">
+                            View sample trace
+                          </p>
+                          <p className="text-white/70 text-xs">
+                            See what a completed eval looks like before you
+                            start.
+                          </p>
                         </div>
                       </div>
                     </div>
