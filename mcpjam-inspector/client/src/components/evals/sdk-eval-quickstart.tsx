@@ -28,21 +28,14 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
-const SDK_README_URL =
-  "https://github.com/MCPJam/inspector/blob/main/sdk/README.md";
 
 /** Providers supported by TestAgent — same list as @mcpjam/sdk README (TestAgent). */
 export const SDK_TEST_AGENT_PROVIDERS =
   "openai, anthropic, azure, google, mistral, deepseek, ollama, openrouter, xai" as const;
 
 const ENV_TAIL_SHELL = `export MCP_SERVER_URL=${LEARN_MCP_URL}
-# EVAL_MODEL = <provider>/<model-id> (any model your vendor exposes under that provider).
-# Supported providers for TestAgent: ${SDK_TEST_AGENT_PROVIDERS}
-# Examples: openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514, openrouter/openai/gpt-4o-mini
-export EVAL_MODEL=<provider/model-id>
-# Use the API key variable your provider expects; rename in both shell and test if needed:
-# OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.
-export LLM_API_KEY=<your-llm-api-key>`;
+export LLM_API_KEY=<your-llm-api-key>
+export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
 
 const ENV_TAIL_DOTENV = `MCP_SERVER_URL=${LEARN_MCP_URL}
 # EVAL_MODEL = <provider>/<model-id>. TestAgent providers: ${SDK_TEST_AGENT_PROVIDERS}
@@ -76,7 +69,7 @@ export function buildDotEnvSnippet(
 }
 
 /** Snippet strings exported for tests and consistency with copy targets. */
-export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
+export const SDK_EVAL_QUICKSTART_INSTALL = "mkdir my-first-eval && cd my-first-eval\nnpm install @mcpjam/sdk";
 
 /** Placeholder shell env (no workspace key injected). */
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
@@ -211,7 +204,7 @@ function QuickstartCodeBlock({
       <div className="relative">
         <pre
           className={cn(
-            "max-h-[min(420px,55vh)] overflow-auto px-4 py-3.5 text-left font-mono text-[11px] leading-relaxed text-foreground sm:text-xs",
+            "max-h-[min(320px,45vh)] overflow-auto px-4 py-3.5 text-left font-mono text-[13px] leading-relaxed text-foreground",
             toolbarLabel ? "pr-4" : "pr-12",
           )}
           tabIndex={0}
@@ -251,7 +244,7 @@ function StepCard({
   children: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl border border-border/60 bg-card/50 px-5 py-4">
+    <div className="rounded-2xl border border-border/40 bg-card/40 px-5 py-4 shadow-sm backdrop-blur-sm">
       <div className="mb-3 flex items-center gap-2.5">
         <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary ring-1 ring-primary/20">
           {step}
@@ -310,7 +303,7 @@ function ApiKeyRow({
 }) {
   if (isAuthLoading) {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2.5">
         <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         <span className="text-xs text-muted-foreground">Checking...</span>
       </div>
@@ -319,7 +312,7 @@ function ApiKeyRow({
 
   if (!isAuthenticated) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
@@ -338,7 +331,7 @@ function ApiKeyRow({
 
   if (!workspaceId) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
@@ -351,7 +344,7 @@ function ApiKeyRow({
 
   if (maybeApiKey === undefined) {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2.5">
+      <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2.5">
         <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
         <span className="text-xs text-muted-foreground">Loading key...</span>
       </div>
@@ -361,7 +354,7 @@ function ApiKeyRow({
   if (plaintextKey) {
     return (
       <TooltipProvider delayDuration={300}>
-        <div className="flex items-center gap-2 rounded-lg bg-muted/40 px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
           <span className="shrink-0 text-xs font-medium text-muted-foreground">
             MCPJAM_API_KEY
           </span>
@@ -398,7 +391,7 @@ function ApiKeyRow({
 
   if (!existingKey) {
     return (
-      <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+      <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
         </span>
@@ -417,7 +410,7 @@ function ApiKeyRow({
   }
 
   return (
-    <div className="flex items-center justify-between rounded-lg bg-muted/40 px-3 py-2">
+    <div className="flex items-center justify-between rounded-lg border border-border/60 bg-muted/40 px-3 py-2">
       <div className="flex items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">
           MCPJAM_API_KEY
@@ -551,12 +544,12 @@ export function SdkEvalQuickstart({
   const activeKeys = maybeApiKey?.filter((k) => !k.revokedAt) ?? [];
   const existingKey = activeKeys.length > 0 ? activeKeys[0] : null;
 
-  const dotenvEnv = buildDotEnvSnippet(plaintextKey);
+  const shellEnv = buildShellEnvSnippet(plaintextKey);
 
   return (
-    <div className="w-full max-w-2xl space-y-4">
-      {/* Step 1: Install */}
-      <StepCard step={1} title="Install">
+    <div className="w-full max-w-2xl space-y-3">
+      {/* Step 1: Set up project */}
+      <StepCard step={1} title="Set up project">
         <QuickstartCodeBlock
           code={SDK_EVAL_QUICKSTART_INSTALL}
           copyLabel="Copy install command"
@@ -589,36 +582,34 @@ export function SdkEvalQuickstart({
           headerCopied={headerCopied}
         />
         <QuickstartCodeBlock
-          code={dotenvEnv}
-          copyLabel="Copy .env"
-          toolbarLabel=".env"
+          code={shellEnv}
+          copyLabel="Copy exports"
+          toolbarLabel="Terminal"
         />
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-          <span>
-            Providers:{" "}
-            <span className="text-foreground/80">
-              {SDK_TEST_AGENT_PROVIDERS}
-            </span>
-          </span>
+        <div className="flex justify-end text-[11px] text-muted-foreground">
           <a
             className="inline-flex items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
-            href={SDK_README_URL}
+            href="https://docs.mcpjam.com/sdk"
             target="_blank"
             rel="noreferrer noopener"
           >
-            SDK README
+            Learn more and see all providers in the SDK docs
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>
       </StepCard>
 
-      {/* Step 3: Run */}
-      <StepCard step={3} title="Run the test">
+      {/* Step 3: Copy the demo test */}
+      <StepCard step={3} title="Add mcp-eval.quickstart.test.ts to your project">
         <QuickstartCodeBlock
           code={SDK_EVAL_QUICKSTART_RUN}
           copyLabel="Copy quickstart test file"
           toolbarLabel="mcp-eval.quickstart.test.ts"
         />
+      </StepCard>
+
+      {/* Step 4: Run the demo test */}
+      <StepCard step={4} title="Run the demo test">
         <QuickstartCodeBlock
           code="npx vitest mcp-eval.quickstart.test.ts"
           copyLabel="Copy run command"

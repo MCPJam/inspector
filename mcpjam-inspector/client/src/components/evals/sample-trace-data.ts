@@ -4,6 +4,13 @@ import type { TraceEnvelope } from "./trace-viewer-adapter";
 /** Simulated wall-clock start for the sample trace (2026-03-15 14:30:00 UTC). */
 export const SAMPLE_TRACE_STARTED_AT_MS = 1773854400000;
 
+/**
+ * Preview image shown on the "View sample trace" card.
+ * This must be a full served URL, not a raw Convex `Id<"_storage">`.
+ */
+export const SAMPLE_TRACE_PREVIEW_IMAGE_URL =
+  "https://outstanding-fennec-304.convex.cloud/api/storage/4fca4ad4-6ae2-4073-a183-9b5b7f45bfc0";
+
 /** Example model row for the sample trace dialog (matches typical CI trace metadata). */
 export const SAMPLE_TRACE_VIEWER_MODEL: ModelDefinition = {
   id: "gpt-4o",
