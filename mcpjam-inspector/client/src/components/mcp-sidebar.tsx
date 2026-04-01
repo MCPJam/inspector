@@ -65,8 +65,6 @@ interface NavItem {
   hiddenByFlag?: string;
   /** Hide this item when billing enforcement is active and the org lacks this feature */
   billingFeature?: BillingFeatureName;
-  /** Set when enforcement is on and this billed feature is locked (nav still enabled). */
-  billingLocked?: boolean;
 }
 
 interface NavSection {
@@ -131,38 +129,6 @@ export function applyBillingGateNavState(
         disabled: true,
         disabledTooltip: `${item.title} requires a plan upgrade.`,
       };
-    }),
-  }));
-}
-
-/**
- * When billing enforcement is active, flags nav items that are locked so the UI can
- * show a lock hint without disabling navigation.
- */
-export function annotateBillingNavLockHints(
-  sections: NavSection[],
-  options: {
-    billingUiEnabled: boolean;
-    gateDenied: Partial<Record<BillingFeatureName, boolean>>;
-    enforcementActive: boolean;
-  },
-): NavSection[] {
-  const { billingUiEnabled, gateDenied, enforcementActive } = options;
-  if (!billingUiEnabled || !enforcementActive) {
-    return sections;
-  }
-
-  return sections.map((section) => ({
-    ...section,
-    items: section.items.map((item) => {
-      if (!item.billingFeature) {
-        return item;
-      }
-      const locked = gateDenied[item.billingFeature] === true;
-      if (!locked) {
-        return item;
-      }
-      return { ...item, billingLocked: true };
     }),
   }));
 }
@@ -361,6 +327,8 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
   billingUiEnabled?: boolean;
+  isCreateWorkspaceDisabled?: boolean;
+  createWorkspaceDisabledReason?: string;
 }
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
@@ -379,6 +347,8 @@ export function MCPSidebar({
   billingGateDenied = {},
   billingGateEnforcementActive = false,
   billingUiEnabled = false,
+  isCreateWorkspaceDisabled = false,
+  createWorkspaceDisabledReason,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
@@ -501,16 +471,9 @@ export function MCPSidebar({
       isAuthenticated,
     ],
   );
-  const visibleNavigationSections = annotateBillingNavLockHints(
-    filterByFeatureFlags(
-      HOSTED_MODE ? hostedNavigationSections : navigationSections,
-      featureFlags,
-    ),
-    {
-      billingUiEnabled,
-      gateDenied: billingGateDenied,
-      enforcementActive: billingGateEnforcementActive,
-    },
+  const visibleNavigationSections = filterByFeatureFlags(
+    HOSTED_MODE ? hostedNavigationSections : navigationSections,
+    featureFlags,
   );
 
   return (
@@ -547,6 +510,8 @@ export function MCPSidebar({
           onDeleteWorkspace={onDeleteWorkspace}
           isLoading={isLoadingWorkspaces}
           onNavigateToSettings={() => handleNavClick("#workspace-settings")}
+          isCreateDisabled={isCreateWorkspaceDisabled}
+          createDisabledReason={createWorkspaceDisabledReason}
         />
       </SidebarHeader>
       <SidebarContent>

@@ -1,9 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { SandboxesTab } from "../SandboxesTab";
-import { writeBuilderSession } from "@/lib/sandbox-session";
+import {
+  readBuilderSession,
+  writeBuilderSession,
+} from "@/lib/sandbox-session";
 
 const mockBuilderViewProps = vi.fn();
+const mockUseFeatureFlagEnabled = vi.fn(() => true);
+const mockUseOrganizationBilling = vi.fn();
 
 const sandboxList = [
   {
@@ -40,6 +45,16 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: (...args: unknown[]) =>
+    mockUseFeatureFlagEnabled(...args),
+}));
+
+vi.mock("@/hooks/useOrganizationBilling", () => ({
+  useOrganizationBilling: (...args: unknown[]) =>
+    mockUseOrganizationBilling(...args),
+}));
+
 vi.mock("@/hooks/useSandboxes", () => ({
   useSandboxList: () => ({
     sandboxes: sandboxList,
@@ -53,8 +68,10 @@ vi.mock("@/hooks/useWorkspaces", () => ({
       {
         _id: "ws-1",
         name: "Workspace One",
+        organizationId: "org-1",
       },
     ],
+    isLoading: false,
   }),
   useWorkspaceServers: () => ({
     servers: [],
@@ -84,6 +101,35 @@ describe("SandboxesTab", () => {
   beforeEach(() => {
     sessionStorage.clear();
     vi.clearAllMocks();
+    mockUseFeatureFlagEnabled.mockReturnValue(true);
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        plan: "starter",
+        effectivePlan: "starter",
+        canManageBilling: true,
+      },
+      workspacePremiumness: {
+        plan: "starter",
+        enforcementState: "active",
+        effectivePlan: "starter",
+        billingInterval: "monthly",
+        source: "subscription",
+        decisionRequired: false,
+        gates: [
+          {
+            gateKey: "sandboxes",
+            kind: "feature",
+            scope: "organization",
+            canAccess: true,
+            shouldShowUpsell: false,
+            upgradePlan: null,
+            reason: "feature_included",
+          },
+        ],
+      },
+      isLoadingBilling: false,
+      isLoadingWorkspacePremiumness: false,
+    });
   });
 
   it("shows a workspace prompt when no workspace is selected", () => {
@@ -152,5 +198,89 @@ describe("SandboxesTab", () => {
     expect(
       await screen.findByRole("heading", { name: "Sandboxes" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the upsell gate instead of opening the sandbox surface when sandboxes are denied", async () => {
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        plan: "free",
+        effectivePlan: "free",
+        canManageBilling: true,
+      },
+      workspacePremiumness: {
+        plan: "free",
+        enforcementState: "active",
+        effectivePlan: "free",
+        billingInterval: null,
+        source: "free",
+        decisionRequired: false,
+        gates: [
+          {
+            gateKey: "sandboxes",
+            kind: "feature",
+            scope: "organization",
+            canAccess: false,
+            shouldShowUpsell: true,
+            upgradePlan: "starter",
+            reason: "feature_not_included",
+          },
+        ],
+      },
+      isLoadingBilling: false,
+      isLoadingWorkspacePremiumness: false,
+    });
+
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    expect(await screen.findByTestId("billing-upsell-gate")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "New sandbox" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Builder view")).not.toBeInTheDocument();
+  });
+
+  it("clears restored builder sessions when sandboxes are denied", async () => {
+    writeBuilderSession({
+      workspaceId: "ws-1",
+      sandboxId: "sbx-2",
+      draft: null,
+      viewMode: "preview",
+    });
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        plan: "free",
+        effectivePlan: "free",
+        canManageBilling: true,
+      },
+      workspacePremiumness: {
+        plan: "free",
+        enforcementState: "active",
+        effectivePlan: "free",
+        billingInterval: null,
+        source: "free",
+        decisionRequired: false,
+        gates: [
+          {
+            gateKey: "sandboxes",
+            kind: "feature",
+            scope: "organization",
+            canAccess: false,
+            shouldShowUpsell: true,
+            upgradePlan: "starter",
+            reason: "feature_not_included",
+          },
+        ],
+      },
+      isLoadingBilling: false,
+      isLoadingWorkspacePremiumness: false,
+    });
+
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    expect(await screen.findByTestId("billing-upsell-gate")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readBuilderSession("ws-1")).toBeNull();
+    });
+    expect(screen.queryByText("Builder view")).not.toBeInTheDocument();
   });
 });

@@ -12,7 +12,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface GuideBubble {
@@ -28,8 +27,6 @@ interface NavMainItem {
   isActive?: boolean;
   disabled?: boolean;
   disabledTooltip?: string;
-  /** Billing enforcement: feature present but not entitled; nav remains enabled. */
-  billingLocked?: boolean;
 }
 
 interface NavMainProps {
@@ -84,16 +81,7 @@ export function NavMain({
                 {item.icon && <item.icon className="h-4 w-4" />}
                 <span className="flex min-w-0 flex-1 items-center gap-1.5">
                   <span className="truncate">{item.title}</span>
-                  {item.billingLocked ? (
-                    <Lock
-                      className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-                      aria-hidden
-                    />
-                  ) : null}
                 </span>
-                {item.billingLocked ? (
-                  <span className="sr-only">Plan upgrade required</span>
-                ) : null}
               </SidebarMenuButton>
             );
 

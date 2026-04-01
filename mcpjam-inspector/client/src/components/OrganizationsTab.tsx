@@ -40,9 +40,15 @@ import {
   useOrganizationMembers,
   useOrganizationMutations,
 } from "@/hooks/useOrganizations";
-import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import {
+  useOrganizationBilling,
+  type BillingInterval,
+  type OrganizationBillingStatus,
+  type PlanCatalog,
+} from "@/hooks/useOrganizationBilling";
 import {
   formatBillingFeatureName,
+  formatPlanName,
   getBillingErrorMessage,
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
@@ -70,6 +76,53 @@ function getOrganizationRouteHash(
   return section === "billing"
     ? `organizations/${organizationId}/billing`
     : `organizations/${organizationId}`;
+}
+
+interface PendingPaidUpgradeConfirmation {
+  tier: "team";
+  billingInterval: BillingInterval;
+}
+
+function shouldConfirmPaidUpgrade(
+  billingStatus: OrganizationBillingStatus | undefined,
+  tier: "starter" | "team",
+): boolean {
+  return (
+    tier === "team" &&
+    billingStatus?.plan === "starter" &&
+    (billingStatus.subscriptionStatus === "active" ||
+      billingStatus.subscriptionStatus === "trialing")
+  );
+}
+
+function formatCurrencyAmount(amount: number, currency: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function getPaidUpgradeConfirmationSummary(
+  planCatalog: PlanCatalog | undefined,
+  billingInterval: BillingInterval,
+): string {
+  const teamPlan = planCatalog?.plans.team;
+  const seatMinimum = teamPlan?.seatMinimum ?? 4;
+  const priceCents = teamPlan?.prices[billingInterval];
+
+  if (typeof priceCents !== "number") {
+    return billingInterval === "annual"
+      ? `Team with annual billing (${seatMinimum}-seat minimum)`
+      : `Team with monthly billing (${seatMinimum}-seat minimum)`;
+  }
+
+  const billedAmount = (priceCents * seatMinimum) / 100;
+  const cadence = billingInterval === "annual" ? "year" : "month";
+  const currency = planCatalog?.currency ?? "usd";
+
+  return `Team at ${formatCurrencyAmount(billedAmount, currency)}/${cadence} (${seatMinimum}-seat minimum)`;
 }
 
 export function OrganizationsTab({
@@ -238,11 +291,11 @@ function OrganizationPage({
     isLoadingEntitlements,
     isLoadingPlanCatalog,
     isLoadingOrganizationPremiumness,
-    isStartingCheckout,
-    pendingCheckoutTier,
+    isStartingPlanChange,
+    pendingPlanChangeTarget,
     isOpeningPortal,
     error: billingError,
-    startCheckout,
+    startPlanChange,
     openPortal,
   } = useOrganizationBilling(organization._id);
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
@@ -291,6 +344,8 @@ function OrganizationPage({
   const [isDeleting, setIsDeleting] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
+  const [pendingPaidUpgradeConfirmation, setPendingPaidUpgradeConfirmation] =
+    useState<PendingPaidUpgradeConfirmation | null>(null);
 
   const handleSaveName = async (name: string) => {
     try {
@@ -543,44 +598,109 @@ function OrganizationPage({
     }
   };
 
-  const handlePlanCheckout = async (
+  const executeManualPlanChange = async (
     tier: "starter" | "team",
     billingInterval: "monthly" | "annual",
     options: CheckoutNavigationOptions = {},
   ) => {
     try {
-      const billingUrl = await startCheckout(
+      const result = await startPlanChange(
         getBillingReturnUrl(),
         tier,
         billingInterval,
+        { confirmPaidPlanChange: true },
       );
+
+      if (result.kind === "updated") {
+        toast.success(
+          `Plan updated to ${formatPlanName(result.subscription.plan ?? tier)}.`,
+        );
+        return;
+      }
+
+      const billingUrl =
+        result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
       options.onBeforeNavigate?.();
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to start checkout flow",
+          : "Failed to change plan",
       );
     }
   };
 
-  const handleAutoPlanCheckout = useCallback(
+  const handlePlanChange = async (
+    tier: "starter" | "team",
+    billingInterval: "monthly" | "annual",
+    options: CheckoutNavigationOptions = {},
+  ) => {
+    if (shouldConfirmPaidUpgrade(billingStatus, tier)) {
+      setPendingPaidUpgradeConfirmation({
+        tier,
+        billingInterval,
+      });
+      return;
+    }
+
+    await executeManualPlanChange(tier, billingInterval, options);
+  };
+
+  const handleConfirmPaidUpgrade = async () => {
+    if (!pendingPaidUpgradeConfirmation) return;
+
+    try {
+      await executeManualPlanChange(
+        pendingPaidUpgradeConfirmation.tier,
+        pendingPaidUpgradeConfirmation.billingInterval,
+      );
+    } finally {
+      setPendingPaidUpgradeConfirmation(null);
+    }
+  };
+
+  const paidUpgradeConfirmationSummary = pendingPaidUpgradeConfirmation
+    ? getPaidUpgradeConfirmationSummary(
+        planCatalog,
+        pendingPaidUpgradeConfirmation.billingInterval,
+      )
+    : null;
+
+  const handleAutoPlanChange = useCallback(
     async (tier: "starter" | "team", billingInterval: "monthly" | "annual") => {
       try {
-        const billingUrl = await startCheckout(
+        const result = await startPlanChange(
           getBillingReturnUrl(),
           tier,
           billingInterval,
+          { confirmPaidPlanChange: false },
         );
+
+        if (result.kind === "updated") {
+          toast.success(
+            `Plan updated to ${formatPlanName(result.subscription.plan ?? tier)}.`,
+          );
+          return;
+        }
+
+        const billingUrl =
+          result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
         onCheckoutIntentNavigationStarted?.();
         openBillingUrl(billingUrl, "same-tab");
       } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to start checkout flow",
-        );
+        if (
+          !(
+            error instanceof Error &&
+            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
+          )
+        ) {
+          toast.error(
+            error instanceof Error
+              ? error.message
+              : "Failed to change plan",
+          );
+        }
         throw error;
       }
     },
@@ -588,7 +708,7 @@ function OrganizationPage({
       getBillingReturnUrl,
       onCheckoutIntentNavigationStarted,
       openBillingUrl,
-      startCheckout,
+      startPlanChange,
     ],
   );
 
@@ -700,12 +820,12 @@ function OrganizationPage({
               planCatalog={planCatalog}
               isLoadingBilling={isLoadingBilling}
               isLoadingPlanCatalog={isLoadingPlanCatalog}
-              isStartingCheckout={isStartingCheckout}
-              pendingCheckoutTier={pendingCheckoutTier}
+              isStartingPlanChange={isStartingPlanChange}
+              pendingPlanChangeTarget={pendingPlanChangeTarget}
               isOpeningPortal={isOpeningPortal}
               onManageBilling={handleManageBilling}
-              onStartCheckout={handlePlanCheckout}
-              onStartAutoCheckout={handleAutoPlanCheckout}
+              onStartPlanChange={handlePlanChange}
+              onStartAutoPlanChange={handleAutoPlanChange}
               checkoutIntent={checkoutIntent}
               onCheckoutIntentConsumed={onCheckoutIntentConsumed}
             />
@@ -993,6 +1113,46 @@ function OrganizationPage({
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog
+        open={pendingPaidUpgradeConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !isStartingPlanChange) {
+            setPendingPaidUpgradeConfirmation(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Upgrade to Team?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This change takes effect immediately, updates your existing
+              subscription in place, will not open Stripe Checkout, and Stripe
+              may apply a prorated charge or credit today.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+            <span className="font-medium text-foreground">
+              {paidUpgradeConfirmationSummary ??
+                "Team billing will apply with the 4-seat minimum."}
+            </span>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isStartingPlanChange}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmPaidUpgrade();
+              }}
+              disabled={isStartingPlanChange}
+            >
+              {isStartingPlanChange ? "Upgrading..." : "Upgrade now"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Delete Confirmation */}
       <AlertDialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
         <AlertDialogContent>
@@ -1041,3 +1201,5 @@ function OrganizationPage({
     </div>
   );
 }
+const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =
+  "Paid plan changes require an explicit confirmation.";

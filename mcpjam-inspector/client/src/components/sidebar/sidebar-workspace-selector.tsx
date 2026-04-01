@@ -33,6 +33,8 @@ interface SidebarWorkspaceSelectorProps {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoading?: boolean;
   onNavigateToSettings?: () => void;
+  isCreateDisabled?: boolean;
+  createDisabledReason?: string;
 }
 
 interface WorkspaceDeleteState {
@@ -69,6 +71,8 @@ export function SidebarWorkspaceSelector({
   onDeleteWorkspace,
   isLoading,
   onNavigateToSettings,
+  isCreateDisabled = false,
+  createDisabledReason,
 }: SidebarWorkspaceSelectorProps) {
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
@@ -104,6 +108,9 @@ export function SidebarWorkspaceSelector({
   });
 
   const handleCreateWorkspace = () => {
+    if (isCreateDisabled) {
+      return;
+    }
     let baseName = "New workspace";
     let name = baseName;
     let counter = 1;
@@ -116,6 +123,18 @@ export function SidebarWorkspaceSelector({
     }
     onCreateWorkspace(name, true);
   };
+
+  const createWorkspaceItem = (
+    <DropdownMenuItem
+      onClick={handleCreateWorkspace}
+      disabled={isCreateDisabled}
+      title={createDisabledReason}
+      className={cn("cursor-pointer", isCreateDisabled && "cursor-not-allowed")}
+    >
+      <Plus className="size-4" />
+      Add Workspace
+    </DropdownMenuItem>
+  );
 
   return (
     <SidebarMenu>
@@ -204,13 +223,20 @@ export function SidebarWorkspaceSelector({
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={handleCreateWorkspace}
-              className="cursor-pointer"
-            >
-              <Plus className="size-4" />
-              Add Workspace
-            </DropdownMenuItem>
+            {isCreateDisabled && createDisabledReason ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex" title={createDisabledReason}>
+                    {createWorkspaceItem}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  {createDisabledReason}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              createWorkspaceItem
+            )}
             {onNavigateToSettings && (
               <DropdownMenuItem
                 onClick={onNavigateToSettings}

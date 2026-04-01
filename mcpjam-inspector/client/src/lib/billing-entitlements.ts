@@ -2,6 +2,8 @@ import { ConvexError } from "convex/values";
 import type {
   BillingFeatureName,
   BillingInterval,
+  BillingLimitName,
+  GateDecision,
   OrganizationPlan,
   PlanCatalog,
   PlanCatalogEntry,
@@ -53,21 +55,24 @@ export function getPremiumnessGateForTab(
   return feature as PremiumnessGateKey;
 }
 
+export function isBillingEnforcementActive(
+  premiumness: PremiumnessState | undefined,
+): boolean {
+  return !!premiumness && premiumness.enforcementState !== "disabled";
+}
+
 export function isGateAccessDenied(
   premiumness: PremiumnessState | undefined,
   gateKey: PremiumnessGateKey,
 ): boolean {
-  if (!premiumness) {
-    return false;
-  }
-  if (premiumness.enforcementState === "disabled") {
-    return false;
-  }
-  const decision = premiumness.gates[gateKey];
+  const decision = getGateDecision(premiumness, gateKey);
   if (!decision) {
     return false;
   }
-  return decision.allowed === false;
+  if (!isBillingEnforcementActive(premiumness)) {
+    return false;
+  }
+  return decision.canAccess === false;
 }
 
 /**
@@ -102,14 +107,23 @@ export function getUpgradePlanForDeniedGate(
   premiumness: PremiumnessState | undefined,
   gateKey: PremiumnessGateKey | null,
 ): OrganizationPlan | null {
-  if (!premiumness || !gateKey) {
-    return null;
-  }
-  const decision = premiumness.gates[gateKey];
-  if (!decision || decision.allowed !== false) {
+  const decision = gateKey ? getGateDecision(premiumness, gateKey) : null;
+  if (!decision || decision.canAccess !== false) {
     return null;
   }
   return decision.upgradePlan ?? null;
+}
+
+export function getGateDecision(
+  premiumness: PremiumnessState | undefined,
+  gateKey: PremiumnessGateKey,
+): GateDecision | null {
+  if (!premiumness) {
+    return null;
+  }
+  return (
+    premiumness.gates.find((decision) => decision.gateKey === gateKey) ?? null
+  );
 }
 
 export function formatBillingFeatureName(feature: BillingFeatureName): string {
@@ -248,6 +262,39 @@ function resolveFeatureLabel(payload: BillingErrorPayload): string | null {
   return null;
 }
 
+export function formatBillingLimitReachedMessage(
+  limitName: BillingLimitName | string | undefined,
+  allowedValue: number | null | undefined,
+  canManageBilling = true,
+): string | null {
+  if (typeof allowedValue !== "number") {
+    return null;
+  }
+
+  if (limitName === "maxEvalRunsPerMonth") {
+    return canManageBilling
+      ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
+      : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "maxSandboxesPerWorkspace") {
+    return canManageBilling
+      ? `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`
+      : `This workspace has reached its sandbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "maxMembers") {
+    return canManageBilling
+      ? `This organization has reached its member limit (${allowedValue}). Upgrade to add more members.`
+      : `This organization has reached its member limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+  if (limitName === "maxWorkspaces") {
+    return canManageBilling
+      ? `This organization has reached its workspace limit (${allowedValue}). Upgrade to create more workspaces.`
+      : `This organization has reached its workspace limit (${allowedValue}). Ask an organization owner to upgrade.`;
+  }
+
+  return null;
+}
+
 export function getBillingErrorMessage(
   error: unknown,
   fallback: string,
@@ -260,11 +307,18 @@ export function getBillingErrorMessage(
 
   if (payload.code === "billing_feature_not_included") {
     const featureName = resolveFeatureLabel(payload);
-    const planName = formatPlanName(payload.upgradePlan ?? payload.plan);
+    const currentPlanName = formatPlanName(payload.plan);
+    const upgradePlanName = payload.upgradePlan
+      ? formatPlanName(payload.upgradePlan)
+      : null;
     if (featureName) {
       return canManageBilling
-        ? `${featureName} is not included in the ${planName} plan. Upgrade the organization to continue.`
-        : `${featureName} is not included in the ${planName} plan. Ask an organization owner to upgrade.`;
+        ? upgradePlanName
+          ? `${featureName} is not included in the ${currentPlanName} plan. Upgrade to ${upgradePlanName} to continue.`
+          : `${featureName} is not included in the ${currentPlanName} plan. Upgrade the organization to continue.`
+        : upgradePlanName
+          ? `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade to ${upgradePlanName}.`
+          : `${featureName} is not included in the ${currentPlanName} plan. Ask an organization owner to upgrade.`;
     }
   }
 
@@ -277,32 +331,13 @@ export function getBillingErrorMessage(
           ? payload.current
           : null;
     const canManage = payload.canManageBilling ?? canManageBilling;
-
-    if (
-      limitName === "maxEvalRunsPerMonth" &&
-      typeof allowedValue === "number"
-    ) {
-      return canManage
-        ? `This organization has reached its monthly eval run limit (${allowedValue}). Upgrade to continue.`
-        : `This organization has reached its monthly eval run limit (${allowedValue}). Ask an organization owner to upgrade.`;
-    }
-    if (
-      limitName === "maxSandboxesPerWorkspace" &&
-      typeof allowedValue === "number"
-    ) {
-      return canManage
-        ? `This workspace has reached its sandbox limit (${allowedValue}). Upgrade to continue.`
-        : `This workspace has reached its sandbox limit (${allowedValue}). Ask an organization owner to upgrade.`;
-    }
-    if (limitName === "maxMembers" && typeof allowedValue === "number") {
-      return canManage
-        ? `This organization has reached its member limit (${allowedValue}). Upgrade to add more members.`
-        : `This organization has reached its member limit (${allowedValue}). Ask an organization owner to upgrade.`;
-    }
-    if (limitName === "maxWorkspaces" && typeof allowedValue === "number") {
-      return canManage
-        ? `This organization has reached its workspace limit (${allowedValue}). Upgrade to create more workspaces.`
-        : `This organization has reached its workspace limit (${allowedValue}). Ask an organization owner to upgrade.`;
+    const message = formatBillingLimitReachedMessage(
+      limitName,
+      allowedValue,
+      canManage,
+    );
+    if (message) {
+      return message;
     }
   }
 

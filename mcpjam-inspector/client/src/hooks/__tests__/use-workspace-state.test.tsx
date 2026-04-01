@@ -109,9 +109,11 @@ function createAppState(workspaces: Record<string, Workspace>): AppState {
 function renderUseWorkspaceState({
   appState,
   activeOrganizationId,
+  routeOrganizationId,
 }: {
   appState: AppState;
   activeOrganizationId?: string;
+  routeOrganizationId?: string;
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -128,6 +130,7 @@ function renderUseWorkspaceState({
         isAuthenticated: true,
         isAuthLoading: false,
         activeOrganizationId: organizationId,
+        routeOrganizationId,
         logger,
       }),
     {
@@ -222,6 +225,47 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
       organizationId: "org-c",
+    });
+  });
+
+  it("prefers the route organization for workspace actions while active org state catches up", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Existing workspace",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-stale",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-stale",
+      routeOrganizationId: "org-route",
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-route",
+      });
+    });
+
+    await act(async () => {
+      await result.current.handleCreateWorkspace("Workspace Two");
+    });
+
+    expect(createWorkspaceMock).toHaveBeenCalledWith({
+      organizationId: "org-route",
+      name: "Workspace Two",
+      clientConfig: undefined,
+      servers: {},
     });
   });
 

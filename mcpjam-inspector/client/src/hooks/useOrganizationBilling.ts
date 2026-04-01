@@ -31,29 +31,38 @@ export type PremiumnessGateKey =
   | "maxSandboxesPerWorkspace"
   | "maxEvalRunsPerMonth";
 
-export type BillingEnforcementState = "enabled" | "disabled";
+export type BillingEnforcementState =
+  | "active"
+  | "disabled"
+  | "decision_required";
 
 export interface GateDecision {
-  allowed: boolean;
   gateKey: PremiumnessGateKey;
-  upgradePlan?: OrganizationPlan | null;
+  kind: "feature" | "limit";
+  scope: "organization" | "workspace";
+  canAccess: boolean;
+  shouldShowUpsell: boolean;
+  upgradePlan: OrganizationPlan | null;
+  reason: string;
+  currentValue?: number;
+  allowedValue?: number | null;
 }
 
 export interface PremiumnessState {
-  organizationId?: string;
-  workspaceId?: string;
+  plan: OrganizationPlan;
   enforcementState: BillingEnforcementState;
   /** Effective plan for UX (trials, simulations). */
   effectivePlan: OrganizationPlan;
-  /** Persisted commercial plan (Stripe/admin), may differ during trials. */
-  plan?: OrganizationPlan;
-  gates: Partial<Record<PremiumnessGateKey, GateDecision>>;
+  billingInterval: BillingInterval | null;
+  source: "free" | "subscription" | "trial" | "simulation";
+  decisionRequired: boolean;
+  gates: GateDecision[];
 }
 
 export interface OrganizationEntitlements {
   plan: OrganizationPlan;
   billingInterval: BillingInterval | null;
-  source: "persisted" | "simulation";
+  source: OrganizationBillingStatus["source"];
   features: Record<BillingFeatureName, boolean>;
   limits: Record<BillingLimitName, number | null>;
 }
@@ -63,7 +72,7 @@ export interface OrganizationBillingStatus {
   organizationName: string;
   plan: OrganizationPlan;
   effectivePlan: OrganizationPlan;
-  source: string;
+  source: "free" | "subscription" | "trial" | "simulation";
   billingInterval: BillingInterval | null;
   billingConfigured: boolean;
   subscriptionStatus: string | null;
@@ -105,12 +114,42 @@ export interface PlanCatalog {
   plans: Record<OrganizationPlan, PlanCatalogEntry>;
 }
 
+export interface OrganizationPlanChangeSnapshot {
+  stripeCustomerId?: string;
+  stripeSubscriptionId?: string;
+  stripeSubscriptionStatus?: string;
+  stripeSubscriptionItemId?: string;
+  stripePriceId?: string;
+  stripeSeatQuantity?: number;
+  stripeCurrentPeriodEnd?: number;
+  plan?: OrganizationPlan;
+  billingInterval?: BillingInterval;
+}
+
+export type OrganizationPlanChangeResult =
+  | {
+      kind: "checkout";
+      checkoutUrl: string;
+    }
+  | {
+      kind: "portal";
+      portalUrl: string;
+    }
+  | {
+      kind: "updated";
+      subscription: OrganizationPlanChangeSnapshot;
+    };
+
 export function isPaidPlan(plan: OrganizationPlan): boolean {
   return plan !== "free";
 }
 
 export interface UseOrganizationBillingOptions {
   workspaceId?: string | null;
+}
+
+export interface StartOrganizationPlanChangeOptions {
+  confirmPaidPlanChange?: boolean;
 }
 
 export function useOrganizationBillingStatus(
@@ -152,8 +191,8 @@ export function useOrganizationBilling(
     organizationId ? ({ organizationId } as any) : "skip",
   ) as PlanCatalog | undefined;
 
-  const createCheckout = useAction(
-    "billing:createOrganizationCheckoutSession" as any,
+  const startPlanChangeAction = useAction(
+    "billing:startOrganizationPlanChange" as any,
   );
   const createPortal = useAction(
     "billing:createOrganizationBillingPortalSession" as any,
@@ -162,8 +201,8 @@ export function useOrganizationBilling(
     "billing:selectOrganizationFreePlanAfterTrial" as any,
   );
 
-  const [isStartingCheckout, setIsStartingCheckout] = useState(false);
-  const [pendingCheckoutTier, setPendingCheckoutTier] = useState<
+  const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
+  const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
     "starter" | "team" | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
@@ -171,35 +210,37 @@ export function useOrganizationBilling(
     useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const startCheckout = useCallback(
+  const startPlanChange = useCallback(
     async (
       returnUrl: string,
       tier: "starter" | "team" = "starter",
       billingInterval: BillingInterval = "monthly",
-    ) => {
+      options: StartOrganizationPlanChangeOptions = {},
+    ): Promise<OrganizationPlanChangeResult> => {
       if (!organizationId) throw new Error("Organization is required");
-      setIsStartingCheckout(true);
-      setPendingCheckoutTier(tier);
+      setIsStartingPlanChange(true);
+      setPendingPlanChangeTarget(tier);
       setError(null);
       try {
-        const result = await createCheckout({
+        const result = await startPlanChangeAction({
           organizationId,
           returnUrl,
           tier,
           billingInterval,
+          confirmPaidPlanChange: options.confirmPaidPlanChange,
         });
-        return result.checkoutUrl as string;
+        return result as OrganizationPlanChangeResult;
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : "Failed to create checkout";
+          err instanceof Error ? err.message : "Failed to change plan";
         setError(message);
         throw err;
       } finally {
-        setIsStartingCheckout(false);
-        setPendingCheckoutTier(null);
+        setIsStartingPlanChange(false);
+        setPendingPlanChangeTarget(null);
       }
     },
-    [createCheckout, organizationId],
+    [organizationId, startPlanChangeAction],
   );
 
   const openPortal = useCallback(
@@ -257,12 +298,12 @@ export function useOrganizationBilling(
     isLoadingOrganizationPremiumness,
     isLoadingWorkspacePremiumness,
     isLoadingPlanCatalog: !!organizationId && planCatalog === undefined,
-    isStartingCheckout,
-    pendingCheckoutTier,
+    isStartingPlanChange,
+    pendingPlanChangeTarget,
     isOpeningPortal,
     isSelectingFreeAfterTrial,
     error,
-    startCheckout,
+    startPlanChange,
     openPortal,
     selectFreeAfterTrial,
   };

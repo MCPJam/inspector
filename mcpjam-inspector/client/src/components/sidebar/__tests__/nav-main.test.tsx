@@ -72,4 +72,25 @@ describe("NavMain", () => {
     fireEvent.click(screen.getByRole("button", { name: "Servers" }));
     expect(onItemClick).toHaveBeenCalledWith("#servers");
   });
+
+  it("does not render a plan-upgrade lock hint for enabled billed items", () => {
+    render(
+      <NavMain
+        items={[
+          {
+            title: "Sandboxes",
+            url: "#sandboxes",
+            icon: FakeIcon,
+          },
+        ]}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Sandboxes" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Plan upgrade required"),
+    ).not.toBeInTheDocument();
+  });
 });

@@ -109,9 +109,11 @@ import {
   getPremiumnessGateForTab,
   getRequiredBillingFeatureForTab,
   getUpgradePlanForDeniedGate,
+  isBillingEnforcementActive,
   isGateAccessDenied,
   isPremiumnessGateDeniedForShell,
 } from "./lib/billing-entitlements";
+import { BILLING_GATES, resolveBillingGateState } from "./lib/billing-gates";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
@@ -285,6 +287,18 @@ export default function App() {
   const isSandboxChatRoute =
     HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
   const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
+  const currentHash = window.location.hash || "#servers";
+  const currentHashRoute = useMemo(
+    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
+    [currentHash],
+  );
+  const { sortedOrganizations, isLoading: isLoadingOrganizations } =
+    useOrganizationQueries({ isAuthenticated });
+  const hasRouteOrganization = !!currentHashRoute.organizationId
+    ? sortedOrganizations.some(
+        (org) => org._id === currentHashRoute.organizationId,
+      )
+    : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
@@ -452,23 +466,13 @@ export default function App() {
     setActiveOrganizationId,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
+    routeOrganizationId: hasRouteOrganization
+      ? currentHashRoute.organizationId
+      : undefined,
   });
-
-  const { sortedOrganizations, isLoading: isLoadingOrganizations } =
-    useOrganizationQueries({ isAuthenticated });
-  const currentHash = window.location.hash || "#servers";
-  const currentHashRoute = useMemo(
-    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
-    [currentHash],
-  );
   const activeOrganizationName = sortedOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
-  const hasRouteOrganization = !!currentHashRoute.organizationId
-    ? sortedOrganizations.some(
-        (org) => org._id === currentHashRoute.organizationId,
-      )
-    : false;
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -521,8 +525,14 @@ export default function App() {
     activeWorkspace?.clientConfig,
   ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const routeScopedOrganizationId = hasRouteOrganization
+    ? currentHashRoute.organizationId ?? null
+    : null;
   const rawBillingOrganizationId =
-    activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
+    routeScopedOrganizationId ??
+    activeOrganizationId ??
+    activeWorkspace?.organizationId ??
+    null;
   const billingOrganizationId =
     !isLoadingOrganizations &&
     rawBillingOrganizationId &&
@@ -556,6 +566,13 @@ export default function App() {
     navPremiumness,
     activeTabGate,
   );
+  const workspaceCreationGate = resolveBillingGateState({
+    billingUiEnabled,
+    organizationId: billingOrganizationId,
+    billingStatus: shellBillingStatus,
+    premiumness: organizationPremiumness,
+    gate: BILLING_GATES.workspaceCreation,
+  });
   const sidebarGateDenied = useMemo(() => {
     const denied: Partial<Record<BillingFeatureName, boolean>> = {};
     for (const key of ["evals", "sandboxes", "cicd"] as const) {
@@ -564,7 +581,10 @@ export default function App() {
     return denied;
   }, [navPremiumness]);
   const billingGateEnforcementActive =
-    billingUiEnabled && navPremiumness?.enforcementState === "enabled";
+    billingUiEnabled && isBillingEnforcementActive(navPremiumness);
+  const isCreateWorkspaceDisabled = workspaceCreationGate.isDenied;
+  const createWorkspaceDisabledReason =
+    workspaceCreationGate.denialMessage ?? undefined;
   const showTrialDecisionModal =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
@@ -747,11 +767,8 @@ export default function App() {
   }, []);
 
   const handleCheckoutIntentNavigationStarted = useCallback(() => {
-    clearPersistedCheckoutIntent();
-    clearBillingSignInReturnPath();
-    clearCheckoutIntentFromUrl();
-    billingCheckoutQueryConsumedRef.current = false;
-  }, []);
+    consumeCheckoutIntent();
+  }, [consumeCheckoutIntent]);
 
   // `/billing?plan=&interval=` → auth (if needed) → org billing hash → auto-checkout when intent is valid.
   useEffect(() => {
@@ -1111,6 +1128,8 @@ export default function App() {
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}
         billingGateEnforcementActive={billingGateEnforcementActive}
+        isCreateWorkspaceDisabled={isCreateWorkspaceDisabled}
+        createWorkspaceDisabledReason={createWorkspaceDisabledReason}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <Header activeServerSelectorProps={activeServerSelectorProps} />

@@ -27,9 +27,13 @@ function premiumness(
   } = {},
 ): PremiumnessState {
   return {
-    enforcementState: "enabled",
+    plan: "free",
+    enforcementState: "active",
     effectivePlan: "free",
-    gates: {},
+    billingInterval: null,
+    source: "free",
+    decisionRequired: false,
+    gates: [],
     ...overrides,
   };
 }
@@ -157,20 +161,41 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
-  it("formats billing_feature_not_included using gateKey when feature is absent", () => {
+  it("formats billing_feature_not_included using the current plan name", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_feature_not_included",
-          gateKey: "evals",
+          feature: "sandboxes",
+          plan: "free",
           upgradePlan: "starter",
         }),
       ),
       "fallback",
     );
 
-    expect(message).toContain("Generate Evals");
-    expect(message).toContain("Starter");
+    expect(message).toBe(
+      "Sandboxes is not included in the Free plan. Upgrade to Starter to continue.",
+    );
+  });
+
+  it("formats billing_feature_not_included for non-billing admins with explicit upgrade guidance", () => {
+    const message = getBillingErrorMessage(
+      new Error(
+        JSON.stringify({
+          code: "billing_feature_not_included",
+          feature: "sandboxes",
+          plan: "free",
+          upgradePlan: "starter",
+        }),
+      ),
+      "fallback",
+      false,
+    );
+
+    expect(message).toBe(
+      "Sandboxes is not included in the Free plan. Ask an organization owner to upgrade to Starter.",
+    );
   });
 
   it("preserves non-billing ConvexError messages", () => {
@@ -192,9 +217,17 @@ describe("isGateAccessDenied", () => {
       isGateAccessDenied(
         premiumness({
           enforcementState: "disabled",
-          gates: {
-            evals: { allowed: false, gateKey: "evals" },
-          },
+          gates: [
+            {
+              gateKey: "evals",
+              kind: "feature",
+              scope: "workspace",
+              canAccess: false,
+              shouldShowUpsell: true,
+              upgradePlan: "starter",
+              reason: "feature_not_included",
+            },
+          ],
         }),
         "evals",
       ),
@@ -205,11 +238,42 @@ describe("isGateAccessDenied", () => {
     expect(
       isGateAccessDenied(
         premiumness({
-          gates: {
-            evals: { allowed: false, gateKey: "evals", upgradePlan: "starter" },
-          },
+          gates: [
+            {
+              gateKey: "evals",
+              kind: "feature",
+              scope: "workspace",
+              canAccess: false,
+              shouldShowUpsell: true,
+              upgradePlan: "starter",
+              reason: "feature_not_included",
+            },
+          ],
         }),
         "evals",
+      ),
+    ).toBe(true);
+  });
+
+  it("denies maxWorkspaces when a free organization is already at cap", () => {
+    expect(
+      isGateAccessDenied(
+        premiumness({
+          gates: [
+            {
+              gateKey: "maxWorkspaces",
+              kind: "limit",
+              scope: "organization",
+              canAccess: false,
+              shouldShowUpsell: true,
+              upgradePlan: "starter",
+              reason: "limit_reached",
+              currentValue: 1,
+              allowedValue: 1,
+            },
+          ],
+        }),
+        "maxWorkspaces",
       ),
     ).toBe(true);
   });
@@ -242,14 +306,30 @@ describe("isPremiumnessGateDeniedForShell", () => {
       hasWorkspace: true,
       gateKey: "evals",
       workspacePremiumness: premiumness({
-        gates: {
-          evals: { allowed: false, gateKey: "evals" },
-        },
+        gates: [
+          {
+            gateKey: "evals",
+            kind: "feature",
+            scope: "workspace",
+            canAccess: false,
+            shouldShowUpsell: true,
+            upgradePlan: "starter",
+            reason: "feature_not_included",
+          },
+        ],
       }),
       organizationPremiumness: premiumness({
-        gates: {
-          evals: { allowed: true, gateKey: "evals" },
-        },
+        gates: [
+          {
+            gateKey: "evals",
+            kind: "feature",
+            scope: "workspace",
+            canAccess: true,
+            shouldShowUpsell: false,
+            upgradePlan: null,
+            reason: "feature_included",
+          },
+        ],
       }),
     });
     expect(denied).toBe(true);

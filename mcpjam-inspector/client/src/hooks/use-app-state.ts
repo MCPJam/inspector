@@ -23,8 +23,10 @@ interface ActiveOrganizationSelection {
 
 export function useAppState({
   currentUserId,
+  routeOrganizationId,
 }: {
   currentUserId: string | null;
+  routeOrganizationId?: string;
 }) {
   const logger = useLogger("Connections");
   const [appState, dispatch] = useReducer(appReducer, initialAppState);
@@ -100,6 +102,7 @@ export function useAppState({
     isAuthenticated,
     isAuthLoading,
     activeOrganizationId,
+    routeOrganizationId,
     logger,
   });
 

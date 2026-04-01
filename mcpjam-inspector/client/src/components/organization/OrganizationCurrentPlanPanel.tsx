@@ -43,6 +43,9 @@ function formatCurrentPlanBillingDetailLine(
   if (billingStatus.source === "trial") {
     return "7-day trial · no active subscription yet";
   }
+  if (billingStatus.source === "simulation") {
+    return "Simulation active · billing changes are not applied";
+  }
 
   const plan = billingStatus.plan ?? "free";
   const interval = billingStatus.billingInterval ?? "monthly";
@@ -88,13 +91,15 @@ export function OrganizationCurrentPlanPanel({
   isOpeningPortal,
 }: OrganizationCurrentPlanPanelProps) {
   const currentPlan = billingStatus.plan ?? "free";
-  const displayPlan =
-    billingStatus.source === "trial"
-      ? billingStatus.trialPlan ?? billingStatus.effectivePlan
+  const isTrial = billingStatus.source === "trial";
+  const isSimulation = billingStatus.source === "simulation";
+  const displayPlan = isTrial
+    ? billingStatus.trialPlan ?? billingStatus.effectivePlan
+    : isSimulation
+      ? billingStatus.effectivePlan
       : currentPlan;
   const billingConfigured = billingStatus.billingConfigured ?? false;
   const canManageBilling = billingStatus.canManageBilling ?? false;
-  const isTrial = billingStatus.source === "trial";
   const formattedPeriodEnd =
     billingStatus.stripeCurrentPeriodEnd != null
       ? new Intl.DateTimeFormat(undefined, {
@@ -119,6 +124,9 @@ export function OrganizationCurrentPlanPanel({
     billingStatus.billingInterval ?? "monthly";
   const billingDetailLine = planCatalog
     ? formatCurrentPlanBillingDetailLine(billingStatus, planCatalog)
+    : null;
+  const simulationBanner = isSimulation
+    ? `Simulation active. Limits and access use ${formatPlanName(displayPlan)}, while billing remains on ${formatPlanName(currentPlan)}.`
     : null;
 
   const showIntervalPortalLink =
@@ -169,6 +177,15 @@ export function OrganizationCurrentPlanPanel({
         )}
       </p>
 
+      {isSimulation ? (
+        <div
+          className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-950 dark:text-amber-100"
+          data-testid="current-plan-simulation-banner"
+        >
+          {simulationBanner}
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <Badge
           variant="secondary"
@@ -200,7 +217,7 @@ export function OrganizationCurrentPlanPanel({
                 ? `${formatPlanName(displayPlan)} Trial`
                 : formatPlanName(displayPlan)}
             </p>
-            {currentPlan === "free" && !isTrial ? (
+            {displayPlan === "free" && !isTrial ? (
               <p className="text-xs text-muted-foreground/90">
                 Limited functionality
               </p>

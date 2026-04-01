@@ -44,12 +44,22 @@ vi.mock("@/components/ui/dropdown-menu", () => ({
     children,
     onClick,
     className,
+    disabled,
+    title,
   }: {
     children: ReactNode;
     onClick?: () => void;
     className?: string;
+    disabled?: boolean;
+    title?: string;
   }) => (
-    <div className={className} onClick={onClick} role="menuitem">
+    <div
+      className={className}
+      onClick={disabled ? undefined : onClick}
+      role="menuitem"
+      aria-disabled={disabled ? "true" : "false"}
+      title={title}
+    >
       {children}
     </div>
   ),
@@ -65,6 +75,27 @@ vi.mock("@/components/ui/tooltip", () => ({
 }));
 
 describe("SidebarWorkspaceSelector", () => {
+  const baseWorkspaces = {
+    "workspace-owner": {
+      id: "workspace-owner",
+      name: "Owner Workspace",
+      servers: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      canDeleteWorkspace: true,
+      sharedWorkspaceId: "shared-owner",
+    },
+    "workspace-member": {
+      id: "workspace-member",
+      name: "Member Workspace",
+      servers: {},
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      canDeleteWorkspace: false,
+      sharedWorkspaceId: "shared-member",
+    },
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockUseConvexAuth.mockReturnValue({
@@ -81,26 +112,7 @@ describe("SidebarWorkspaceSelector", () => {
     render(
       <SidebarWorkspaceSelector
         activeWorkspaceId="workspace-owner"
-        workspaces={{
-          "workspace-owner": {
-            id: "workspace-owner",
-            name: "Owner Workspace",
-            servers: {},
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            canDeleteWorkspace: true,
-            sharedWorkspaceId: "shared-owner",
-          },
-          "workspace-member": {
-            id: "workspace-member",
-            name: "Member Workspace",
-            servers: {},
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            canDeleteWorkspace: false,
-            sharedWorkspaceId: "shared-member",
-          },
-        }}
+        workspaces={baseWorkspaces}
         onSwitchWorkspace={vi.fn()}
         onCreateWorkspace={vi.fn(async () => "workspace-created")}
         onDeleteWorkspace={vi.fn()}
@@ -128,15 +140,7 @@ describe("SidebarWorkspaceSelector", () => {
       <SidebarWorkspaceSelector
         activeWorkspaceId="workspace-owner"
         workspaces={{
-          "workspace-owner": {
-            id: "workspace-owner",
-            name: "Owner Workspace",
-            servers: {},
-            createdAt: new Date(),
-            updatedAt: new Date(),
-            canDeleteWorkspace: true,
-            sharedWorkspaceId: "shared-owner",
-          },
+          "workspace-owner": baseWorkspaces["workspace-owner"],
         }}
         onSwitchWorkspace={vi.fn()}
         onCreateWorkspace={vi.fn(async () => "workspace-created")}
@@ -149,5 +153,55 @@ describe("SidebarWorkspaceSelector", () => {
     );
 
     expect(onDeleteWorkspace).toHaveBeenCalledWith("workspace-owner");
+  });
+
+  it("disables Add Workspace for free organizations at cap", () => {
+    render(
+      <SidebarWorkspaceSelector
+        activeWorkspaceId="workspace-owner"
+        workspaces={baseWorkspaces}
+        onSwitchWorkspace={vi.fn()}
+        onCreateWorkspace={vi.fn(async () => "workspace-created")}
+        onDeleteWorkspace={vi.fn()}
+        isCreateDisabled={true}
+        createDisabledReason="This organization has reached its workspace limit (1). Upgrade to create more workspaces."
+      />,
+    );
+
+    expect(
+      screen.getByRole("menuitem", { name: "Add Workspace" }),
+    ).toHaveAttribute("aria-disabled", "true");
+    expect(
+      screen.getByRole("menuitem", { name: "Add Workspace" }),
+    ).toHaveAttribute(
+      "title",
+      "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+    );
+    expect(
+      screen.getByText(
+        "This organization has reached its workspace limit (1). Upgrade to create more workspaces.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps Add Workspace enabled when the org is not locked", () => {
+    const onCreateWorkspace = vi.fn(async () => "workspace-created");
+
+    render(
+      <SidebarWorkspaceSelector
+        activeWorkspaceId="workspace-owner"
+        workspaces={baseWorkspaces}
+        onSwitchWorkspace={vi.fn()}
+        onCreateWorkspace={onCreateWorkspace}
+        onDeleteWorkspace={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Add Workspace" }));
+
+    expect(onCreateWorkspace).toHaveBeenCalledWith("New workspace", true);
+    expect(
+      screen.getByRole("menuitem", { name: "Add Workspace" }),
+    ).toHaveAttribute("aria-disabled", "false");
   });
 });

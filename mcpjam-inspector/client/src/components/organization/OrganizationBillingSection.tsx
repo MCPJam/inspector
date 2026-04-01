@@ -72,7 +72,7 @@ function getPlanColumnCta(params: {
   canManageBilling: boolean;
   isBillingActionPending: boolean;
   onDowngrade: (plan: OrganizationPlan) => void;
-  onStartCheckout: (
+  onStartPlanChange: (
     plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
@@ -91,7 +91,7 @@ function getPlanColumnCta(params: {
     canManageBilling,
     isBillingActionPending,
     onDowngrade,
-    onStartCheckout,
+    onStartPlanChange,
     billingInterval,
   } = params;
 
@@ -137,7 +137,7 @@ function getPlanColumnCta(params: {
         !canManageBilling ||
         isBillingActionPending,
       variant: "default",
-      onClick: () => void onStartCheckout(plan, billingInterval),
+      onClick: () => void onStartPlanChange(plan, billingInterval),
     };
   }
 
@@ -460,15 +460,15 @@ interface OrganizationBillingSectionProps {
   planCatalog: PlanCatalog | undefined;
   isLoadingBilling: boolean;
   isLoadingPlanCatalog: boolean;
-  isStartingCheckout: boolean;
-  pendingCheckoutTier: "starter" | "team" | null;
+  isStartingPlanChange: boolean;
+  pendingPlanChangeTarget: "starter" | "team" | null;
   isOpeningPortal: boolean;
   onManageBilling: () => Promise<void>;
-  onStartCheckout: (
+  onStartPlanChange: (
     plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
-  onStartAutoCheckout?: (
+  onStartAutoPlanChange?: (
     plan: "starter" | "team",
     billingInterval: BillingInterval,
   ) => Promise<void>;
@@ -482,12 +482,12 @@ export function OrganizationBillingSection({
   planCatalog,
   isLoadingBilling,
   isLoadingPlanCatalog,
-  isStartingCheckout,
-  pendingCheckoutTier,
+  isStartingPlanChange,
+  pendingPlanChangeTarget,
   isOpeningPortal,
   onManageBilling,
-  onStartCheckout,
-  onStartAutoCheckout,
+  onStartPlanChange,
+  onStartAutoPlanChange,
   checkoutIntent = null,
   onCheckoutIntentConsumed,
 }: OrganizationBillingSectionProps) {
@@ -546,6 +546,17 @@ export function OrganizationBillingSection({
         return;
       }
 
+      const isAutoCheckoutEligible =
+        billingStatus.source === "trial" ||
+        (billingStatus.source === "free" && billingStatus.plan === "free");
+
+      if (!isAutoCheckoutEligible) {
+        if (!cancelled) {
+          onCheckoutIntentConsumed?.();
+        }
+        return;
+      }
+
       if (!billingStatus.billingConfigured || !billingStatus.canManageBilling) {
         if (!cancelled) {
           toast.error(
@@ -586,10 +597,13 @@ export function OrganizationBillingSection({
       autoCheckoutStartedForKeyRef.current = intentKey;
 
       try {
-        await (onStartAutoCheckout ?? onStartCheckout)(
+        await (onStartAutoPlanChange ?? onStartPlanChange)(
           checkoutIntent.plan,
           checkoutIntent.interval,
         );
+        if (!cancelled) {
+          onCheckoutIntentConsumed?.();
+        }
       } catch {
         if (!cancelled) {
           onCheckoutIntentConsumed?.();
@@ -608,15 +622,15 @@ export function OrganizationBillingSection({
     isLoadingBilling,
     isLoadingPlanCatalog,
     onCheckoutIntentConsumed,
-    onStartAutoCheckout,
-    onStartCheckout,
+    onStartAutoPlanChange,
+    onStartPlanChange,
     planCatalog,
   ]);
 
   const currentPlan = billingStatus?.plan ?? "free";
   const billingConfigured = billingStatus?.billingConfigured ?? false;
   const canManageBilling = billingStatus?.canManageBilling ?? false;
-  const isBillingActionPending = isStartingCheckout || isOpeningPortal;
+  const isBillingActionPending = isStartingPlanChange || isOpeningPortal;
   const annualDiscountPct = getAnnualDiscountPercent(planCatalog);
   const compareSections = planCatalog
     ? buildComparePlanSectionsFromCatalog(planCatalog)
@@ -836,11 +850,11 @@ export function OrganizationBillingSection({
                           canManageBilling,
                           isBillingActionPending,
                           onDowngrade: (p) => void manageBillingFromPlan(p),
-                          onStartCheckout,
+                          onStartPlanChange,
                           billingInterval,
                         });
-                        const showCheckoutSpinner =
-                          pendingCheckoutTier === plan &&
+                        const showPlanChangeSpinner =
+                          pendingPlanChangeTarget === plan &&
                           cta.label === "Upgrade" &&
                           (plan === "starter" || plan === "team");
                         const showPortalSpinner =
@@ -848,7 +862,7 @@ export function OrganizationBillingSection({
                           portalLoadingPlan === plan &&
                           cta.label === "Downgrade";
                         const showCtaSpinner =
-                          showCheckoutSpinner || showPortalSpinner;
+                          showPlanChangeSpinner || showPortalSpinner;
                         const isPopular = plan === POPULAR_PLAN;
                         return (
                           <TableHead
