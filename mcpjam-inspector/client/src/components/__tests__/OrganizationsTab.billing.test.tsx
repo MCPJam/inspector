@@ -1251,11 +1251,11 @@ describe("OrganizationsTab billing", () => {
 
     hookState.isStartingPlanChange = true;
     hookState.pendingPlanChangeTarget = "team";
-    view.rerender(<OrganizationsTab organizationId="org-1" section="billing" />);
+    view.rerender(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
 
-    expect(
-      screen.getByRole("button", { name: "Upgrading..." }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Upgrading..." })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 
