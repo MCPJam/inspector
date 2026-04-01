@@ -588,11 +588,14 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
               ) : !hasVisibleSuites ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <div className="mx-auto w-full max-w-4xl px-6 py-8 pb-12">
-                    <div className="mb-6 flex gap-6 items-start rounded-xl border border-border bg-muted/60 px-6 py-5">
-                      <h2 className="w-2/5 shrink-0 pt-1 text-2xl font-bold tracking-tight text-foreground">
-                        Follow these steps to connect to an MCP server, run an
-                        eval, and see your first run appear in MCPJam.
-                      </h2>
+                    <div className="mb-6 flex gap-6 items-center rounded-xl border border-border bg-muted/60 px-6 py-5">
+                      <div className="w-2/5 shrink-0">
+                        <h2 className="text-2xl font-bold tracking-tight text-foreground">
+                          <GitBranch className="inline-block h-6 w-6 text-primary mr-2 mb-1" />
+                          Follow the steps below to connect to an MCP server,
+                          run an eval, and see your first run appear in MCPJam.
+                        </h2>
+                      </div>
                       <div
                         className="flex-1 relative aspect-[16/9] overflow-hidden rounded-xl group cursor-pointer"
                         onClick={() => setShowSampleTrace(true)}
