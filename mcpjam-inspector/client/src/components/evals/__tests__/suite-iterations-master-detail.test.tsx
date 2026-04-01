@@ -6,6 +6,7 @@ import type { EvalSuite } from "../types";
 const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
   useQuery: vi.fn(),
+  suiteHeader: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -25,7 +26,10 @@ vi.mock("../use-suite-data", () => ({
 }));
 
 vi.mock("../suite-header", () => ({
-  SuiteHeader: () => <div data-testid="suite-header" />,
+  SuiteHeader: (props: unknown) => {
+    mocks.suiteHeader(props);
+    return <div data-testid="suite-header" />;
+  },
 }));
 
 vi.mock("../run-overview", () => ({
@@ -92,6 +96,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         onDeleteRun={vi.fn()}
         onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
         connectedServerNames={new Set()}
+        canDeleteSuite={false}
         rerunningSuiteId={null}
         cancellingRunId={null}
         deletingSuiteId={null}
@@ -130,6 +135,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         onDeleteRun={vi.fn()}
         onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
         connectedServerNames={new Set()}
+        canDeleteSuite={false}
         rerunningSuiteId={null}
         cancellingRunId={null}
         deletingSuiteId={null}
@@ -166,6 +172,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
         onDeleteRun={vi.fn()}
         onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
         connectedServerNames={new Set()}
+        canDeleteSuite={false}
         rerunningSuiteId={null}
         cancellingRunId={null}
         deletingSuiteId={null}
@@ -181,5 +188,45 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     );
 
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
+  });
+
+  it("passes canDeleteSuite through to the header in read-only overview", () => {
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "runs",
+        }}
+        navigation={noopNav}
+        readOnlyConfig
+      />,
+    );
+
+    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+      expect.objectContaining({
+        canDeleteSuite: true,
+        readOnlyConfig: true,
+      }),
+    );
   });
 });

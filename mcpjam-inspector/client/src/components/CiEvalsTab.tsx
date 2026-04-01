@@ -91,11 +91,16 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
       ? route.testId
       : null;
 
-  const { connectedServerNames, userMap, canDeleteRuns, availableModels } =
-    useEvalTabContext({
-      isAuthenticated,
-      workspaceId: convexWorkspaceId,
-    });
+  const {
+    connectedServerNames,
+    userMap,
+    canDeleteSuite,
+    canDeleteRuns,
+    availableModels,
+  } = useEvalTabContext({
+    isAuthenticated,
+    workspaceId: convexWorkspaceId,
+  });
 
   const ciNavigation = useMemo(() => createCiSuiteNavigation(route), [route]);
 
@@ -693,6 +698,7 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                     onDeleteRun={handleDeleteRun}
                     onDirectDeleteRun={handlers.directDeleteRun}
                     connectedServerNames={connectedServerNames}
+                    canDeleteSuite={canDeleteSuite}
                     rerunningSuiteId={handlers.rerunningSuiteId}
                     replayingRunId={handlers.replayingRunId}
                     cancellingRunId={handlers.cancellingRunId}

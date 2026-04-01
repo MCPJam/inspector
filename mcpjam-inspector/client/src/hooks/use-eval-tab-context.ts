@@ -27,6 +27,9 @@ export function useEvalTabContext({
     [appState.servers],
   );
 
+  // Suite visibility already implies suite access; let the backend mutation
+  // remain the source of truth for whether deletion is allowed.
+  const canDeleteSuite = true;
   const canDeleteRuns = !workspaceId || canManageMembers;
 
   const userMap = useMemo(() => {
@@ -46,6 +49,7 @@ export function useEvalTabContext({
   return {
     connectedServerNames,
     userMap,
+    canDeleteSuite,
     canDeleteRuns,
     availableModels,
   };
