@@ -29,7 +29,6 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
 
-
 const ENV_TAIL_SHELL = `export MCP_SERVER_URL=${LEARN_MCP_URL}
 export LLM_API_KEY=<your-llm-api-key>
 export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
