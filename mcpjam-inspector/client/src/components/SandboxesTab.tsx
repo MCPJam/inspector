@@ -1,4 +1,6 @@
 import { Suspense, lazy, useEffect } from "react";
+import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import { getBillingUpsellCtaLabel, getBillingUpsellTeaser } from "@/lib/billing-upsell";
 import { Loader2 } from "lucide-react";
 import { BillingGateSurface } from "@/components/billing/BillingGateSurface";
 import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
@@ -29,6 +31,32 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
     workspaceId,
     gate: BILLING_GATES.sandboxes,
   });
+  const sandboxCreationGate = useWorkspaceBillingGate({
+    workspaceId,
+    gate: BILLING_GATES.sandboxCreation,
+  });
+  const { planCatalog } = useOrganizationBilling(sandboxGate.organizationId, {
+    workspaceId,
+  });
+  const createSandboxUpsell =
+    sandboxCreationGate.isDenied && sandboxCreationGate.denialMessage
+      ? {
+          title: "Need more sandboxes?",
+          message: sandboxCreationGate.denialMessage,
+          teaser: getBillingUpsellTeaser({
+            planCatalog,
+            upgradePlan: sandboxCreationGate.upgradePlan,
+            intent: "sandboxes",
+          }),
+          canManageBilling: sandboxCreationGate.canManageBilling,
+          ctaLabel: getBillingUpsellCtaLabel(sandboxCreationGate.upgradePlan),
+          onNavigateToBilling: () => {
+            if (sandboxCreationGate.organizationId) {
+              window.location.hash = `organizations/${sandboxCreationGate.organizationId}/billing`;
+            }
+          },
+        }
+      : null;
 
   useEffect(() => {
     if (sandboxGate.isDenied) {
@@ -55,7 +83,12 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
       }}
     >
       <Suspense fallback={<SandboxesLoadingState />}>
-        <SandboxBuilderExperience workspaceId={workspaceId} />
+        <SandboxBuilderExperience
+          workspaceId={workspaceId}
+          isCreateSandboxDisabled={sandboxCreationGate.isDenied}
+          isCreateSandboxLoading={sandboxCreationGate.isLoading}
+          createSandboxUpsell={createSandboxUpsell}
+        />
       </Suspense>
     </BillingGateSurface>
   );

@@ -39,6 +39,126 @@ const sandboxList = [
   },
 ];
 
+function createPlanCatalog() {
+  return {
+    catalogVersion: "mcpjam_pricing_page",
+    currency: "usd",
+    appOrigin: "http://localhost:5173",
+    plans: {
+      free: {
+        plan: "free",
+        displayName: "Free",
+        billingModel: "free",
+        isSelfServe: false,
+        prices: { monthly: 0, annual: 0 },
+        features: {
+          evals: false,
+          sandboxes: false,
+          cicd: false,
+          customDomains: false,
+          auditLog: false,
+          sso: false,
+          prioritySupport: false,
+        },
+        limits: {
+          maxMembers: 1,
+          maxWorkspaces: 1,
+          maxServersPerWorkspace: 3,
+          maxSandboxesPerWorkspace: 0,
+          maxEvalRunsPerMonth: 5,
+        },
+        includedSeats: null,
+        seatMinimum: null,
+        checkout: null,
+      },
+      starter: {
+        plan: "starter",
+        displayName: "Starter",
+        billingModel: "flat",
+        isSelfServe: true,
+        prices: { monthly: 6100, annual: 58800 },
+        features: {
+          evals: true,
+          sandboxes: true,
+          cicd: true,
+          customDomains: false,
+          auditLog: false,
+          sso: false,
+          prioritySupport: false,
+        },
+        limits: {
+          maxMembers: 3,
+          maxWorkspaces: 2,
+          maxServersPerWorkspace: 10,
+          maxSandboxesPerWorkspace: 1,
+          maxEvalRunsPerMonth: 500,
+        },
+        includedSeats: 3,
+        seatMinimum: null,
+        checkout: {
+          plan: "starter",
+          supportedIntervals: ["monthly", "annual"],
+        },
+      },
+      team: {
+        plan: "team",
+        displayName: "Team",
+        billingModel: "per_seat",
+        isSelfServe: true,
+        prices: { monthly: 7400, annual: 70800 },
+        features: {
+          evals: true,
+          sandboxes: true,
+          cicd: true,
+          customDomains: true,
+          auditLog: false,
+          sso: true,
+          prioritySupport: true,
+        },
+        limits: {
+          maxMembers: 100,
+          maxWorkspaces: 10,
+          maxServersPerWorkspace: null,
+          maxSandboxesPerWorkspace: 3,
+          maxEvalRunsPerMonth: 5000,
+        },
+        includedSeats: null,
+        seatMinimum: 4,
+        checkout: {
+          plan: "team",
+          supportedIntervals: ["monthly", "annual"],
+        },
+      },
+      enterprise: {
+        plan: "enterprise",
+        displayName: "Enterprise",
+        billingModel: "contact",
+        isSelfServe: false,
+        prices: { monthly: null, annual: null },
+        features: {
+          evals: true,
+          sandboxes: true,
+          cicd: true,
+          customDomains: true,
+          auditLog: true,
+          sso: true,
+          prioritySupport: true,
+        },
+        limits: {
+          maxMembers: null,
+          maxWorkspaces: null,
+          maxServersPerWorkspace: null,
+          maxSandboxesPerWorkspace: null,
+          maxEvalRunsPerMonth: null,
+        },
+        includedSeats: null,
+        seatMinimum: null,
+        checkout: null,
+      },
+    },
+  };
+}
+
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
@@ -108,6 +228,7 @@ describe("SandboxesTab", () => {
         effectivePlan: "starter",
         canManageBilling: true,
       },
+      planCatalog: createPlanCatalog(),
       workspacePremiumness: {
         plan: "starter",
         enforcementState: "active",
@@ -207,6 +328,7 @@ describe("SandboxesTab", () => {
         effectivePlan: "free",
         canManageBilling: true,
       },
+      planCatalog: createPlanCatalog(),
       workspacePremiumness: {
         plan: "free",
         enforcementState: "active",
@@ -252,6 +374,7 @@ describe("SandboxesTab", () => {
         effectivePlan: "free",
         canManageBilling: true,
       },
+      planCatalog: createPlanCatalog(),
       workspacePremiumness: {
         plan: "free",
         enforcementState: "active",
@@ -282,5 +405,126 @@ describe("SandboxesTab", () => {
       expect(readBuilderSession("ws-1")).toBeNull();
     });
     expect(screen.queryByText("Builder view")).not.toBeInTheDocument();
+  });
+
+  it("shows an inline upgrade upsell when the workspace sandbox limit is reached", async () => {
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        plan: "starter",
+        effectivePlan: "starter",
+        canManageBilling: true,
+      },
+      planCatalog: createPlanCatalog(),
+      workspacePremiumness: {
+        plan: "starter",
+        enforcementState: "active",
+        effectivePlan: "starter",
+        billingInterval: "monthly",
+        source: "subscription",
+        decisionRequired: false,
+        gates: [
+          {
+            gateKey: "sandboxes",
+            kind: "feature",
+            scope: "organization",
+            canAccess: true,
+            shouldShowUpsell: false,
+            upgradePlan: null,
+            reason: "feature_included",
+          },
+          {
+            gateKey: "maxSandboxesPerWorkspace",
+            kind: "limit",
+            scope: "workspace",
+            canAccess: false,
+            shouldShowUpsell: true,
+            upgradePlan: "team",
+            reason: "limit_reached",
+            currentValue: 1,
+            allowedValue: 1,
+          },
+        ],
+      },
+      isLoadingBilling: false,
+      isLoadingWorkspacePremiumness: false,
+    });
+
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    expect(
+      await screen.findByTestId("sandbox-limit-upsell"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "This workspace has reached its sandbox limit (1). Upgrade to continue.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Team includes 3 sandboxes per workspace and 100 members, from $296/mo (4-seat minimum).",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Upgrade to Team" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "New sandbox" }),
+    ).toBeDisabled();
+    expect(screen.getByText("Alpha")).toBeInTheDocument();
+  });
+
+  it("shows owner-directed sandbox upsell copy for non-billing-managers", async () => {
+    mockUseOrganizationBilling.mockReturnValue({
+      billingStatus: {
+        plan: "starter",
+        effectivePlan: "starter",
+        canManageBilling: false,
+      },
+      planCatalog: createPlanCatalog(),
+      workspacePremiumness: {
+        plan: "starter",
+        enforcementState: "active",
+        effectivePlan: "starter",
+        billingInterval: "monthly",
+        source: "subscription",
+        decisionRequired: false,
+        gates: [
+          {
+            gateKey: "sandboxes",
+            kind: "feature",
+            scope: "organization",
+            canAccess: true,
+            shouldShowUpsell: false,
+            upgradePlan: null,
+            reason: "feature_included",
+          },
+          {
+            gateKey: "maxSandboxesPerWorkspace",
+            kind: "limit",
+            scope: "workspace",
+            canAccess: false,
+            shouldShowUpsell: true,
+            upgradePlan: "team",
+            reason: "limit_reached",
+            currentValue: 1,
+            allowedValue: 1,
+          },
+        ],
+      },
+      isLoadingBilling: false,
+      isLoadingWorkspacePremiumness: false,
+    });
+
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    expect(
+      await screen.findByTestId("sandbox-limit-upsell"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Ask an organization owner to review billing options."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Upgrade to Team" }),
+    ).not.toBeInTheDocument();
   });
 });

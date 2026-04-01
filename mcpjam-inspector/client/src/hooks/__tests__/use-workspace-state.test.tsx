@@ -14,6 +14,7 @@ const {
   deleteWorkspaceMock,
   workspaceQueryState,
   organizationBillingStatusState,
+  useOrganizationBillingStatusMock,
   serializeServersForSharingMock,
 } = vi.hoisted(() => ({
   createWorkspaceMock: vi.fn(),
@@ -33,6 +34,7 @@ const {
         }
       | undefined,
   },
+  useOrganizationBillingStatusMock: vi.fn(),
   serializeServersForSharingMock: vi.fn((servers) => servers),
 }));
 
@@ -60,7 +62,8 @@ vi.mock("../useWorkspaces", () => ({
 }));
 
 vi.mock("../useOrganizationBilling", () => ({
-  useOrganizationBillingStatus: () => organizationBillingStatusState.value,
+  useOrganizationBillingStatus: (...args: unknown[]) =>
+    useOrganizationBillingStatusMock(...args),
 }));
 
 vi.mock("@/lib/workspace-serialization", () => ({
@@ -110,10 +113,12 @@ function renderUseWorkspaceState({
   appState,
   activeOrganizationId,
   routeOrganizationId,
+  isAuthenticated = true,
 }: {
   appState: AppState;
   activeOrganizationId?: string;
   routeOrganizationId?: string;
+  isAuthenticated?: boolean;
 }) {
   const dispatch = vi.fn<(action: AppAction) => void>();
   const logger = {
@@ -127,7 +132,7 @@ function renderUseWorkspaceState({
       useWorkspaceState({
         appState,
         dispatch,
-        isAuthenticated: true,
+        isAuthenticated,
         isAuthLoading: false,
         activeOrganizationId: organizationId,
         routeOrganizationId,
@@ -165,6 +170,9 @@ describe("useWorkspaceState automatic workspace creation", () => {
     workspaceQueryState.workspaces = [];
     workspaceQueryState.isLoading = false;
     organizationBillingStatusState.value = undefined;
+    useOrganizationBillingStatusMock.mockImplementation(
+      () => organizationBillingStatusState.value,
+    );
     useClientConfigStore.setState({
       activeWorkspaceId: null,
       defaultConfig: null,
@@ -225,6 +233,22 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
       organizationId: "org-c",
+    });
+  });
+
+  it("skips organization billing status queries while Convex auth is unavailable", () => {
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-auth",
+      isAuthenticated: false,
+    });
+
+    expect(useOrganizationBillingStatusMock).toHaveBeenCalledWith("org-auth", {
+      enabled: false,
     });
   });
 

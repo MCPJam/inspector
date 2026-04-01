@@ -1,6 +1,7 @@
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
-import { Layers3, List, Loader2, Plus, Search } from "lucide-react";
+import { CreditCard, Layers3, List, Loader2, Plus, Search } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardInteractive } from "@/components/ui/card";
@@ -74,6 +75,16 @@ interface SandboxIndexPageProps {
   isLoading: boolean;
   onOpenSandbox: (sandboxId: string) => void;
   onCreateSandbox: () => void;
+  isCreateSandboxDisabled?: boolean;
+  isCreateSandboxLoading?: boolean;
+  createSandboxUpsell?: {
+    title: string;
+    message: string;
+    teaser?: string | null;
+    canManageBilling: boolean;
+    ctaLabel: string;
+    onNavigateToBilling: () => void;
+  } | null;
 }
 
 export function SandboxIndexPage({
@@ -81,6 +92,9 @@ export function SandboxIndexPage({
   isLoading,
   onOpenSandbox,
   onCreateSandbox,
+  isCreateSandboxDisabled = false,
+  isCreateSandboxLoading = false,
+  createSandboxUpsell = null,
 }: SandboxIndexPageProps) {
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<"architecture" | "list">(
@@ -117,6 +131,7 @@ export function SandboxIndexPage({
             size="lg"
             className="gap-2 rounded-xl"
             onClick={onCreateSandbox}
+            disabled={isCreateSandboxDisabled || isCreateSandboxLoading}
           >
             <Plus className="size-4" />
             New sandbox
@@ -158,6 +173,43 @@ export function SandboxIndexPage({
             </Button>
           </div>
         </div>
+
+        {createSandboxUpsell ? (
+          <Alert
+            className="mt-4 border-primary/20 bg-primary/[0.04]"
+            data-testid="sandbox-limit-upsell"
+          >
+            <CreditCard className="size-4 text-primary" />
+            <AlertTitle>{createSandboxUpsell.title}</AlertTitle>
+            <AlertDescription className="gap-3">
+              <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+                <div className="space-y-1">
+                  <p>{createSandboxUpsell.message}</p>
+                  {createSandboxUpsell.teaser ? (
+                    <p className="text-foreground/80">
+                      {createSandboxUpsell.teaser}
+                    </p>
+                  ) : null}
+                  {!createSandboxUpsell.canManageBilling ? (
+                    <p className="font-medium text-foreground/80">
+                      Ask an organization owner to review billing options.
+                    </p>
+                  ) : null}
+                </div>
+                {createSandboxUpsell.canManageBilling ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    className="md:self-end"
+                    onClick={createSandboxUpsell.onNavigateToBilling}
+                  >
+                    {createSandboxUpsell.ctaLabel}
+                  </Button>
+                ) : null}
+              </div>
+            </AlertDescription>
+          </Alert>
+        ) : null}
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-6">
@@ -174,7 +226,11 @@ export function SandboxIndexPage({
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
               Create a new sandbox or broaden the current search.
             </p>
-            <Button className="mt-5 rounded-xl" onClick={onCreateSandbox}>
+            <Button
+              className="mt-5 rounded-xl"
+              onClick={onCreateSandbox}
+              disabled={isCreateSandboxDisabled || isCreateSandboxLoading}
+            >
               <Plus className="mr-1.5 size-4" />
               Create sandbox
             </Button>

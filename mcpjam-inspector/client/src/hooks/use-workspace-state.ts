@@ -96,6 +96,7 @@ export function useWorkspaceState({
   } = useWorkspaceMutations();
   const billingStatus = useOrganizationBillingStatus(
     workspaceOrganizationId ?? null,
+    { enabled: isAuthenticated },
   );
 
   const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<

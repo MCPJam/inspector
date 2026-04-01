@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Check, CheckCircle2, CreditCard, Info, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -71,7 +71,10 @@ function getPlanColumnCta(params: {
   billingConfigured: boolean;
   canManageBilling: boolean;
   isBillingActionPending: boolean;
-  onDowngrade: (plan: OrganizationPlan) => void;
+  onDowngradePlan: (
+    plan: OrganizationPlan,
+    billingInterval: BillingInterval,
+  ) => void;
   onStartPlanChange: (
     plan: "starter" | "team",
     billingInterval: BillingInterval,
@@ -90,7 +93,7 @@ function getPlanColumnCta(params: {
     billingConfigured,
     canManageBilling,
     isBillingActionPending,
-    onDowngrade,
+    onDowngradePlan,
     onStartPlanChange,
     billingInterval,
   } = params;
@@ -122,7 +125,7 @@ function getPlanColumnCta(params: {
       disabled:
         !canManageBilling || !billingConfigured || isBillingActionPending,
       variant: "outline",
-      onClick: () => void onDowngrade(plan),
+      onClick: () => void onDowngradePlan(plan, billingInterval),
     };
   }
 
@@ -463,7 +466,10 @@ interface OrganizationBillingSectionProps {
   isStartingPlanChange: boolean;
   pendingPlanChangeTarget: "starter" | "team" | null;
   isOpeningPortal: boolean;
-  onManageBilling: () => Promise<void>;
+  onDowngradePlan: (
+    plan: OrganizationPlan,
+    billingInterval: BillingInterval,
+  ) => Promise<void>;
   onStartPlanChange: (
     plan: "starter" | "team",
     billingInterval: BillingInterval,
@@ -485,7 +491,7 @@ export function OrganizationBillingSection({
   isStartingPlanChange,
   pendingPlanChangeTarget,
   isOpeningPortal,
-  onManageBilling,
+  onDowngradePlan,
   onStartPlanChange,
   onStartAutoPlanChange,
   checkoutIntent = null,
@@ -499,20 +505,6 @@ export function OrganizationBillingSection({
     currentDisplayName: string;
     requestedDisplayName: string;
   } | null>(null);
-  const [portalLoadingPlan, setPortalLoadingPlan] =
-    useState<OrganizationPlan | null>(null);
-
-  const manageBillingFromPlan = useCallback(
-    async (plan: OrganizationPlan) => {
-      setPortalLoadingPlan(plan);
-      try {
-        await onManageBilling();
-      } finally {
-        setPortalLoadingPlan(null);
-      }
-    },
-    [onManageBilling],
-  );
 
   useEffect(() => {
     if (checkoutIntent?.interval) {
@@ -849,20 +841,19 @@ export function OrganizationBillingSection({
                           billingConfigured,
                           canManageBilling,
                           isBillingActionPending,
-                          onDowngrade: (p) => void manageBillingFromPlan(p),
+                          onDowngradePlan: (targetPlan, targetBillingInterval) =>
+                            void onDowngradePlan(
+                              targetPlan,
+                              targetBillingInterval,
+                            ),
                           onStartPlanChange,
                           billingInterval,
                         });
                         const showPlanChangeSpinner =
                           pendingPlanChangeTarget === plan &&
-                          cta.label === "Upgrade" &&
+                          (cta.label === "Upgrade" || cta.label === "Downgrade") &&
                           (plan === "starter" || plan === "team");
-                        const showPortalSpinner =
-                          isOpeningPortal &&
-                          portalLoadingPlan === plan &&
-                          cta.label === "Downgrade";
-                        const showCtaSpinner =
-                          showPlanChangeSpinner || showPortalSpinner;
+                        const showCtaSpinner = showPlanChangeSpinner;
                         const isPopular = plan === POPULAR_PLAN;
                         return (
                           <TableHead

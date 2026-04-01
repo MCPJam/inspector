@@ -194,6 +194,13 @@ describe("OrganizationsTab member management", () => {
         canManageBilling: true,
         isOwner: true,
         hasCustomer: false,
+        stripeScheduledPlan: null,
+        stripeScheduledBillingInterval: null,
+        stripeScheduledPriceId: null,
+        stripeScheduledEffectiveAt: null,
+        stripeCancelAtPeriodEnd: false,
+        stripeCancelAt: null,
+        stripeCanceledAt: null,
         stripeCurrentPeriodEnd: null,
         stripePriceId: null,
         trialStatus: "none",
@@ -209,9 +216,12 @@ describe("OrganizationsTab member management", () => {
       isStartingPlanChange: false,
       pendingPlanChangeTarget: null,
       isOpeningPortal: false,
+      isCancelingScheduledBillingChange: false,
       error: null,
       startPlanChange: vi.fn(),
       openPortal: vi.fn(),
+      openIntervalChangePortal: vi.fn(),
+      cancelScheduledBillingChange: vi.fn(),
       selectFreeAfterTrial: vi.fn(),
     });
 
@@ -297,6 +307,13 @@ describe("OrganizationsTab member management", () => {
         canManageBilling: false,
         isOwner: false,
         hasCustomer: false,
+        stripeScheduledPlan: null,
+        stripeScheduledBillingInterval: null,
+        stripeScheduledPriceId: null,
+        stripeScheduledEffectiveAt: null,
+        stripeCancelAtPeriodEnd: false,
+        stripeCancelAt: null,
+        stripeCanceledAt: null,
         stripeCurrentPeriodEnd: null,
         stripePriceId: null,
         trialStatus: "none",
@@ -312,9 +329,12 @@ describe("OrganizationsTab member management", () => {
       isStartingPlanChange: false,
       pendingPlanChangeTarget: null,
       isOpeningPortal: false,
+      isCancelingScheduledBillingChange: false,
       error: null,
       startPlanChange: vi.fn(),
       openPortal: vi.fn(),
+      openIntervalChangePortal: vi.fn(),
+      cancelScheduledBillingChange: vi.fn(),
       selectFreeAfterTrial: vi.fn(),
     });
 
@@ -329,5 +349,32 @@ describe("OrganizationsTab member management", () => {
     expect(
       screen.getByRole("button", { name: "Go to Servers" }),
     ).toBeInTheDocument();
+  });
+
+  it("shows the sign-in prompt instead of mounting organization billing while Convex auth is unavailable", () => {
+    const signIn = vi.fn();
+
+    mockUseConvexAuth.mockReturnValue({
+      isAuthenticated: false,
+      isLoading: false,
+    });
+    mockUseAuth.mockReturnValue({
+      user: { email: "owner@example.com" },
+      signIn,
+    });
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [organization],
+      isLoading: false,
+    });
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      screen.getByText("Sign in to manage organizations"),
+    ).toBeInTheDocument();
+    expect(mockUseOrganizationBilling).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign In" }));
+    expect(signIn).toHaveBeenCalledTimes(1);
   });
 });

@@ -77,8 +77,16 @@ export interface OrganizationBillingStatus {
   billingConfigured: boolean;
   subscriptionStatus: string | null;
   canManageBilling: boolean;
+  canCancelScheduledBillingChange: boolean;
   isOwner: boolean;
   hasCustomer: boolean;
+  stripeScheduledPlan: OrganizationPlan | null;
+  stripeScheduledBillingInterval: BillingInterval | null;
+  stripeScheduledPriceId: string | null;
+  stripeScheduledEffectiveAt: number | null;
+  stripeCancelAtPeriodEnd: boolean;
+  stripeCancelAt: number | null;
+  stripeCanceledAt: number | null;
   stripeCurrentPeriodEnd: number | null;
   stripePriceId: string | null;
   stripeSeatQuantity?: number | null;
@@ -121,6 +129,14 @@ export interface OrganizationPlanChangeSnapshot {
   stripeSubscriptionItemId?: string;
   stripePriceId?: string;
   stripeSeatQuantity?: number;
+  stripeScheduledPlan?: "starter" | "team" | null;
+  stripeScheduledBillingInterval?: BillingInterval | null;
+  stripeScheduledPriceId?: string | null;
+  stripeScheduledEffectiveAt?: number | null;
+  stripeCanCancelScheduledBillingChange?: boolean;
+  stripeCancelAtPeriodEnd?: boolean;
+  stripeCancelAt?: number | null;
+  stripeCanceledAt?: number | null;
   stripeCurrentPeriodEnd?: number;
   plan?: OrganizationPlan;
   billingInterval?: BillingInterval;
@@ -138,6 +154,10 @@ export type OrganizationPlanChangeResult =
   | {
       kind: "updated";
       subscription: OrganizationPlanChangeSnapshot;
+    }
+  | {
+      kind: "scheduled";
+      subscription: OrganizationPlanChangeSnapshot;
     };
 
 export function isPaidPlan(plan: OrganizationPlan): boolean {
@@ -146,6 +166,11 @@ export function isPaidPlan(plan: OrganizationPlan): boolean {
 
 export interface UseOrganizationBillingOptions {
   workspaceId?: string | null;
+  enabled?: boolean;
+}
+
+export interface UseOrganizationBillingStatusOptions {
+  enabled?: boolean;
 }
 
 export interface StartOrganizationPlanChangeOptions {
@@ -154,10 +179,13 @@ export interface StartOrganizationPlanChangeOptions {
 
 export function useOrganizationBillingStatus(
   organizationId: string | null,
+  options?: UseOrganizationBillingStatusOptions,
 ): OrganizationBillingStatus | undefined {
+  const enabled = options?.enabled ?? true;
+
   return useQuery(
     "billing:getOrganizationBillingStatus" as any,
-    organizationId ? ({ organizationId } as any) : "skip",
+    enabled && organizationId ? ({ organizationId } as any) : "skip",
   ) as OrganizationBillingStatus | undefined;
 }
 
@@ -166,29 +194,32 @@ export function useOrganizationBilling(
   options?: UseOrganizationBillingOptions,
 ) {
   const workspaceId = options?.workspaceId ?? null;
+  const enabled = options?.enabled ?? true;
+  const shouldQueryOrganization = enabled && !!organizationId;
+  const shouldQueryWorkspace = shouldQueryOrganization && !!workspaceId;
 
-  const billingStatus = useOrganizationBillingStatus(organizationId);
+  const billingStatus = useOrganizationBillingStatus(organizationId, {
+    enabled,
+  });
 
   const entitlements = useQuery(
     "billing:getOrganizationEntitlements" as any,
-    organizationId ? ({ organizationId } as any) : "skip",
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as OrganizationEntitlements | undefined;
 
   const organizationPremiumness = useQuery(
     "billing:getOrganizationPremiumness" as any,
-    organizationId ? ({ organizationId } as any) : "skip",
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
   const workspacePremiumness = useQuery(
     "billing:getWorkspacePremiumness" as any,
-    organizationId && workspaceId
-      ? ({ organizationId, workspaceId } as any)
-      : "skip",
+    shouldQueryWorkspace ? ({ organizationId, workspaceId } as any) : "skip",
   ) as PremiumnessState | undefined;
 
   const planCatalog = useQuery(
     "billing:getPlanCatalog" as any,
-    organizationId ? ({ organizationId } as any) : "skip",
+    shouldQueryOrganization ? ({ organizationId } as any) : "skip",
   ) as PlanCatalog | undefined;
 
   const startPlanChangeAction = useAction(
@@ -196,6 +227,15 @@ export function useOrganizationBilling(
   );
   const createPortal = useAction(
     "billing:createOrganizationBillingPortalSession" as any,
+  );
+  const createCancellationPortal = useAction(
+    "billing:createOrganizationBillingPortalCancellationSession" as any,
+  );
+  const createIntervalChangePortal = useAction(
+    "billing:createOrganizationBillingPortalIntervalChangeSession" as any,
+  );
+  const cancelScheduledBillingChangeAction = useAction(
+    "billing:cancelOrganizationScheduledBillingChange" as any,
   );
   const selectFreeAfterTrialMutation = useMutation(
     "billing:selectOrganizationFreePlanAfterTrial" as any,
@@ -206,6 +246,8 @@ export function useOrganizationBilling(
     "starter" | "team" | null
   >(null);
   const [isOpeningPortal, setIsOpeningPortal] = useState(false);
+  const [isCancelingScheduledBillingChange, setIsCancelingScheduledBillingChange] =
+    useState(false);
   const [isSelectingFreeAfterTrial, setIsSelectingFreeAfterTrial] =
     useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -266,6 +308,78 @@ export function useOrganizationBilling(
     [createPortal, organizationId],
   );
 
+  const openIntervalChangePortal = useCallback(
+    async (returnUrl: string, targetBillingInterval: BillingInterval) => {
+      if (!organizationId) throw new Error("Organization is required");
+      setIsOpeningPortal(true);
+      setError(null);
+      try {
+        const result = await createIntervalChangePortal({
+          organizationId,
+          returnUrl,
+          targetBillingInterval,
+        });
+        return result.portalUrl as string;
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to open billing interval change";
+        setError(message);
+        throw err;
+      } finally {
+        setIsOpeningPortal(false);
+      }
+    },
+    [createIntervalChangePortal, organizationId],
+  );
+
+  const openCancellationPortal = useCallback(
+    async (returnUrl: string) => {
+      if (!organizationId) throw new Error("Organization is required");
+      setIsOpeningPortal(true);
+      setError(null);
+      try {
+        const result = await createCancellationPortal({
+          organizationId,
+          returnUrl,
+        });
+        return result.portalUrl as string;
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : "Failed to open cancellation flow";
+        setError(message);
+        throw err;
+      } finally {
+        setIsOpeningPortal(false);
+      }
+    },
+    [createCancellationPortal, organizationId],
+  );
+
+  const cancelScheduledBillingChange = useCallback(async () => {
+    if (!organizationId) throw new Error("Organization is required");
+    setIsCancelingScheduledBillingChange(true);
+    setError(null);
+    try {
+      const result = await cancelScheduledBillingChangeAction({
+        organizationId,
+      });
+      return result.subscription as OrganizationPlanChangeSnapshot;
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : "Failed to cancel scheduled billing change";
+      setError(message);
+      throw err;
+    } finally {
+      setIsCancelingScheduledBillingChange(false);
+    }
+  }, [cancelScheduledBillingChangeAction, organizationId]);
+
   const selectFreeAfterTrial = useCallback(async () => {
     if (!organizationId) throw new Error("Organization is required");
     setIsSelectingFreeAfterTrial(true);
@@ -283,9 +397,9 @@ export function useOrganizationBilling(
   }, [organizationId, selectFreeAfterTrialMutation]);
 
   const isLoadingOrganizationPremiumness =
-    !!organizationId && organizationPremiumness === undefined;
+    shouldQueryOrganization && organizationPremiumness === undefined;
   const isLoadingWorkspacePremiumness =
-    !!organizationId && !!workspaceId && workspacePremiumness === undefined;
+    shouldQueryWorkspace && workspacePremiumness === undefined;
 
   return {
     billingStatus,
@@ -293,18 +407,22 @@ export function useOrganizationBilling(
     workspacePremiumness,
     entitlements,
     planCatalog,
-    isLoadingBilling: !!organizationId && billingStatus === undefined,
-    isLoadingEntitlements: !!organizationId && entitlements === undefined,
+    isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
+    isLoadingEntitlements: shouldQueryOrganization && entitlements === undefined,
     isLoadingOrganizationPremiumness,
     isLoadingWorkspacePremiumness,
-    isLoadingPlanCatalog: !!organizationId && planCatalog === undefined,
+    isLoadingPlanCatalog: shouldQueryOrganization && planCatalog === undefined,
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,
+    isCancelingScheduledBillingChange,
     isSelectingFreeAfterTrial,
     error,
     startPlanChange,
     openPortal,
+    openCancellationPortal,
+    openIntervalChangePortal,
+    cancelScheduledBillingChange,
     selectFreeAfterTrial,
   };
 }

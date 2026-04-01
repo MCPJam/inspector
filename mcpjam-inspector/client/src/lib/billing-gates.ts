@@ -27,6 +27,14 @@ export const BILLING_GATES = {
     gateKey: "sandboxes",
     feature: "sandboxes",
   },
+  sandboxCreation: {
+    gateKey: "maxSandboxesPerWorkspace",
+    feature: null,
+  },
+  memberInvites: {
+    gateKey: "maxMembers",
+    feature: null,
+  },
   workspaceCreation: {
     gateKey: "maxWorkspaces",
     feature: null,

@@ -44,16 +44,21 @@ import {
   useOrganizationBilling,
   type BillingInterval,
   type OrganizationBillingStatus,
+  type OrganizationPlan,
   type PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
 import {
-  formatBillingFeatureName,
   formatPlanName,
   getBillingErrorMessage,
   isGateAccessDenied,
 } from "@/lib/billing-entitlements";
 import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
 import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
+import {
+  getBillingUpsellCtaLabel,
+  getBillingUpsellTeaser,
+} from "@/lib/billing-upsell";
 import { cn } from "@/lib/utils";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
@@ -83,6 +88,21 @@ interface PendingPaidUpgradeConfirmation {
   billingInterval: BillingInterval;
 }
 
+interface PendingDowngradeConfirmation {
+  targetPlan: "free" | "starter";
+  targetBillingInterval: BillingInterval | null;
+  currentPlan: OrganizationPlan;
+  currentBillingInterval: BillingInterval | null;
+}
+
+interface ScheduledBillingChangeCancellationState {
+  ctaLabel: string;
+  confirmLabel: string;
+  dialogTitle: string;
+  dialogDescription: string;
+  successMessage: string;
+}
+
 function shouldConfirmPaidUpgrade(
   billingStatus: OrganizationBillingStatus | undefined,
   tier: "starter" | "team",
@@ -102,6 +122,90 @@ function formatCurrencyAmount(amount: number, currency: string): string {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   }).format(amount);
+}
+
+function formatBillingDate(timestampMs: number | null): string | null {
+  if (timestampMs == null) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestampMs));
+}
+
+function formatBillingIntervalLabel(interval: BillingInterval): string {
+  return interval === "annual" ? "annual" : "monthly";
+}
+
+function formatPlanDescriptor(
+  plan: OrganizationPlan,
+  billingInterval: BillingInterval | null,
+): string {
+  if (billingInterval == null) {
+    return formatPlanName(plan);
+  }
+
+  return `${formatPlanName(plan)} ${formatBillingIntervalLabel(billingInterval)}`;
+}
+
+function getScheduledBillingChangeCancellationState(
+  billingStatus: OrganizationBillingStatus | undefined,
+): ScheduledBillingChangeCancellationState | null {
+  if (
+    !billingStatus?.canManageBilling ||
+    !billingStatus.canCancelScheduledBillingChange ||
+    billingStatus.stripeCancelAtPeriodEnd
+  ) {
+    return null;
+  }
+
+  const currentPlan = billingStatus.plan;
+  const currentBillingInterval = billingStatus.billingInterval;
+  const scheduledPlan = billingStatus.stripeScheduledPlan;
+  const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
+
+  if (
+    (currentPlan !== "starter" && currentPlan !== "team") ||
+    currentBillingInterval == null ||
+    scheduledPlan == null ||
+    scheduledBillingInterval == null
+  ) {
+    return null;
+  }
+
+  if (
+    scheduledPlan === currentPlan &&
+    scheduledBillingInterval === currentBillingInterval
+  ) {
+    return null;
+  }
+
+  const currentIntervalLabel = formatBillingIntervalLabel(currentBillingInterval);
+  const scheduledIntervalLabel = formatBillingIntervalLabel(
+    scheduledBillingInterval,
+  );
+  const currentPlanName = formatPlanName(currentPlan);
+  const effectiveDate = formatBillingDate(
+    billingStatus.stripeScheduledEffectiveAt,
+  );
+  const keepCurrentPlanLabel = `Keep ${currentPlanName} ${currentIntervalLabel} plan`;
+  const effectiveDateSuffix = effectiveDate ? ` on ${effectiveDate}` : "";
+  const scheduledDescriptor =
+    scheduledPlan === currentPlan
+      ? `${scheduledIntervalLabel} billing`
+      : `${formatPlanName(scheduledPlan)} ${scheduledIntervalLabel}`;
+  const changeNoun = scheduledPlan === currentPlan ? "switch" : "change";
+
+  return {
+    ctaLabel: keepCurrentPlanLabel,
+    confirmLabel: keepCurrentPlanLabel,
+    dialogTitle: `${keepCurrentPlanLabel}?`,
+    dialogDescription: `This cancels the pending ${changeNoun} to ${scheduledDescriptor}${effectiveDateSuffix}. ${currentPlanName} ${currentIntervalLabel} remains active.`,
+    successMessage: `Scheduled billing change canceled. ${currentPlanName} ${currentIntervalLabel} remains active.`,
+  };
 }
 
 function getPaidUpgradeConfirmationSummary(
@@ -134,7 +238,7 @@ export function OrganizationsTab({
   navigateBillingInSameTab,
 }: OrganizationsTabProps) {
   const { user, signIn } = useAuth();
-  const { isAuthenticated } = useConvexAuth();
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
     isAuthenticated,
@@ -145,7 +249,18 @@ export function OrganizationsTab({
     ? sortedOrganizations.find((org) => org._id === organizationId)
     : null;
 
-  if (!user) {
+  if (isAuthLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <RefreshCw className="size-4 animate-spin" />
+          Completing sign-in...
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8">
         <div className="text-center space-y-4 max-w-md">
@@ -294,16 +409,38 @@ function OrganizationPage({
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,
+    isCancelingScheduledBillingChange,
     error: billingError,
     startPlanChange,
     openPortal,
-  } = useOrganizationBilling(organization._id);
+    openCancellationPortal,
+    openIntervalChangePortal,
+    cancelScheduledBillingChange,
+  } = useOrganizationBilling(organization._id, { enabled: isAuthenticated });
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const activeSection =
     billingUiEnabled && section === "billing" ? "billing" : "overview";
+  const memberInviteGate = resolveBillingGateState({
+    billingUiEnabled,
+    organizationId: organization._id,
+    billingStatus,
+    premiumness: organizationPremiumness,
+    gate: BILLING_GATES.memberInvites,
+    isLoading:
+      billingUiEnabled &&
+      (isLoadingBilling || isLoadingOrganizationPremiumness),
+  });
+  const memberUpsellTeaser = getBillingUpsellTeaser({
+    planCatalog,
+    upgradePlan: memberInviteGate.upgradePlan,
+    intent: "members",
+  });
+  const memberUpsellCtaLabel = getBillingUpsellCtaLabel(
+    memberInviteGate.upgradePlan,
+  );
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
     if (!currentRole) return false;
@@ -344,8 +481,14 @@ function OrganizationPage({
   const [isDeleting, setIsDeleting] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
+  const [scheduledBillingChangeConfirmOpen, setScheduledBillingChangeConfirmOpen] =
+    useState(false);
   const [pendingPaidUpgradeConfirmation, setPendingPaidUpgradeConfirmation] =
     useState<PendingPaidUpgradeConfirmation | null>(null);
+  const [pendingDowngradeConfirmation, setPendingDowngradeConfirmation] =
+    useState<PendingDowngradeConfirmation | null>(null);
+  const scheduledBillingChangeCancellation =
+    getScheduledBillingChangeCancellationState(billingStatus);
 
   const handleSaveName = async (name: string) => {
     try {
@@ -422,6 +565,16 @@ function OrganizationPage({
 
   const handleInvite = async () => {
     if (!inviteEmail.trim() || !canInvite) return;
+    if (memberInviteGate.isLoading) {
+      return;
+    }
+    if (memberInviteGate.isDenied) {
+      toast.error(
+        memberInviteGate.denialMessage ??
+          "Upgrade required to add more members",
+      );
+      return;
+    }
     setIsInviting(true);
     try {
       const result = await addMember({
@@ -566,8 +719,10 @@ function OrganizationPage({
   const openBillingUrl = useCallback(
     (url: string, navigation: "new-tab" | "same-tab" = "new-tab") => {
       if (navigation === "same-tab") {
-        (navigateBillingInSameTab ??
-          ((nextUrl: string) => window.location.assign(nextUrl)))(url);
+        (
+          navigateBillingInSameTab ??
+          ((nextUrl: string) => window.location.assign(nextUrl))
+        )(url);
         return;
       }
 
@@ -598,6 +753,130 @@ function OrganizationPage({
     }
   };
 
+  const handleChangeBillingInterval = async (
+    targetBillingInterval: BillingInterval,
+  ) => {
+    try {
+      const billingUrl = await openIntervalChangePortal(
+        getBillingReturnUrl(),
+        targetBillingInterval,
+      );
+      openBillingUrl(billingUrl);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to open billing interval change",
+      );
+    }
+  };
+
+  const handleDowngradePlan = async (
+    targetPlan: OrganizationPlan,
+    targetBillingInterval: BillingInterval,
+  ) => {
+    const currentPlan = billingStatus?.plan;
+
+    if (
+      currentPlan === "team" &&
+      targetPlan === "starter" &&
+      billingStatus?.billingInterval != null
+    ) {
+      setPendingDowngradeConfirmation({
+        targetPlan: "starter",
+        targetBillingInterval,
+        currentPlan,
+        currentBillingInterval: billingStatus.billingInterval,
+      });
+      return;
+    }
+
+    if (
+      (currentPlan === "starter" || currentPlan === "team") &&
+      targetPlan === "free"
+    ) {
+      setPendingDowngradeConfirmation({
+        targetPlan: "free",
+        targetBillingInterval: null,
+        currentPlan,
+        currentBillingInterval: billingStatus.billingInterval,
+      });
+      return;
+    }
+
+    await handleManageBilling();
+  };
+
+  const handleOpenScheduledBillingChangeCancelDialog = () => {
+    if (!scheduledBillingChangeCancellation) return;
+    setScheduledBillingChangeConfirmOpen(true);
+  };
+
+  const handleConfirmScheduledBillingChangeCancellation = async () => {
+    if (!scheduledBillingChangeCancellation) return;
+
+    try {
+      await cancelScheduledBillingChange();
+      setScheduledBillingChangeConfirmOpen(false);
+      toast.success(scheduledBillingChangeCancellation.successMessage);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to cancel scheduled billing change",
+      );
+    }
+  };
+
+  const handleConfirmDowngrade = async () => {
+    if (!pendingDowngradeConfirmation) return;
+
+    try {
+      if (pendingDowngradeConfirmation.targetPlan === "free") {
+        const billingUrl = await openCancellationPortal(getBillingReturnUrl());
+        openBillingUrl(billingUrl);
+        setPendingDowngradeConfirmation(null);
+        return;
+      }
+
+      const result = await startPlanChange(
+        getBillingReturnUrl(),
+        "starter",
+        pendingDowngradeConfirmation.targetBillingInterval ?? "monthly",
+        { confirmPaidPlanChange: false },
+      );
+
+      if (result.kind === "updated") {
+        toast.success(
+          `Plan updated to ${formatPlanName(
+            result.subscription.plan ?? pendingDowngradeConfirmation.targetPlan,
+          )}.`,
+        );
+        setPendingDowngradeConfirmation(null);
+        return;
+      }
+
+      if (result.kind === "scheduled") {
+        const targetLabel = formatPlanDescriptor(
+          pendingDowngradeConfirmation.targetPlan,
+          pendingDowngradeConfirmation.targetBillingInterval,
+        );
+        toast.success(`Downgrade to ${targetLabel} scheduled for renewal.`);
+        setPendingDowngradeConfirmation(null);
+        return;
+      }
+
+      const billingUrl =
+        result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+      openBillingUrl(billingUrl);
+      setPendingDowngradeConfirmation(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to change plan",
+      );
+    }
+  };
+
   const executeManualPlanChange = async (
     tier: "starter" | "team",
     billingInterval: "monthly" | "annual",
@@ -618,15 +897,18 @@ function OrganizationPage({
         return;
       }
 
+      if (result.kind === "scheduled") {
+        toast.success("Plan change scheduled for renewal.");
+        return;
+      }
+
       const billingUrl =
         result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
       options.onBeforeNavigate?.();
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to change plan",
+        error instanceof Error ? error.message : "Failed to change plan",
       );
     }
   };
@@ -666,6 +948,21 @@ function OrganizationPage({
         pendingPaidUpgradeConfirmation.billingInterval,
       )
     : null;
+  const pendingDowngradeEffectiveDate = formatBillingDate(
+    billingStatus?.stripeCurrentPeriodEnd ?? null,
+  );
+  const pendingDowngradeTargetLabel = pendingDowngradeConfirmation
+    ? formatPlanDescriptor(
+        pendingDowngradeConfirmation.targetPlan,
+        pendingDowngradeConfirmation.targetBillingInterval,
+      )
+    : null;
+  const pendingDowngradeCurrentLabel = pendingDowngradeConfirmation
+    ? formatPlanDescriptor(
+        pendingDowngradeConfirmation.currentPlan,
+        pendingDowngradeConfirmation.currentBillingInterval,
+      )
+    : null;
 
   const handleAutoPlanChange = useCallback(
     async (tier: "starter" | "team", billingInterval: "monthly" | "annual") => {
@@ -684,6 +981,11 @@ function OrganizationPage({
           return;
         }
 
+        if (result.kind === "scheduled") {
+          toast.success("Plan change scheduled for renewal.");
+          return;
+        }
+
         const billingUrl =
           result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
         onCheckoutIntentNavigationStarted?.();
@@ -696,9 +998,7 @@ function OrganizationPage({
           )
         ) {
           toast.error(
-            error instanceof Error
-              ? error.message
-              : "Failed to change plan",
+            error instanceof Error ? error.message : "Failed to change plan",
           );
         }
         throw error;
@@ -783,9 +1083,7 @@ function OrganizationPage({
               <button
                 type="button"
                 onClick={() => navigateToSection("overview")}
-                aria-current={
-                  activeSection === "overview" ? "page" : undefined
-                }
+                aria-current={activeSection === "overview" ? "page" : undefined}
                 className={cn(
                   "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
                   activeSection === "overview"
@@ -823,7 +1121,7 @@ function OrganizationPage({
               isStartingPlanChange={isStartingPlanChange}
               pendingPlanChangeTarget={pendingPlanChangeTarget}
               isOpeningPortal={isOpeningPortal}
-              onManageBilling={handleManageBilling}
+              onDowngradePlan={handleDowngradePlan}
               onStartPlanChange={handlePlanChange}
               onStartAutoPlanChange={handleAutoPlanChange}
               checkoutIntent={checkoutIntent}
@@ -852,23 +1150,67 @@ function OrganizationPage({
               </CardHeader>
               <CardContent className="space-y-4 pt-0">
                 {canInvite ? (
-                  <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
-                    <Input
-                      placeholder="Email address"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && handleInvite()}
-                      className="h-9 w-full sm:w-80"
-                    />
-                    <Button
-                      size="sm"
-                      className="h-9"
-                      onClick={handleInvite}
-                      disabled={!inviteEmail.trim() || isInviting}
-                    >
-                      <UserPlus className="mr-2 size-4" />
-                      {isInviting ? "Inviting..." : "Add member"}
-                    </Button>
+                  <div className="space-y-3">
+                    <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        placeholder="Email address"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        onKeyDown={(e) =>
+                          e.key === "Enter" && void handleInvite()
+                        }
+                        className="h-9 w-full sm:w-80"
+                      />
+                      <Button
+                        size="sm"
+                        className="h-9"
+                        onClick={handleInvite}
+                        disabled={
+                          !inviteEmail.trim() ||
+                          isInviting ||
+                          memberInviteGate.isLoading ||
+                          memberInviteGate.isDenied
+                        }
+                      >
+                        <UserPlus className="mr-2 size-4" />
+                        {isInviting ? "Inviting..." : "Add member"}
+                      </Button>
+                    </div>
+
+                    {memberInviteGate.isDenied ? (
+                      <Alert
+                        className="border-primary/20 bg-primary/[0.04]"
+                        data-testid="member-limit-upsell"
+                      >
+                        <CreditCard className="size-4 text-primary" />
+                        <AlertTitle>Need more members?</AlertTitle>
+                        <AlertDescription className="gap-2">
+                          {memberInviteGate.denialMessage ? (
+                            <p>{memberInviteGate.denialMessage}</p>
+                          ) : null}
+                          {memberUpsellTeaser ? (
+                            <p className="text-foreground/80">
+                              {memberUpsellTeaser}
+                            </p>
+                          ) : null}
+                          {billingStatus?.canManageBilling ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="mt-1"
+                              onClick={handleViewBilling}
+                            >
+                              {memberUpsellCtaLabel}
+                            </Button>
+                          ) : (
+                            <p className="font-medium text-foreground/80">
+                              Ask an organization owner to review billing
+                              options.
+                            </p>
+                          )}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
                   </div>
                 ) : null}
 
@@ -943,9 +1285,8 @@ function OrganizationPage({
                     Billing
                   </CardTitle>
                   <p className="text-sm text-muted-foreground">
-                    Review your plan here or open
-                    the billing view for the full pricing matrix, checkout, and
-                    subscription management.
+                    Review your plan here or open the billing view for the full
+                    pricing matrix, checkout, and subscription management.
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-3 pt-0">
@@ -963,6 +1304,15 @@ function OrganizationPage({
                         billingStatus={billingStatus}
                         planCatalog={planCatalog}
                         isLoadingPlanCatalog={isLoadingPlanCatalog}
+                        onChangeBillingInterval={handleChangeBillingInterval}
+                        onCancelScheduledBillingChange={
+                          scheduledBillingChangeCancellation
+                            ? handleOpenScheduledBillingChangeCancelDialog
+                            : undefined
+                        }
+                        cancelScheduledBillingChangeLabel={
+                          scheduledBillingChangeCancellation?.ctaLabel ?? null
+                        }
                         onManageBilling={handleManageBilling}
                         isOpeningPortal={isOpeningPortal}
                       />
@@ -1114,6 +1464,128 @@ function OrganizationPage({
       </AlertDialog>
 
       <AlertDialog
+        open={scheduledBillingChangeConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !isCancelingScheduledBillingChange) {
+            setScheduledBillingChangeConfirmOpen(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {scheduledBillingChangeCancellation?.dialogTitle ??
+                "Cancel scheduled billing change?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {scheduledBillingChangeCancellation?.dialogDescription ??
+                "This cancels the pending billing change and keeps the current subscription active."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isCancelingScheduledBillingChange}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmScheduledBillingChangeCancellation();
+              }}
+              disabled={isCancelingScheduledBillingChange}
+            >
+              {isCancelingScheduledBillingChange
+                ? "Saving..."
+                : (scheduledBillingChangeCancellation?.confirmLabel ??
+                  "Keep current plan")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingDowngradeConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !isStartingPlanChange && !isOpeningPortal) {
+            setPendingDowngradeConfirmation(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingDowngradeConfirmation?.targetPlan === "free"
+                ? "Return to Free at renewal?"
+                : "Downgrade to Starter?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              {pendingDowngradeConfirmation?.targetPlan === "free" ? (
+                <>
+                  <span className="block">
+                    This cancellation takes effect at renewal, not now.
+                  </span>
+                  <span className="block">
+                    {pendingDowngradeCurrentLabel ?? "Your paid plan"} remains
+                    active until{" "}
+                    {pendingDowngradeEffectiveDate ??
+                      "the end of the current billing period"}
+                    .
+                  </span>
+                  <span className="block">
+                    After that, the organization returns to Free.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="block">
+                    This downgrade takes effect at renewal, not now.
+                  </span>
+                  <span className="block">
+                    {pendingDowngradeTargetLabel ?? "Starter"} begins{" "}
+                    {pendingDowngradeEffectiveDate ??
+                      "at the end of the current billing period"}
+                    .
+                  </span>
+                  <span className="block">
+                    {pendingDowngradeCurrentLabel ?? "Your current plan"} remains
+                    active until then.
+                  </span>
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+            <span className="font-medium text-foreground">
+              {pendingDowngradeConfirmation?.targetPlan === "free"
+                ? "Stripe will open a cancellation flow that keeps paid access active until renewal."
+                : `${pendingDowngradeTargetLabel ?? "Starter"} will replace ${
+                    pendingDowngradeCurrentLabel ?? "the current plan"
+                  } at renewal.`}
+            </span>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={isStartingPlanChange || isOpeningPortal}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmDowngrade();
+              }}
+              disabled={isStartingPlanChange || isOpeningPortal}
+            >
+              {isStartingPlanChange || isOpeningPortal
+                ? "Saving..."
+                : pendingDowngradeConfirmation?.targetPlan === "free"
+                  ? "Open cancellation flow"
+                  : "Schedule downgrade"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
         open={pendingPaidUpgradeConfirmation !== null}
         onOpenChange={(open) => {
           if (!open && !isStartingPlanChange) {
@@ -1124,10 +1596,19 @@ function OrganizationPage({
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Upgrade to Team?</AlertDialogTitle>
-            <AlertDialogDescription>
-              This change takes effect immediately, updates your existing
-              subscription in place, will not open Stripe Checkout, and Stripe
-              may apply a prorated charge or credit today.
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">
+                This upgrade takes effect immediately and updates your existing
+                Starter subscription in place.
+              </span>
+              <span className="block">
+                We do not send you through Stripe Checkout.
+              </span>
+              <span className="block">
+                Stripe prorates the rest of your current billing period instead
+                of waiting until renewal, so unused Starter time is factored
+                into the Team change.
+              </span>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">

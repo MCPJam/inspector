@@ -19,10 +19,23 @@ import type { SandboxDraftConfig } from "./types";
 
 interface SandboxBuilderExperienceProps {
   workspaceId: string | null;
+  isCreateSandboxDisabled?: boolean;
+  isCreateSandboxLoading?: boolean;
+  createSandboxUpsell?: {
+    title: string;
+    message: string;
+    teaser?: string | null;
+    canManageBilling: boolean;
+    ctaLabel: string;
+    onNavigateToBilling: () => void;
+  } | null;
 }
 
 export default function SandboxBuilderExperience({
   workspaceId,
+  isCreateSandboxDisabled = false,
+  isCreateSandboxLoading = false,
+  createSandboxUpsell = null,
 }: SandboxBuilderExperienceProps) {
   const { isAuthenticated } = useConvexAuth();
   const { sandboxes, isLoading } = useSandboxList({
@@ -52,11 +65,16 @@ export default function SandboxBuilderExperience({
   const restoredForWorkspaceRef = useRef<string | null>(null);
   useEffect(() => {
     if (!workspaceId) return;
+    if (isCreateSandboxLoading) return;
     if (restoredForWorkspaceRef.current === workspaceId) return;
     restoredForWorkspaceRef.current = workspaceId;
 
     const session = readBuilderSession(workspaceId);
     if (!session || (!session.sandboxId && !session.draft)) return;
+    if (!session.sandboxId && isCreateSandboxDisabled) {
+      clearBuilderSession();
+      return;
+    }
 
     startTransition(() => {
       setSelectedSandboxId(session.sandboxId);
@@ -65,16 +83,19 @@ export default function SandboxBuilderExperience({
         session.viewMode as "builder" | "insights" | "preview" | undefined,
       );
     });
-  }, [workspaceId]);
+  }, [isCreateSandboxDisabled, isCreateSandboxLoading, workspaceId]);
 
   const handleCreateSandbox = useCallback(() => {
+    if (isCreateSandboxDisabled || isCreateSandboxLoading) {
+      return;
+    }
     const blankStarter = SANDBOX_STARTERS.find((s) => s.id === "blank")!;
     startTransition(() => {
       setSelectedSandboxId(null);
       setDraft(blankStarter.createDraft(getDefaultHostedModelId()));
       setRestoredViewMode(undefined);
     });
-  }, []);
+  }, [isCreateSandboxDisabled, isCreateSandboxLoading]);
 
   const handleSavedDraft = useCallback((sandbox: SandboxSettings) => {
     startTransition(() => {
@@ -127,6 +148,9 @@ export default function SandboxBuilderExperience({
             })
           }
           onCreateSandbox={handleCreateSandbox}
+          isCreateSandboxDisabled={isCreateSandboxDisabled}
+          isCreateSandboxLoading={isCreateSandboxLoading}
+          createSandboxUpsell={createSandboxUpsell}
         />
       )}
     </>
