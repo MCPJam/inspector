@@ -227,10 +227,10 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         enterprise: c,
       },
       {
-        label: "Token budget / seat",
+        label: "Daily rate limit / user",
         free: x,
-        starter: t("$5/mo then pay-as-you-go"),
-        team: t("$5/seat/mo then pay-as-you-go", true),
+        starter: t("$5"),
+        team: t("$5", true),
         enterprise: t("Custom", true),
       },
     ],
@@ -256,7 +256,7 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
         label: "Audit log retention",
         free: x,
         starter: x,
-        team: t("90 days", true),
+        team: x,
         enterprise: t("Custom", true),
       },
       {

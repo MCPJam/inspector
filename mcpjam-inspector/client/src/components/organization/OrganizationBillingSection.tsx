@@ -56,7 +56,7 @@ const ORG_COMPARE_PLANS_NOTE = "Your organization is the billed unit.";
 
 const LLM_USAGE_SECTION_TITLE = "LLM Usage";
 const LLM_USAGE_SECTION_TOOLTIP =
-  "LLM usage billing isn’t live yet; models are currently free! Figures below are placeholders and are subject tochange.";
+  "LLM usage billing isn’t live yet, so models are currently free. For paid plans, the table reflects the intended $5 per user per day rate limit and may change before billing launches.";
 
 function getPlanRank(plan: OrganizationPlan): number {
   return PLAN_ORDER.indexOf(plan);

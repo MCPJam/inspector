@@ -1138,6 +1138,29 @@ describe("OrganizationsTab billing", () => {
     openSpy.mockRestore();
   });
 
+  it("disables self-serve compare-table actions while a plan change is in flight", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        isStartingPlanChange: true,
+        pendingPlanChangeTarget: "team",
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      within(getPlanColumn("Starter")).getByRole("button", {
+        name: "Upgrade",
+      }),
+    ).toBeDisabled();
+    expect(
+      within(getPlanColumn("Team")).getByRole("button", {
+        name: "Loading...",
+      }),
+    ).toBeDisabled();
+  });
+
   it("opens a confirmation dialog before paid upgrades", async () => {
     const startPlanChange = vi.fn();
     mockUseOrganizationBilling.mockReturnValue(
@@ -1203,6 +1226,37 @@ describe("OrganizationsTab billing", () => {
       expect(screen.queryByText("Upgrade to Team?")).not.toBeInTheDocument();
     });
     expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("disables the paid-upgrade confirmation buttons while the upgrade request is running", async () => {
+    const hookState = createBillingHookState({
+      billingStatus: billingStatusFixture({
+        plan: "starter",
+        effectivePlan: "starter",
+        billingInterval: "monthly",
+        subscriptionStatus: "active",
+        hasCustomer: true,
+        stripePriceId: "price_starter",
+      }),
+      isStartingPlanChange: false,
+    });
+    mockUseOrganizationBilling.mockImplementation(() => hookState);
+
+    const view = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Upgrade" }));
+    expect(screen.getByText("Upgrade to Team?")).toBeInTheDocument();
+
+    hookState.isStartingPlanChange = true;
+    hookState.pendingPlanChangeTarget = "team";
+    view.rerender(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      screen.getByRole("button", { name: "Upgrading..." }),
+    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
   });
 
   it("updates the existing subscription in place after paid upgrade confirmation", async () => {
@@ -1461,6 +1515,54 @@ describe("OrganizationsTab billing", () => {
     });
 
     openSpy.mockRestore();
+  });
+
+  it("starts auto-checkout only once for the same deep-link intent key", async () => {
+    const startPlanChange = vi.fn().mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://stripe.test/checkout",
+    });
+    const hookState = createBillingHookState({
+      billingStatus: billingStatusFixture(),
+      startPlanChange,
+    });
+    mockUseOrganizationBilling.mockImplementation(() => hookState);
+
+    const navigateBillingInSameTab = vi.fn();
+    const checkoutIntent = {
+      organizationId: "org-1",
+      plan: "starter" as const,
+      interval: "annual" as const,
+    };
+
+    const view = render(
+      <OrganizationsTab
+        organizationId="org-1"
+        section="billing"
+        checkoutIntent={checkoutIntent}
+        navigateBillingInSameTab={navigateBillingInSameTab}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(startPlanChange).toHaveBeenCalledTimes(1);
+    });
+
+    view.rerender(
+      <OrganizationsTab
+        organizationId="org-1"
+        section="billing"
+        checkoutIntent={{ ...checkoutIntent }}
+        navigateBillingInSameTab={navigateBillingInSameTab}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(startPlanChange).toHaveBeenCalledTimes(1);
+    });
+    expect(navigateBillingInSameTab).toHaveBeenCalledWith(
+      "https://stripe.test/checkout",
+    );
   });
 
   it("auto-checks out starter deep links during an active starter trial", async () => {

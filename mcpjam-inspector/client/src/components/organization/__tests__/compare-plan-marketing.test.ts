@@ -49,4 +49,39 @@ describe("COMPARE_PLAN_MARKETING_SECTIONS", () => {
       security?.rows.find((r) => r.label === "SSO / SAML")?.enterprise,
     ).toEqual({ kind: "check" });
   });
+
+  it("keeps the LLM usage copy aligned to the daily per-user rate limit", () => {
+    const llmUsage = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "LLM Usage",
+    );
+    const rateLimitRow = llmUsage?.rows.find(
+      (r) => r.label === "Daily rate limit / user",
+    );
+
+    expect(rateLimitRow?.starter).toEqual({
+      kind: "text",
+      text: "$5",
+    });
+    expect(rateLimitRow?.team).toEqual({
+      kind: "text",
+      text: "$5",
+      emphasize: true,
+    });
+  });
+
+  it("keeps audit logs positioned on Enterprise only", () => {
+    const security = COMPARE_PLAN_MARKETING_SECTIONS.find(
+      (s) => s.title === "Security & Compliance",
+    );
+    const auditLogRow = security?.rows.find(
+      (r) => r.label === "Audit log retention",
+    );
+
+    expect(auditLogRow?.team).toEqual({ kind: "x" });
+    expect(auditLogRow?.enterprise).toEqual({
+      kind: "text",
+      text: "Custom",
+      emphasize: true,
+    });
+  });
 });
