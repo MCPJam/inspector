@@ -36,20 +36,7 @@ function DurationBarBlock({ data }: { data: DurationDatum[] }) {
           vertical={false}
           stroke="hsl(var(--muted-foreground) / 0.12)"
         />
-        <XAxis
-          dataKey="name"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={6}
-          tick={{ fontSize: 11 }}
-          interval={0}
-          height={72}
-          angle={-24}
-          textAnchor="end"
-          tickFormatter={(v: string) =>
-            v.length > 24 ? `${v.substring(0, 22)}…` : v
-          }
-        />
+        <XAxis dataKey="name" hide />
         <YAxis
           tickLine={false}
           axisLine={false}
@@ -104,20 +91,7 @@ function TokensBarBlock({ data }: { data: TokensDatum[] }) {
           vertical={false}
           stroke="hsl(var(--muted-foreground) / 0.12)"
         />
-        <XAxis
-          dataKey="name"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={6}
-          tick={{ fontSize: 11 }}
-          interval={0}
-          height={72}
-          angle={-24}
-          textAnchor="end"
-          tickFormatter={(v: string) =>
-            v.length > 24 ? `${v.substring(0, 22)}…` : v
-          }
-        />
+        <XAxis dataKey="name" hide />
         <YAxis
           tickLine={false}
           axisLine={false}
@@ -177,17 +151,23 @@ export function RunMetricsBarCharts({
     >
       {showDuration && (
         <div className="rounded-xl border border-border/40 bg-card/80 p-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            Avg duration by test
-          </h3>
+          <div className="mb-3 flex items-baseline justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Avg duration by test
+            </h3>
+            <span className="text-[10px] text-muted-foreground/60">Hover bars to see test names</span>
+          </div>
           <DurationBarBlock data={durationData} />
         </div>
       )}
       {showTokens && (
         <div className="rounded-xl border border-border/40 bg-card/80 p-4">
-          <h3 className="mb-3 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
-            Avg tokens by test
-          </h3>
+          <div className="mb-3 flex items-baseline justify-between">
+            <h3 className="text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">
+              Avg tokens by test
+            </h3>
+            <span className="text-[10px] text-muted-foreground/60">Hover bars to see test names</span>
+          </div>
           <TokensBarBlock data={tokensData} />
         </div>
       )}
