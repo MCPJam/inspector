@@ -55,11 +55,16 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const { user } = useAuth();
   const route = useEvalsRoute();
   const appState = useSharedAppState();
-  const { connectedServerNames, userMap, canDeleteRuns, availableModels } =
-    useEvalTabContext({
-      isAuthenticated,
-      workspaceId: workspaceId ?? null,
-    });
+  const {
+    connectedServerNames,
+    userMap,
+    canDeleteSuite,
+    canDeleteRuns,
+    availableModels,
+  } = useEvalTabContext({
+    isAuthenticated,
+    workspaceId: workspaceId ?? null,
+  });
   const updateSuiteMutation = useMutation("testSuites:updateTestSuite" as any);
   const mutations = useEvalMutations();
 
@@ -364,6 +369,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           onDeleteRun={handlers.handleDeleteRun}
           onDirectDeleteRun={handlers.directDeleteRun}
           connectedServerNames={connectedServerNames}
+          canDeleteSuite={canDeleteSuite}
           rerunningSuiteId={handlers.rerunningSuiteId}
           cancellingRunId={handlers.cancellingRunId}
           deletingSuiteId={handlers.deletingSuiteId}
