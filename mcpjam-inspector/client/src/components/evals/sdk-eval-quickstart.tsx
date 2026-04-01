@@ -29,9 +29,6 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
 
-/** Providers supported by TestAgent — same list as @mcpjam/sdk README (TestAgent). */
-export const SDK_TEST_AGENT_PROVIDERS =
-  "openai, anthropic, azure, google, mistral, deepseek, ollama, openrouter, xai" as const;
 
 const ENV_TAIL_SHELL = `export MCP_SERVER_URL=${LEARN_MCP_URL}
 export LLM_API_KEY=<your-llm-api-key>
