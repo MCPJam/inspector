@@ -49,6 +49,10 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-explore-cases-prefetch-on-connect", () => ({
+  useExploreCasesPrefetchOnConnect: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     error: vi.fn(),
@@ -96,5 +100,29 @@ describe("ServerConnectionCard hosted reconnect guard", () => {
       "HTTP servers are not supported in hosted mode",
     );
     expect(onReconnect).not.toHaveBeenCalled();
+  });
+
+  it("hides the share CTA even for share-eligible hosted servers", () => {
+    const server = createServer({
+      name: "shareable-server",
+      connectionStatus: "connected",
+      config: {
+        transportType: "streamableHttp",
+        url: "https://example.com/mcp",
+      },
+    });
+
+    render(
+      <ServerConnectionCard
+        server={server}
+        hostedServerId="hosted-server-1"
+        onDisconnect={vi.fn()}
+        onReconnect={vi.fn().mockResolvedValue(undefined)}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Share" }),
+    ).not.toBeInTheDocument();
   });
 });

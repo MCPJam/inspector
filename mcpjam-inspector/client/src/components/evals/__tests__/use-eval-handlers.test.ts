@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
+import { toast } from "sonner";
 import { useEvalHandlers } from "../use-eval-handlers";
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
@@ -40,11 +41,13 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
-// Mock useAiProviderKeys
+// Mock useAiProviderKeys (mutable for replay-without-keys coverage)
+const mockProviderGetToken = vi.fn().mockReturnValue("mock-api-key");
+const mockProviderHasToken = vi.fn().mockReturnValue(true);
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
   useAiProviderKeys: () => ({
-    getToken: vi.fn().mockReturnValue("mock-api-key"),
-    hasToken: vi.fn().mockReturnValue(true),
+    getToken: mockProviderGetToken,
+    hasToken: mockProviderHasToken,
   }),
 }));
 
@@ -112,11 +115,14 @@ describe("useEvalHandlers", () => {
     selectedSuiteId: null,
     selectedTestId: null,
     workspaceId: "workspace-1",
+    connectedServerNames: new Set(["server-1"]),
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockIsHostedMode.mockReturnValue(false);
+    mockProviderGetToken.mockReturnValue("mock-api-key");
+    mockProviderHasToken.mockReturnValue(true);
 
     // Default mock implementations
     mockGetAccessToken.mockResolvedValue("mock-access-token");
@@ -205,7 +211,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-123",
         name: "Test Suite",
         description: "A test suite",
-        environment: { servers: [] },
+        environment: { servers: ["server-1"] },
       };
 
       await act(async () => {
@@ -222,23 +228,8 @@ describe("useEvalHandlers", () => {
       global.fetch = originalFetch;
     });
 
-    it("replays the latest CI run in hosted mode for SDK suites", async () => {
+    it("replays the latest run when live servers are missing and replay is available", async () => {
       mockIsHostedMode.mockReturnValue(true);
-
-      const selectedSuiteEntry = {
-        latestRun: {
-          _id: "run-source",
-          hasServerReplayConfig: true,
-          passCriteria: { minimumPassRate: 92 },
-        },
-        recentRuns: [
-          {
-            _id: "run-source",
-            hasServerReplayConfig: true,
-            passCriteria: { minimumPassRate: 92 },
-          },
-        ],
-      };
 
       mockAuthFetch.mockResolvedValue(
         createFetchResponse({
@@ -251,7 +242,17 @@ describe("useEvalHandlers", () => {
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
-          selectedSuiteEntry: selectedSuiteEntry as any,
+          connectedServerNames: new Set(),
+          latestRunBySuiteId: new Map([
+            [
+              "suite-123",
+              {
+                _id: "run-source",
+                hasServerReplayConfig: true,
+                passCriteria: { minimumPassRate: 92 },
+              },
+            ],
+          ]),
         }),
       );
 
@@ -259,7 +260,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-123",
         name: "CI Suite",
         description: "A CI-backed suite",
-        source: "sdk",
+        source: "ui",
         environment: { servers: ["server-1"] },
       };
 
@@ -287,31 +288,80 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-123",
         runId: "run-replay",
+        insightsFocus: true,
       });
     });
 
-    it("falls back to the normal rerun path when hosted SDK runs are not replayable", async () => {
+    it("replays the latest run when suite server metadata is empty but replay is available", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          success: true,
+          suiteId: "suite-123",
+          runId: "run-replay",
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          latestRunBySuiteId: new Map([
+            [
+              "suite-123",
+              {
+                _id: "run-source",
+                hasServerReplayConfig: true,
+                passCriteria: { minimumPassRate: 92 },
+              },
+            ],
+          ]),
+        }),
+      );
+
+      const mockSuite = {
+        _id: "suite-123",
+        name: "SDK Suite",
+        description: "A replayable suite without stored server names",
+        source: "sdk",
+        environment: { servers: [] },
+      };
+
+      await act(async () => {
+        await result.current.handleRerun(mockSuite as any);
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/web/evals/replay-run",
+        expect.objectContaining({
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+
+      const callArgs = mockAuthFetch.mock.calls[0];
+      const requestBody = JSON.parse(callArgs[1].body);
+      expect(requestBody).toMatchObject({
+        runId: "run-source",
+        passCriteria: { minimumPassRate: 92 },
+      });
+
+      expect(mockNavigateToCiEvalsRoute).toHaveBeenCalledWith({
+        type: "run-detail",
+        suiteId: "suite-123",
+        runId: "run-replay",
+        insightsFocus: true,
+      });
+    });
+
+    it("uses the normal rerun path when live servers are connected", async () => {
       mockIsHostedMode.mockReturnValue(true);
       setHostedApiContext({
         workspaceId: "ws-123",
         isAuthenticated: true,
         serverIdsByName: { "server-1": "srv-1" },
       });
-
-      const selectedSuiteEntry = {
-        latestRun: {
-          _id: "run-source",
-          hasServerReplayConfig: false,
-          passCriteria: { minimumPassRate: 92 },
-        },
-        recentRuns: [
-          {
-            _id: "run-source",
-            hasServerReplayConfig: false,
-            passCriteria: { minimumPassRate: 92 },
-          },
-        ],
-      };
 
       mockAuthFetch.mockResolvedValue(
         createFetchResponse({
@@ -324,16 +374,26 @@ describe("useEvalHandlers", () => {
       const { result } = renderHook(() =>
         useEvalHandlers({
           ...defaultProps,
-          selectedSuiteEntry: selectedSuiteEntry as any,
           selectedSuiteId: "suite-123",
+          connectedServerNames: new Set(["server-1"]),
+          latestRunBySuiteId: new Map([
+            [
+              "suite-123",
+              {
+                _id: "run-source",
+                hasServerReplayConfig: true,
+                passCriteria: { minimumPassRate: 92 },
+              },
+            ],
+          ]),
         }),
       );
 
       const mockSuite = {
         _id: "suite-123",
         name: "Hosted SDK Suite",
-        description: "A replay-ineligible suite",
-        source: "sdk",
+        description: "A replay-eligible suite with live connectivity",
+        source: "ui",
         environment: { servers: ["server-1"] },
       };
 
@@ -348,6 +408,55 @@ describe("useEvalHandlers", () => {
           headers: { "Content-Type": "application/json" },
         }),
       );
+    });
+
+    it("uses the clicked suite latest run instead of the selected suite entry", async () => {
+      mockIsHostedMode.mockReturnValue(true);
+
+      mockAuthFetch.mockResolvedValue(
+        createFetchResponse({
+          success: true,
+          suiteId: "suite-clicked",
+          runId: "run-replay",
+        }),
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          connectedServerNames: new Set(),
+          selectedSuiteEntry: {
+            suite: { _id: "suite-selected" },
+            latestRun: {
+              _id: "run-selected",
+              hasServerReplayConfig: false,
+            },
+            recentRuns: [],
+          } as any,
+          latestRunBySuiteId: new Map([
+            [
+              "suite-clicked",
+              {
+                _id: "run-clicked",
+                hasServerReplayConfig: true,
+              },
+            ],
+          ]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-clicked",
+          name: "Clicked Suite",
+          description: "Uses clicked latest run",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      const callArgs = mockAuthFetch.mock.calls[0];
+      const requestBody = JSON.parse(callArgs[1].body);
+      expect(requestBody.runId).toBe("run-clicked");
     });
   });
 
@@ -465,6 +574,44 @@ describe("useEvalHandlers", () => {
       );
     });
 
+    it("requires browser API keys for replay (shows toast error when missing)", async () => {
+      mockProviderHasToken.mockReturnValue(false);
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          selectedSuiteEntry: {
+            latestRun: {
+              _id: "run-source",
+              hasServerReplayConfig: true,
+            },
+            recentRuns: [],
+          } as any,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleReplayRun(
+          {
+            _id: "suite-no-keys",
+            name: "Suite",
+            description: "Needs external provider",
+            source: "sdk",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "run-source",
+            hasServerReplayConfig: true,
+          } as any,
+        );
+      });
+
+      expect(mockAuthFetch).not.toHaveBeenCalled();
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/API key.*Settings/i),
+      );
+    });
+
     it("posts to the hosted replay endpoint for a specific run", async () => {
       mockIsHostedMode.mockReturnValue(true);
 
@@ -537,6 +684,7 @@ describe("useEvalHandlers", () => {
         type: "run-detail",
         suiteId: "suite-456",
         runId: "run-new",
+        insightsFocus: true,
       });
     });
   });
@@ -681,7 +829,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-123",
         name: "Test Suite",
         description: "A test suite",
-        environment: { servers: [] },
+        environment: { servers: ["server-1"] },
       };
 
       await act(async () => {
@@ -794,7 +942,7 @@ describe("useEvalHandlers", () => {
         _id: "suite-789",
         name: "Test Suite",
         description: "A test suite",
-        environment: { servers: [] },
+        environment: { servers: ["server-1"] },
       };
 
       expect(result.current.rerunningSuiteId).toBe(null);

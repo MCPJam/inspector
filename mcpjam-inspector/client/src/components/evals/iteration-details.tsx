@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import { TraceViewer } from "./trace-viewer";
 import {
@@ -7,8 +7,9 @@ import {
   Code2,
   ChevronDown,
   ChevronRight,
-  ShieldCheck,
-  ShieldX,
+  WifiOff,
+  AlertCircle,
+  Loader2,
 } from "lucide-react";
 import { ToolServerMap, listTools } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
@@ -22,9 +23,28 @@ import {
   type ModelDefinition,
   type ModelProvider,
 } from "@/shared/types";
+import { cn } from "@/lib/utils";
+import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
+const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
 const EMPTY_SERVER_NAMES: string[] = [];
+
+function formatToolCallsSummary(
+  expected: Array<{ toolName: string }>,
+  actual: Array<{ toolName: string }>,
+  maxLen = TOOL_CALLS_SUMMARY_MAX_LEN,
+): string {
+  const expPart =
+    expected.length === 0 ? "—" : expected.map((t) => t.toolName).join(", ");
+  const actPart =
+    actual.length === 0 ? "—" : actual.map((t) => t.toolName).join(", ");
+  const s = `Expected: ${expPart} · Actual: ${actPart}`;
+  if (s.length <= maxLen) return s;
+  return `${s.slice(0, maxLen - 1)}…`;
+}
 const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
   "anthropic",
   "azure",
@@ -148,16 +168,71 @@ function resolveTraceModel(
   );
 }
 
+function TraceBlobLoadErrorPanel({
+  error,
+  layoutMode,
+  onRetry,
+  isDetailsOpen,
+  onDetailsOpenChange,
+}: {
+  error: string;
+  layoutMode: "compact" | "full";
+  onRetry: () => void;
+  isDetailsOpen: boolean;
+  onDetailsOpenChange: (open: boolean) => void;
+}) {
+  const info = formatConvexBlobLoadError(error);
+  const Icon = info.kind === "transient" ? WifiOff : AlertCircle;
+  return (
+    <div
+      className={cn("space-y-3", layoutMode === "full" && "max-w-md")}
+      data-testid="iteration-trace-load-error"
+    >
+      <Alert variant={info.alertVariant}>
+        <Icon />
+        <AlertTitle>{info.title}</AlertTitle>
+        <AlertDescription className="space-y-3">
+          <p>{info.description}</p>
+          <Button type="button" variant="secondary" size="sm" onClick={onRetry}>
+            Try again
+          </Button>
+        </AlertDescription>
+      </Alert>
+      <Collapsible open={isDetailsOpen} onOpenChange={onDetailsOpenChange}>
+        <CollapsibleTrigger
+          type="button"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <span>Technical details</span>
+          {isDetailsOpen ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronRight className="h-3 w-3" />
+          )}
+        </CollapsibleTrigger>
+        <CollapsibleContent className="mt-2">
+          <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap overflow-x-auto rounded border border-border/40 bg-muted/30 p-2">
+            {error}
+          </pre>
+        </CollapsibleContent>
+      </Collapsible>
+    </div>
+  );
+}
+
 export function IterationDetails({
   iteration,
   testCase,
   serverNames = EMPTY_SERVER_NAMES,
   layoutMode = "compact",
+  caseInsightSlot,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
   serverNames?: string[];
   layoutMode?: "compact" | "full";
+  /** Run-level case insight caption; shown under the trace toolbar or at top when no trace blob. */
+  caseInsightSlot?: ReactNode;
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -166,6 +241,9 @@ export function IterationDetails({
   const [blob, setBlob] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [blobRetryTick, setBlobRetryTick] = useState(0);
+  const [isBlobErrorDetailsOpen, setIsBlobErrorDetailsOpen] = useState(false);
+  const prevBlobIdRef = useRef<string | undefined>(undefined);
   const [toolViewMode, setToolViewMode] = useState<"formatted" | "raw">(
     "formatted",
   );
@@ -177,15 +255,23 @@ export function IterationDetails({
   const [toolsWithSchema, setToolsWithSchema] = useState<
     Record<string, { name: string; inputSchema?: any }>
   >({});
+  const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
+    layoutMode === "full" ? iteration.result !== "passed" : true,
+  );
 
   useEffect(() => {
     let cancelled = false;
     async function run() {
       if (!iteration.blob) {
+        prevBlobIdRef.current = undefined;
         setBlob(null);
         setLoading(false);
         setError(null);
         return;
+      }
+      if (prevBlobIdRef.current !== iteration.blob) {
+        prevBlobIdRef.current = iteration.blob;
+        setIsBlobErrorDetailsOpen(false);
       }
       setLoading(true);
       setError(null);
@@ -205,7 +291,12 @@ export function IterationDetails({
     return () => {
       cancelled = true;
     };
-  }, [iteration.blob, getBlob]);
+  }, [iteration.blob, getBlob, blobRetryTick]);
+
+  useEffect(() => {
+    if (layoutMode !== "full") return;
+    setToolCallsSectionOpen(iteration.result !== "passed");
+  }, [layoutMode, iteration._id, iteration.result]);
 
   useEffect(() => {
     let cancelled = false;
@@ -288,6 +379,17 @@ export function IterationDetails({
     () => resolveTraceModel(iteration, testCase),
     [iteration, testCase],
   );
+
+  const estimatedDurationMs = useMemo(
+    () =>
+      Math.max(
+        iteration.updatedAt - (iteration.startedAt ?? iteration.createdAt),
+        0,
+      ),
+    [iteration.updatedAt, iteration.startedAt, iteration.createdAt],
+  );
+  const traceStartedAtMs = iteration.startedAt ?? iteration.createdAt;
+  const traceEndedAtMs = iteration.updatedAt;
 
   // Use snapshot values first (reflects what was actually tested, including unsaved edits)
   const expectedToolCalls =
@@ -415,46 +517,248 @@ export function IterationDetails({
   const errorDetailsJson = parseErrorDetails(iteration.errorDetails);
   const [isErrorDetailsOpen, setIsErrorDetailsOpen] = useState(false);
 
-  const isNegativeTest =
-    iteration.testCaseSnapshot?.isNegativeTest || testCase?.isNegativeTest;
-  const negativeTestScenario =
-    iteration.testCaseSnapshot?.scenario || testCase?.scenario;
+  const hasToolCalls =
+    expectedToolCalls.length > 0 || actualToolCalls.length > 0;
+  const traceFirst = layoutMode === "full" && Boolean(iteration.blob);
+  const toolCallsSummary = formatToolCallsSummary(
+    expectedToolCalls,
+    actualToolCalls,
+  );
 
-  return (
-    <div className="space-y-4 py-2">
-      {/* Negative Test Summary */}
-      {isNegativeTest && (
-        <div
-          className={`rounded-md border p-3 space-y-1 ${
-            iteration.result === "passed"
-              ? "border-emerald-500/30 bg-emerald-500/10"
-              : "border-destructive/30 bg-destructive/10"
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {iteration.result === "passed" ? (
-              <ShieldCheck className="h-4 w-4 text-emerald-500 shrink-0" />
-            ) : (
-              <ShieldX className="h-4 w-4 text-destructive shrink-0" />
-            )}
-            <span className="text-xs font-semibold">
-              Negative Test{" "}
-              {iteration.result === "passed" ? "Passed" : "Failed"}
-            </span>
+  const toolCallsGrids =
+    toolViewMode === "raw" ? (
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
+          <div className="text-xs font-medium text-muted-foreground uppercase">
+            Expected
           </div>
-          <p className="text-xs text-muted-foreground">
-            {iteration.result === "passed"
-              ? "No tools were called, which is the expected behavior for this test."
-              : "Tools were unexpectedly called during this negative test."}
-          </p>
-          {negativeTestScenario && (
-            <p className="text-xs text-muted-foreground/80 italic mt-1">
-              Scenario: {negativeTestScenario}
-            </p>
+          {renderRawToolCalls(expectedToolCalls, "No expected tool calls")}
+        </div>
+        <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
+          <div className="text-xs font-medium text-muted-foreground uppercase">
+            Actual
+          </div>
+          {renderRawToolCalls(actualToolCalls, "No tool calls made")}
+        </div>
+      </div>
+    ) : (
+      <div className="grid gap-2 md:grid-cols-2">
+        <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+            Expected
+          </div>
+          {expectedToolCalls.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic">
+              No expected tool calls
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {expectedToolCalls.map((tool, idx) => (
+                <div
+                  key={`expected-${idx}`}
+                  className="rounded border border-border/30 bg-background/50 p-1.5 space-y-1"
+                >
+                  <div className="font-mono text-xs font-medium">
+                    {tool.toolName}
+                  </div>
+                  {Object.keys(tool.arguments || {}).length > 0 && (
+                    <div className="text-xs bg-muted/30 rounded p-1.5">
+                      {renderArguments(tool.arguments || {}, tool.toolName)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
           )}
         </div>
-      )}
+        <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
+            Actual
+          </div>
+          {actualToolCalls.length === 0 ? (
+            <div className="text-xs text-muted-foreground italic">
+              No tool calls made
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              {actualToolCalls.map((tool, idx) => (
+                <div
+                  key={`actual-${idx}`}
+                  className="rounded border border-border/30 bg-background/50 p-1.5 space-y-1"
+                >
+                  <div className="font-mono text-xs font-medium">
+                    {tool.toolName}
+                  </div>
+                  {Object.keys(tool.arguments || {}).length > 0 && (
+                    <div className="text-xs bg-muted/30 rounded p-1.5">
+                      {renderArguments(tool.arguments || {}, tool.toolName)}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
 
+  const formattedRawToggle = (
+    <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
+      <button
+        type="button"
+        onClick={() => setToolViewMode("formatted")}
+        className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+          toolViewMode === "formatted"
+            ? "bg-primary/10 text-foreground font-medium"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+        title="Formatted view"
+      >
+        <MessageSquare className="h-3 w-3" />
+        Formatted
+      </button>
+      <button
+        type="button"
+        onClick={() => setToolViewMode("raw")}
+        className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+          toolViewMode === "raw"
+            ? "bg-primary/10 text-foreground font-medium"
+            : "text-muted-foreground hover:text-foreground"
+        }`}
+        title="Raw JSON view"
+      >
+        <Code2 className="h-3 w-3" />
+        Raw
+      </button>
+    </div>
+  );
+
+  const toolCallsSection =
+    hasToolCalls && !iteration.blob ? (
+      layoutMode === "full" ? (
+        <Collapsible
+          open={toolCallsSectionOpen}
+          onOpenChange={setToolCallsSectionOpen}
+        >
+          <div className="space-y-2" data-testid="iteration-tool-calls-section">
+            <div className="flex min-w-0 items-center justify-between gap-2 border-b border-border/40 pb-2">
+              <CollapsibleTrigger
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-1 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+              >
+                {toolCallsSectionOpen ? (
+                  <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                )}
+                <span className="shrink-0 text-xs font-semibold">
+                  Tool Calls
+                </span>
+                {!toolCallsSectionOpen && (
+                  <span
+                    className="min-w-0 truncate text-xs text-muted-foreground"
+                    title={toolCallsSummary}
+                  >
+                    {toolCallsSummary}
+                  </span>
+                )}
+              </CollapsibleTrigger>
+              {toolCallsSectionOpen ? formattedRawToggle : null}
+            </div>
+            <CollapsibleContent>
+              <div
+                className="space-y-2"
+                data-testid="iteration-tool-calls-grid"
+              >
+                {toolCallsGrids}
+              </div>
+            </CollapsibleContent>
+          </div>
+        </Collapsible>
+      ) : (
+        <div className="space-y-2" data-testid="iteration-tool-calls-section">
+          <div className="flex items-center justify-between border-b border-border/40 pb-2">
+            <div className="text-xs font-semibold">Tool Calls</div>
+            {formattedRawToggle}
+          </div>
+          <div data-testid="iteration-tool-calls-grid">{toolCallsGrids}</div>
+        </div>
+      )
+    ) : null;
+
+  const traceSection = iteration.blob ? (
+    <div
+      className={cn(
+        "flex flex-col",
+        layoutMode === "full" && "min-h-0 flex-1",
+        layoutMode === "full" ? "gap-1" : "gap-1.5",
+      )}
+      data-testid="iteration-trace-section"
+    >
+      {layoutMode !== "full" ? (
+        <div className="text-xs font-semibold">Trace</div>
+      ) : null}
+      <div
+        className={cn(
+          layoutMode === "compact" &&
+            "rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto",
+          layoutMode === "full" &&
+            iteration.blob &&
+            !error &&
+            "flex min-h-0 flex-1 flex-col",
+          layoutMode === "full" &&
+            error &&
+            !loading &&
+            "min-h-[320px] flex flex-col justify-center",
+        )}
+      >
+        {loading ? (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : error ? (
+          <TraceBlobLoadErrorPanel
+            error={error}
+            layoutMode={layoutMode}
+            onRetry={() => setBlobRetryTick((n) => n + 1)}
+            isDetailsOpen={isBlobErrorDetailsOpen}
+            onDetailsOpenChange={setIsBlobErrorDetailsOpen}
+          />
+        ) : (
+          <TraceViewer
+            trace={blob}
+            model={traceModel}
+            toolsMetadata={toolsMetadata}
+            toolServerMap={toolServerMap}
+            connectedServerIds={connectedServerIds}
+            traceStartedAtMs={traceStartedAtMs}
+            traceEndedAtMs={traceEndedAtMs}
+            estimatedDurationMs={estimatedDurationMs}
+            traceInsight={caseInsightSlot}
+            chromeDensity={layoutMode === "full" ? "compact" : "default"}
+            expectedToolCalls={expectedToolCalls}
+            actualToolCalls={actualToolCalls}
+          />
+        )}
+      </div>
+    </div>
+  ) : null;
+
+  const caseInsightFallback =
+    caseInsightSlot && !iteration.blob ? (
+      <div className="min-w-0" data-testid="iteration-case-insight-fallback">
+        {caseInsightSlot}
+      </div>
+    ) : null;
+
+  return (
+    <div
+      className={cn(
+        "flex flex-col",
+        layoutMode === "full" && "min-h-0 flex-1",
+        layoutMode === "full" ? "gap-3" : "gap-4 py-2",
+      )}
+    >
       {/* Error Display */}
       {iteration.error && (
         <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 space-y-2">
@@ -498,156 +802,18 @@ export function IterationDetails({
         </div>
       )}
 
-      {/* Tool Calls Comparison & Status */}
-      {(expectedToolCalls.length > 0 || actualToolCalls.length > 0) && (
-        <div className="space-y-2">
-          <div className="flex items-center justify-between border-b border-border/40 pb-2">
-            <div className="text-xs font-semibold">Tool Calls</div>
-            <div className="flex items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
-              <button
-                type="button"
-                onClick={() => setToolViewMode("formatted")}
-                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                  toolViewMode === "formatted"
-                    ? "bg-primary/10 text-foreground font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Formatted view"
-              >
-                <MessageSquare className="h-3 w-3" />
-                Formatted
-              </button>
-              <button
-                type="button"
-                onClick={() => setToolViewMode("raw")}
-                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                  toolViewMode === "raw"
-                    ? "bg-primary/10 text-foreground font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Raw JSON view"
-              >
-                <Code2 className="h-3 w-3" />
-                Raw
-              </button>
-            </div>
-          </div>
+      {caseInsightFallback}
 
-          {toolViewMode === "raw" ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {/* Expected */}
-              <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
-                <div className="text-xs font-medium text-muted-foreground uppercase">
-                  Expected
-                </div>
-                {renderRawToolCalls(
-                  expectedToolCalls,
-                  "No expected tool calls",
-                )}
-              </div>
-
-              {/* Actual */}
-              <div className="rounded-md border border-border/40 bg-muted/10 p-3 space-y-2">
-                <div className="text-xs font-medium text-muted-foreground uppercase">
-                  Actual
-                </div>
-                {renderRawToolCalls(actualToolCalls, "No tool calls made")}
-              </div>
-            </div>
-          ) : (
-            <div className="grid gap-2 md:grid-cols-2">
-              {/* Expected */}
-              <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
-                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                  Expected
-                </div>
-                {expectedToolCalls.length === 0 ? (
-                  <div className="text-xs text-muted-foreground italic">
-                    No expected tool calls
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {expectedToolCalls.map((tool, idx) => (
-                      <div
-                        key={`expected-${idx}`}
-                        className="rounded border border-border/30 bg-background/50 p-1.5 space-y-1"
-                      >
-                        <div className="font-mono text-xs font-medium">
-                          {tool.toolName}
-                        </div>
-                        {Object.keys(tool.arguments || {}).length > 0 && (
-                          <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(
-                              tool.arguments || {},
-                              tool.toolName,
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* Actual */}
-              <div className="rounded-md border border-border/40 bg-muted/10 p-2 space-y-2">
-                <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide">
-                  Actual
-                </div>
-                {actualToolCalls.length === 0 ? (
-                  <div className="text-xs text-muted-foreground italic">
-                    No tool calls made
-                  </div>
-                ) : (
-                  <div className="space-y-1.5">
-                    {actualToolCalls.map((tool, idx) => (
-                      <div
-                        key={`actual-${idx}`}
-                        className="rounded border border-border/30 bg-background/50 p-1.5 space-y-1"
-                      >
-                        <div className="font-mono text-xs font-medium">
-                          {tool.toolName}
-                        </div>
-                        {Object.keys(tool.arguments || {}).length > 0 && (
-                          <div className="text-xs bg-muted/30 rounded p-1.5">
-                            {renderArguments(
-                              tool.arguments || {},
-                              tool.toolName,
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Trace */}
-      {iteration.blob && (
-        <div className="space-y-1.5">
-          <div className="text-xs font-semibold">Trace</div>
-          <div
-            className={`rounded-md bg-muted/20 p-3${layoutMode === "compact" ? " max-h-[480px] overflow-y-auto" : ""}`}
-          >
-            {loading ? (
-              <div className="text-xs text-muted-foreground">Loading trace</div>
-            ) : error ? (
-              <div className="text-xs text-destructive">{error}</div>
-            ) : (
-              <TraceViewer
-                trace={blob}
-                model={traceModel}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                connectedServerIds={connectedServerIds}
-              />
-            )}
-          </div>
-        </div>
+      {traceFirst ? (
+        <>
+          {traceSection}
+          {toolCallsSection}
+        </>
+      ) : (
+        <>
+          {toolCallsSection}
+          {traceSection}
+        </>
       )}
     </div>
   );

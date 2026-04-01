@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useLayoutEffect } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
@@ -20,7 +20,10 @@ import {
 
 const {
   createAppStateMock,
+  mockAppBuilderTabMounts,
+  mockConvexAuthState,
   mockHandleOAuthCallback,
+  mockHostedShellGateState,
   mockMCPSidebar,
   mockOrganizationsTab,
   mockPosthogCapture,
@@ -29,6 +32,7 @@ const {
   mockUseConvexAuth,
   mockUseFeatureFlagEnabled,
   mockUseQuery,
+  mockWorkOsAuthState,
 } = vi.hoisted(() => {
   const createAppStateMock = () => ({
     appState: {
@@ -69,7 +73,19 @@ const {
 
   return {
     createAppStateMock,
+    mockAppBuilderTabMounts: vi.fn(),
+    mockConvexAuthState: {
+      isAuthenticated: true,
+      isLoading: false,
+    },
     mockHandleOAuthCallback: vi.fn(),
+    mockHostedShellGateState: {
+      value: "ready" as
+        | "ready"
+        | "auth-loading"
+        | "workspace-loading"
+        | "logged-out",
+    },
     mockMCPSidebar: vi.fn(() => <div />),
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
@@ -78,18 +94,24 @@ const {
     mockUseConvexAuth: vi.fn(),
     mockUseFeatureFlagEnabled: vi.fn(),
     mockUseQuery: vi.fn(() => undefined),
+    mockWorkOsAuthState: {
+      getAccessToken: vi.fn(),
+      signIn: vi.fn(),
+      user: null as { id: string } | null,
+      isLoading: false,
+    },
   };
 });
 
 vi.mock("convex/react", () => ({
-  useConvexAuth: (...args: unknown[]) => mockUseConvexAuth(...args),
+  useConvexAuth: () => mockConvexAuthState,
   useQuery: mockUseQuery,
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: (...args: unknown[]) => mockUseAuth(...args),
+  useAuth: () => mockWorkOsAuthState,
 }));
 
 vi.mock("posthog-js/react", () => ({
@@ -199,7 +221,25 @@ vi.mock("../components/OAuthFlowTab", () => ({
   OAuthFlowTab: () => <div />,
 }));
 vi.mock("../components/ui-playground/AppBuilderTab", () => ({
-  AppBuilderTab: () => <div />,
+  AppBuilderTab: ({
+    onOnboardingChange,
+  }: {
+    onOnboardingChange?: (value: boolean) => void;
+  }) => {
+    useLayoutEffect(() => {
+      mockAppBuilderTabMounts();
+      onOnboardingChange?.(true);
+      return () => onOnboardingChange?.(false);
+    }, [onOnboardingChange]);
+
+    return (
+      <div data-testid="app-builder-tab">
+        <button type="button" onClick={() => onOnboardingChange?.(false)}>
+          Finish onboarding
+        </button>
+      </div>
+    );
+  },
 }));
 vi.mock("../components/ProfileTab", () => ({
   ProfileTab: () => <div />,
@@ -214,7 +254,7 @@ vi.mock("../components/oauth/OAuthDebugCallback", () => ({
   default: () => <div />,
 }));
 vi.mock("../components/mcp-sidebar", () => ({
-  MCPSidebar: (props: unknown) => mockMCPSidebar(props),
+  MCPSidebar: () => <div data-testid="mcp-sidebar" />,
 }));
 vi.mock("../components/ui/sidebar", () => ({
   SidebarInset: ({ children }: { children?: ReactNode }) => (
@@ -244,7 +284,7 @@ vi.mock("../components/LoadingScreen", () => ({
   default: () => <div data-testid="hosted-oauth-loading" />,
 }));
 vi.mock("../components/Header", () => ({
-  Header: () => <div />,
+  Header: () => <div data-testid="app-header" />,
 }));
 vi.mock("../components/hosted/HostedShellGate", () => ({
   HostedShellGate: ({ children }: { children?: ReactNode }) => (
@@ -252,7 +292,7 @@ vi.mock("../components/hosted/HostedShellGate", () => ({
   ),
 }));
 vi.mock("../components/hosted/hosted-shell-gate-state", () => ({
-  resolveHostedShellGateState: () => "ready",
+  resolveHostedShellGateState: () => mockHostedShellGateState.value,
 }));
 vi.mock("../components/hosted/SharedServerChatPage", () => ({
   SharedServerChatPage: () => <button type="button">Authorize</button>,
@@ -288,13 +328,23 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockReset();
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
-    mockUseQuery.mockImplementation(() => undefined);
+    mockUseQuery.mockImplementation((ref: string) =>
+      ref === "users:getCurrentUser" ? null : undefined,
+    );
+    mockHostedShellGateState.value = "ready";
+    mockConvexAuthState.isAuthenticated = true;
+    mockConvexAuthState.isLoading = false;
+    mockWorkOsAuthState.getAccessToken = vi.fn();
+    mockWorkOsAuthState.signIn = vi.fn();
+    mockWorkOsAuthState.user = null;
+    mockWorkOsAuthState.isLoading = false;
     mockHandleOAuthCallback.mockReset();
     mockOrganizationsTab.mockReset();
     mockOrganizationsTab.mockImplementation(() => <div />);
     mockMCPSidebar.mockReset();
     mockMCPSidebar.mockImplementation(() => <div />);
     mockPosthogCapture.mockReset();
+    mockAppBuilderTabMounts.mockReset();
     mockHandleOAuthCallback.mockImplementation(
       () => new Promise<never>(() => {}),
     );
@@ -1137,6 +1187,172 @@ describe("App hosted OAuth callback handling", () => {
       expect(window.location.hash).toBe("#sandboxes");
       expect(screen.getByText("Sandboxes Tab")).toBeInTheDocument();
     });
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps App Builder mounted when onboarding chrome is restored", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#app-builder");
+    mockHandleOAuthCallback.mockReset();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
+
+    expect(mockAppBuilderTabMounts).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Finish onboarding" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mcp-sidebar")).toBeInTheDocument();
+      expect(screen.getByTestId("app-header")).toBeInTheDocument();
+    });
+
+    expect(mockAppBuilderTabMounts).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores chrome after leaving App Builder mid-onboarding", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#app-builder");
+    mockHandleOAuthCallback.mockReset();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("mcp-sidebar")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("app-header")).not.toBeInTheDocument();
+
+    window.location.hash = "servers";
+    window.dispatchEvent(new Event("hashchange"));
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("mcp-sidebar")).toBeInTheDocument();
+      expect(screen.getByTestId("app-header")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+  });
+
+  it("does not auto-route to App Builder when any saved server already exists", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      workspaceServers: {
+        savedServer: {
+          name: "savedServer",
+          connectionStatus: "disconnected",
+          enabled: true,
+          retryCount: 0,
+          lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+          config: {
+            transportType: "http",
+            url: "https://example.com/mcp",
+          },
+        },
+      },
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#servers");
+    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+  });
+
+  it("does not auto-route to App Builder while the hosted shell is still auth-loading", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+    mockHostedShellGateState.value = "auth-loading";
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#servers");
+    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+  });
+
+  it("does not auto-route signed-in users into App Builder once startup is ready", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#servers");
+    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+  });
+
+  it("still auto-routes a true hosted guest into App Builder onboarding once startup is ready", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#app-builder");
+  });
+
+  it("goes from hosted loading straight to App Builder onboarding for a true guest", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+    mockHostedShellGateState.value = "auth-loading";
+
+    const { rerender } = render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+
+    mockHostedShellGateState.value = "ready";
+    rerender(<App />);
+
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#app-builder");
     expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 });

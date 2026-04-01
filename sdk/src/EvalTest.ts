@@ -369,7 +369,10 @@ export class EvalTest {
       return;
     }
 
-    const results = this.buildEvalResultInputs(runResult.iterationDetails);
+    const results = this.buildEvalResultInputs(
+      runResult.iterationDetails,
+      config
+    );
     if (results.length === 0) {
       return;
     }
@@ -396,12 +399,14 @@ export class EvalTest {
   }
 
   private buildEvalResultInputs(
-    iterations: IterationResult[]
+    iterations: IterationResult[],
+    reporting?: MCPJamReportingConfig
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
       iterations,
-      this.config.expectedToolCalls
+      this.config.expectedToolCalls,
+      reporting?.failOnToolError
     );
   }
 

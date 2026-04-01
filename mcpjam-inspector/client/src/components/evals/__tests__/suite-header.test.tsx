@@ -37,7 +37,9 @@ describe("SuiteHeader", () => {
     status: "completed" as const,
     source: "sdk" as const,
     hasServerReplayConfig: true,
-    createdAt: 1,
+    createdAt: 1_000,
+    completedAt: 136_000,
+    summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
   };
 
   const baseProps = {
@@ -52,12 +54,11 @@ describe("SuiteHeader", () => {
     onDeleteRun: vi.fn(),
     onViewModeChange: vi.fn(),
     connectedServerNames: new Set<string>(),
+    canDeleteSuite: false,
     rerunningSuiteId: null,
     cancellingRunId: null,
     deletingSuiteId: null,
     deletingRunId: null,
-    showRunSummarySidebar: false,
-    setShowRunSummarySidebar: vi.fn(),
     runs: [baseRun],
     allIterations: [],
     aggregate: null,
@@ -68,7 +69,35 @@ describe("SuiteHeader", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockIsHostedMode.mockReturnValue(true);
+    mockIsHostedMode.mockReturnValue(false);
+  });
+
+  it("shows compact run stats under the run title in run detail", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+        }}
+      />,
+    );
+    expect(screen.getByText(/1 passed · 1 failed · 50%/)).toBeInTheDocument();
+  });
+
+  it("shows replay lineage under the run title when replayedFromRunId is set", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        selectedRunDetails={{
+          ...baseRun,
+          replayedFromRunId: "n573zfck8sdhjg7by2s31ex2yx83m6sh",
+        }}
+      />,
+    );
+
+    expect(screen.getByText("Replay of")).toBeTruthy();
+    expect(screen.getByText("Run n573zfck")).toBeTruthy();
   });
 
   it("shows a replay action for replayable CI runs in read-only run detail", async () => {
@@ -88,7 +117,15 @@ describe("SuiteHeader", () => {
     expect(baseProps.onRerun).not.toHaveBeenCalled();
   });
 
-  it("shows replay latest run in overview for hosted CI suites", () => {
+  it("hides run-detail actions when run actions are suppressed", () => {
+    renderWithProviders(<SuiteHeader {...baseProps} hideRunActions />);
+
+    expect(
+      screen.queryByRole("button", { name: "Replay this run" }),
+    ).toBeNull();
+  });
+
+  it("shows replay latest run in overview without hosted-mode gating", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
@@ -100,5 +137,74 @@ describe("SuiteHeader", () => {
     expect(
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeTruthy();
+  });
+
+  it("hides overview run actions when run actions are suppressed", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        hideRunActions
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Replay latest run" }),
+    ).toBeNull();
+  });
+
+  it("shows Cases when cases sidebar is hidden on runs overview", async () => {
+    const user = userEvent.setup();
+    const onShowCasesSidebar = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="runs"
+        casesSidebarHidden
+        onShowCasesSidebar={onShowCasesSidebar}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Cases" }));
+
+    expect(onShowCasesSidebar).toHaveBeenCalled();
+  });
+
+  it("shows Delete suite in read-only overview when canDeleteSuite is true", async () => {
+    const user = userEvent.setup();
+    const onDelete = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        canDeleteSuite
+        onDelete={onDelete}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Delete suite" }));
+
+    expect(onDelete).toHaveBeenCalledWith(baseSuite);
+  });
+
+  it("hides Delete suite in read-only overview when canDeleteSuite is false", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        canDeleteSuite={false}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Delete suite" }),
+    ).toBeNull();
   });
 });

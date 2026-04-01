@@ -1,8 +1,9 @@
 // Standard React component for Vite
 import { getProviderLogoFromProvider } from "../../shared/chat-helpers";
 import { cn } from "@/lib/chat-utils";
-import { getProviderColor } from "../../shared/chat-helpers";
+import { getProviderColorForTheme } from "../../shared/chat-helpers";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useSandboxHostTheme } from "@/contexts/sandbox-host-style-context";
 
 interface ProviderLogoProps {
   provider: string;
@@ -15,7 +16,9 @@ export function ProviderLogo({
   customProviderName,
 }: ProviderLogoProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const logoSrc = getProviderLogoFromProvider(provider, themeMode);
+  const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedThemeMode = sandboxHostTheme ?? themeMode;
+  const logoSrc = getProviderLogoFromProvider(provider, resolvedThemeMode);
 
   if (!logoSrc) {
     // Custom providers: first-letter badge matching the Settings tab style
@@ -28,7 +31,12 @@ export function ProviderLogo({
       );
     }
     return (
-      <div className={cn("h-3 w-3 rounded-sm", getProviderColor(provider))} />
+      <div
+        className={cn(
+          "h-3 w-3 rounded-sm",
+          getProviderColorForTheme(provider, resolvedThemeMode),
+        )}
+      />
     );
   } else {
     return (

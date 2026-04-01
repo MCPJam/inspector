@@ -1,15 +1,17 @@
+import { useMemo } from "react";
 import {
   Plus,
   MoreVertical,
   Copy,
   Trash2,
-  BarChart3,
   Sparkles,
   RotateCw,
   Loader2,
+  FileCode2,
 } from "lucide-react";
 import posthog from "posthog-js";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,6 +27,15 @@ import { cn } from "@/lib/utils";
 import { detectPlatform, detectEnvironment } from "@/lib/PosthogUtils";
 import { navigateToEvalsRoute } from "@/lib/evals-router";
 import type { EvalCase, EvalSuite } from "./types";
+import {
+  formatCaseTitleForSidebar,
+  getEvalCaseSidebarGroupKey,
+  groupEvalCasesForSidebar,
+} from "./case-name-utils";
+import {
+  RUN_INSIGHTS_SIDEBAR_LABEL,
+  RunInsightsNavRow,
+} from "./run-insights-sidebar";
 
 interface TestCaseListSidebarProps {
   testCases: EvalCase[];
@@ -35,19 +46,30 @@ interface TestCaseListSidebarProps {
   onDeleteTestCase: (testCaseId: string, testCaseTitle: string) => void;
   onDuplicateTestCase: (testCaseId: string) => void;
   onGenerateTests?: () => void;
+  /** Explore: copy agent brief with explore cases + embedded explore-to-sdk-evals skill */
+  onCopySdkEvalBrief?: () => void;
+  isCopyingSdkEvalBrief?: boolean;
   deletingTestCaseId: string | null;
   duplicatingTestCaseId: string | null;
   isGeneratingTests?: boolean;
   showingOverview: boolean;
   noServerSelected?: boolean;
   selectedServer?: string;
-  // Rerun props
   suite?: EvalSuite | null;
-  onRerun?: (suite: EvalSuite) => void;
-  rerunningSuiteId?: string | null;
   connectedServerNames?: Set<string>;
+  onRunTestCase?: (testCase: EvalCase) => void;
+  runningTestCaseId?: string | null;
   onNavigateToOverview?: (suiteId: string) => void;
   onSelectTestCase?: (suiteId: string, testCaseId: string) => void;
+  heading?: string;
+  emptyLabel?: string;
+  onToggleSelection?: (testCaseId: string, selected: boolean) => void;
+  selectedCaseIds?: string[];
+  showSelection?: boolean;
+  /** Playground: hide suite-level Run Insights row (replaced by breadcrumbs + run-detail sidebar). */
+  hideRunInsightsRow?: boolean;
+  /** Overrides nav row label below the header (playground uses e.g. "Runs"). */
+  insightsNavLabel?: string;
 }
 
 export function TestCaseListSidebar({
@@ -59,6 +81,8 @@ export function TestCaseListSidebar({
   onDeleteTestCase,
   onDuplicateTestCase,
   onGenerateTests,
+  onCopySdkEvalBrief,
+  isCopyingSdkEvalBrief = false,
   deletingTestCaseId,
   duplicatingTestCaseId,
   isGeneratingTests,
@@ -66,19 +90,34 @@ export function TestCaseListSidebar({
   noServerSelected,
   selectedServer,
   suite,
-  onRerun,
-  rerunningSuiteId,
   connectedServerNames,
+  onRunTestCase,
+  runningTestCaseId,
   onNavigateToOverview,
   onSelectTestCase,
+  heading = "Cases",
+  emptyLabel = "No cases yet",
+  onToggleSelection,
+  selectedCaseIds = [],
+  showSelection = false,
+  hideRunInsightsRow = false,
+  insightsNavLabel = RUN_INSIGHTS_SIDEBAR_LABEL,
 }: TestCaseListSidebarProps) {
-  // Calculate rerun availability
-  const suiteServers = suite?.environment?.servers || [];
-  const missingServers = suiteServers.filter(
-    (server) => !connectedServerNames?.has(server),
+  const selectedTestCase = useMemo(
+    () => testCases.find((testCase) => testCase._id === selectedTestId) ?? null,
+    [selectedTestId, testCases],
   );
-  const canRerun = missingServers.length === 0 && suite && onRerun;
-  const isRerunning = rerunningSuiteId === suite?._id;
+  const suiteServers = suite?.environment?.servers ?? [];
+  const missingServers = suiteServers.filter(
+    (serverName) => !connectedServerNames?.has(serverName),
+  );
+  const canRunSelectedCase =
+    Boolean(selectedTestCase) &&
+    Boolean(selectedTestCase?.models?.length) &&
+    Boolean(suite) &&
+    Boolean(onRunTestCase) &&
+    missingServers.length === 0;
+  const isRunningSelectedCase = runningTestCaseId === selectedTestCase?._id;
   const handleNavigateToOverview = () => {
     if (suiteId) {
       if (onNavigateToOverview) {
@@ -89,15 +128,20 @@ export function TestCaseListSidebar({
     }
   };
 
+  const sidebarCaseGroups = useMemo(
+    () => groupEvalCasesForSidebar(testCases),
+    [testCases],
+  );
+
   if (noServerSelected) {
     return (
       <>
         <div className="p-4 border-b">
-          <h2 className="text-sm font-semibold">Test Cases</h2>
+          <h2 className="text-sm font-semibold">{heading}</h2>
         </div>
         <div className="flex-1 flex items-center justify-center p-4">
           <p className="text-xs text-muted-foreground text-center">
-            Select a server to view test cases.
+            Select a server to view cases.
           </p>
         </div>
       </>
@@ -109,7 +153,7 @@ export function TestCaseListSidebar({
       {/* Header */}
       <div className="p-4 border-b flex items-center justify-between">
         <h2 className="text-sm font-semibold">
-          Test Cases
+          {heading}
           {selectedServer && (
             <span className="text-muted-foreground font-normal">
               {" "}
@@ -124,33 +168,46 @@ export function TestCaseListSidebar({
                 <Button
                   variant="ghost"
                   size="sm"
+                  aria-label="Run selected case"
                   onClick={() => {
-                    if (suite && onRerun) {
-                      posthog.capture("rerun_suite_button_clicked", {
+                    if (selectedTestCase && onRunTestCase) {
+                      posthog.capture("run_selected_case_button_clicked", {
                         location: "test_case_list_sidebar",
                         platform: detectPlatform(),
                         environment: detectEnvironment(),
+                        test_case_id: selectedTestCase._id,
                       });
-                      onRerun(suite);
+                      onRunTestCase(selectedTestCase);
                     }
                   }}
-                  disabled={!canRerun || isRerunning || testCases.length === 0}
+                  disabled={
+                    !canRunSelectedCase ||
+                    isRunningSelectedCase ||
+                    testCases.length === 0
+                  }
                   className="h-7 w-7 p-0"
                 >
                   <RotateCw
-                    className={cn("h-4 w-4", isRerunning && "animate-spin")}
+                    className={cn(
+                      "h-4 w-4",
+                      isRunningSelectedCase && "animate-spin",
+                    )}
                   />
                 </Button>
               </span>
             </TooltipTrigger>
             <TooltipContent>
               {testCases.length === 0
-                ? "Add test cases first"
-                : !canRerun && missingServers.length > 0
-                  ? `Connect the following servers: ${missingServers.join(", ")}`
-                  : isRerunning
-                    ? "Running..."
-                    : "Run all tests"}
+                ? "Add cases first"
+                : !selectedTestCase
+                  ? "Select a case first"
+                  : !selectedTestCase.models?.length
+                    ? "Add a model first"
+                    : missingServers.length > 0
+                      ? `Connect the following servers: ${missingServers.join(", ")}`
+                      : isRunningSelectedCase
+                        ? "Running..."
+                        : "Run selected case"}
             </TooltipContent>
           </Tooltip>
           <Tooltip>
@@ -182,11 +239,38 @@ export function TestCaseListSidebar({
               </span>
             </TooltipTrigger>
             <TooltipContent>
-              {isGeneratingTests
-                ? "Generating..."
-                : "Generate test cases with AI"}
+              {isGeneratingTests ? "Generating..." : "Generate cases with AI"}
             </TooltipContent>
           </Tooltip>
+          {onCopySdkEvalBrief ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Copy SDK eval agent brief"
+                    onClick={() => onCopySdkEvalBrief()}
+                    disabled={testCases.length === 0 || isCopyingSdkEvalBrief}
+                    className="h-7 w-7 p-0"
+                  >
+                    {isCopyingSdkEvalBrief ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <FileCode2 className="h-4 w-4" />
+                    )}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {testCases.length === 0
+                  ? "Add at least one case first"
+                  : isCopyingSdkEvalBrief
+                    ? "Copying…"
+                    : "Copy markdown brief with all cases and the explore-to-sdk-evals skill—paste into your coding agent to generate @mcpjam/sdk tests"}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -205,114 +289,180 @@ export function TestCaseListSidebar({
                 <Plus className="h-4 w-4" />
               </Button>
             </TooltipTrigger>
-            <TooltipContent>Create new test case</TooltipContent>
+            <TooltipContent>Create new case</TooltipContent>
           </Tooltip>
         </div>
       </div>
 
-      {/* Results Overview Button */}
-      {suiteId && (
-        <div
+      {/* Run Insights — opens latest completed run detail with metrics + vs-prior narrative when available */}
+      {suiteId && !hideRunInsightsRow ? (
+        <RunInsightsNavRow
+          selected={showingOverview}
           onClick={handleNavigateToOverview}
-          className={cn(
-            "flex items-center gap-2 px-4 py-2.5 text-sm cursor-pointer transition-colors border-b",
-            "hover:bg-accent/50",
-            showingOverview && "bg-accent font-medium",
-          )}
-        >
-          <BarChart3 className="h-4 w-4 text-muted-foreground" />
-          <span>Results & Runs</span>
-        </div>
-      )}
+          label={insightsNavLabel}
+        />
+      ) : null}
 
-      {/* Test Cases List */}
+      {/* Cases List */}
       <div className="flex-1 overflow-y-auto">
         {isLoading ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
-            Loading test cases...
+            Loading cases...
           </div>
         ) : isGeneratingTests ? (
           <div className="p-4 flex flex-col items-center justify-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" />
-            <span>Generating test cases...</span>
+            <span>Generating cases...</span>
           </div>
         ) : testCases.length === 0 ? (
           <div className="p-4 text-center text-xs text-muted-foreground">
-            No test cases yet
+            {emptyLabel}
           </div>
         ) : (
           <div className="py-2">
-            {testCases.map((testCase) => {
-              const isTestSelected = selectedTestId === testCase._id;
-              const isTestDeleting = deletingTestCaseId === testCase._id;
-              const isTestDuplicating = duplicatingTestCaseId === testCase._id;
+            {sidebarCaseGroups.map(({ groupKey, cases: groupCases }) => {
+              const showGroupLabel =
+                groupCases.length > 1 ||
+                groupCases.some(
+                  (c) =>
+                    getEvalCaseSidebarGroupKey(c.title || "") !==
+                    c.title?.trim(),
+                );
 
               return (
-                <div
-                  key={testCase._id}
-                  onClick={() => {
-                    if (suiteId) {
-                      if (onSelectTestCase) {
-                        onSelectTestCase(suiteId, testCase._id);
-                        return;
-                      }
-                      navigateToEvalsRoute({
-                        type: "test-edit",
-                        suiteId: suiteId,
-                        testId: testCase._id,
-                      });
-                    }
-                  }}
-                  className={cn(
-                    "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm hover:bg-accent/50 transition-colors cursor-pointer",
-                    isTestSelected && "bg-accent font-medium",
-                  )}
-                >
-                  <div className="flex-1 min-w-0 text-left flex items-center gap-1.5">
-                    <span className="truncate">{testCase.title}</span>
-                    {testCase.isNegativeTest && (
-                      <span
-                        className="text-[10px] text-orange-500 shrink-0"
-                        title="Negative test"
-                      >
-                        NEG
-                      </span>
-                    )}
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <button
-                        onClick={(e) => e.stopPropagation()}
-                        className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
-                        aria-label="Test case options"
-                      >
-                        <MoreVertical className="h-4 w-4" />
-                      </button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDuplicateTestCase(testCase._id);
+                <div key={groupKey} className="mb-1">
+                  {showGroupLabel ? (
+                    <div
+                      className="px-4 pt-2 pb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground truncate"
+                      title={groupKey}
+                    >
+                      {groupKey}
+                    </div>
+                  ) : null}
+                  {groupCases.map((testCase) => {
+                    const isTestSelected = selectedTestId === testCase._id;
+                    const isTestDeleting = deletingTestCaseId === testCase._id;
+                    const isTestDuplicating =
+                      duplicatingTestCaseId === testCase._id;
+                    const isCaseChecked = selectedCaseIds.includes(
+                      testCase._id,
+                    );
+                    const { line1, line2, fullTitle } =
+                      formatCaseTitleForSidebar(testCase.title || "");
+                    const useLineClampForTitle =
+                      line2 == null && fullTitle.length > 44;
+
+                    return (
+                      <div
+                        key={testCase._id}
+                        onClick={() => {
+                          if (suiteId) {
+                            if (onSelectTestCase) {
+                              onSelectTestCase(suiteId, testCase._id);
+                              return;
+                            }
+                            navigateToEvalsRoute({
+                              type: "test-edit",
+                              suiteId: suiteId,
+                              testId: testCase._id,
+                            });
+                          }
                         }}
-                        disabled={isTestDuplicating}
+                        className={cn(
+                          "group w-full flex items-center gap-1 px-4 py-2 text-left text-sm hover:bg-accent/50 transition-colors cursor-pointer",
+                          isTestSelected && "bg-accent font-medium",
+                        )}
+                        title={fullTitle}
                       >
-                        <Copy className="h-4 w-4 mr-2 text-foreground" />
-                        {isTestDuplicating ? "Duplicating..." : "Duplicate"}
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onDeleteTestCase(testCase._id, testCase.title);
-                        }}
-                        disabled={isTestDeleting}
-                        variant="destructive"
-                      >
-                        <Trash2 className="h-4 w-4 mr-2" />
-                        {isTestDeleting ? "Deleting..." : "Delete"}
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                        {showSelection && (
+                          <Checkbox
+                            checked={isCaseChecked}
+                            onCheckedChange={(checked) => {
+                              onToggleSelection?.(
+                                testCase._id,
+                                checked === true,
+                              );
+                            }}
+                            onClick={(e) => e.stopPropagation()}
+                            aria-label={`Select ${fullTitle}`}
+                          />
+                        )}
+                        <div className="flex-1 min-w-0 text-left flex flex-col gap-0.5">
+                          <div
+                            className={cn(
+                              "flex gap-1.5 min-w-0",
+                              useLineClampForTitle
+                                ? "items-start"
+                                : "items-center",
+                            )}
+                          >
+                            <span
+                              className={cn(
+                                "min-w-0 leading-tight",
+                                useLineClampForTitle
+                                  ? "line-clamp-2 break-words"
+                                  : "truncate",
+                              )}
+                            >
+                              {line1}
+                            </span>
+                            {testCase.isNegativeTest && (
+                              <span
+                                className="text-[10px] text-orange-500 shrink-0"
+                                title="Negative case"
+                              >
+                                NEG
+                              </span>
+                            )}
+                          </div>
+                          {line2 ? (
+                            <span
+                              className="truncate text-[11px] text-muted-foreground leading-tight"
+                              title={fullTitle}
+                            >
+                              {line2}
+                            </span>
+                          ) : null}
+                        </div>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <button
+                              onClick={(e) => e.stopPropagation()}
+                              className="shrink-0 p-1 hover:bg-accent/50 rounded transition-colors opacity-0 group-hover:opacity-100"
+                              aria-label="Case options"
+                            >
+                              <MoreVertical className="h-4 w-4" />
+                            </button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDuplicateTestCase(testCase._id);
+                              }}
+                              disabled={isTestDuplicating}
+                            >
+                              <Copy className="h-4 w-4 mr-2 text-foreground" />
+                              {isTestDuplicating
+                                ? "Duplicating..."
+                                : "Duplicate"}
+                            </DropdownMenuItem>
+                            <DropdownMenuItem
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onDeleteTestCase(testCase._id, testCase.title);
+                              }}
+                              disabled={isTestDeleting}
+                              variant="destructive"
+                            >
+                              <Trash2 className="h-4 w-4 mr-2" />
+                              {isTestDeleting ? "Deleting..." : "Delete"}
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
+                    );
+                  })}
                 </div>
               );
             })}

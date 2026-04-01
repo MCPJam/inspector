@@ -1,7 +1,10 @@
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
+import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
+import { sanitizeForConvexTransport } from "./convex-sanitize.js";
 
 type IterationStatus = "completed" | "failed" | "cancelled";
 
@@ -35,6 +38,7 @@ export type SuiteRunRecorder = {
     }>;
     usage: UsageTotals;
     messages: ModelMessage[];
+    spans?: EvalTraceSpan[];
     status?: IterationStatus;
     startedAt?: number;
     error?: string;
@@ -157,6 +161,7 @@ export const createSuiteRunRecorder = ({
       toolsCalled,
       usage,
       messages,
+      spans,
       status,
       startedAt,
       error,
@@ -193,9 +198,12 @@ export const createSuiteRunRecorder = ({
           status:
             iterationStatus === "completed" ? "completed" : iterationStatus,
           result,
-          actualToolCalls: toolsCalled,
+          actualToolCalls: sanitizeForConvexTransport(toolsCalled),
           tokensUsed: usage.totalTokens ?? 0,
-          messages,
+          messages: sanitizeForConvexTransport(messages),
+          ...(spans?.length
+            ? { spans: sanitizeForConvexTransport(spans) }
+            : {}),
           error,
           errorDetails,
         });
@@ -263,6 +271,10 @@ export const startSuiteRunWithRecorder = async ({
   passCriteria,
   serverIds,
   replayedFromRunId,
+  useCurrentSuiteConfig,
+  environmentOverride,
+  toolSnapshot,
+  toolSnapshotDebug,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -272,6 +284,16 @@ export const startSuiteRunWithRecorder = async ({
   };
   serverIds?: string[];
   replayedFromRunId?: string;
+  useCurrentSuiteConfig?: boolean;
+  environmentOverride?: {
+    servers: string[];
+    serverBindings?: Array<{
+      serverName: string;
+      workspaceServerId?: string;
+    }>;
+  };
+  toolSnapshot?: ServerToolSnapshot;
+  toolSnapshotDebug?: Record<string, unknown>;
 }) => {
   const response = await convexClient.mutation(
     "testSuites:startTestSuiteRun" as any,
@@ -280,6 +302,10 @@ export const startSuiteRunWithRecorder = async ({
       notes,
       passCriteria,
       replayedFromRunId,
+      useCurrentSuiteConfig,
+      environmentOverride,
+      toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
+      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
     },
   );
 

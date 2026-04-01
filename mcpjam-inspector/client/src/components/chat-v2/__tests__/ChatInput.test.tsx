@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import {
+  SandboxHostStyleProvider,
+  SandboxHostThemeProvider,
+} from "@/contexts/sandbox-host-style-context";
 import type { ModelDefinition } from "@/shared/types";
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
 
 // Mock child components
 vi.mock("../chat-input/model-selector", () => ({
@@ -160,6 +168,21 @@ describe("ChatInput", () => {
         "bg-[#1f1f1f]",
       );
     });
+
+    it("keeps the textarea transparent inside a dark host-scoped composer", () => {
+      render(
+        <SandboxHostStyleProvider value="chatgpt">
+          <SandboxHostThemeProvider value="dark">
+            <ChatInput {...defaultProps} />
+          </SandboxHostThemeProvider>
+        </SandboxHostStyleProvider>,
+      );
+
+      expect(screen.getByPlaceholderText("Type your message...")).toHaveClass(
+        "bg-transparent",
+        "dark:bg-transparent",
+      );
+    });
   });
 
   describe("input handling", () => {
@@ -178,6 +201,28 @@ describe("ChatInput", () => {
 
       const textarea = screen.getByPlaceholderText("Type your message...");
       expect(textarea).toHaveValue("Test message");
+    });
+
+    it("places the caret at the end when requested", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Draw me an MCP architecture diagram"
+          moveCaretToEndTrigger={1}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+
+      expect(document.activeElement).toBe(textarea);
+      expect(textarea.selectionStart).toBe(
+        "Draw me an MCP architecture diagram".length,
+      );
+      expect(textarea.selectionEnd).toBe(
+        "Draw me an MCP architecture diagram".length,
+      );
     });
   });
 

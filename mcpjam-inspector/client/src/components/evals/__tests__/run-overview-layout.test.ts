@@ -73,4 +73,24 @@ describe("resolveRunsTableLayout", () => {
       enableHorizontalScroll: true,
     });
   });
+
+  it("omits selection column width when includeSelectionColumn is false", () => {
+    const withSelection = estimateRunsTableRequiredWidth({
+      hasTokenData: true,
+      hasCiMetadata: true,
+      showTokens: true,
+      showRunBy: true,
+      metadataMode: "full",
+      includeSelectionColumn: true,
+    });
+    const withoutSelection = estimateRunsTableRequiredWidth({
+      hasTokenData: true,
+      hasCiMetadata: true,
+      showTokens: true,
+      showRunBy: true,
+      metadataMode: "full",
+      includeSelectionColumn: false,
+    });
+    expect(withoutSelection).toBeLessThan(withSelection);
+  });
 });

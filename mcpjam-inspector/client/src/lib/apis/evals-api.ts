@@ -1,5 +1,6 @@
 import { API_ENDPOINTS } from "@/components/evals/constants";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
+import { getSessionToken } from "@/lib/session-token";
 import {
   buildHostedEvalServerBatchRequest,
   buildHostedServerBatchRequest,
@@ -14,6 +15,8 @@ export const EVALS_API_ENDPOINTS = {
     generateNegativeTests: "/api/mcp/evals/generate-negative-tests",
     runTestCase: "/api/mcp/evals/run-test-case",
     replayRun: "/api/mcp/evals/replay-run",
+    traceRepairStart: "/api/mcp/evals/trace-repair/start",
+    traceRepairStop: "/api/mcp/evals/trace-repair/stop",
   },
   hosted: {
     run: "/api/web/evals/run",
@@ -21,6 +24,8 @@ export const EVALS_API_ENDPOINTS = {
     generateNegativeTests: "/api/web/evals/generate-negative-tests",
     runTestCase: "/api/web/evals/run-test-case",
     replayRun: "/api/web/evals/replay-run",
+    traceRepairStart: "/api/web/evals/trace-repair/start",
+    traceRepairStop: "/api/web/evals/trace-repair/stop",
   },
 } as const;
 
@@ -131,7 +136,11 @@ async function postEvalRequest<TResponse>(
 
   if (!response.ok) {
     const errorBody = body as
-      | { message?: unknown; error?: unknown }
+      | {
+          message?: unknown;
+          error?: unknown;
+          code?: unknown;
+        }
       | null
       | undefined;
     const message =
@@ -236,5 +245,51 @@ export async function generateNegativeEvalTests(
         EVALS_API_ENDPOINTS.hosted.generateNegativeTests,
         mergeHostedServerBatch(request) as JsonRecord,
       ),
+  });
+}
+
+export type StartTraceRepairParams =
+  | {
+      scope: "suite";
+      suiteId: string;
+      sourceRunId: string;
+      modelApiKeys?: Record<string, string>;
+    }
+  | {
+      scope: "case";
+      suiteId: string;
+      sourceRunId: string;
+      sourceIterationId: string;
+      testCaseId: string;
+      modelApiKeys?: Record<string, string>;
+    };
+
+export async function startTraceRepair(
+  params: StartTraceRepairParams,
+): Promise<{ success: boolean; jobId: string; existing?: boolean }> {
+  return runByMode({
+    local: () =>
+      postEvalRequest(EVALS_API_ENDPOINTS.local.traceRepairStart, {
+        ...params,
+        convexAuthToken: getSessionToken(),
+      } as JsonRecord),
+    hosted: () =>
+      postEvalRequest(EVALS_API_ENDPOINTS.hosted.traceRepairStart, {
+        ...params,
+      } as JsonRecord),
+  });
+}
+
+export async function stopTraceRepair(jobId: string): Promise<void> {
+  await runByMode({
+    local: () =>
+      postEvalRequest(EVALS_API_ENDPOINTS.local.traceRepairStop, {
+        jobId,
+        convexAuthToken: getSessionToken(),
+      } as JsonRecord),
+    hosted: () =>
+      postEvalRequest(EVALS_API_ENDPOINTS.hosted.traceRepairStop, {
+        jobId,
+      } as JsonRecord),
   });
 }

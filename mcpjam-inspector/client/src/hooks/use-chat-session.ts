@@ -55,6 +55,7 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
+import { buildHostedServerRequest } from "@/lib/apis/web/context";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -274,6 +275,10 @@ export function useChatSession({
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
   const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
+  const selectedServersSignature = useMemo(
+    () => selectedServers.join("\u0000"),
+    [selectedServers],
+  );
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -384,6 +389,13 @@ export function useChatSession({
     // (via hostedContextNotReady), so this branch only runs for guests.
     const buildHostedBody = () => {
       if (!hostedWorkspaceId) {
+        if (directGuestMode && selectedServers.length > 0) {
+          return {
+            chatSessionId,
+            ...buildHostedServerRequest(selectedServers[0]),
+          };
+        }
+
         return {
           chatSessionId,
         };
@@ -431,6 +443,7 @@ export function useChatSession({
     temperature,
     systemPrompt,
     selectedServers,
+    directGuestMode,
     hostedWorkspaceId,
     chatSessionId,
     hostedSelectedServerIds,
@@ -656,10 +669,18 @@ export function useChatSession({
   useEffect(() => {
     const fetchToolsMetadata = async () => {
       if (selectedServers.length === 0) {
-        setToolsMetadata({});
-        setToolServerMap({});
-        setMcpToolsTokenCount(null);
-        setMcpToolsTokenCountLoading(false);
+        setToolsMetadata((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous,
+        );
+        setToolServerMap((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous,
+        );
+        setMcpToolsTokenCount((previous) =>
+          previous !== null ? null : previous,
+        );
+        setMcpToolsTokenCountLoading((previous) =>
+          previous ? false : previous,
+        );
         return;
       }
 
@@ -705,7 +726,12 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
+  }, [
+    selectedServersSignature,
+    selectedModel,
+    hostedShareToken,
+    hostedSandboxToken,
+  ]);
 
   // System prompt token count
   useEffect(() => {

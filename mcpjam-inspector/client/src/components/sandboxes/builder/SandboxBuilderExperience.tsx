@@ -14,8 +14,9 @@ import {
 import { readBuilderSession, clearBuilderSession } from "@/lib/sandbox-session";
 import { SandboxIndexPage } from "./SandboxIndexPage";
 import { SandboxBuilderView } from "./SandboxBuilderView";
-import { getDefaultHostedModelId, SANDBOX_STARTERS } from "./drafts";
-import type { SandboxDraftConfig } from "./types";
+import { SandboxLauncher } from "./SandboxLauncher";
+import { getDefaultHostedModelId } from "./drafts";
+import type { SandboxDraftConfig, SandboxStarterDefinition } from "./types";
 
 interface SandboxBuilderExperienceProps {
   workspaceId: string | null;
@@ -55,8 +56,9 @@ export default function SandboxBuilderExperience({
   );
   const [draft, setDraft] = useState<SandboxDraftConfig | null>(null);
   const [restoredViewMode, setRestoredViewMode] = useState<
-    "builder" | "insights" | "preview" | undefined
+    "setup" | "preview" | "usage" | undefined
   >();
+  const [starterLauncherOpen, setStarterLauncherOpen] = useState(false);
 
   // Restore builder session from sessionStorage when workspaceId becomes
   // available. After an OAuth redirect the page reloads and Convex needs to
@@ -79,23 +81,39 @@ export default function SandboxBuilderExperience({
     startTransition(() => {
       setSelectedSandboxId(session.sandboxId);
       setDraft((session.draft as SandboxDraftConfig | null) ?? null);
-      setRestoredViewMode(
-        session.viewMode as "builder" | "insights" | "preview" | undefined,
-      );
+      const vm = session.viewMode;
+      if (vm === "builder") {
+        setRestoredViewMode("setup");
+      } else if (vm === "insights") {
+        setRestoredViewMode("usage");
+      } else {
+        setRestoredViewMode(vm as "setup" | "preview" | "usage" | undefined);
+      }
     });
   }, [isCreateSandboxDisabled, isCreateSandboxLoading, workspaceId]);
 
-  const handleCreateSandbox = useCallback(() => {
+  const applyStarterDraft = useCallback((starter: SandboxStarterDefinition) => {
     if (isCreateSandboxDisabled || isCreateSandboxLoading) {
       return;
     }
-    const blankStarter = SANDBOX_STARTERS.find((s) => s.id === "blank")!;
     startTransition(() => {
       setSelectedSandboxId(null);
-      setDraft(blankStarter.createDraft(getDefaultHostedModelId()));
+      setDraft(starter.createDraft(getDefaultHostedModelId()));
       setRestoredViewMode(undefined);
+      setStarterLauncherOpen(false);
     });
   }, [isCreateSandboxDisabled, isCreateSandboxLoading]);
+
+  const handleOpenStarterLauncher = useCallback(() => {
+    setStarterLauncherOpen(true);
+  }, []);
+
+  const handleSelectStarterFromLauncher = useCallback(
+    (starter: SandboxStarterDefinition) => {
+      applyStarterDraft(starter);
+    },
+    [applyStarterDraft],
+  );
 
   const handleSavedDraft = useCallback((sandbox: SandboxSettings) => {
     startTransition(() => {
@@ -119,6 +137,11 @@ export default function SandboxBuilderExperience({
 
   return (
     <>
+      <SandboxLauncher
+        open={starterLauncherOpen}
+        onOpenChange={setStarterLauncherOpen}
+        onSelectStarter={handleSelectStarterFromLauncher}
+      />
       {isBuilderOpen ? (
         <SandboxBuilderView
           workspaceId={workspaceId}
@@ -147,7 +170,8 @@ export default function SandboxBuilderExperience({
               setRestoredViewMode(undefined);
             })
           }
-          onCreateSandbox={handleCreateSandbox}
+          onOpenStarterLauncher={handleOpenStarterLauncher}
+          onSelectStarter={applyStarterDraft}
           isCreateSandboxDisabled={isCreateSandboxDisabled}
           isCreateSandboxLoading={isCreateSandboxLoading}
           createSandboxUpsell={createSandboxUpsell}

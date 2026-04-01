@@ -26,6 +26,20 @@ describe("MCPClientManager", () => {
       );
       expect(manager).toBeInstanceOf(MCPClientManager);
     });
+
+    it("lazyConnect skips eager connect so listServers is empty until connectToServer", () => {
+      const manager = new MCPClientManager(
+        {
+          pending: {
+            url: "http://127.0.0.1:9/mcp",
+            timeout: 1000,
+          },
+        },
+        { lazyConnect: true }
+      );
+      expect(manager.listServers()).toEqual([]);
+      expect(manager.getConnectionStatus("pending")).toBe("disconnected");
+    });
   });
 
   describe("STDIO server", () => {
@@ -198,6 +212,56 @@ describe("MCPClientManager", () => {
             headers: {
               "X-Custom": "1",
             },
+          },
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("returns tokenless replay configs for public HTTP servers with empty headers", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("public-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {},
+          },
+          preferSSE: true,
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([
+        {
+          serverId: "public-http",
+          url: "https://example.com/mcp",
+          preferSSE: true,
+        },
+      ]);
+    });
+
+    it("skips stdio servers when building replay configs", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("stdio-server", {
+        config: {
+          command: "node",
+          args: ["server.js"],
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("skips HTTP configs with unsupported requestInit options", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("request-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            method: "POST",
           },
         },
         timeout: 1000,

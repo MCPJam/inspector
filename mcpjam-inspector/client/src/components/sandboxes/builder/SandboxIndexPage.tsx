@@ -1,5 +1,15 @@
 import { startTransition, useDeferredValue, useMemo, useState } from "react";
-import { CreditCard, Layers3, List, Loader2, Plus, Search } from "lucide-react";
+import {
+  CreditCard,
+  LayoutGrid,
+  List,
+  Loader2,
+  Plus,
+  Search,
+  Sparkles,
+  Users,
+  Wand2,
+} from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -8,9 +18,11 @@ import { Card, CardInteractive } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import type { SandboxListItem } from "@/hooks/useSandboxes";
 import {
-  getSandboxHostLabel,
   getSandboxHostLogo,
+  getSandboxHostStyleShortLabel,
 } from "@/lib/sandbox-host-style";
+import { SANDBOX_STARTERS } from "./drafts";
+import type { SandboxStarterDefinition } from "./types";
 
 // ---------------------------------------------------------------------------
 // SandboxSummaryCard — info-first layout
@@ -47,7 +59,7 @@ function SandboxSummaryCard({
             alt=""
             className="size-3"
           />
-          {getSandboxHostLabel(sandbox.hostStyle)}
+          {getSandboxHostStyleShortLabel(sandbox.hostStyle)}
         </Badge>
         <Badge
           variant="secondary"
@@ -66,6 +78,12 @@ function SandboxSummaryCard({
   );
 }
 
+const STARTER_ICONS = {
+  "internal-qa": Users,
+  "icp-demo": Sparkles,
+  blank: Wand2,
+} as const;
+
 // ---------------------------------------------------------------------------
 // SandboxIndexPage
 // ---------------------------------------------------------------------------
@@ -74,7 +92,10 @@ interface SandboxIndexPageProps {
   sandboxes: SandboxListItem[] | undefined;
   isLoading: boolean;
   onOpenSandbox: (sandboxId: string) => void;
-  onCreateSandbox: () => void;
+  /** Opens the starter chooser (e.g. Command dialog). */
+  onOpenStarterLauncher: () => void;
+  /** Creates a builder draft from a starter (inline tiles or launcher). */
+  onSelectStarter: (starter: SandboxStarterDefinition) => void;
   isCreateSandboxDisabled?: boolean;
   isCreateSandboxLoading?: boolean;
   createSandboxUpsell?: {
@@ -91,15 +112,14 @@ export function SandboxIndexPage({
   sandboxes,
   isLoading,
   onOpenSandbox,
-  onCreateSandbox,
+  onOpenStarterLauncher,
+  onSelectStarter,
   isCreateSandboxDisabled = false,
   isCreateSandboxLoading = false,
   createSandboxUpsell = null,
 }: SandboxIndexPageProps) {
   const [query, setQuery] = useState("");
-  const [viewMode, setViewMode] = useState<"architecture" | "list">(
-    "architecture",
-  );
+  const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
   const deferredQuery = useDeferredValue(query);
 
   const filteredSandboxes = useMemo(() => {
@@ -120,6 +140,12 @@ export function SandboxIndexPage({
     return base;
   }, [deferredQuery, sandboxes]);
 
+  const totalCount = sandboxes?.length ?? 0;
+  const isFirstRunEmpty =
+    !isLoading && totalCount === 0 && deferredQuery.trim() === "";
+  const isSearchEmpty =
+    !isLoading && totalCount > 0 && filteredSandboxes.length === 0;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="border-b px-6 py-5">
@@ -130,7 +156,7 @@ export function SandboxIndexPage({
           <Button
             size="lg"
             className="gap-2 rounded-xl"
-            onClick={onCreateSandbox}
+            onClick={onOpenStarterLauncher}
             disabled={isCreateSandboxDisabled || isCreateSandboxLoading}
           >
             <Plus className="size-4" />
@@ -138,39 +164,41 @@ export function SandboxIndexPage({
           </Button>
         </div>
 
-        <div className="mt-6 flex flex-wrap items-center gap-3">
-          <div className="relative min-w-[260px] flex-1">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(event) => {
-                const nextValue = event.target.value;
-                startTransition(() => setQuery(nextValue));
-              }}
-              placeholder="Search sandboxes, servers, or descriptions"
-              className="pl-9"
-            />
-          </div>
+        {!isFirstRunEmpty ? (
+          <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="relative min-w-[260px] flex-1">
+              <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={query}
+                onChange={(event) => {
+                  const nextValue = event.target.value;
+                  startTransition(() => setQuery(nextValue));
+                }}
+                placeholder="Search sandboxes, servers, or descriptions"
+                className="pl-9"
+              />
+            </div>
 
-          <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-card/60 p-1">
-            <Button
-              variant={viewMode === "architecture" ? "secondary" : "ghost"}
-              size="sm"
-              className="rounded-lg"
-              onClick={() => setViewMode("architecture")}
-            >
-              <Layers3 className="mr-1.5 size-4" />
-              Architecture
-            </Button>
-            <Button
-              variant={viewMode === "list" ? "secondary" : "ghost"}
-              size="sm"
-              className="rounded-lg"
-              onClick={() => setViewMode("list")}
-            >
-              <List className="mr-1.5 size-4" />
-              List
-            </Button>
+            <div className="flex items-center gap-2 rounded-xl border border-border/70 bg-card/60 p-1">
+              <Button
+                variant={viewMode === "cards" ? "secondary" : "ghost"}
+                size="sm"
+                className="rounded-lg"
+                onClick={() => setViewMode("cards")}
+              >
+                <LayoutGrid className="mr-1.5 size-4" />
+                Cards
+              </Button>
+              <Button
+                variant={viewMode === "list" ? "secondary" : "ghost"}
+                size="sm"
+                className="rounded-lg"
+                onClick={() => setViewMode("list")}
+              >
+                <List className="mr-1.5 size-4" />
+                List
+              </Button>
+            </div>
           </div>
         </div>
 
@@ -217,25 +245,72 @@ export function SandboxIndexPage({
           <div className="flex h-full items-center justify-center">
             <Loader2 className="size-5 animate-spin text-muted-foreground" />
           </div>
-        ) : filteredSandboxes.length === 0 ? (
+        ) : isFirstRunEmpty ? (
+          <div className="mx-auto flex max-w-3xl flex-col gap-8">
+            <div>
+              <h3 className="text-2xl font-semibold tracking-tight">
+                Create your first sandbox
+              </h3>
+              <p className="mt-2 text-sm text-muted-foreground">
+                Pick a starter to open the builder with realistic defaults, or
+                start blank. You can change everything before saving.
+              </p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-1 md:grid-cols-3">
+              {SANDBOX_STARTERS.map((starter) => {
+                const Icon = STARTER_ICONS[starter.id] ?? Sparkles;
+                return (
+                  <button
+                    key={starter.id}
+                    type="button"
+                    onClick={() => onSelectStarter(starter)}
+                    className="flex flex-col rounded-[28px] border border-border/70 bg-card/70 p-5 text-left shadow-sm transition-colors hover:border-primary/35 hover:bg-card"
+                  >
+                    <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35">
+                      <Icon className="size-5 text-muted-foreground" />
+                    </span>
+                    <span className="mt-4 font-semibold leading-snug">
+                      {starter.title}
+                    </span>
+                    <span className="mt-2 line-clamp-3 text-sm text-muted-foreground">
+                      {starter.description}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex justify-center pb-4">
+              <Button
+                variant="outline"
+                size="lg"
+                className="rounded-xl"
+                onClick={onOpenStarterLauncher}
+              >
+                <Plus className="mr-2 size-4" />
+                More options
+              </Button>
+            </div>
+          </div>
+        ) : isSearchEmpty ? (
           <Card className="flex min-h-[320px] flex-col items-center justify-center rounded-[28px] border-dashed text-center">
             <div className="flex size-14 items-center justify-center rounded-2xl border border-border/60 bg-muted/30">
               <Search className="size-5 text-muted-foreground" />
             </div>
-            <h3 className="mt-5 text-xl font-semibold">No sandboxes found</h3>
+            <h3 className="mt-5 text-xl font-semibold">
+              No matching sandboxes
+            </h3>
             <p className="mt-2 max-w-md text-sm text-muted-foreground">
-              Create a new sandbox or broaden the current search.
+              Try a different search, or clear the filter to see all sandboxes.
             </p>
             <Button
+              variant="outline"
               className="mt-5 rounded-xl"
-              onClick={onCreateSandbox}
-              disabled={isCreateSandboxDisabled || isCreateSandboxLoading}
+              onClick={() => setQuery("")}
             >
-              <Plus className="mr-1.5 size-4" />
-              Create sandbox
+              Clear search
             </Button>
           </Card>
-        ) : viewMode === "architecture" ? (
+        ) : viewMode === "cards" ? (
           <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
             {filteredSandboxes.map((sandbox) => (
               <SandboxSummaryCard
@@ -263,7 +338,9 @@ export function SandboxIndexPage({
                   </p>
                 </div>
                 <div className="ml-4 flex shrink-0 items-center gap-2">
-                  <Badge variant="outline">{sandbox.hostStyle}</Badge>
+                  <Badge variant="outline">
+                    {getSandboxHostStyleShortLabel(sandbox.hostStyle)}
+                  </Badge>
                   <Badge variant="outline">{sandbox.serverCount} servers</Badge>
                 </div>
               </button>

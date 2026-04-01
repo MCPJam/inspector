@@ -2,43 +2,56 @@ import { useMemo, useState } from "react";
 import { X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
-import { getIterationBorderColor, formatRunId } from "./helpers";
+import {
+  evalStatusLeftBorderClasses,
+  formatRunId,
+  pickLatestCompletedRun,
+} from "./helpers";
+import { useRunInsights } from "./use-run-insights";
+import { findRunInsightForCase } from "./run-insight-helpers";
 import { IterationDetails } from "./iteration-details";
 import type { EvalCase, EvalIteration, EvalSuiteRun } from "./types";
 
 interface TestCaseDetailViewProps {
   testCase: EvalCase;
   iterations: EvalIteration[];
-  runs: EvalSuiteRun[];
   onBack: () => void;
   onViewRun?: (runId: string) => void;
   serverNames?: string[];
   suiteName?: string;
   onNavigateToSuite?: () => void;
+  runs?: EvalSuiteRun[];
 }
 
 export function TestCaseDetailView({
   testCase,
   iterations,
-  runs,
   onBack,
   onViewRun,
   serverNames = [],
   suiteName,
   onNavigateToSuite,
+  runs = [],
 }: TestCaseDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
-  // Filter out iterations from inactive runs
-  const activeIterations = useMemo(() => {
-    const inactiveRunIds = new Set(
-      runs.filter((run) => run.isActive === false).map((run) => run._id),
-    );
-    return iterations.filter(
-      (iter) => !iter.suiteRunId || !inactiveRunIds.has(iter.suiteRunId),
-    );
-  }, [iterations, runs]);
+  const latestCompletedRun = useMemo(
+    () => pickLatestCompletedRun(runs),
+    [runs],
+  );
+
+  useRunInsights(latestCompletedRun, { autoRequest: true });
+
+  const latestCaseInsight = useMemo(
+    () =>
+      findRunInsightForCase(latestCompletedRun, {
+        caseKey: testCase.caseKey,
+        testCaseId: testCase._id,
+      }),
+    [latestCompletedRun, testCase.caseKey, testCase._id],
+  );
 
   // Model breakdown
   const modelBreakdown = useMemo(() => {
@@ -53,7 +66,7 @@ export function TestCaseDetailView({
       }
     >();
 
-    activeIterations.forEach((iteration) => {
+    iterations.forEach((iteration) => {
       const snapshot = iteration.testCaseSnapshot;
       if (!snapshot) return;
 
@@ -94,18 +107,18 @@ export function TestCaseDetailView({
         failed: stats.failed,
       }))
       .sort((a, b) => b.passRate - a.passRate);
-  }, [activeIterations]);
+  }, [iterations]);
 
   // Compute overall stats
   const overallStats = useMemo(() => {
-    const results = activeIterations.map((i) => computeIterationResult(i));
+    const results = iterations.map((i) => computeIterationResult(i));
     const passed = results.filter((r) => r === "passed").length;
     const failed = results.filter((r) => r === "failed").length;
     const total = passed + failed;
     const passRate = total > 0 ? Math.round((passed / total) * 100) : 0;
 
     // Avg duration
-    const completed = activeIterations.filter(
+    const completed = iterations.filter(
       (i) => i.startedAt && i.updatedAt && i.result !== "pending",
     );
     const avgDuration =
@@ -117,7 +130,7 @@ export function TestCaseDetailView({
         : 0;
 
     return { passed, failed, total, passRate, avgDuration };
-  }, [activeIterations]);
+  }, [iterations]);
 
   const formatDurationHelper = (ms: number) => {
     if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -131,7 +144,7 @@ export function TestCaseDetailView({
   return (
     <div className="space-y-4 overflow-y-auto h-full p-0.5">
       {/* Breadcrumb + Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-2">
         <div>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground mb-1">
             {suiteName && onNavigateToSuite && (
@@ -156,10 +169,39 @@ export function TestCaseDetailView({
             </p>
           )}
         </div>
-        <Button variant="ghost" size="icon" onClick={onBack}>
-          <X className="h-4 w-4" />
-        </Button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="ghost" size="icon" onClick={onBack}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
       </div>
+
+      {latestCompletedRun ? (
+        <div className="rounded-lg border bg-card text-card-foreground p-3">
+          <h3 className="text-xs font-semibold text-muted-foreground mb-1.5">
+            Latest run insight
+          </h3>
+          {latestCompletedRun.runInsightsStatus === "pending" ? (
+            <span className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+              Generating suite run insights…
+            </span>
+          ) : latestCompletedRun.runInsightsStatus === "failed" ? (
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              Run insights did not complete. Open the latest completed run from
+              this suite to retry generation.
+            </p>
+          ) : latestCaseInsight ? (
+            <p className="text-sm leading-relaxed">
+              {latestCaseInsight.summary}
+            </p>
+          ) : (
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              No notable change in the last two runs.
+            </p>
+          )}
+        </div>
+      ) : null}
 
       {/* Hero Stats */}
       {overallStats.total > 0 && (
@@ -236,7 +278,7 @@ export function TestCaseDetailView({
         <Label className="text-xs font-medium text-muted-foreground">
           Iterations
         </Label>
-        {activeIterations.length === 0 ? (
+        {iterations.length === 0 ? (
           <div className="py-12 text-center text-sm text-muted-foreground">
             No iterations found for this test.
           </div>
@@ -258,13 +300,13 @@ export function TestCaseDetailView({
             </div>
             {/* Failing iterations first */}
             {(() => {
-              const failing = activeIterations.filter(
+              const failing = iterations.filter(
                 (i) => computeIterationResult(i) === "failed",
               );
-              const passing = activeIterations.filter(
+              const passing = iterations.filter(
                 (i) => computeIterationResult(i) === "passed",
               );
-              const other = activeIterations.filter((i) => {
+              const other = iterations.filter((i) => {
                 const r = computeIterationResult(i);
                 return r !== "failed" && r !== "passed";
               });
@@ -278,7 +320,12 @@ export function TestCaseDetailView({
                   ? Math.max(completedAt - startedAt, 0)
                   : null;
               const actualToolCalls = iteration.actualToolCalls || [];
+              const computedResult = computeIterationResult(iteration);
               const isPending = iteration.result === "pending";
+              const isLive =
+                iteration.status === "pending" ||
+                iteration.status === "running" ||
+                computedResult === "pending";
               const isOpen = openIterationId === iteration._id;
 
               const formatDuration = (ms: number) => {
@@ -293,12 +340,16 @@ export function TestCaseDetailView({
               return (
                 <div
                   key={iteration._id}
-                  className={`relative ${isPending ? "opacity-60" : ""}`}
+                  className={cn(
+                    "relative border-l-2",
+                    evalStatusLeftBorderClasses(
+                      isLive ? "running" : computedResult,
+                    ),
+                    isPending && "opacity-60",
+                  )}
                 >
-                  <div
-                    className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(iteration.result)}`}
-                  />
                   <button
+                    title={`Iteration ${computedResult}`}
                     onClick={() =>
                       setOpenIterationId(isOpen ? null : iteration._id)
                     }
@@ -313,8 +364,8 @@ export function TestCaseDetailView({
                         )}
                       </div>
                       <div className="flex min-w-0 flex-1 items-center gap-2">
-                        <span className="text-xs font-medium capitalize">
-                          {iteration.result}
+                        <span className="text-xs font-medium truncate">
+                          {snapshot?.title ?? "Iteration"}
                         </span>
                       </div>
                     </div>

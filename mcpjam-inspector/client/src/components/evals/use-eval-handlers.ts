@@ -14,17 +14,28 @@ import {
   navigateToCiEvalsRoute,
   type CiEvalsRoute,
 } from "@/lib/ci-evals-router";
-import type { EvalSuite, EvalSuiteOverviewEntry, EvalSuiteRun } from "./types";
+import type {
+  EvalCase,
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+} from "./types";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   buildEvalConvexAuthPayload,
-  generateEvalTests,
   getEvalApiEndpoints,
   runEvals,
+  runEvalTestCase,
 } from "@/lib/apis/evals-api";
-import { isHostedMode } from "@/lib/apis/mode-client";
+import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
+import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
+import {
+  getDefaultTestCaseModelValue,
+  prepareSingleTestCaseRun,
+} from "./single-test-case-runner";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -32,6 +43,8 @@ interface UseEvalHandlersProps {
   selectedSuiteId: string | null;
   selectedTestId: string | null;
   workspaceId?: string | null;
+  connectedServerNames?: Set<string>;
+  latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
    * When `ci-evals`, navigation after test-case mutations stays on CI evals
    * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
@@ -48,6 +61,8 @@ export function useEvalHandlers({
   selectedSuiteId,
   selectedTestId,
   workspaceId = null,
+  connectedServerNames,
+  latestRunBySuiteId,
   evalsNavigationContext = "evals",
 }: UseEvalHandlersProps) {
   const convex = useConvex();
@@ -56,6 +71,9 @@ export function useEvalHandlers({
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
+  const [runningTestCaseId, setRunningTestCaseId] = useState<string | null>(
+    null,
+  );
   const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
@@ -192,7 +210,7 @@ export function useEvalHandlers({
 
       if (!run.hasServerReplayConfig) {
         toast.error(
-          "This CI run can't be replayed because it doesn't have stored credentials.",
+          "This CI run can't be replayed because it doesn't have stored replay config.",
         );
         return;
       }
@@ -258,6 +276,7 @@ export function useEvalHandlers({
             type: "run-detail",
             suiteId: result.suiteId,
             runId: result.runId,
+            insightsFocus: true,
           });
         }
 
@@ -290,15 +309,36 @@ export function useEvalHandlers({
     async (suite: EvalSuite) => {
       if (rerunningSuiteId) return;
 
-      const latestRun = selectedSuiteEntry?.latestRun;
+      const latestRun =
+        latestRunBySuiteId?.get(suite._id) ??
+        (selectedSuiteEntry?.suite._id === suite._id
+          ? selectedSuiteEntry.latestRun
+          : null);
+      const rerunEligibility = getSuiteReplayEligibility({
+        suiteServers: suite.environment?.servers,
+        connectedServerNames,
+        latestRun,
+      });
+
       if (
-        isHostedMode() &&
-        suite.source === "sdk" &&
-        latestRun?._id &&
-        latestRun.hasServerReplayConfig
+        rerunEligibility.canReplayFallback &&
+        rerunEligibility.replayableLatestRun?._id
       ) {
-        await handleReplayRun(suite, latestRun);
+        await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
         return;
+      }
+
+      if (!rerunEligibility.canRunLive) {
+        if (!rerunEligibility.hasServersConfigured) {
+          toast.error("No MCP servers are configured for this suite.");
+          return;
+        }
+        if (rerunEligibility.missingServers.length > 0) {
+          toast.error(
+            `Connect ${rerunEligibility.missingServers.join(", ")} to run this suite.`,
+          );
+          return;
+        }
       }
 
       const executionContext = await getSuiteExecutionContext(suite);
@@ -372,10 +412,92 @@ export function useEvalHandlers({
     [
       rerunningSuiteId,
       selectedSuiteEntry,
+      latestRunBySuiteId,
+      connectedServerNames,
       getAccessToken,
       workspaceId,
       getSuiteExecutionContext,
       handleReplayRun,
+    ],
+  );
+
+  const handleRunTestCase = useCallback(
+    async (
+      suite: EvalSuite,
+      testCase: EvalCase,
+      options?: { location?: string; selectedModel?: string | null },
+    ) => {
+      if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
+        return null;
+      }
+
+      const modelValue = getDefaultTestCaseModelValue(testCase);
+      if (!modelValue) {
+        toast.error("Add a model first");
+        return null;
+      }
+
+      setRunningTestCaseId(testCase._id);
+
+      try {
+        const preparedRun = await prepareSingleTestCaseRun({
+          workspaceId,
+          suite,
+          testCase,
+          getAccessToken,
+          getToken,
+          hasToken,
+          selectedModel: options?.selectedModel,
+        });
+
+        posthog.capture("eval_test_case_run_started", {
+          location: options?.location ?? "test_case_list_sidebar",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          test_case_id: testCase._id,
+          model: preparedRun.modelValue,
+        });
+
+        const data = await runEvalTestCase(preparedRun.request);
+        const iteration = data?.iteration;
+
+        if (iteration) {
+          const startedAt = iteration.startedAt ?? iteration.createdAt;
+          const completedAt = iteration.updatedAt ?? iteration.createdAt;
+          const durationMs =
+            startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
+
+          posthog.capture("eval_test_case_run_completed", {
+            location: options?.location ?? "test_case_list_sidebar",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            suite_id: suite._id,
+            test_case_id: testCase._id,
+            model: preparedRun.modelValue,
+            result: iteration.result || "unknown",
+            duration_ms: durationMs,
+          });
+        }
+
+        toast.success("Test completed successfully!");
+        return data;
+      } catch (error) {
+        console.error("Failed to run test case:", error);
+        toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+        return null;
+      } finally {
+        setRunningTestCaseId(null);
+      }
+    },
+    [
+      runningTestCaseId,
+      rerunningSuiteId,
+      replayingRunId,
+      workspaceId,
+      getAccessToken,
+      getToken,
+      hasToken,
     ],
   );
 
@@ -534,39 +656,7 @@ export function useEvalHandlers({
           { suiteId },
         );
 
-        // Extract unique models from existing test cases
-        let modelsToUse: any[] = [];
-        if (testCases && Array.isArray(testCases) && testCases.length > 0) {
-          const uniqueModels = new Map<
-            string,
-            { model: string; provider: string }
-          >();
-
-          for (const testCase of testCases) {
-            if (testCase.models && Array.isArray(testCase.models)) {
-              for (const modelConfig of testCase.models) {
-                if (modelConfig.model && modelConfig.provider) {
-                  const key = `${modelConfig.provider}:${modelConfig.model}`;
-                  if (!uniqueModels.has(key)) {
-                    uniqueModels.set(key, {
-                      model: modelConfig.model,
-                      provider: modelConfig.provider,
-                    });
-                  }
-                }
-              }
-            }
-          }
-
-          modelsToUse = Array.from(uniqueModels.values());
-        }
-
-        // Default to Haiku 4.5 if no models configured
-        if (modelsToUse.length === 0) {
-          modelsToUse = [
-            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
-          ];
-        }
+        const modelsToUse = collectUniqueModelsFromTestCases(testCases);
 
         const testCaseId = await mutations.createTestCaseMutation({
           suiteId: suiteId,
@@ -727,98 +817,32 @@ export function useEvalHandlers({
       setIsGeneratingTests(true);
 
       try {
-        const accessToken = await getAccessToken();
-        const endpoints = getEvalApiEndpoints();
-
-        // Get existing test cases to extract models
-        const existingTestCases = await convex.query(
-          "testSuites:listTestCases" as any,
-          { suiteId },
-        );
-
-        // Extract unique models from existing test cases
-        let modelsToUse: Array<{ model: string; provider: string }> = [];
-        if (
-          existingTestCases &&
-          Array.isArray(existingTestCases) &&
-          existingTestCases.length > 0
-        ) {
-          const uniqueModels = new Map<
-            string,
-            { model: string; provider: string }
-          >();
-
-          for (const testCase of existingTestCases) {
-            if (testCase.models && Array.isArray(testCase.models)) {
-              for (const modelConfig of testCase.models) {
-                if (modelConfig.model && modelConfig.provider) {
-                  const key = `${modelConfig.provider}:${modelConfig.model}`;
-                  if (!uniqueModels.has(key)) {
-                    uniqueModels.set(key, {
-                      model: modelConfig.model,
-                      provider: modelConfig.provider,
-                    });
-                  }
-                }
-              }
-            }
-          }
-
-          modelsToUse = Array.from(uniqueModels.values());
-        }
-
-        // Default to Haiku 4.5 if no models configured
-        if (modelsToUse.length === 0) {
-          modelsToUse = [
-            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
-          ];
-        }
-
-        // Call generate tests API
-        const result = await generateEvalTests({
+        const outcome = await generateAndPersistEvalTests({
+          convex,
+          getAccessToken,
           workspaceId,
+          suiteId,
           serverIds,
-          convexAuthToken: accessToken,
+          createTestCase: mutations.createTestCaseMutation,
+          skipIfExistingCases: false,
         });
 
-        if (!result.tests || result.tests.length === 0) {
+        if (outcome.apiReturnedTests === 0) {
           toast.info("No test cases were generated");
           return;
         }
 
-        // Create test cases for each generated test
-        let createdCount = 0;
-        for (const test of result.tests) {
-          try {
-            await mutations.createTestCaseMutation({
-              suiteId,
-              title: test.title || "Generated test",
-              query: test.query || "",
-              models: modelsToUse,
-              expectedToolCalls: test.expectedToolCalls || [],
-              runs: test.runs || 1,
-              isNegativeTest: test.isNegativeTest || false,
-              scenario: test.scenario,
-              expectedOutput: test.expectedOutput,
-            });
-            createdCount++;
-          } catch (err) {
-            console.error("Failed to create test case:", err);
-          }
-        }
-
-        if (createdCount > 0) {
+        if (outcome.createdCount > 0) {
           toast.success(
-            `Generated ${createdCount} test case${createdCount > 1 ? "s" : ""}`,
+            `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}`,
           );
 
-          // Track generation
           posthog.capture("eval_tests_generated_from_sidebar", {
             location: "test_case_list_sidebar",
             platform: detectPlatform(),
             environment: detectEnvironment(),
             suite_id: suiteId,
-            generated_count: createdCount,
+            generated_count: outcome.createdCount,
           });
         }
       } catch (error) {
@@ -842,6 +866,7 @@ export function useEvalHandlers({
   return {
     // Handlers
     handleRerun,
+    handleRunTestCase,
     handleReplayRun,
     handleDelete,
     confirmDelete,
@@ -857,6 +882,7 @@ export function useEvalHandlers({
     handleGenerateTests,
     // States
     rerunningSuiteId,
+    runningTestCaseId,
     replayingRunId,
     cancellingRunId,
     deletingSuiteId,

@@ -145,7 +145,7 @@ describe("MessageView", () => {
       );
     });
 
-    it("uses a neutral placeholder for sandbox assistant avatars", () => {
+    it("renders the sandbox host logo for assistant avatars (not the model provider)", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hello" }],
@@ -157,8 +157,8 @@ describe("MessageView", () => {
         </SandboxHostStyleProvider>,
       );
 
-      expect(screen.getByLabelText("Assistant")).toBeInTheDocument();
-      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+      expect(screen.getByLabelText("Claude assistant")).toBeInTheDocument();
+      expect(screen.getByRole("img")).toHaveAttribute("alt", "Claude logo");
     });
   });
 

@@ -1,4 +1,5 @@
 import { PromptResult } from "../src/PromptResult";
+import type { EvalTraceSpanInput } from "../src/eval-reporting-types";
 import type { IterationResult, EvalRunResult } from "../src/EvalTest";
 import {
   iterationToEvalResult,
@@ -22,6 +23,7 @@ function makePrompt(overrides: {
   provider?: string;
   model?: string;
   error?: string;
+  spans?: EvalTraceSpanInput[];
 }): PromptResult {
   if (overrides.error) {
     return PromptResult.error(
@@ -49,6 +51,7 @@ function makePrompt(overrides: {
     latency: overrides.latency ?? { e2eMs: 100, llmMs: 80, mcpMs: 20 },
     provider: overrides.provider,
     model: overrides.model,
+    spans: overrides.spans,
   });
 }
 
@@ -172,6 +175,193 @@ describe("iterationToEvalResult", () => {
     expect(messages).toHaveLength(4);
     expect(messages[0]).toEqual({ role: "user", content: "turn 1" });
     expect(messages[3]).toEqual({ role: "assistant", content: "reply 2" });
+  });
+
+  it("merges spans from multi-prompt iteration with e2e offsets", () => {
+    const p1 = makePrompt({
+      prompt: "turn 1",
+      latency: { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+      spans: [
+        {
+          id: "a",
+          name: "Step",
+          category: "step",
+          startMs: 0,
+          endMs: 50,
+        },
+      ],
+    });
+    const p2 = makePrompt({
+      prompt: "turn 2",
+      latency: { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+      spans: [
+        {
+          id: "b",
+          parentId: "a",
+          name: "LLM",
+          category: "llm",
+          startMs: 10,
+          endMs: 80,
+        },
+      ],
+    });
+    const iteration = makeIteration({
+      prompts: [p1, p2],
+      latencies: [
+        { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+        { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+      ],
+    });
+
+    const result = iterationToEvalResult(iteration, 0, { caseTitle: "spans" });
+
+    expect((result.trace as any).spans).toEqual([
+      {
+        id: "prompt-0:a",
+        parentId: undefined,
+        name: "Step",
+        category: "step",
+        startMs: 0,
+        endMs: 50,
+        promptIndex: 0,
+        modelId: undefined,
+        messageStartIndex: undefined,
+        messageEndIndex: undefined,
+      },
+      {
+        id: "prompt-1:b",
+        parentId: "prompt-1:a",
+        name: "LLM",
+        category: "llm",
+        startMs: 110,
+        endMs: 180,
+        promptIndex: 1,
+        modelId: undefined,
+        messageStartIndex: undefined,
+        messageEndIndex: undefined,
+      },
+    ]);
+  });
+
+  it("marks passed false when merged trace has errored tool span", () => {
+    const p = makePrompt({
+      spans: [
+        {
+          id: "tool-1",
+          name: "create_view",
+          category: "tool",
+          startMs: 0,
+          endMs: 1,
+          status: "error",
+        },
+      ],
+    });
+    const iteration = makeIteration({ passed: true, prompts: [p] });
+    const result = iterationToEvalResult(iteration, 0, { caseTitle: "x" });
+    expect(result.passed).toBe(false);
+  });
+
+  it("keeps passed true for tool error span when failOnToolError is false", () => {
+    const p = makePrompt({
+      spans: [
+        {
+          id: "tool-1",
+          name: "create_view",
+          category: "tool",
+          startMs: 0,
+          endMs: 1,
+          status: "error",
+        },
+      ],
+    });
+    const iteration = makeIteration({ passed: true, prompts: [p] });
+    const result = iterationToEvalResult(iteration, 0, {
+      caseTitle: "x",
+      failOnToolError: false,
+    });
+    expect(result.passed).toBe(true);
+  });
+
+  it("preserves prompt grouping and offsets message ranges across prompts", () => {
+    const p1 = makePrompt({
+      prompt: "turn 1",
+      messages: [
+        { role: "user", content: "turn 1" },
+        { role: "assistant", content: "reply 1" },
+      ],
+      model: "gpt-4o",
+      spans: [
+        {
+          id: "step",
+          name: "Step 1",
+          category: "step",
+          startMs: 0,
+          endMs: 60,
+          stepIndex: 0,
+          messageStartIndex: 1,
+          messageEndIndex: 1,
+        },
+      ],
+    });
+    const p2 = makePrompt({
+      prompt: "turn 2",
+      messages: [
+        { role: "user", content: "turn 2" },
+        { role: "assistant", content: "reply 2" },
+        { role: "tool", content: "tool result" },
+      ],
+      latency: { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+      model: "gpt-4.1",
+      spans: [
+        {
+          id: "tool",
+          name: "search",
+          category: "tool",
+          startMs: 10,
+          endMs: 30,
+          stepIndex: 1,
+          toolCallId: "call-2",
+          toolName: "search",
+          messageStartIndex: 1,
+          messageEndIndex: 2,
+        },
+      ],
+    });
+
+    const result = iterationToEvalResult(
+      makeIteration({
+        prompts: [p1, p2],
+        latencies: [
+          { e2eMs: 100, llmMs: 80, mcpMs: 20 },
+          { e2eMs: 200, llmMs: 150, mcpMs: 50 },
+        ],
+      }),
+      0,
+      { caseTitle: "trace-groups" }
+    );
+
+    expect((result.trace as any).spans).toEqual([
+      expect.objectContaining({
+        id: "prompt-0:step",
+        promptIndex: 0,
+        stepIndex: 0,
+        modelId: "gpt-4o",
+        messageStartIndex: 1,
+        messageEndIndex: 1,
+      }),
+      expect.objectContaining({
+        id: "prompt-1:tool",
+        promptIndex: 1,
+        stepIndex: 1,
+        modelId: "gpt-4.1",
+        toolCallId: "call-2",
+        toolName: "search",
+        startMs: 110,
+        endMs: 130,
+        messageStartIndex: 3,
+        messageEndIndex: 4,
+      }),
+    ]);
   });
 
   it("uses promptSelector to pick query/provider/model from selected prompt", () => {
@@ -463,6 +653,57 @@ describe("iterationsToEvalResultInputs", () => {
 
     expect(results[0].error).toBe("timeout");
     expect(results[0].passed).toBe(false);
+  });
+
+  it("fails passed when trace has tool error span despite iteration.passed", () => {
+    const iteration = makeIteration({
+      passed: true,
+      prompts: [
+        makePrompt({
+          spans: [
+            {
+              id: "s1",
+              name: "create_view",
+              category: "tool",
+              startMs: 0,
+              endMs: 1,
+              status: "error",
+            },
+          ],
+        }),
+      ],
+    });
+
+    const results = iterationsToEvalResultInputs("t", [iteration]);
+    expect(results[0].passed).toBe(false);
+  });
+
+  it("preserves passed when failOnToolError is false", () => {
+    const iteration = makeIteration({
+      passed: true,
+      prompts: [
+        makePrompt({
+          spans: [
+            {
+              id: "s1",
+              name: "create_view",
+              category: "tool",
+              startMs: 0,
+              endMs: 1,
+              status: "error",
+            },
+          ],
+        }),
+      ],
+    });
+
+    const results = iterationsToEvalResultInputs(
+      "t",
+      [iteration],
+      undefined,
+      false
+    );
+    expect(results[0].passed).toBe(true);
   });
 
   it("forwards expectedToolCalls when provided", () => {

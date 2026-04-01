@@ -21,6 +21,47 @@ export type ToolCallMatchResult = {
   passed: boolean;
 };
 
+type ArgumentPlaceholder =
+  | "any"
+  | "string"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array"
+  | "null";
+
+function matchArgumentPlaceholder(
+  expectedValue: unknown,
+  actualValue: unknown,
+): boolean | null {
+  if (typeof expectedValue !== "string") {
+    return null;
+  }
+
+  switch (expectedValue.trim().toLowerCase() as ArgumentPlaceholder) {
+    case "any":
+      return actualValue !== undefined;
+    case "string":
+      return typeof actualValue === "string";
+    case "number":
+      return typeof actualValue === "number";
+    case "boolean":
+      return typeof actualValue === "boolean";
+    case "object":
+      return (
+        actualValue !== null &&
+        typeof actualValue === "object" &&
+        !Array.isArray(actualValue)
+      );
+    case "array":
+      return Array.isArray(actualValue);
+    case "null":
+      return actualValue === null;
+    default:
+      return null;
+  }
+}
+
 /**
  * Check if expected arguments are satisfied by actual arguments.
  * Only checks keys present in expected - actual may have additional keys.
@@ -30,6 +71,14 @@ export function argumentsMatch(
   actualArgs: Record<string, any>,
 ): boolean {
   for (const [key, value] of Object.entries(expectedArgs)) {
+    const placeholderMatch = matchArgumentPlaceholder(value, actualArgs[key]);
+    if (placeholderMatch !== null) {
+      if (!placeholderMatch) {
+        return false;
+      }
+      continue;
+    }
+
     if (JSON.stringify(actualArgs[key]) !== JSON.stringify(value)) {
       return false;
     }

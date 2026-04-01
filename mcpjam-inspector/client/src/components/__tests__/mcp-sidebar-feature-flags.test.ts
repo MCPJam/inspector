@@ -15,15 +15,9 @@ const makeSections = () => [
     items: [
       { title: "Always Visible", url: "#always", icon: FakeIcon },
       {
-        title: "Generate Evals",
-        url: "#evals",
-        icon: FakeIcon,
-      },
-      {
-        title: "Evals CI/CD",
+        title: "Testing",
         url: "#ci-evals",
         icon: FakeIcon,
-        featureFlag: "ci-evals-enabled",
       },
     ],
   },
@@ -34,28 +28,38 @@ describe("filterByFeatureFlags", () => {
     const result = filterByFeatureFlags(makeSections(), {});
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toContain("Always Visible");
-    expect(titles).toContain("Generate Evals");
-    expect(titles).not.toContain("Evals CI/CD");
+    expect(titles).toContain("Testing");
   });
 
   it("hides featureFlag items when flag is off", () => {
-    const result = filterByFeatureFlags(makeSections(), {
-      "ci-evals-enabled": false,
-    });
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "main",
+          items: [
+            { title: "Always Visible", url: "#always", icon: FakeIcon },
+            {
+              title: "Registry",
+              url: "#registry",
+              icon: FakeIcon,
+              featureFlag: "registry-enabled",
+            },
+          ],
+        },
+      ],
+      { "registry-enabled": false },
+    );
     const titles = result[0].items.map((i) => i.title);
-    expect(titles).toContain("Always Visible");
-    expect(titles).toContain("Generate Evals");
-    expect(titles).not.toContain("Evals CI/CD");
+    expect(titles).toEqual(["Always Visible"]);
   });
 
-  it("shows featureFlag items without hiding Generate Evals when flag is on", () => {
+  it("keeps Testing visible when unrelated flags are on", () => {
     const result = filterByFeatureFlags(makeSections(), {
-      "ci-evals-enabled": true,
+      "registry-enabled": true,
     });
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toContain("Always Visible");
-    expect(titles).toContain("Generate Evals");
-    expect(titles).toContain("Evals CI/CD");
+    expect(titles).toContain("Testing");
   });
 
   it("removes empty sections", () => {
@@ -97,8 +101,8 @@ describe("applyBillingGateNavState", () => {
           id: "main",
           items: [
             {
-              title: "Generate Evals",
-              url: "#evals",
+              title: "Testing",
+              url: "#ci-evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -122,8 +126,8 @@ describe("applyBillingGateNavState", () => {
           id: "main",
           items: [
             {
-              title: "Generate Evals",
-              url: "#evals",
+              title: "Testing",
+              url: "#ci-evals",
               icon: FakeIcon,
               billingFeature: "evals",
             },
@@ -142,7 +146,7 @@ describe("applyBillingGateNavState", () => {
       },
     );
 
-    const evalItem = result[0].items.find((i) => i.title === "Generate Evals");
+    const evalItem = result[0].items.find((i) => i.title === "Testing");
     const servers = result[0].items.find((i) => i.title === "Servers");
     expect(evalItem?.disabled).toBe(true);
     expect(servers?.disabled).not.toBe(true);
@@ -158,8 +162,8 @@ describe("getHostedNavigationSections", () => {
           { title: "Skills", url: "#skills", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
-            title: "Generate Evals",
-            url: "#evals",
+            title: "Testing",
+            url: "#ci-evals",
             icon: FakeIcon,
             billingFeature: "evals",
           },
@@ -178,8 +182,8 @@ describe("getHostedNavigationSections", () => {
         disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
       },
       {
-        title: "Generate Evals",
-        url: "#evals",
+        title: "Testing",
+        url: "#ci-evals",
         icon: FakeIcon,
         billingFeature: "evals",
       },
@@ -191,33 +195,51 @@ describe("getHostedNavigationSections", () => {
     ]);
   });
 
-  it("keeps Generate Evals visible in hosted when ci-evals is enabled", () => {
+  it("keeps Testing visible in hosted", () => {
     const hostedSections = getHostedNavigationSections([
       {
         id: "mcp-apps",
         items: [
           {
-            title: "Generate Evals",
-            url: "#evals",
-            icon: FakeIcon,
-          },
-          {
-            title: "Evals CI/CD",
+            title: "Testing",
             url: "#ci-evals",
             icon: FakeIcon,
-            featureFlag: "ci-evals-enabled",
           },
         ],
       },
     ]);
 
-    const visibleSections = filterByFeatureFlags(hostedSections, {
-      "ci-evals-enabled": true,
-    });
+    const visibleSections = filterByFeatureFlags(hostedSections, {});
 
     expect(visibleSections[0].items.map((item) => item.title)).toEqual([
-      "Generate Evals",
-      "Evals CI/CD",
+      "Testing",
+    ]);
+  });
+
+  it("keeps Evaluate subnav entry with #evals in hosted mode", () => {
+    const hostedSections = getHostedNavigationSections([
+      {
+        id: "mcp-apps",
+        items: [
+          {
+            title: "Evaluate",
+            url: "#evals",
+            icon: FakeIcon,
+            billingFeature: "evals",
+            evalsSubnav: true,
+          },
+        ],
+      },
+    ]);
+
+    expect(hostedSections[0].items).toEqual([
+      {
+        title: "Evaluate",
+        url: "#evals",
+        icon: FakeIcon,
+        billingFeature: "evals",
+        evalsSubnav: true,
+      },
     ]);
   });
 });

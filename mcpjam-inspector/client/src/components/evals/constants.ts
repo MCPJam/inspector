@@ -1,3 +1,10 @@
+/** Tag on manually-created suites that represent MCPJam Explore flows for a server */
+export const EXPLORE_SUITE_TAG = "explore";
+
+export function isExploreSuite(suite: { tags?: string[] | null }): boolean {
+  return suite.tags?.includes(EXPLORE_SUITE_TAG) === true;
+}
+
 // Run filters
 export const RUN_FILTER_ALL = "all";
 export const RUN_FILTER_LEGACY = "legacy";
@@ -51,6 +58,12 @@ export const RUN_STATUS = {
 
 export type RunStatus = (typeof RUN_STATUS)[keyof typeof RUN_STATUS];
 
+/** Pass/fail foreground text — same semantic tokens as charts/icons (`--success` / `--destructive` in index.css). */
+export const EVAL_OUTCOME_STATUS_TEXT_CLASS = {
+  passed: "text-success",
+  failed: "text-destructive",
+} as const;
+
 // UI configuration
 export const UI_CONFIG = {
   MAX_TITLE_LENGTH: 100,
@@ -60,9 +73,9 @@ export const UI_CONFIG = {
   SIDEBAR_WIDTH: "w-64",
   CHART_COLORS: {
     PASS_RATE: "var(--chart-1)",
-    PASSED: "hsl(142.1 76.2% 36.3%)",
-    FAILED: "hsl(0 84.2% 60.2%)",
-    PENDING: "hsl(45.4 93.4% 47.5%)",
+    PASSED: "var(--color-success)",
+    FAILED: "var(--color-destructive)",
+    PENDING: "var(--color-warning)",
     CANCELLED: "hsl(240 3.7% 15.9%)",
   },
 } as const;
@@ -70,7 +83,7 @@ export const UI_CONFIG = {
 // Border colors for iteration results
 export const BORDER_COLORS = {
   [RESULT_STATUS.PASSED]: "bg-success/50",
-  [RESULT_STATUS.FAILED]: "bg-red-500/50",
+  [RESULT_STATUS.FAILED]: "bg-destructive/50",
   [RESULT_STATUS.CANCELLED]: "bg-muted",
   [RESULT_STATUS.PENDING]: "bg-warning/50",
 } as const;

@@ -197,6 +197,27 @@ describe("Thread", () => {
         }),
       );
     });
+
+    it("applies shared transcript navigation wrappers when focus props are provided", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "assistant" }),
+        createMessage({ id: "msg-2", role: "assistant" }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          focusMessageId="msg-2"
+          highlightedMessageIds={["msg-2"]}
+          navigationKey={1}
+        />,
+      );
+
+      const wrapper = screen.getByTestId("message-msg-2").parentElement;
+      expect(wrapper).toHaveAttribute("data-focused", "true");
+      expect(wrapper).toHaveAttribute("data-highlighted", "true");
+    });
   });
 
   describe("loading state", () => {

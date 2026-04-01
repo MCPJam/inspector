@@ -1,18 +1,42 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { GitBranch } from "lucide-react";
+import { Eye, GitBranch, Loader2, Play } from "lucide-react";
+import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { EmptyState } from "@/components/ui/empty-state";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/components/ui/breadcrumb";
 import {
   ResizableHandle,
   ResizablePanel,
   ResizablePanelGroup,
 } from "@/components/ui/resizable";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { cn } from "@/lib/utils";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
-import { useAvailableEvalModels } from "@/hooks/use-available-eval-models";
-import { aggregateSuite, groupRunsByCommit } from "./evals/helpers";
+import { buildEvalsHash } from "@/lib/evals-router";
+import { withTestingSurface } from "@/lib/testing-surface";
+import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
+import {
+  aggregateSuite,
+  formatRunId,
+  groupRunsByCommit,
+} from "./evals/helpers";
+import { RunIterationsSidebar } from "./evals/run-detail-view";
+import { useRunDetailData } from "./evals/use-suite-data";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
@@ -20,13 +44,20 @@ import {
   CiSuiteListSidebar,
   type SidebarMode,
 } from "./evals/ci-suite-list-sidebar";
-import { CiSuiteDetail } from "./evals/ci-suite-detail";
 import { CommitDetailView } from "./evals/commit-detail-view";
-import { HostedCiSuiteWorkspaceDetail } from "./evals/hosted-ci-suite-workspace-detail";
-import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import { createCiSuiteNavigation } from "./evals/create-suite-navigation";
+import { EvalTabGate } from "./evals/EvalTabGate";
+import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import type { EvalSuite } from "./evals/types";
+import {
+  SAMPLE_TRACE,
+  SAMPLE_TRACE_STARTED_AT_MS,
+  SAMPLE_TRACE_VIEWER_MODEL,
+} from "./evals/sample-trace-data";
+import { SdkEvalQuickstart } from "./evals/sdk-eval-quickstart";
+import { TraceViewer } from "./evals/trace-viewer";
+import { isExploreSuite } from "./evals/constants";
 import { HOSTED_MODE } from "@/lib/config";
-
 interface CiEvalsTabProps {
   convexWorkspaceId: string | null;
 }
@@ -42,6 +73,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>("runs");
   const [hasAutoSwitchedMode, setHasAutoSwitchedMode] = useState(false);
+  const [runDetailSidebarSortBy, setRunDetailSidebarSortBy] = useState<
+    "model" | "test" | "result"
+  >("result");
+  const [showSampleTrace, setShowSampleTrace] = useState(false);
 
   const selectedSuiteId =
     route.type === "suite-overview" ||
@@ -55,36 +90,19 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     route.type === "test-detail" || route.type === "test-edit"
       ? route.testId
       : null;
-  const { availableModels } = useAvailableEvalModels();
 
-  const connectedServerNames = useMemo(
-    () =>
-      new Set(
-        Object.entries(appState.servers)
-          .filter(([, server]) => server.connectionStatus === "connected")
-          .map(([name]) => name),
-      ),
-    [appState.servers],
-  );
-
-  const { members } = useWorkspaceMembers({
+  const {
+    connectedServerNames,
+    userMap,
+    canDeleteSuite,
+    canDeleteRuns,
+    availableModels,
+  } = useEvalTabContext({
     isAuthenticated,
     workspaceId: convexWorkspaceId,
   });
 
-  const userMap = useMemo(() => {
-    if (!members) return undefined;
-    const map = new Map<string, { name: string; imageUrl?: string }>();
-    for (const m of members) {
-      if (m.userId && m.user) {
-        map.set(m.userId, {
-          name: m.user.name,
-          imageUrl: m.user.imageUrl,
-        });
-      }
-    }
-    return map;
-  }, [members]);
+  const ciNavigation = useMemo(() => createCiSuiteNavigation(route), [route]);
 
   const queries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(convexWorkspaceId),
@@ -96,20 +114,36 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   });
 
   const visibleSuites = useMemo(
-    () =>
-      HOSTED_MODE
-        ? queries.sortedSuites
-        : queries.sortedSuites.filter((entry) => entry.suite.source === "sdk"),
+    () => queries.sortedSuites.filter((entry) => !isExploreSuite(entry.suite)),
     [queries.sortedSuites],
-  );
-
-  const sdkSuites = useMemo(
-    () => visibleSuites.filter((entry) => entry.suite.source === "sdk"),
-    [visibleSuites],
   );
   const hasVisibleSuites = visibleSuites.length > 0;
 
-  const commitGroups = useMemo(() => groupRunsByCommit(sdkSuites), [sdkSuites]);
+  const commitGroups = useMemo(
+    () => groupRunsByCommit(visibleSuites),
+    [visibleSuites],
+  );
+
+  // CI/CD: suite config and tests are defined in code (SDK); close edit URLs.
+  useEffect(() => {
+    if (route.type === "suite-edit") {
+      navigateToCiEvalsRoute(
+        { type: "suite-overview", suiteId: route.suiteId },
+        { replace: true },
+      );
+      return;
+    }
+    if (route.type === "test-edit") {
+      navigateToCiEvalsRoute(
+        {
+          type: "test-detail",
+          suiteId: route.suiteId,
+          testId: route.testId,
+        },
+        { replace: true },
+      );
+    }
+  }, [route]);
 
   // Auto-switch to "By Suite" when all runs are manual (no commit SHAs)
   useEffect(() => {
@@ -129,13 +163,85 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     }
   }, [commitGroups, hasAutoSwitchedMode]);
 
-  const selectedCommitSha =
-    route.type === "commit-detail" ? route.commitSha : null;
+  useEffect(() => {
+    if (route.type !== "create") return;
+    window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+  }, [route.type]);
+
+  useEffect(() => {
+    if (route.type !== "commit-detail" || !route.suite) return;
+    navigateToCiEvalsRoute(
+      {
+        type: "suite-overview",
+        suiteId: route.suite,
+        fromCommit: route.commitSha,
+      },
+      { replace: true },
+    );
+  }, [route]);
+
+  const selectedCommitSha = useMemo(() => {
+    if (route.type === "commit-detail") return route.commitSha;
+    if (route.type === "suite-overview" && route.fromCommit) {
+      return route.fromCommit;
+    }
+    return null;
+  }, [route]);
+
+  const selectedRunIdForSidebar =
+    route.type === "run-detail" ? route.runId : null;
+
+  const { caseGroupsForSelectedRun } = useRunDetailData(
+    selectedRunIdForSidebar,
+    queries.sortedIterations,
+    runDetailSidebarSortBy,
+  );
+
+  const selectedRunForSidebar = useMemo(() => {
+    if (route.type !== "run-detail") return null;
+    return (
+      queries.runsForSelectedSuite.find((r) => r._id === route.runId) ?? null
+    );
+  }, [route, queries.runsForSelectedSuite]);
+
+  useEffect(() => {
+    if (route.type !== "run-detail") {
+      setRunDetailSidebarSortBy("result");
+    }
+  }, [route.type]);
 
   const selectedCommitGroup = useMemo(() => {
     if (!selectedCommitSha) return null;
     return commitGroups.find((g) => g.commitSha === selectedCommitSha) ?? null;
   }, [commitGroups, selectedCommitSha]);
+
+  const commitBreadcrumbContext = useMemo(() => {
+    if (route.type !== "suite-overview" || !route.fromCommit) return null;
+    const group = commitGroups.find((g) => g.commitSha === route.fromCommit);
+    const label = group
+      ? group.commitSha.startsWith("manual-")
+        ? "Manual"
+        : group.shortSha
+      : route.fromCommit.length > 7
+        ? route.fromCommit.slice(0, 7)
+        : route.fromCommit;
+    return { commitSha: route.fromCommit, label };
+  }, [route, commitGroups]);
+
+  const selectedSuiteIdInCommit = useMemo(() => {
+    if (route.type === "commit-detail" && route.suite) return route.suite;
+    if (
+      route.type === "suite-overview" &&
+      route.fromCommit &&
+      selectedSuiteId
+    ) {
+      const group = commitGroups.find((g) => g.commitSha === route.fromCommit);
+      if (!group) return null;
+      const inGroup = group.runs.some((r) => r.suiteId === selectedSuiteId);
+      return inGroup ? selectedSuiteId : null;
+    }
+    return null;
+  }, [route, commitGroups, selectedSuiteId]);
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId) return null;
     return (
@@ -145,11 +251,24 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
 
   const selectedSuite = selectedSuiteEntry?.suite ?? null;
 
+  const latestRunBySuiteId = useMemo(
+    () =>
+      new Map(
+        visibleSuites.map((entry) => [
+          entry.suite._id,
+          entry.latestRun ?? null,
+        ]),
+      ),
+    [visibleSuites],
+  );
+
   const handlers = useEvalHandlers({
     mutations,
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    connectedServerNames,
+    latestRunBySuiteId,
     evalsNavigationContext: "ci-evals",
   });
 
@@ -162,8 +281,21 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     );
   }, [selectedSuite, queries.suiteDetails, queries.activeIterations]);
 
+  const showCiSuiteDrilldownSidebar = useMemo(
+    () =>
+      Boolean(
+        selectedSuiteId &&
+        selectedSuite &&
+        route.type !== "list" &&
+        route.type !== "create" &&
+        route.type !== "commit-detail" &&
+        hasVisibleSuites,
+      ),
+    [selectedSuiteId, selectedSuite, route.type, hasVisibleSuites],
+  );
+
   useEffect(() => {
-    if (route.type === "list") return;
+    if (route.type === "list" || route.type === "create") return;
     if (!selectedSuiteId) return;
     if (queries.isOverviewLoading) return;
     if (!selectedSuiteEntry) {
@@ -183,6 +315,24 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const handleSelectCommit = useCallback((commitSha: string) => {
     navigateToCiEvalsRoute({ type: "commit-detail", commitSha });
   }, []);
+
+  const handleSelectSuiteInCommit = useCallback(
+    (suiteId: string) => {
+      const commitSha =
+        route.type === "commit-detail"
+          ? route.commitSha
+          : route.type === "suite-overview" && route.fromCommit
+            ? route.fromCommit
+            : null;
+      if (!commitSha) return;
+      navigateToCiEvalsRoute({
+        type: "suite-overview",
+        suiteId,
+        fromCommit: commitSha,
+      });
+    },
+    [route],
+  );
 
   const handleDeleteSuite = useCallback(
     async (suite: EvalSuite) => {
@@ -234,7 +384,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
           navigateToCiEvalsRoute({
             type: "suite-overview",
             suiteId: selectedSuiteId,
-            view: "runs",
           });
         }
       } catch (error) {
@@ -269,181 +418,326 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     );
   }, [handlers, selectedSuite, selectedSuiteId]);
 
-  if (isLoading) {
-    return (
-      <div className="p-6">
-        <div className="flex min-h-[calc(100vh-200px)] items-center justify-center">
-          <div className="text-center">
-            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-            <p className="mt-4 text-muted-foreground">Loading...</p>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const handleCiBreadcrumbToSuiteList = useCallback(() => {
+    navigateToCiEvalsRoute({ type: "list" });
+  }, []);
 
-  if (!isAuthenticated || !user) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={GitBranch}
-          title="Sign in to view CI runs"
-          description="Create an account or sign in to view SDK-ingested evaluation runs."
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
+  const handleCiBreadcrumbToSuiteOverview = useCallback(() => {
+    if (!selectedSuite) return;
+    navigateToCiEvalsRoute({
+      type: "suite-overview",
+      suiteId: selectedSuite._id,
+    });
+  }, [selectedSuite]);
 
-  if (!convexWorkspaceId) {
-    return (
-      <div className="p-6">
-        <EmptyState
-          icon={GitBranch}
-          title="Select a workspace"
-          description="Choose a workspace to view shared CI evaluation runs."
-          className="h-[calc(100vh-200px)]"
-        />
-      </div>
-    );
-  }
+  const handleCiBreadcrumbToCommit = useCallback(() => {
+    if (!commitBreadcrumbContext) return;
+    navigateToCiEvalsRoute({
+      type: "commit-detail",
+      commitSha: commitBreadcrumbContext.commitSha,
+    });
+  }, [commitBreadcrumbContext]);
+
+  const isRunDetailView = route.type === "run-detail";
 
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <ResizablePanelGroup
-        direction="horizontal"
-        className="flex-1 overflow-hidden"
-      >
-        <ResizablePanel
-          defaultSize={24}
-          minSize={20}
-          maxSize={35}
-          className="border-r bg-muted/30 flex flex-col"
-        >
-          <CiSuiteListSidebar
-            suites={visibleSuites}
-            selectedSuiteId={selectedSuiteId}
-            onSelectSuite={handleSelectSuite}
-            isLoading={queries.isOverviewLoading}
-            sidebarMode={sidebarMode}
-            onSidebarModeChange={setSidebarMode}
-            commitGroups={commitGroups}
-            selectedCommitSha={selectedCommitSha}
-            onSelectCommit={handleSelectCommit}
-          />
-        </ResizablePanel>
-
-        <ResizableHandle withHandle />
-
-        <ResizablePanel
-          defaultSize={70}
-          className="flex flex-col overflow-hidden"
-        >
-          {route.type === "commit-detail" && selectedCommitGroup ? (
-            <CommitDetailView commitGroup={selectedCommitGroup} route={route} />
-          ) : !hasVisibleSuites ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-md mx-auto p-8">
-                <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-                  <GitBranch className="h-10 w-10 text-muted-foreground" />
-                </div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  {HOSTED_MODE ? "No eval suites yet" : "No CI runs yet"}
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  {HOSTED_MODE
-                    ? "Create a suite from Servers or report eval results from your SDK to see runs here."
-                    : "Report eval results from your SDK or CI pipeline to see runs here."}
-                </p>
+    <EvalTabGate
+      variant="ci"
+      isLoading={isLoading}
+      isAuthenticated={isAuthenticated}
+      user={user}
+      workspaceId={convexWorkspaceId}
+    >
+      <>
+        <div className="h-full flex flex-col overflow-hidden">
+          {showCiSuiteDrilldownSidebar && selectedSuite ? (
+            <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+              <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+                <Breadcrumb className="min-w-0 flex-1">
+                  <BreadcrumbList className="min-w-0 flex-nowrap">
+                    <BreadcrumbItem>
+                      <BreadcrumbLink asChild>
+                        <button
+                          type="button"
+                          onClick={handleCiBreadcrumbToSuiteList}
+                          className="inline-flex border-0 bg-transparent p-0 font-medium"
+                        >
+                          Suites
+                        </button>
+                      </BreadcrumbLink>
+                    </BreadcrumbItem>
+                    <BreadcrumbSeparator />
+                    {commitBreadcrumbContext ? (
+                      <>
+                        <BreadcrumbItem className="max-w-[min(120px,20vw)] min-w-0">
+                          <BreadcrumbLink asChild>
+                            <button
+                              type="button"
+                              onClick={handleCiBreadcrumbToCommit}
+                              title="Back to commit"
+                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                            >
+                              {commitBreadcrumbContext.label}
+                            </button>
+                          </BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator />
+                      </>
+                    ) : null}
+                    {route.type === "run-detail" ? (
+                      <>
+                        <BreadcrumbItem className="max-w-[min(200px,28vw)] min-w-0 sm:max-w-[240px]">
+                          <BreadcrumbLink asChild>
+                            <button
+                              type="button"
+                              onClick={handleCiBreadcrumbToSuiteOverview}
+                              title={selectedSuite.name}
+                              className="inline-flex max-w-full border-0 bg-transparent p-0 font-medium truncate"
+                            >
+                              {selectedSuite.name}
+                            </button>
+                          </BreadcrumbLink>
+                        </BreadcrumbItem>
+                        <BreadcrumbSeparator />
+                        <BreadcrumbItem>
+                          <BreadcrumbPage className="truncate font-medium">
+                            Run {formatRunId(route.runId)}
+                          </BreadcrumbPage>
+                        </BreadcrumbItem>
+                      </>
+                    ) : (
+                      <BreadcrumbItem className="max-w-[min(280px,50vw)] min-w-0">
+                        <BreadcrumbPage
+                          className="truncate font-medium"
+                          title={selectedSuite.name}
+                        >
+                          {selectedSuite.name}
+                        </BreadcrumbPage>
+                      </BreadcrumbItem>
+                    )}
+                  </BreadcrumbList>
+                </Breadcrumb>
               </div>
             </div>
-          ) : route.type === "list" || !selectedSuite ? (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-center max-w-md mx-auto p-8">
-                <div className="w-20 h-20 bg-muted rounded-full flex items-center justify-center mx-auto mb-6">
-                  <GitBranch className="h-10 w-10 text-muted-foreground" />
-                </div>
-                <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  Select a suite
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  Choose a CI suite or commit from the sidebar to inspect runs
-                  and test iterations.
-                </p>
-              </div>
-            </div>
-          ) : queries.isSuiteDetailsLoading ? (
-            <div className="flex h-full items-center justify-center">
-              <div className="text-center">
-                <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                <p className="mt-4 text-muted-foreground">
-                  Loading suite data...
-                </p>
-              </div>
-            </div>
-          ) : HOSTED_MODE ? (
-            <HostedCiSuiteWorkspaceDetail
-              suite={selectedSuite}
-              cases={queries.suiteDetails?.testCases || []}
-              iterations={queries.activeIterations}
-              allIterations={queries.sortedIterations}
-              runs={queries.runsForSelectedSuite}
-              runsLoading={queries.isSuiteRunsLoading}
-              aggregate={suiteAggregate}
-              route={route}
-              connectedServerNames={connectedServerNames}
-              availableModels={availableModels}
-              onRerun={handlers.handleRerun}
-              onReplayRun={handlers.handleReplayRun}
-              onCancelRun={handlers.handleCancelRun}
-              onDelete={handleDeleteSuite}
-              onDeleteRun={handleDeleteRun}
-              onDirectDeleteRun={handlers.directDeleteRun}
-              onCreateTestCase={handleCreateTestCase}
-              onDeleteTestCase={handlers.handleDeleteTestCase}
-              onDuplicateTestCase={handleDuplicateTestCase}
-              onGenerateTests={handleGenerateTests}
-              rerunningSuiteId={handlers.rerunningSuiteId}
-              replayingRunId={handlers.replayingRunId}
-              cancellingRunId={handlers.cancellingRunId}
-              deletingSuiteId={deletingSuiteId}
-              deletingRunId={deletingRunId}
-              deletingTestCaseId={handlers.deletingTestCaseId}
-              duplicatingTestCaseId={handlers.duplicatingTestCaseId}
-              isGeneratingTests={handlers.isGeneratingTests}
-              userMap={userMap}
-            />
-          ) : (
-            <div
-              className={`flex-1 px-6 pb-6 pt-6 ${route.type === "run-detail" ? "overflow-hidden flex flex-col" : "overflow-y-auto"}`}
+          ) : null}
+          <ResizablePanelGroup
+            direction="horizontal"
+            className="flex-1 overflow-hidden"
+          >
+            <ResizablePanel
+              defaultSize={28}
+              minSize={20}
+              maxSize={35}
+              className="flex min-h-0 flex-col border-r bg-muted/30"
             >
-              <CiSuiteDetail
-                suite={selectedSuite}
-                cases={queries.suiteDetails?.testCases || []}
-                iterations={queries.activeIterations}
-                allIterations={queries.sortedIterations}
-                runs={queries.runsForSelectedSuite}
-                runsLoading={queries.isSuiteRunsLoading}
-                aggregate={suiteAggregate}
-                onRerun={handlers.handleRerun}
-                onReplayRun={handlers.handleReplayRun}
-                onCancelRun={handlers.handleCancelRun}
-                onDeleteSuite={handleDeleteSuite}
-                onDeleteRun={handleDeleteRun}
-                onDirectDeleteRun={handlers.directDeleteRun}
-                connectedServerNames={connectedServerNames}
-                rerunningSuiteId={handlers.rerunningSuiteId}
-                replayingRunId={handlers.replayingRunId}
-                cancellingRunId={handlers.cancellingRunId}
-                deletingSuiteId={deletingSuiteId}
-                deletingRunId={deletingRunId}
-                route={route}
-                userMap={userMap}
+              {showCiSuiteDrilldownSidebar && route.type === "run-detail" ? (
+                <RunIterationsSidebar
+                  caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+                  runDetailSortBy={runDetailSidebarSortBy}
+                  onSortChange={setRunDetailSidebarSortBy}
+                  selectedIterationId={route.iteration ?? null}
+                  onSelectIteration={(iterationId) => {
+                    navigateToCiEvalsRoute({
+                      type: "run-detail",
+                      suiteId: route.suiteId,
+                      runId: route.runId,
+                      iteration: iterationId,
+                    });
+                  }}
+                  runForOverview={selectedRunForSidebar}
+                  onOpenRunInsights={
+                    route.type === "run-detail"
+                      ? () =>
+                          navigateToCiEvalsRoute({
+                            type: "run-detail",
+                            suiteId: route.suiteId,
+                            runId: route.runId,
+                            insightsFocus: true,
+                          })
+                      : undefined
+                  }
+                  runInsightsSelected={
+                    route.type === "run-detail"
+                      ? Boolean(route.insightsFocus && !route.iteration)
+                      : false
+                  }
+                />
+              ) : (
+                <CiSuiteListSidebar
+                  suites={visibleSuites}
+                  selectedSuiteId={selectedSuiteId}
+                  onSelectSuite={handleSelectSuite}
+                  isLoading={queries.isOverviewLoading}
+                  sidebarMode={sidebarMode}
+                  onSidebarModeChange={setSidebarMode}
+                  commitGroups={commitGroups}
+                  selectedCommitSha={selectedCommitSha}
+                  onSelectCommit={handleSelectCommit}
+                  selectedSuiteIdInCommit={selectedSuiteIdInCommit}
+                  onSelectSuiteInCommit={handleSelectSuiteInCommit}
+                />
+              )}
+            </ResizablePanel>
+
+            <ResizableHandle withHandle />
+
+            <ResizablePanel
+              defaultSize={72}
+              minSize={route.type === "run-detail" ? 42 : 15}
+              className="flex flex-col overflow-hidden"
+            >
+              {route.type === "create" ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                </div>
+              ) : route.type === "commit-detail" && selectedCommitGroup ? (
+                <CommitDetailView
+                  commitGroup={selectedCommitGroup}
+                  route={route}
+                />
+              ) : !hasVisibleSuites ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+                  <div className="mx-auto w-full max-w-3xl px-6 py-8 pb-12">
+                    <div className="mb-6 text-center">
+                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
+                        <GitBranch className="h-6 w-6 text-primary" />
+                      </div>
+                      <h2 className="mb-1 text-lg font-semibold tracking-tight text-foreground">
+                        Run your first eval from code
+                      </h2>
+                      <p className="mb-4 text-sm text-muted-foreground">
+                        See what a completed eval looks like before you start.
+                      </p>
+                      <motion.button
+                        type="button"
+                        onClick={() => setShowSampleTrace(true)}
+                        className="group relative mx-auto inline-flex items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/5 px-5 py-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/10"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{
+                          delay: 0.2,
+                          duration: 0.4,
+                          ease: "easeOut",
+                        }}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.98 }}
+                      >
+                        <motion.span
+                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
+                          animate={{ scale: [1, 1.08, 1] }}
+                          transition={{
+                            duration: 2.4,
+                            repeat: Infinity,
+                            ease: "easeInOut",
+                          }}
+                        >
+                          <Play className="size-4 fill-current" />
+                        </motion.span>
+                        <span className="flex flex-col items-start">
+                          <span>View sample trace</span>
+                          <span className="text-xs font-normal text-muted-foreground">
+                            Timeline, chat &amp; raw data
+                          </span>
+                        </span>
+                        <Eye className="size-4 text-muted-foreground transition-colors group-hover:text-primary" />
+                      </motion.button>
+                    </div>
+                    <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
+                  </div>
+                </div>
+              ) : route.type === "list" || !selectedSuite ? (
+                <div className="flex flex-1 items-center justify-center">
+                  <div className="mx-auto max-w-md p-6 text-center">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-full bg-muted">
+                      <GitBranch className="h-7 w-7 text-muted-foreground" />
+                    </div>
+                    <h2 className="mb-2 text-lg font-semibold text-foreground">
+                      Select a suite or commit
+                    </h2>
+                    <p className="text-sm text-muted-foreground">
+                      Choose a suite to inspect regressions and failures, or
+                      switch to commits when you want a run-by-run timeline.
+                    </p>
+                  </div>
+                </div>
+              ) : queries.isSuiteDetailsLoading ? (
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                    <p className="mt-4 text-muted-foreground">
+                      Loading suite data...
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div
+                  className={cn(
+                    "flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+                    isRunDetailView ? "px-4 pb-3 pt-3" : "px-6 pb-6 pt-6",
+                  )}
+                >
+                  <SuiteIterationsView
+                    suite={selectedSuite}
+                    cases={queries.suiteDetails?.testCases || []}
+                    iterations={queries.activeIterations}
+                    allIterations={queries.sortedIterations}
+                    runs={queries.runsForSelectedSuite}
+                    runsLoading={queries.isSuiteRunsLoading}
+                    aggregate={suiteAggregate}
+                    runDetailSortByOverride={
+                      isRunDetailView ? runDetailSidebarSortBy : undefined
+                    }
+                    onRunDetailSortByChange={
+                      isRunDetailView ? setRunDetailSidebarSortBy : undefined
+                    }
+                    omitRunIterationList={isRunDetailView}
+                    onRerun={handlers.handleRerun}
+                    onReplayRun={handlers.handleReplayRun}
+                    onCancelRun={handlers.handleCancelRun}
+                    onDelete={handleDeleteSuite}
+                    onDeleteRun={handleDeleteRun}
+                    onDirectDeleteRun={handlers.directDeleteRun}
+                    connectedServerNames={connectedServerNames}
+                    canDeleteSuite={canDeleteSuite}
+                    rerunningSuiteId={handlers.rerunningSuiteId}
+                    replayingRunId={handlers.replayingRunId}
+                    cancellingRunId={handlers.cancellingRunId}
+                    deletingSuiteId={deletingSuiteId}
+                    deletingRunId={deletingRunId}
+                    availableModels={availableModels}
+                    route={route}
+                    userMap={userMap}
+                    navigation={ciNavigation}
+                    canDeleteRuns={canDeleteRuns}
+                    readOnlyConfig
+                    omitSuiteHeader
+                  />
+                </div>
+              )}
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </div>
+
+        <Dialog open={showSampleTrace} onOpenChange={setShowSampleTrace}>
+          <DialogContent className="flex max-h-[85vh] max-w-5xl flex-col gap-4 overflow-hidden sm:max-w-5xl">
+            <DialogHeader>
+              <DialogTitle>Sample trace</DialogTitle>
+              <DialogDescription>
+                Example of an eval iteration with tool calls and timing — same
+                tabs as a real run (Timeline, Chat, Raw).
+              </DialogDescription>
+            </DialogHeader>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              <TraceViewer
+                trace={SAMPLE_TRACE}
+                model={SAMPLE_TRACE_VIEWER_MODEL}
+                traceStartedAtMs={SAMPLE_TRACE_STARTED_AT_MS}
+                chromeDensity="compact"
               />
             </div>
-          )}
-        </ResizablePanel>
-      </ResizablePanelGroup>
-    </div>
+          </DialogContent>
+        </Dialog>
+      </>
+    </EvalTabGate>
   );
 }

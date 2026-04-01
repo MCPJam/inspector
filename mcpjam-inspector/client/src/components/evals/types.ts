@@ -46,6 +46,7 @@ export type EvalCase = {
   testSuiteId: string;
   createdBy: string;
   workspaceId?: string;
+  caseKey?: string;
   title: string;
   query: string;
   models: Array<{
@@ -70,6 +71,7 @@ export type EvalIteration = {
   testCaseId?: string;
   workspaceId?: string;
   testCaseSnapshot?: {
+    caseKey?: string;
     title: string;
     query: string;
     provider: string;
@@ -139,6 +141,8 @@ export type EvalSuiteRun = {
   result?: "pending" | "passed" | "failed" | "cancelled";
   source?: "ui" | "sdk";
   replayedFromRunId?: string;
+  /** Set when this run was created by the Auto fix suite replay step. */
+  traceRepairJobId?: string;
   hasServerReplayConfig?: boolean;
   externalRunId?: string;
   framework?: string;
@@ -153,22 +157,117 @@ export type EvalSuiteRun = {
   notes?: string;
   createdAt: number;
   completedAt?: number;
-  isActive?: boolean; // Mark runs as inactive when suite is edited
+  /** Legacy field from Convex; no longer used for UI gating or trends. */
+  isActive?: boolean;
   expectedIterations?: number;
   _creationTime?: number;
-  triageStatus?: "pending" | "completed" | "failed";
-  triageSummary?: {
+  runInsightsJobId?: number;
+  runInsightsStatus?: "pending" | "completed" | "failed";
+  runInsights?: {
     summary: string;
-    failureCategories: Array<{
-      category: string;
-      count: number;
-      testCaseTitles: string[];
-      recommendation: string;
-    }>;
-    topRecommendations: string[];
     generatedAt: number;
     modelUsed: string;
+    baselineRunId?: string;
+    toolSnapshotHash?: string;
+    caseInsights: Array<{
+      caseKey: string;
+      testCaseId?: string;
+      title: string;
+      status:
+        | "new_failure"
+        | "still_failing"
+        | "fixed"
+        | "new_case"
+        | "removed_case";
+      summary: string;
+    }>;
   };
+  serverQualityJobId?: number;
+  serverQualityStatus?: "pending" | "completed" | "failed";
+  serverQuality?: {
+    summary: string;
+    generatedAt: number;
+    modelUsed: string;
+    toolInsights: Array<{
+      toolName: string;
+      rating: "good" | "needs_improvement" | "poor";
+      issues: string[];
+      suggestions: string[];
+    }>;
+    workflowInsights: Array<{
+      caseKey: string;
+      title: string;
+      toolCallCount: number;
+      optimalCallCount?: number;
+      efficiency: "optimal" | "acceptable" | "inefficient" | "excessive";
+      issues: string[];
+      suggestions: string[];
+    }>;
+  };
+};
+
+export type EvalRefinementSession = {
+  _id: string;
+  status: "pending_candidate" | "ready" | "verifying" | "completed" | "failed";
+  outcome?: "improved_test" | "still_ambiguous" | "server_likely";
+  failureSignature?: string;
+  testWeaknessHypothesis?: string;
+  serverHypothesis?: string;
+  confidenceChecklist?: string[];
+  candidateParaphraseQuery?: string;
+  verificationRuns: Array<{
+    label: string;
+    iterationId?: string;
+    provider: string;
+    model: string;
+    query: string;
+    passed: boolean;
+    failureSignature?: string;
+  }>;
+  attributionSummary?: string;
+  promotedAt?: number;
+  updatedAt: number;
+  baseSnapshot?: {
+    caseKey?: string;
+    title: string;
+    query: string;
+    runs: number;
+    models: Array<{ model: string; provider: string }>;
+    expectedToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
+    isNegativeTest?: boolean;
+    scenario?: string;
+    expectedOutput?: string;
+    advancedConfig?: Record<string, unknown>;
+  };
+  candidateSnapshot?: {
+    caseKey?: string;
+    title: string;
+    query: string;
+    runs: number;
+    models: Array<{ model: string; provider: string }>;
+    expectedToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
+    isNegativeTest?: boolean;
+    scenario?: string;
+    expectedOutput?: string;
+    advancedConfig?: Record<string, unknown>;
+  };
+};
+
+export type EvalRunRefinementCase = {
+  sourceIterationId: string;
+  testCaseId?: string;
+  caseKey: string;
+  title: string;
+  query: string;
+  failureSignature?: string;
+  failureStreak: number;
+  session: EvalRefinementSession | null;
 };
 
 export type EvalSuiteOverviewEntry = {

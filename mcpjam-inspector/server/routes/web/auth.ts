@@ -342,7 +342,13 @@ export async function handleRoute<T>(
     return c.json(result, successStatus);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details,
+    );
   }
 }
 

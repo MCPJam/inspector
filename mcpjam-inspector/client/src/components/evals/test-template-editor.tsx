@@ -29,12 +29,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  useAiProviderKeys,
-  type ProviderTokens,
-} from "@/hooks/use-ai-provider-keys";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import type { ModelDefinition } from "@/shared/types";
+import {
+  buildTestCaseModelOptions,
+  prepareSingleTestCaseRun,
+  resolveSelectedTestCaseModelValue,
+  setPersistedTestCaseModelValue,
+} from "./single-test-case-runner";
 
 interface TestTemplate {
   title: string;
@@ -55,6 +58,7 @@ interface TestTemplateEditorProps {
   selectedTestCaseId: string;
   connectedServerNames: Set<string>;
   workspaceId: string | null;
+  availableModels: ModelDefinition[];
 }
 
 const validateExpectedToolCalls = (
@@ -125,6 +129,7 @@ export function TestTemplateEditor({
   selectedTestCaseId,
   connectedServerNames,
   workspaceId,
+  availableModels,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -336,63 +341,19 @@ export function TestTemplateEditor({
   const handleRun = async () => {
     if (!selectedModel || !currentTestCase || !suite) return;
 
-    // Parse the selected model (format: "provider/model")
-    const [provider, ...modelParts] = selectedModel.split("/");
-    const model = modelParts.join("/");
-
-    if (!provider || !model) {
-      toast.error("Invalid model selection");
-      return;
-    }
-
-    // Check for API key if needed
-    if (!isMCPJamProvidedModel(model)) {
-      const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-      if (!hasToken(tokenKey)) {
-        toast.error(
-          `Please add your ${provider} API key in Settings before running this test`,
-        );
-        return;
-      }
-    }
-
     // Clear previous result
     setCurrentQuickRunResult(null);
     setIsRunning(true);
 
-    // Track test case run started
-    posthog.capture("eval_test_case_run_started", {
-      location: "test_template_editor",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-      suite_id: suiteId,
-      test_case_id: currentTestCase._id,
-      model: selectedModel,
-    });
-
     try {
-      const accessToken = await getAccessToken();
-      const serverIds = suite.environment?.servers || [];
-
-      // Collect API key if needed
-      const modelApiKeys: Record<string, string> = {};
-      if (!isMCPJamProvidedModel(model)) {
-        const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-        const key = getToken(tokenKey);
-        if (key) {
-          modelApiKeys[provider] = key;
-        }
-      }
-
-      const data = await runEvalTestCase({
+      const preparedRun = await prepareSingleTestCaseRun({
         workspaceId,
-        testCaseId: currentTestCase._id,
-        model,
-        provider,
-        serverIds,
-        modelApiKeys:
-          Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-        convexAuthToken: accessToken,
+        suite,
+        testCase: currentTestCase,
+        selectedModel,
+        getAccessToken,
+        getToken,
+        hasToken,
         // Send current form state to run with unsaved changes
         testCaseOverrides: editForm
           ? {
@@ -402,6 +363,18 @@ export function TestTemplateEditor({
             }
           : undefined,
       });
+
+      // Track test case run started
+      posthog.capture("eval_test_case_run_started", {
+        location: "test_template_editor",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: suiteId,
+        test_case_id: currentTestCase._id,
+        model: preparedRun.modelValue,
+      });
+
+      const data = await runEvalTestCase(preparedRun.request);
 
       // Store the iteration result
       if (data.iteration) {
@@ -421,7 +394,7 @@ export function TestTemplateEditor({
           environment: detectEnvironment(),
           suite_id: suiteId,
           test_case_id: currentTestCase._id,
-          model: selectedModel,
+          model: preparedRun.modelValue,
           result: iteration.result || "unknown",
           duration_ms: durationMs,
         });
@@ -478,23 +451,24 @@ export function TestTemplateEditor({
     }
   };
 
-  // Use models from the test case (which come from the suite configuration)
+  // Offer the full eval model set while keeping the case's saved model selectable.
   const modelOptions = useMemo(() => {
-    if (!currentTestCase) return [];
-    const models = currentTestCase.models || [];
-    return models.map((m: any) => ({
-      value: `${m.provider}/${m.model}`,
-      label: m.model, // Show only model name, not provider
-      provider: m.provider,
-    }));
-  }, [currentTestCase]);
+    return buildTestCaseModelOptions(availableModels, currentTestCase);
+  }, [availableModels, currentTestCase]);
 
-  // Auto-select first model if none selected
   useEffect(() => {
-    if (modelOptions.length > 0 && !selectedModel) {
-      setSelectedModel(modelOptions[0].value);
-    }
-  }, [modelOptions, selectedModel]);
+    const nextSelectedModel = resolveSelectedTestCaseModelValue({
+      testCaseId: currentTestCase?._id ?? selectedTestCaseId,
+      testCase: currentTestCase,
+      modelOptions,
+    });
+
+    setSelectedModel(nextSelectedModel ?? "");
+  }, [currentTestCase, modelOptions, selectedTestCaseId]);
+
+  useEffect(() => {
+    setPersistedTestCaseModelValue(selectedTestCaseId, selectedModel || null);
+  }, [selectedModel, selectedTestCaseId]);
 
   if (!currentTestCase) {
     return (

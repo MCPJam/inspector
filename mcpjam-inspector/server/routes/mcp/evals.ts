@@ -1,13 +1,8 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
-import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
-import {
-  buildReplayManager,
-  createConvexClient,
-  fetchReplayConfig,
-  requireConvexHttpUrl,
-} from "../../services/evals/route-helpers.js";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
+import { executeSuiteReplayFromRun } from "../../services/evals/replay-suite-run.js";
+import { runTraceRepairJob } from "../../services/evals/trace-repair-runner.js";
 import "../../types/hono";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
@@ -51,6 +46,30 @@ const ReplayRunRequestSchema = z.object({
     .optional(),
 });
 
+const TraceRepairStartSchema = z.discriminatedUnion("scope", [
+  z.object({
+    scope: z.literal("suite"),
+    suiteId: z.string().min(1),
+    sourceRunId: z.string().min(1),
+    convexAuthToken: z.string(),
+    modelApiKeys: z.record(z.string(), z.string()).optional(),
+  }),
+  z.object({
+    scope: z.literal("case"),
+    suiteId: z.string().min(1),
+    sourceRunId: z.string().min(1),
+    sourceIterationId: z.string().min(1),
+    testCaseId: z.string().min(1),
+    convexAuthToken: z.string(),
+    modelApiKeys: z.record(z.string(), z.string()).optional(),
+  }),
+]);
+
+const TraceRepairStopSchema = z.object({
+  jobId: z.string().min(1),
+  convexAuthToken: z.string(),
+});
+
 evals.post("/run", async (c) => {
   try {
     const body = await c.req.json();
@@ -74,6 +93,82 @@ evals.post("/run", async (c) => {
   }
 });
 
+evals.post("/trace-repair/start", async (c) => {
+  try {
+    const body = await c.req.json();
+    const parsed = TraceRepairStartSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: parsed.error.issues,
+        },
+        400,
+      );
+    }
+    const data = parsed.data;
+    const convexClient = createConvexClient(data.convexAuthToken);
+    const start = await convexClient.mutation(
+      "traceRepair:startTraceRepairJob" as any,
+      {
+        testSuiteId: data.suiteId,
+        sourceRunId: data.sourceRunId,
+        scope: data.scope,
+        targetTestCaseId: data.scope === "case" ? data.testCaseId : undefined,
+        targetSourceIterationId:
+          data.scope === "case" ? data.sourceIterationId : undefined,
+      },
+    );
+    const shouldSpawnWorker =
+      start.shouldSpawnWorker !== false &&
+      (start.shouldSpawnWorker === true || start.existing !== true);
+    if (shouldSpawnWorker) {
+      void runTraceRepairJob({
+        convexClient,
+        convexAuthToken: data.convexAuthToken,
+        jobId: start.jobId,
+        modelApiKeys: data.modelApiKeys,
+      }).catch((err) => {
+        logger.error("[trace-repair] background job failed", err, {
+          jobId: start.jobId,
+        });
+      });
+    }
+    return c.json({
+      success: true,
+      jobId: start.jobId,
+      existing: Boolean(start.existing),
+    });
+  } catch (error) {
+    logger.error("[Error starting trace repair]", error);
+    return jsonRouteError(c, error);
+  }
+});
+
+evals.post("/trace-repair/stop", async (c) => {
+  try {
+    const body = await c.req.json();
+    const parsed = TraceRepairStopSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: parsed.error.issues,
+        },
+        400,
+      );
+    }
+    const convexClient = createConvexClient(parsed.data.convexAuthToken);
+    await convexClient.mutation("traceRepair:stopTraceRepairJob" as any, {
+      jobId: parsed.data.jobId,
+    });
+    return c.json({ success: true });
+  } catch (error) {
+    logger.error("[Error stopping trace repair]", error);
+    return jsonRouteError(c, error);
+  }
+});
+
 evals.post("/replay-run", async (c) => {
   try {
     const body = await c.req.json();
@@ -92,69 +187,25 @@ evals.post("/replay-run", async (c) => {
       validationResult.data;
 
     const convexClient = createConvexClient(convexAuthToken);
-    const convexHttpUrl = requireConvexHttpUrl();
-    const replayMetadata = await convexClient.query(
-      "testSuites:getRunReplayMetadata" as any,
-      {
-        runId,
-      },
-    );
-
-    if (!replayMetadata?.hasServerReplayConfig) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "This run does not have stored replay credentials",
-      );
-    }
-
-    const replayConfig = await fetchReplayConfig(runId, convexAuthToken);
-    if (!replayConfig || replayConfig.servers.length === 0) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        "No replay configuration found for this run",
-      );
-    }
-
-    const replayManager = buildReplayManager(replayConfig);
     try {
-      const {
-        runId: replayRunId,
-        recorder,
-        config,
-      } = await startSuiteRunWithRecorder({
+      const result = await executeSuiteReplayFromRun({
         convexClient,
-        suiteId: replayMetadata.suiteId,
+        convexAuthToken,
+        sourceRunId: runId,
+        modelApiKeys,
         notes,
         passCriteria,
-        serverIds:
-          replayMetadata.environment?.servers ??
-          replayConfig.servers.map((server) => server.serverId),
-        replayedFromRunId: runId,
       });
-
-      await runEvalSuiteWithAiSdk({
-        suiteId: replayMetadata.suiteId,
-        runId: replayRunId,
-        config,
-        modelApiKeys: modelApiKeys ?? undefined,
-        convexClient,
-        convexHttpUrl,
-        convexAuthToken,
-        mcpClientManager: replayManager,
-        recorder,
-      });
-
-      return c.json({
-        success: true,
-        suiteId: replayMetadata.suiteId,
-        runId: replayRunId,
-        sourceRunId: runId,
-        message: "Replay completed successfully.",
-      });
-    } finally {
-      await replayManager.disconnectAllServers();
+      return c.json(result);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (
+        message.includes("stored replay config") ||
+        message.includes("No replay configuration")
+      ) {
+        throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, message);
+      }
+      throw err;
     }
   } catch (error) {
     logger.error("[Error replaying eval run]", error);

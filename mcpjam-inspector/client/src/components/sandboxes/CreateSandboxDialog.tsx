@@ -119,6 +119,15 @@ export function CreateSandboxDialog({
 
     setIsSaving(true);
     try {
+      const optionalServerIds = sandbox
+        ? sandbox.servers
+            .filter(
+              (s) =>
+                s.optional === true && selectedServerIds.includes(s.serverId),
+            )
+            .map((s) => s.serverId)
+        : [];
+
       const payload = {
         name: trimmedName,
         description: description.trim() || undefined,
@@ -129,6 +138,7 @@ export function CreateSandboxDialog({
         requireToolApproval,
         allowGuestAccess,
         serverIds: selectedServerIds,
+        optionalServerIds,
       };
 
       const next = (

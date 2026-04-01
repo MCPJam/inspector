@@ -1,18 +1,21 @@
 import { ConvexHttpClient } from "convex/browser";
-import type { MCPClientManager } from "@mcpjam/sdk";
+import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { z } from "zod";
-import {
-  generateTestCases,
-  type DiscoveredTool,
-} from "../../services/eval-agent";
+import { generateTestCases } from "../../services/eval-agent";
 import {
   convertToEvalTestCases,
   generateNegativeTestCases,
 } from "../../services/negative-test-agent";
 import { startSuiteRunWithRecorder } from "../../services/evals/recorder";
+import {
+  captureToolSnapshotForEvalAuthoring,
+  storeReplayConfig,
+} from "../../services/evals/route-helpers";
 import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
+import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 
 export const RunEvalsRequestSchema = z.object({
   workspaceId: z.string().optional(),
@@ -146,34 +149,6 @@ export function resolveServerIdsOrThrow(
   return resolved;
 }
 
-async function collectToolsForServers(
-  clientManager: MCPClientManager,
-  serverIds: string[],
-): Promise<DiscoveredTool[]> {
-  const perServerTools = await Promise.all(
-    serverIds.map(async (serverId) => {
-      try {
-        const { tools } = await clientManager.listTools(serverId);
-        return tools.map((tool: any) => ({
-          name: tool.name,
-          description: tool.description,
-          inputSchema: tool.inputSchema,
-          outputSchema: (tool as { outputSchema?: unknown }).outputSchema,
-          serverId,
-        }));
-      } catch (error) {
-        logger.warn(`[evals] Failed to list tools for server ${serverId}`, {
-          serverId,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        return [] as DiscoveredTool[];
-      }
-    }),
-  );
-
-  return perServerTools.flat();
-}
-
 function normalizeForComparison(obj: any): any {
   if (obj === null || obj === undefined) return null;
   if (typeof obj !== "object") return obj;
@@ -186,6 +161,36 @@ function normalizeForComparison(obj: any): any {
       sorted[key] = normalizeForComparison(obj[key]);
     });
   return sorted;
+}
+
+export function filterAndRemapReplayConfigs(
+  replayConfigs: MCPServerReplayConfig[],
+  resolvedServerIds: string[],
+  persistedServerIds: string[],
+): MCPServerReplayConfig[] {
+  const persistedIdByResolvedId = new Map<string, string>();
+
+  for (const [index, resolvedServerId] of resolvedServerIds.entries()) {
+    const persistedServerId = persistedServerIds[index] ?? resolvedServerId;
+    if (!resolvedServerId || !persistedServerId) {
+      continue;
+    }
+    persistedIdByResolvedId.set(resolvedServerId, persistedServerId);
+  }
+
+  return replayConfigs.flatMap((config) => {
+    const persistedServerId = persistedIdByResolvedId.get(config.serverId);
+    if (!persistedServerId) {
+      return [];
+    }
+
+    return [
+      {
+        ...config,
+        serverId: persistedServerId,
+      },
+    ];
+  });
 }
 
 export async function runEvalsWithManager(
@@ -227,6 +232,14 @@ export async function runEvalsWithManager(
       ? storageServerIds
       : resolvedServerIds;
   const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
+  const { toolSnapshot, toolSnapshotDebug } =
+    await captureToolSnapshotForEvalAuthoring(
+      clientManager,
+      resolvedServerIds,
+      {
+        logPrefix: "evals",
+      },
+    );
 
   let resolvedSuiteId = suiteId ?? null;
 
@@ -331,10 +344,14 @@ export async function runEvalsWithManager(
             testCaseId: existingTestCase._id,
             models: testCaseData.models,
             runs: testCaseData.runs,
-            expectedToolCalls: testCaseData.expectedToolCalls,
+            expectedToolCalls: sanitizeForConvexTransport(
+              testCaseData.expectedToolCalls,
+            ),
             isNegativeTest: testCaseData.isNegativeTest,
             scenario: testCaseData.scenario,
-            advancedConfig: testCaseData.advancedConfig,
+            advancedConfig: sanitizeForConvexTransport(
+              testCaseData.advancedConfig,
+            ),
           });
         }
       } else {
@@ -344,11 +361,15 @@ export async function runEvalsWithManager(
           query: testCaseData.query,
           models: testCaseData.models,
           runs: testCaseData.runs,
-          expectedToolCalls: testCaseData.expectedToolCalls,
+          expectedToolCalls: sanitizeForConvexTransport(
+            testCaseData.expectedToolCalls,
+          ),
           isNegativeTest: testCaseData.isNegativeTest,
           scenario: testCaseData.scenario,
           judgeRequirement: testCaseData.judgeRequirement,
-          advancedConfig: testCaseData.advancedConfig,
+          advancedConfig: sanitizeForConvexTransport(
+            testCaseData.advancedConfig,
+          ),
         });
       }
     }
@@ -377,11 +398,13 @@ export async function runEvalsWithManager(
         query: testCaseData.query,
         models: testCaseData.models,
         runs: testCaseData.runs,
-        expectedToolCalls: testCaseData.expectedToolCalls,
+        expectedToolCalls: sanitizeForConvexTransport(
+          testCaseData.expectedToolCalls,
+        ),
         isNegativeTest: testCaseData.isNegativeTest,
         scenario: testCaseData.scenario,
         judgeRequirement: testCaseData.judgeRequirement,
-        advancedConfig: testCaseData.advancedConfig,
+        advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
       });
     }
   }
@@ -392,7 +415,25 @@ export async function runEvalsWithManager(
     notes,
     passCriteria,
     serverIds: resolvedServerIds,
+    toolSnapshot,
+    toolSnapshotDebug,
   });
+
+  const replayConfigsToStore = filterAndRemapReplayConfigs(
+    clientManager.getServerReplayConfigs(),
+    resolvedServerIds,
+    persistedServerIds,
+  );
+  if (replayConfigsToStore.length > 0) {
+    try {
+      await storeReplayConfig(runId, replayConfigsToStore, convexAuthToken);
+    } catch (error) {
+      logger.warn("[evals] Failed to store replay config for suite run", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
 
   await runEvalSuiteWithAiSdk({
     suiteId: resolvedSuiteId,
@@ -414,9 +455,15 @@ export async function runEvalsWithManager(
   };
 }
 
+export type RunEvalTestCaseWithManagerOptions = {
+  /** When true, skip mutating `testCase.lastMessageRun` after the run (safe for parallel quick runs on the same case). */
+  skipLastMessageRunUpdate?: boolean;
+};
+
 export async function runEvalTestCaseWithManager(
   clientManager: MCPClientManager,
   request: RunTestCaseRequest,
+  options?: RunEvalTestCaseWithManagerOptions,
 ) {
   const {
     testCaseId,
@@ -453,7 +500,7 @@ export async function runEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
-  await runEvalSuiteWithAiSdk({
+  const quickResult = await runEvalSuiteWithAiSdk({
     suiteId: testCase.evalTestSuiteId,
     runId: null,
     config: {
@@ -469,16 +516,28 @@ export async function runEvalTestCaseWithManager(
     testCaseId,
   });
 
-  const recentIterations = await convexClient.query(
-    "testSuites:listTestIterations" as any,
-    { testCaseId },
-  );
-  const latestIteration = recentIterations?.[0] || null;
+  const expectedIterationId =
+    quickResult?.quickRunIterationOutcomes?.[0]?.iterationId;
 
-  if (latestIteration?._id) {
+  let latestIteration: unknown = null;
+  if (expectedIterationId) {
+    latestIteration = await convexClient.query(
+      "testSuites:getTestIteration" as any,
+      { iterationId: expectedIterationId },
+    );
+  }
+  if (!latestIteration) {
+    const recentIterations = await convexClient.query(
+      "testSuites:listTestIterations" as any,
+      { testCaseId },
+    );
+    latestIteration = recentIterations?.[0] || null;
+  }
+
+  if (!options?.skipLastMessageRunUpdate && (latestIteration as any)?._id) {
     await convexClient.mutation("testSuites:updateTestCase" as any, {
       testCaseId,
-      lastMessageRun: latestIteration._id,
+      lastMessageRun: (latestIteration as any)._id,
     });
   }
 
@@ -497,10 +556,14 @@ export async function generateEvalTestsWithManager(
     request.serverIds,
     clientManager,
   );
-  const filteredTools = await collectToolsForServers(
+  const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
+    {
+      logPrefix: "evals.generate-tests",
+    },
   );
+  const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
   if (filteredTools.length === 0) {
     throw new WebRouteError(
@@ -516,7 +579,7 @@ export async function generateEvalTestsWithManager(
   }
 
   const tests = await generateTestCases(
-    filteredTools,
+    toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
   );
@@ -535,10 +598,14 @@ export async function generateNegativeEvalTestsWithManager(
     request.serverIds,
     clientManager,
   );
-  const filteredTools = await collectToolsForServers(
+  const { toolSnapshot } = await captureToolSnapshotForEvalAuthoring(
     clientManager,
     resolvedServerIds,
+    {
+      logPrefix: "evals.generate-negative-tests",
+    },
   );
+  const filteredTools = flattenServerToolSnapshotTools(toolSnapshot);
 
   if (filteredTools.length === 0) {
     throw new WebRouteError(
@@ -554,7 +621,7 @@ export async function generateNegativeEvalTestsWithManager(
   }
 
   const tests = await generateNegativeTestCases(
-    filteredTools,
+    toolSnapshot,
     convexHttpUrl,
     request.convexAuthToken,
   );

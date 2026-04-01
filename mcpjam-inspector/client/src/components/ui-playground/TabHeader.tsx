@@ -37,8 +37,8 @@ export function TabHeader({
   onClose,
 }: TabHeaderProps) {
   return (
-    <div className="border-b border-border flex-shrink-0">
-      <div className="px-2 py-1.5 flex items-center gap-2">
+    <div className="h-11 border-b border-border flex-shrink-0">
+      <div className="h-full px-2 flex items-center gap-2">
         {/* Tabs */}
         <div className="flex items-center gap-1.5">
           <button

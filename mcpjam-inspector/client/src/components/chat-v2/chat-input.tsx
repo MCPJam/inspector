@@ -1,10 +1,23 @@
-import { useRef, useState, useCallback, type ChangeEvent } from "react";
+import {
+  useRef,
+  useState,
+  useCallback,
+  useLayoutEffect,
+  type ChangeEvent,
+} from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square, Paperclip, Glasses, ShieldCheck } from "lucide-react";
+import {
+  ArrowUp,
+  Square,
+  Paperclip,
+  Glasses,
+  ShieldCheck,
+  Plus,
+} from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -41,7 +54,16 @@ import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
 import { usePostHog } from "posthog-js/react";
-import { useSandboxHostStyle } from "@/contexts/sandbox-host-style-context";
+import {
+  useSandboxHostStyle,
+  useSandboxHostTheme,
+} from "@/contexts/sandbox-host-style-context";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface ChatInputProps {
   value: string;
@@ -92,6 +114,17 @@ interface ChatInputProps {
   onRequireToolApprovalChange?: (enabled: boolean) => void;
   /** Shared chat-only mode */
   minimalMode?: boolean;
+  /** Onboarding: pulse the send button with glow animation */
+  pulseSubmit?: boolean;
+  /** Move the textarea caret to the end when this trigger changes */
+  moveCaretToEndTrigger?: number;
+  /** Hosted sandbox: optional servers not yet connected (Add server popover). */
+  sandboxAttachableServers?: Array<{
+    serverId: string;
+    serverName: string;
+    useOAuth: boolean;
+  }>;
+  onAttachSandboxServer?: (serverId: string) => void;
 }
 
 export function ChatInput({
@@ -131,9 +164,17 @@ export function ChatInput({
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
+  pulseSubmit = false,
+  moveCaretToEndTrigger,
+  sandboxAttachableServers,
+  onAttachSandboxServer,
 }: ChatInputProps) {
   const posthog = usePostHog();
   const sandboxHostStyle = useSandboxHostStyle();
+  const sandboxHostTheme = useSandboxHostTheme();
+  const globalThemeMode = usePreferencesStore((s) => s.themeMode);
+  const resolvedThemeMode = sandboxHostTheme ?? globalThemeMode;
+  const isDarkSandboxTheme = resolvedThemeMode === "dark";
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -150,6 +191,18 @@ export function ChatInput({
     value,
     caretIndex,
   );
+
+  useLayoutEffect(() => {
+    if (moveCaretToEndTrigger === undefined) return;
+
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    textarea.focus();
+    const end = textarea.value.length;
+    textarea.setSelectionRange(end, end);
+    setCaretIndex(end);
+  }, [moveCaretToEndTrigger]);
 
   const onMCPPromptSelected = useCallback(
     (mcpPromptResult: MCPPromptResult) => {
@@ -328,21 +381,37 @@ export function ChatInput({
 
   const composerClasses =
     sandboxHostStyle === "chatgpt"
-      ? "sandbox-host-composer rounded-[1.75rem] border-transparent bg-[#f4f4f4] shadow-none dark:bg-[#2f2f2f]"
+      ? cn(
+          "sandbox-host-composer rounded-[1.75rem] border-transparent shadow-none",
+          isDarkSandboxTheme ? "bg-[#2f2f2f]" : "bg-[#f4f4f4]",
+        )
       : sandboxHostStyle === "claude"
-        ? "sandbox-host-composer rounded-[1.35rem] border-[#d7cfbf] bg-[#f5f0e8] shadow-none dark:border-[#4b463d] dark:bg-[#34322e]"
+        ? cn(
+            "sandbox-host-composer rounded-[1.35rem] shadow-none",
+            isDarkSandboxTheme
+              ? "border-[#4b463d] bg-[#34322e]"
+              : "border-[#d7cfbf] bg-[#f5f0e8]",
+          )
         : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =
     sandboxHostStyle === "chatgpt"
-      ? "bg-[#1f1f1f] text-white hover:bg-[#303030] dark:bg-[#f4f4f4] dark:text-[#1f1f1f] dark:hover:bg-[#e8e8e8]"
+      ? isDarkSandboxTheme
+        ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
+        : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
       : sandboxHostStyle === "claude"
-        ? "bg-[#e27d47] text-white hover:bg-[#d16f3d] dark:bg-[#d07b53] dark:text-[#fff7f0] dark:hover:bg-[#c06f49]"
+        ? isDarkSandboxTheme
+          ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
+          : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
         : "bg-primary text-primary-foreground hover:bg-primary/90";
   const inactiveSubmitButtonClasses =
     sandboxHostStyle === "chatgpt"
-      ? "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed dark:bg-[#3a3a3a] dark:text-[#8a8a8a]"
+      ? isDarkSandboxTheme
+        ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
+        : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
       : sandboxHostStyle === "claude"
-        ? "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed dark:bg-[#45413b] dark:text-[#8d857a]"
+        ? isDarkSandboxTheme
+          ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
+          : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
         : "bg-muted text-muted-foreground cursor-not-allowed";
 
   return (
@@ -365,6 +434,53 @@ export function ChatInput({
           caretIndex={caretIndex}
           minimalMode={minimalMode}
         />
+
+        {minimalMode &&
+        sandboxAttachableServers &&
+        sandboxAttachableServers.length > 0 &&
+        onAttachSandboxServer ? (
+          <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-0.5">
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8 gap-1 rounded-full border-dashed px-3 text-xs"
+                  disabled={disabled}
+                  aria-label="Add optional server"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add server
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-72 p-1" align="start">
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                  Connect an optional server. You may be asked to authorize.
+                </p>
+                <div className="max-h-48 overflow-y-auto">
+                  {sandboxAttachableServers.map((s) => (
+                    <button
+                      key={s.serverId}
+                      type="button"
+                      className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
+                      onClick={() => onAttachSandboxServer(s.serverId)}
+                    >
+                      <span className="truncate font-medium">
+                        {s.serverName}
+                      </span>
+                      {s.useOAuth ? (
+                        <span className="shrink-0 text-[10px] text-muted-foreground">
+                          OAuth
+                        </span>
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </PopoverContent>
+            </Popover>
+          </div>
+        ) : null}
 
         {/* Hidden file input */}
         <input
@@ -616,6 +732,7 @@ export function ChatInput({
                         !submitDisabled
                         ? activeSubmitButtonClasses
                         : inactiveSubmitButtonClasses,
+                      pulseSubmit && "animate-onboarding-pulse",
                     )}
                     disabled={
                       (!value.trim() && !hasResults) ||

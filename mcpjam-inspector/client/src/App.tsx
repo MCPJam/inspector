@@ -1,5 +1,13 @@
-import { useConvexAuth } from "convex/react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useConvexAuth, useQuery } from "convex/react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentProps,
+} from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +32,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
@@ -114,6 +123,7 @@ import {
   isPremiumnessGateDeniedForShell,
 } from "./lib/billing-entitlements";
 import { BILLING_GATES, resolveBillingGateState } from "./lib/billing-gates";
+import { getNewlyConnectedServers } from "./lib/connected-server-auto-open";
 import {
   clearHostedOAuthPendingState,
   getHostedOAuthCallbackContext,
@@ -200,11 +210,36 @@ function getInitialPendingCheckoutIntent(): CheckoutIntent | null {
   return readPersistedCheckoutIntent();
 }
 
+type AppChromeSidebarProps = ComponentProps<typeof MCPSidebar> & {
+  hidden: boolean;
+};
+
+function AppChromeSidebar({ hidden, ...props }: AppChromeSidebarProps) {
+  if (hidden) {
+    return null;
+  }
+
+  return <MCPSidebar {...props} />;
+}
+
+type AppChromeHeaderProps = ComponentProps<typeof Header> & {
+  hidden: boolean;
+};
+
+function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
+  if (hidden) {
+    return null;
+  }
+
+  return <Header {...props} />;
+}
+
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
+  const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
   const billingDeepLinkNavRef = useRef(false);
@@ -214,7 +249,6 @@ export default function App() {
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
@@ -456,6 +490,7 @@ export default function App() {
     handleUpdateWorkspace,
     handleUpdateClientConfig,
     handleDeleteWorkspace,
+    handleLeaveWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -471,6 +506,30 @@ export default function App() {
   const activeOrganizationName = sortedOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
+  const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
+  const hostedShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces,
+  });
+  const hostedChatShellGateState = resolveHostedShellGateState({
+    hostedMode: HOSTED_MODE,
+    isConvexAuthLoading: isAuthLoading,
+    isConvexAuthenticated: isAuthenticated,
+    isWorkOsLoading,
+    hasWorkOsUser: !!workOsUser,
+    isLoadingRemoteWorkspaces: false,
+  });
+  const isOnboardingDecisionReady = hostedShellGateState === "ready";
+  const isHostedDefaultRoute = currentHashRoute.normalizedTab === "servers";
+  const shouldHoldHostedDefaultRouteForAuth =
+    HOSTED_MODE &&
+    !isHostedChatRoute &&
+    isHostedDefaultRoute &&
+    hostedShellGateState === "auth-loading";
 
   // Auto-add a shared server when returning from SharedServerChatPage via "Open MCPJam"
   useEffect(() => {
@@ -501,6 +560,53 @@ export default function App() {
     workspaceServers,
     handleConnect,
   ]);
+
+  const previousConnectedServersRef = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const connectedServers = new Set(
+      Object.entries(appState.servers)
+        .filter(([, server]) => server.connectionStatus === "connected")
+        .map(([name]) => name),
+    );
+
+    const previousConnectedServers = previousConnectedServersRef.current;
+    const newlyConnectedServers = getNewlyConnectedServers(
+      previousConnectedServers,
+      connectedServers,
+    );
+
+    if (activeTab === "servers") {
+      const firstVisitServer = newlyConnectedServers.find((serverName) => {
+        try {
+          return (
+            localStorage.getItem(`testing-auto-opened:${serverName}`) !== "true"
+          );
+        } catch {
+          return true;
+        }
+      });
+
+      if (firstVisitServer) {
+        try {
+          localStorage.setItem(
+            `testing-auto-opened:${firstVisitServer}`,
+            "true",
+          );
+        } catch {
+          // Ignore localStorage failures and still navigate.
+        }
+        setSelectedServer(firstVisitServer);
+        if (
+          window.location.hash !== "#ci-evals" &&
+          window.location.hash !== "#/ci-evals"
+        ) {
+          window.location.hash = "#/ci-evals";
+        }
+      }
+    }
+
+    previousConnectedServersRef.current = connectedServers;
+  }, [activeTab, appState.servers, setSelectedServer]);
 
   // Create effective app state that uses the correct workspaces (Convex when authenticated)
   const effectiveAppState = useMemo(
@@ -745,7 +851,7 @@ export default function App() {
   );
 
   // Sync tab with hash on mount and when hash changes
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (isHostedChatRoute) {
       return;
     }
@@ -757,7 +863,33 @@ export default function App() {
     applyHash();
     window.addEventListener("hashchange", applyHash);
     return () => window.removeEventListener("hashchange", applyHash);
-  }, [applyNavigation, isHostedChatRoute, workOsUser?.id]);
+  }, [applyNavigation, isHostedChatRoute]);
+
+  useLayoutEffect(() => {
+    if (isHostedChatRoute) {
+      return;
+    }
+
+    if (!isOnboardingDecisionReady) {
+      return;
+    }
+
+    if (
+      isFirstRunEligible(
+        hasAnyWorkspaceServers,
+        window.location.hash,
+        isAuthenticated,
+      )
+    ) {
+      applyNavigation("app-builder", { updateHash: true });
+    }
+  }, [
+    applyNavigation,
+    hasAnyWorkspaceServers,
+    isAuthenticated,
+    isOnboardingDecisionReady,
+    isHostedChatRoute,
+  ]);
 
   const consumeCheckoutIntent = useCallback(() => {
     clearPersistedCheckoutIntent();
@@ -896,10 +1028,13 @@ export default function App() {
     workOsUser?.id,
   ]);
 
-  // Redirect away from tabs hidden by the ci-evals feature flag.
-  // Use strict equality to avoid redirecting while the flag is still loading (undefined).
   useEffect(() => {
-    if (ciEvalsEnabled === false && activeTab === "ci-evals") {
+    if (activeTabBillingLocked && activeTabBillingFeature) {
+      toast.error(
+        `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
+          billingEntitlements?.plan,
+        )} plan. Upgrade the organization to continue.`,
+      );
       applyNavigation("servers", { updateHash: true });
     } else if (activeTab === "registry" && registryEnabled !== true) {
       applyNavigation("servers", { updateHash: true });
@@ -915,7 +1050,6 @@ export default function App() {
       applyNavigation("servers", { updateHash: true });
     }
   }, [
-    ciEvalsEnabled,
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,
@@ -1063,22 +1197,9 @@ export default function App() {
     billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
 
-  const hostedShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    isLoadingRemoteWorkspaces,
-  });
-  const hostedChatShellGateState = resolveHostedShellGateState({
-    hostedMode: HOSTED_MODE,
-    isConvexAuthLoading: isAuthLoading,
-    isConvexAuthenticated: isAuthenticated,
-    isWorkOsLoading,
-    hasWorkOsUser: !!workOsUser,
-    isLoadingRemoteWorkspaces: false,
-  });
+  if (shouldHoldHostedDefaultRouteForAuth) {
+    return <LoadingScreen />;
+  }
 
   const shouldShowActiveServerSelector =
     activeTab === "tools" ||
@@ -1117,7 +1238,8 @@ export default function App() {
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
-      <MCPSidebar
+      <AppChromeSidebar
+        hidden={appBuilderOnboarding}
         onNavigate={handleNavigate}
         activeTab={activeTab}
         servers={workspaceServers}
@@ -1135,7 +1257,10 @@ export default function App() {
         createWorkspaceDisabledReason={createWorkspaceDisabledReason}
       />
       <SidebarInset className="flex flex-col min-h-0">
-        <Header activeServerSelectorProps={activeServerSelectorProps} />
+        <AppChromeHeader
+          hidden={appBuilderOnboarding}
+          activeServerSelectorProps={activeServerSelectorProps}
+        />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
@@ -1345,6 +1470,11 @@ export default function App() {
             <AppBuilderTab
               serverConfig={selectedMCPConfig}
               serverName={appState.selectedServer}
+              servers={workspaceServers}
+              isAuthenticated={isAuthenticated}
+              isAuthLoading={isAuthLoading}
+              onConnect={handleConnect}
+              onOnboardingChange={setAppBuilderOnboarding}
             />
           )}
           {activeTab === "client-config" && (

@@ -282,10 +282,21 @@ describe("SandboxesTab", () => {
     expect(screen.getByText("Workspace: Workspace One")).toBeInTheDocument();
   });
 
-  it("starts a blank sandbox draft from the new sandbox action", async () => {
+  it("opens the starter launcher from the new sandbox action", async () => {
     render(<SandboxesTab workspaceId="ws-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New sandbox" }));
+
+    expect(
+      await screen.findByText("What would you like to create?"),
+    ).toBeInTheDocument();
+  });
+
+  it("starts a blank sandbox draft after choosing blank from the launcher", async () => {
+    render(<SandboxesTab workspaceId="ws-1" />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "New sandbox" }));
+    fireEvent.click(await screen.findByText("Blank sandbox"));
 
     expect(await screen.findByText("Builder view")).toBeInTheDocument();
     expect(screen.getByText("Sandbox: new")).toBeInTheDocument();
@@ -311,6 +322,7 @@ describe("SandboxesTab", () => {
     render(<SandboxesTab workspaceId="ws-1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "New sandbox" }));
+    fireEvent.click(await screen.findByText("Blank sandbox"));
     fireEvent.click(screen.getByRole("button", { name: "Back to index" }));
 
     expect(

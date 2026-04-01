@@ -689,7 +689,14 @@ describe("reportEvalResults", () => {
     );
 
     const requestBody = JSON.parse(fetchMock.mock.calls[2][1].body as string);
-    expect(requestBody.results[0].widgetSnapshots).toBeUndefined();
+    expect(requestBody.results[0].widgetSnapshots[0]).toEqual(
+      expect.objectContaining({
+        toolCallId: "call-1",
+        toolName: "create_view",
+        widgetHtml: "<html>cached</html>",
+      })
+    );
+    expect(requestBody.results[0].widgetSnapshots[0].widgetHtmlBlobId).toBeUndefined();
     expect(mockAddBreadcrumb).toHaveBeenCalledWith(
       expect.objectContaining({
         category: "eval-reporting.widget-upload",

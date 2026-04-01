@@ -1,13 +1,7 @@
 import type { ModelMessage } from "ai";
 import { logger } from "../utils/logger";
-
-export interface DiscoveredTool {
-  name: string;
-  description?: string;
-  inputSchema: any;
-  outputSchema?: any;
-  serverId: string;
-}
+import type { ServerToolSnapshot } from "../utils/export-helpers.js";
+import { renderServerToolSnapshotSection } from "../utils/export-helpers.js";
 
 export interface GeneratedNegativeTestCase {
   title: string;
@@ -18,7 +12,7 @@ export interface GeneratedNegativeTestCase {
 
 const NEGATIVE_TEST_CASE_COUNT = 3;
 
-const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating negative test cases for MCP (Model Context Protocol) servers.
+export const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating negative test cases for MCP (Model Context Protocol) servers.
 
 **About MCP:**
 The Model Context Protocol enables AI assistants to securely access external data and tools. MCP servers expose tools, resources, and prompts that AI models can use to accomplish user tasks.
@@ -41,6 +35,9 @@ Negative test cases are prompts that might seem similar to tool-triggering promp
 4. **Ambiguous Requests**: Create vague or unclear requests that shouldn't trigger tools
 5. **Conversational**: Include casual conversation that mentions tool-related topics
 6. **Descriptive Scenarios**: Provide clear descriptions of why each case should NOT trigger tools
+7. **Inventory is context only**: The tool list is authoring context only. Every generated case must still expect no tools.
+8. **Keep cases attributable**: Prefer short, clearly non-actionable prompts over long synthetic workflows involving invented entities, ids, places, or blocked workspace actions
+9. **No fake-fixture negatives**: Do not make a case negative merely because it depends on fake workspace entities; make it negative because the request itself should not trigger tools
 
 **Test Case Distribution:**
 Generate 3 negative test cases covering different categories:
@@ -84,39 +81,18 @@ Example:
  * Negative test cases are scenarios where NO tools should be triggered
  */
 export async function generateNegativeTestCases(
-  tools: DiscoveredTool[],
+  toolSnapshot: ServerToolSnapshot,
   convexHttpUrl: string,
   convexAuthToken: string,
 ): Promise<GeneratedNegativeTestCase[]> {
-  // Group tools by server
-  const serverGroups = tools.reduce(
-    (acc, tool) => {
-      if (!acc[tool.serverId]) {
-        acc[tool.serverId] = [];
-      }
-      acc[tool.serverId].push(tool);
-      return acc;
-    },
-    {} as Record<string, DiscoveredTool[]>,
+  const serverCount = toolSnapshot.servers.length;
+  const totalTools = toolSnapshot.servers.reduce(
+    (sum, server) => sum + server.tools.length,
+    0,
   );
-
-  const serverCount = Object.keys(serverGroups).length;
-  const totalTools = tools.length;
-
-  // Build context about available tools grouped by server
-  const toolsContext = Object.entries(serverGroups)
-    .map(([serverId, serverTools]) => {
-      const toolsList = serverTools
-        .map((tool) => {
-          return `  - ${tool.name}: ${tool.description || "No description"}
-    Input: ${JSON.stringify(tool.inputSchema)}`;
-        })
-        .join("\n");
-
-      return `**Server: ${serverId}** (${serverTools.length} tools)
-${toolsList}`;
-    })
-    .join("\n\n");
+  const toolsContext =
+    renderServerToolSnapshotSection(toolSnapshot).promptSection ??
+    "# Available MCP Tools\nNo tools captured.";
 
   const userPrompt = `Generate ${NEGATIVE_TEST_CASE_COUNT} negative test cases for the following MCP server tools.
 
@@ -134,9 +110,11 @@ ${toolsContext}
    - 1 Similar keywords in non-actionable context
    - 1 Ambiguous or conversational prompt
 2. Each prompt should NOT trigger ANY of the tools listed above
-3. Provide clear scenarios explaining why tools should not be triggered
-4. Use keywords from tool descriptions but in non-actionable ways
-5. Respond with ONLY a JSON array - no other text or markdown`;
+3. The tool inventory is context only; the generated eval cases must still expect no tools
+4. Provide clear scenarios explaining why tools should not be triggered
+5. Use keywords from tool descriptions but in non-actionable ways
+6. Prefer short prompts that stay clearly non-actionable without relying on fake workspace fixtures
+7. Respond with ONLY a JSON array - no other text or markdown`;
 
   const messageHistory: ModelMessage[] = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
@@ -155,6 +133,7 @@ ${toolsContext}
       model: "anthropic/claude-haiku-4.5",
       tools: [],
       messages: JSON.stringify(messageHistory),
+      maxOutputTokens: 12288,
     }),
   });
 

@@ -1,58 +1,18 @@
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type RefObject,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ArrowLeft,
-  ChevronsUpDown,
-  Copy,
   ExternalLink,
   Link2,
   Loader2,
-  MessageSquareText,
-  Plus,
+  RefreshCw,
   Save,
-  Settings,
-  Share2,
-  X,
 } from "lucide-react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Slider } from "@/components/ui/slider";
-import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import {
   ResizableHandle,
   ResizablePanel,
@@ -66,11 +26,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { AddServerModal } from "@/components/connection/AddServerModal";
-
-import { SandboxShareSection } from "@/components/sandboxes/SandboxShareSection";
 import { SandboxUsagePanel } from "@/components/sandboxes/SandboxUsagePanel";
 import {
   useSandbox,
@@ -84,6 +40,7 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
   getSandboxHostLabel,
   getSandboxHostLogo,
+  getSandboxHostStyleShortLabel,
   type SandboxHostStyle,
 } from "@/lib/sandbox-host-style";
 import { ChatTabV2 } from "@/components/ChatTabV2";
@@ -92,25 +49,35 @@ import { useHostedOAuthGate } from "@/hooks/hosted/use-hosted-oauth-gate";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { isHostedOAuthBusy } from "@/lib/hosted-oauth-resume";
 import { getStoredTokens } from "@/lib/oauth/mcp-oauth";
+import { SandboxHostOnboardingOverlays } from "@/components/hosted/SandboxHostOnboardingOverlays";
+import { useSandboxHostIntroGate } from "@/components/hosted/useSandboxHostIntroGate";
 import {
   SANDBOX_OAUTH_PENDING_KEY,
   buildPlaygroundSandboxLink,
   buildSandboxLink,
+  sandboxPreviewEnabledOptionalStorageKey,
   writeBuilderSession,
   writePlaygroundSession,
   type SandboxBootstrapPayload,
   type SandboxBootstrapServer,
 } from "@/lib/sandbox-session";
 import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
-import {
-  isMCPJamProvidedModel,
-  SUPPORTED_MODELS,
-  type ServerFormData,
-} from "@/shared/types";
+import type { ServerFormData } from "@/shared/types";
 import { buildSandboxCanvas } from "./sandboxCanvasBuilder";
 import { SandboxCanvas } from "./SandboxCanvas";
 import { DEFAULT_SYSTEM_PROMPT, toDraftConfig } from "./drafts";
+import {
+  computeSectionStatuses,
+  SetupChecklistPanel,
+  isInsecureUrl,
+  updateSelectedServerIds,
+  type SetupSectionId,
+} from "./setup-checklist-panel";
 import type { SandboxBuilderContext, SandboxDraftConfig } from "./types";
+import {
+  bootstrapServerToHostedOAuthDescriptor,
+  countRequiredServers,
+} from "./sandbox-server-optional";
 import "./sandbox-builder.css";
 
 interface SandboxBuilderViewProps {
@@ -119,770 +86,209 @@ interface SandboxBuilderViewProps {
   workspaceServers: RemoteServer[];
   sandboxId?: string | null;
   draft: SandboxDraftConfig | null;
-  initialViewMode?: "builder" | "insights" | "preview";
+  initialViewMode?: "setup" | "preview" | "usage";
   onBack: () => void;
   onSavedDraft: (sandbox: SandboxSettings) => void;
 }
 
-type SettingsTab = "general" | "hostContext" | "servers" | "share";
+/** Right (setup) rail: favor setup on desktop */
+const DESKTOP_SETUP_RAIL_DEFAULT_PERCENT = 60;
+const DESKTOP_SETUP_RAIL_MIN_PERCENT = 40;
+const DESKTOP_SETUP_RAIL_MAX_PERCENT = 70;
 
-const DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT = 35;
-const DESKTOP_SETTINGS_PANE_MAX_PERCENT = 70;
-const DESKTOP_SETTINGS_PANE_MIN_WIDTH_PX = 420;
-const DESKTOP_SETTINGS_TABS_GUTTER_PX = 40;
+type ViewMode = "setup" | "preview" | "usage";
 
-const SETTINGS_TAB_TRIGGER_CLASS =
-  "h-auto flex-none rounded-xl border-0 px-3.5 py-2 text-sm font-medium text-muted-foreground shadow-none transition-all hover:bg-background/70 hover:text-foreground data-[state=active]:bg-background data-[state=active]:text-foreground data-[state=active]:shadow-sm";
-
-function clampPercent(value: number): number {
-  return Math.min(
-    DESKTOP_SETTINGS_PANE_MAX_PERCENT,
-    Math.max(DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT, value),
-  );
+function normalizeInitialViewMode(
+  mode: string | undefined,
+): ViewMode | undefined {
+  if (!mode) return undefined;
+  if (mode === "setup" || mode === "preview" || mode === "usage") return mode;
+  if (mode === "builder") return "setup";
+  if (mode === "insights") return "usage";
+  return undefined;
 }
 
-function calculateRequiredSettingsPanePercent({
-  panelGroupWidth,
-  tabsWidth,
-}: {
-  panelGroupWidth: number;
-  tabsWidth: number;
-}): number {
-  if (panelGroupWidth <= 0 || tabsWidth <= 0) {
-    return DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT;
-  }
-
-  const requiredWidth = Math.max(
-    DESKTOP_SETTINGS_PANE_MIN_WIDTH_PX,
-    tabsWidth + DESKTOP_SETTINGS_TABS_GUTTER_PX,
-  );
-
-  return clampPercent((requiredWidth / panelGroupWidth) * 100);
-}
-
-function getSettingsTabForNode(nodeId: string | null): SettingsTab {
+function getSetupSectionForNode(nodeId: string | null): SetupSectionId {
   if (nodeId?.startsWith("server:")) {
     return "servers";
   }
-  return "hostContext";
+  return "basics";
 }
 
-function isInsecureUrl(url: string | undefined): boolean {
-  if (!url) return false;
-  try {
-    return new URL(url).protocol === "http:";
-  } catch {
-    return false;
-  }
-}
-
-function updateSelectedServerIds(
-  currentServerIds: string[],
-  serverId: string,
-  checked: boolean,
-): string[] {
-  const hasServer = currentServerIds.includes(serverId);
-
-  if (checked) {
-    return hasServer ? currentServerIds : [...currentServerIds, serverId];
-  }
-
-  return hasServer
-    ? currentServerIds.filter((id) => id !== serverId)
-    : currentServerIds;
-}
-
-type ViewMode = "builder" | "insights" | "preview";
-
-function BuilderHeader({
+function SandboxBuilderChrome({
   title,
+  subtitle,
+  headerMode,
   isDirty,
   isSaving,
-  canPreview,
-  isCanvasActive,
-  isPreviewActive,
-  isInsightsActive,
-  canOpenInsights,
-  isSettingsOpen,
+  hasSavedSandbox,
+  setupHasBlockingSections,
+  viewMode,
   onBack,
   onSave,
-  onShowCanvas,
-  onShowPreview,
-  onOpenFullPreview,
   onCopyLink,
-  onOpenShareSettings,
-  onToggleInsights,
-  onToggleSettings,
+  onOpenFullPreview,
+  onReloadPreview,
+  onEditSetup,
+  onModeChange,
 }: {
   title: string;
+  subtitle?: string;
+  headerMode: "setup" | "preview" | "usage";
   isDirty: boolean;
   isSaving: boolean;
-  canPreview: boolean;
-  isCanvasActive: boolean;
-  isPreviewActive: boolean;
-  isInsightsActive: boolean;
-  canOpenInsights: boolean;
-  isSettingsOpen: boolean;
+  hasSavedSandbox: boolean;
+  /** True when any Setup section is marked Attention (same gate as bottom “Save and open preview”). */
+  setupHasBlockingSections: boolean;
+  viewMode: ViewMode;
   onBack: () => void;
   onSave: () => void;
-  onShowCanvas: () => void;
-  onShowPreview: () => void;
-  onOpenFullPreview: () => void;
   onCopyLink: () => void;
-  onOpenShareSettings: () => void;
-  onToggleInsights: () => void;
-  onToggleSettings: () => void;
+  onOpenFullPreview: () => void;
+  onReloadPreview: () => void;
+  onEditSetup: () => void;
+  onModeChange: (mode: ViewMode) => void;
 }) {
+  const saveDisabled =
+    isSaving || (!isDirty && hasSavedSandbox) || setupHasBlockingSections;
+  const showCopyLink = hasSavedSandbox;
+
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 border-b border-border/70 px-6 py-4">
-      <div className="flex min-w-0 items-center gap-3">
-        <Button
-          variant="ghost"
-          size="sm"
-          className="rounded-xl"
-          onClick={onBack}
-        >
-          <ArrowLeft className="mr-1.5 size-4" />
-          Back
-        </Button>
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className="truncate text-xl font-semibold">{title}</h2>
-            {isDirty ? <Badge variant="outline">Unsaved</Badge> : null}
+    <div className="shrink-0 border-b border-border/70">
+      <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+        <div className="flex min-w-0 items-center gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0 rounded-xl"
+            onClick={onBack}
+            aria-label="Return to sandboxes"
+            title="Return to sandboxes"
+          >
+            <ArrowLeft className="size-4" aria-hidden />
+          </Button>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="truncate text-xl font-semibold">{title}</h2>
+              {isDirty && hasSavedSandbox ? (
+                <Badge
+                  variant="outline"
+                  className="border-amber-500/50 bg-amber-500/10 text-amber-800 dark:text-amber-300"
+                >
+                  Unsaved
+                </Badge>
+              ) : null}
+            </div>
+            {subtitle ? (
+              <p className="mt-0.5 truncate text-sm text-muted-foreground">
+                {subtitle}
+              </p>
+            ) : null}
           </div>
         </div>
-      </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {showCopyLink ? (
             <Button
               variant="outline"
               className="rounded-xl"
-              title="Share sandbox via link or open in new tab"
+              onClick={onCopyLink}
             >
-              <Share2 className="mr-1.5 size-4" />
-              Share
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[10rem]">
-            <DropdownMenuItem onClick={onCopyLink} disabled={!canPreview}>
-              <Copy className="size-4" />
+              <Link2 className="mr-1.5 size-4" />
               Copy link
-            </DropdownMenuItem>
-            <DropdownMenuItem
-              onClick={onOpenFullPreview}
-              disabled={!canPreview}
-            >
-              <ExternalLink className="size-4" />
-              Open in new tab
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onOpenShareSettings}>
-              <Link2 className="size-4" />
-              Manage sharing
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <div className="inline-flex items-center gap-1 rounded-xl border border-border/70 bg-background p-1">
-          <Button
-            variant={isCanvasActive ? "secondary" : "ghost"}
-            size="sm"
-            className="rounded-lg"
-            onClick={onShowCanvas}
-          >
-            Canvas
-          </Button>
-          <Button
-            variant={isPreviewActive ? "secondary" : "ghost"}
-            size="sm"
-            className="rounded-lg"
-            disabled={!canPreview}
-            onClick={onShowPreview}
-          >
-            Preview
-          </Button>
-        </div>
-        <Button onClick={onSave} disabled={isSaving} className="rounded-xl">
-          {isSaving ? (
-            <Loader2 className="mr-1.5 size-4 animate-spin" />
-          ) : (
-            <Save className="mr-1.5 size-4" />
+            </Button>
+          ) : null}
+          {headerMode === "preview" && (
+            <>
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={onOpenFullPreview}
+                disabled={!hasSavedSandbox}
+              >
+                <ExternalLink className="mr-1.5 size-4" />
+                Open full preview
+              </Button>
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={onReloadPreview}
+                disabled={!hasSavedSandbox}
+              >
+                <RefreshCw className="mr-1.5 size-4" />
+                Reload preview
+              </Button>
+              <Button
+                variant="outline"
+                className="rounded-xl"
+                onClick={onEditSetup}
+              >
+                Edit setup
+              </Button>
+            </>
           )}
-          Save
-        </Button>
-        <Button
-          variant={isInsightsActive ? "secondary" : "outline"}
-          className="rounded-xl"
-          disabled={!canOpenInsights}
-          onClick={onToggleInsights}
-          title="Usage"
-        >
-          <MessageSquareText className="mr-1.5 size-4" />
-          Usage
-        </Button>
-        <Button
-          variant={isSettingsOpen ? "secondary" : "outline"}
-          size="icon"
-          className="rounded-xl"
-          onClick={onToggleSettings}
-          title="Settings"
-          aria-label="Settings"
-        >
-          <Settings className="size-4" />
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function EmptyInspector({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="flex h-full items-center justify-center p-6">
-      <Card className="max-w-sm rounded-3xl border-dashed p-6 text-center">
-        <h3 className="text-base font-semibold">{title}</h3>
-        <p className="mt-2 text-sm text-muted-foreground">{body}</p>
-      </Card>
-    </div>
-  );
-}
-
-function ServerSelectionEditor({
-  workspaceServers,
-  selectedServerIds,
-  onToggleSelection,
-  onOpenAdd,
-}: {
-  workspaceServers: RemoteServer[];
-  selectedServerIds: string[];
-  onToggleSelection: (serverId: string, checked: boolean) => void;
-  onOpenAdd: () => void;
-}) {
-  const availableServers = workspaceServers.filter(
-    (server) => server.transportType === "http",
-  );
-  const selectedServerSet = new Set(selectedServerIds);
-  const selectedServers = availableServers.filter((server) =>
-    selectedServerSet.has(server._id),
-  );
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-semibold">MCP servers</h3>
-          <p className="text-xs text-muted-foreground">
-            Attach HTTPS MCP servers to this sandbox.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" onClick={onOpenAdd}>
-          <Plus className="mr-1.5 size-4" />
-          Add server
-        </Button>
-      </div>
-
-      <Popover>
-        <PopoverTrigger asChild>
-          <button
-            type="button"
-            aria-label="Select servers"
-            className="flex w-full items-center justify-between rounded-xl border border-border/60 bg-muted/35 px-3 py-2 text-sm transition-colors hover:bg-muted/50"
+          <Button
+            onClick={onSave}
+            disabled={saveDisabled}
+            title={
+              setupHasBlockingSections
+                ? "Resolve every section marked Attention in Setup before saving."
+                : undefined
+            }
+            variant={hasSavedSandbox && !isDirty ? "ghost" : "default"}
+            className="rounded-xl"
           >
-            {selectedServers.length === 0 ? (
-              <span className="text-muted-foreground">Select servers...</span>
+            {isSaving ? (
+              <Loader2 className="mr-1.5 size-4 animate-spin" />
             ) : (
-              <span className="flex flex-wrap gap-1">
-                {selectedServers.map((server) => (
-                  <Badge
-                    key={server._id}
-                    variant="secondary"
-                    className="text-xs"
-                  >
-                    {server.name}
-                  </Badge>
-                ))}
-              </span>
+              <Save className="mr-1.5 size-4" />
             )}
-            <ChevronsUpDown className="ml-2 size-4 shrink-0 text-muted-foreground" />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent
-          className="w-[var(--radix-popover-trigger-width)] p-1"
-          align="start"
-        >
-          {availableServers.length === 0 ? (
-            <p className="px-2 py-1.5 text-sm text-muted-foreground">
-              No HTTP servers available.
-            </p>
-          ) : (
-            <div className="max-h-56 overflow-y-auto">
-              {availableServers.map((server) => {
-                const insecure = isInsecureUrl(server.url);
-                return (
-                  <label
-                    key={server._id}
-                    className={`flex items-center gap-3 rounded-md px-2 py-1.5 ${insecure ? "cursor-not-allowed opacity-50" : "hover:bg-muted/50"}`}
-                    title={
-                      insecure
-                        ? "Sandboxes require HTTPS server URLs"
-                        : undefined
-                    }
-                  >
-                    <Checkbox
-                      checked={!insecure && selectedServerSet.has(server._id)}
-                      onCheckedChange={(checked) =>
-                        onToggleSelection(server._id, checked === true)
-                      }
-                      disabled={insecure}
-                    />
-                    <span className="flex-1 text-sm">{server.name}</span>
-                    {insecure ? (
-                      <span className="text-[10px] text-destructive">
-                        Requires HTTPS
-                      </span>
-                    ) : null}
-                  </label>
-                );
-              })}
-            </div>
-          )}
-        </PopoverContent>
-      </Popover>
-
-      {selectedServers.length === 0 ? (
-        <Card className="rounded-2xl border-dashed p-5 text-sm text-muted-foreground">
-          No servers attached yet.
-        </Card>
-      ) : (
-        <div className="space-y-3">
-          {selectedServers.map((server) => (
-            <Card key={server._id} className="rounded-2xl p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium">{server.name}</p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {server.url ?? "Workspace server"}
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Badge variant="outline">
-                      {server.useOAuth ? "OAuth" : "Direct"}
-                    </Badge>
-                    <Badge
-                      variant={
-                        isInsecureUrl(server.url) ? "secondary" : "outline"
-                      }
-                    >
-                      {isInsecureUrl(server.url) ? "Requires HTTPS" : "HTTPS"}
-                    </Badge>
-                  </div>
-                </div>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="text-destructive hover:text-destructive"
-                  onClick={() => onToggleSelection(server._id, false)}
-                >
-                  Remove
-                </Button>
-              </div>
-            </Card>
-          ))}
+            Save
+          </Button>
         </div>
-      )}
+      </div>
+
+      <div className="border-t border-border/60 px-6">
+        <nav
+          className="flex w-full justify-center gap-1 overflow-x-auto py-1"
+          aria-label="Sandbox modes"
+        >
+          {(
+            [
+              ["setup", "Setup"],
+              ["preview", "Preview"],
+              ["usage", "Usage"],
+            ] as const
+          ).map(([mode, label]) => {
+            const active = viewMode === mode;
+            const disabled =
+              mode === "preview" && !hasSavedSandbox
+                ? true
+                : mode === "usage" && !hasSavedSandbox;
+            return (
+              <button
+                key={mode}
+                type="button"
+                disabled={disabled}
+                onClick={() => onModeChange(mode)}
+                className={`relative min-h-12 shrink-0 px-6 py-3 text-base font-medium transition-colors ${
+                  active
+                    ? "text-foreground"
+                    : "text-muted-foreground hover:text-foreground"
+                } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+              >
+                {label}
+                {active ? (
+                  <span className="absolute inset-x-6 bottom-0 h-0.5 rounded-full bg-primary" />
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
     </div>
   );
-}
-
-function SandboxGeneralSettingsSection({
-  sandboxDraft,
-  onDraftChange,
-}: {
-  sandboxDraft: SandboxDraftConfig;
-  onDraftChange: (
-    updater: (draft: SandboxDraftConfig) => SandboxDraftConfig,
-  ) => void;
-}) {
-  return (
-    <ScrollArea className="h-full">
-      <div className="space-y-5 p-4">
-        <div className="space-y-1">
-          <h4 className="text-sm font-semibold">General</h4>
-          <p className="text-sm text-muted-foreground">
-            Name the sandbox and add an internal description for collaborators.
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="settings-sandbox-name">Sandbox name</Label>
-          <Input
-            id="settings-sandbox-name"
-            value={sandboxDraft.name}
-            onChange={(event) =>
-              onDraftChange((draft) => ({
-                ...draft,
-                name: event.target.value,
-              }))
-            }
-          />
-        </div>
-
-        <div className="space-y-2">
-          <Label htmlFor="settings-sandbox-description">Description</Label>
-          <Textarea
-            id="settings-sandbox-description"
-            rows={4}
-            value={sandboxDraft.description}
-            onChange={(event) =>
-              onDraftChange((draft) => ({
-                ...draft,
-                description: event.target.value,
-              }))
-            }
-          />
-        </div>
-      </div>
-    </ScrollArea>
-  );
-}
-
-function SandboxHostContextSettingsSection({
-  sandboxDraft,
-  onDraftChange,
-}: {
-  sandboxDraft: SandboxDraftConfig;
-  onDraftChange: (
-    updater: (draft: SandboxDraftConfig) => SandboxDraftConfig,
-  ) => void;
-}) {
-  const hostedModels = useMemo(
-    () =>
-      SUPPORTED_MODELS.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      ),
-    [],
-  );
-
-  return (
-    <ScrollArea className="h-full">
-      <div className="space-y-5 p-5">
-        <div className="space-y-1">
-          <h4 className="text-sm font-semibold">Host Context</h4>
-          <p className="text-sm text-muted-foreground">
-            Configure host style, model, prompt, and policies.
-          </p>
-        </div>
-
-        <div className="space-y-2">
-          <Label>Host style</Label>
-          <div className="grid gap-2">
-            {(["claude", "chatgpt"] as SandboxHostStyle[]).map((hostStyle) => {
-              const selected = sandboxDraft.hostStyle === hostStyle;
-              return (
-                <button
-                  key={hostStyle}
-                  type="button"
-                  className={`flex items-center gap-3 rounded-2xl border px-4 py-4 text-left transition-colors ${
-                    selected
-                      ? "border-primary/50 bg-primary/10"
-                      : "border-border/70 bg-card/60 hover:bg-muted/20"
-                  }`}
-                  onClick={() =>
-                    onDraftChange((draft) => ({
-                      ...draft,
-                      hostStyle,
-                    }))
-                  }
-                >
-                  <img
-                    src={getSandboxHostLogo(hostStyle)}
-                    alt={getSandboxHostLabel(hostStyle)}
-                    className="size-6 rounded-md object-contain"
-                  />
-                  <div>
-                    <p className="font-medium">
-                      {getSandboxHostLabel(hostStyle)}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {hostStyle === "chatgpt"
-                        ? "OpenAI-style sandbox chrome"
-                        : "Claude-style sandbox chrome"}
-                    </p>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <Separator />
-
-        <div className="space-y-2">
-          <Label>Model</Label>
-          <Select
-            value={sandboxDraft.modelId}
-            onValueChange={(value) =>
-              onDraftChange((draft) => ({
-                ...draft,
-                modelId: value,
-              }))
-            }
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select a model" />
-            </SelectTrigger>
-            <SelectContent>
-              {hostedModels.map((model) => (
-                <SelectItem key={String(model.id)} value={String(model.id)}>
-                  {model.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <Label>Temperature</Label>
-            <span className="text-sm text-muted-foreground">
-              {sandboxDraft.temperature.toFixed(2)}
-            </span>
-          </div>
-          <Slider
-            min={0}
-            max={2}
-            step={0.05}
-            value={[sandboxDraft.temperature]}
-            onValueChange={(values) =>
-              onDraftChange((draft) => ({
-                ...draft,
-                temperature: values[0] ?? 0.7,
-              }))
-            }
-          />
-        </div>
-
-        <Separator />
-
-        <div className="space-y-2">
-          <Label htmlFor="builder-prompt">System prompt</Label>
-          <Textarea
-            id="builder-prompt"
-            rows={10}
-            value={sandboxDraft.systemPrompt}
-            onChange={(event) =>
-              onDraftChange((draft) => ({
-                ...draft,
-                systemPrompt: event.target.value,
-              }))
-            }
-          />
-        </div>
-        <div className="space-y-4">
-          <div className="flex items-center justify-between gap-3 rounded-2xl border border-border/70 bg-card/60 px-4 py-4">
-            <div>
-              <p className="text-sm font-medium">Require tool approval</p>
-              <p className="text-xs text-muted-foreground">
-                Visitors must approve tool calls before execution.
-              </p>
-            </div>
-            <Switch
-              checked={sandboxDraft.requireToolApproval}
-              onCheckedChange={(checked) =>
-                onDraftChange((draft) => ({
-                  ...draft,
-                  requireToolApproval: checked,
-                }))
-              }
-            />
-          </div>
-        </div>
-      </div>
-    </ScrollArea>
-  );
-}
-
-function SandboxServersSettingsSection({
-  sandboxDraft,
-  workspaceServers,
-  onOpenAddServer,
-  onToggleServer,
-}: {
-  sandboxDraft: SandboxDraftConfig;
-  workspaceServers: RemoteServer[];
-  onOpenAddServer: () => void;
-  onToggleServer: (serverId: string, checked: boolean) => void;
-}) {
-  return (
-    <ScrollArea className="h-full">
-      <div className="space-y-5 p-5">
-        <div className="space-y-1">
-          <h4 className="text-sm font-semibold">Servers</h4>
-          <p className="text-sm text-muted-foreground">
-            Attach and manage the MCP servers available to this sandbox.
-          </p>
-        </div>
-
-        <ServerSelectionEditor
-          workspaceServers={workspaceServers}
-          selectedServerIds={sandboxDraft.selectedServerIds}
-          onToggleSelection={onToggleServer}
-          onOpenAdd={onOpenAddServer}
-        />
-      </div>
-    </ScrollArea>
-  );
-}
-
-function BuilderSettingsPanel({
-  sandboxDraft,
-  activeTab,
-  workspaceServers,
-  workspaceName,
-  savedSandbox,
-  onDraftChange,
-  tabsRowRef,
-  onTabChange,
-  onOpenAddServer,
-  onToggleServer,
-  onClose,
-}: {
-  sandboxDraft: SandboxDraftConfig;
-  activeTab: SettingsTab;
-  workspaceServers: RemoteServer[];
-  workspaceName?: string | null;
-  savedSandbox: SandboxSettings | null;
-  onDraftChange: (
-    updater: (draft: SandboxDraftConfig) => SandboxDraftConfig,
-  ) => void;
-  tabsRowRef: RefObject<HTMLDivElement | null>;
-  onTabChange: (tab: SettingsTab) => void;
-  onOpenAddServer: () => void;
-  onToggleServer: (serverId: string, checked: boolean) => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between px-5 py-4">
-        <h3 className="text-base font-semibold">Settings</h3>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7 rounded-lg"
-          onClick={onClose}
-        >
-          <X className="size-4" />
-        </Button>
-      </div>
-
-      <Tabs
-        value={activeTab}
-        onValueChange={(value) => onTabChange(value as SettingsTab)}
-        className="flex min-h-0 flex-1 flex-col"
-      >
-        <div ref={tabsRowRef} className="px-5 pb-1">
-          <TabsList className="h-auto justify-start gap-1 overflow-x-auto rounded-2xl border border-border/60 bg-muted/35 p-1.5 md:overflow-hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            <TabsTrigger value="general" className={SETTINGS_TAB_TRIGGER_CLASS}>
-              General
-            </TabsTrigger>
-            <TabsTrigger
-              value="hostContext"
-              className={SETTINGS_TAB_TRIGGER_CLASS}
-            >
-              Host Context
-            </TabsTrigger>
-            <TabsTrigger value="servers" className={SETTINGS_TAB_TRIGGER_CLASS}>
-              Servers
-            </TabsTrigger>
-            <TabsTrigger value="share" className={SETTINGS_TAB_TRIGGER_CLASS}>
-              Share
-            </TabsTrigger>
-          </TabsList>
-        </div>
-
-        <TabsContent
-          value="general"
-          className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden"
-        >
-          <SandboxGeneralSettingsSection
-            sandboxDraft={sandboxDraft}
-            onDraftChange={onDraftChange}
-          />
-        </TabsContent>
-
-        <TabsContent
-          value="hostContext"
-          className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden"
-        >
-          <SandboxHostContextSettingsSection
-            sandboxDraft={sandboxDraft}
-            onDraftChange={onDraftChange}
-          />
-        </TabsContent>
-
-        <TabsContent
-          value="servers"
-          className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden"
-        >
-          <SandboxServersSettingsSection
-            sandboxDraft={sandboxDraft}
-            workspaceServers={workspaceServers}
-            onOpenAddServer={onOpenAddServer}
-            onToggleServer={onToggleServer}
-          />
-        </TabsContent>
-
-        <TabsContent
-          value="share"
-          className="mt-0 min-h-0 flex-1 data-[state=inactive]:hidden"
-        >
-          {savedSandbox ? (
-            <ScrollArea className="h-full">
-              <div className="p-4">
-                <SandboxShareSection
-                  sandbox={savedSandbox}
-                  workspaceName={workspaceName}
-                  appearance="builder"
-                />
-              </div>
-            </ScrollArea>
-          ) : (
-            <EmptyInspector
-              title="Save sandbox first"
-              body="Sharing depends on a persisted sandbox link. Save this sandbox, then come back here to manage access and invitations."
-            />
-          )}
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
-}
-
-function getSandboxOAuthRowCopy(status: string): {
-  description: string;
-  buttonLabel: string | null;
-} {
-  switch (status) {
-    case "launching":
-      return { description: "Opening consent screen\u2026", buttonLabel: null };
-    case "resuming":
-      return {
-        description: "Finishing authorization\u2026",
-        buttonLabel: null,
-      };
-    case "verifying":
-      return { description: "Verifying access\u2026", buttonLabel: null };
-    case "error":
-      return {
-        description: "Authorization could not be completed. Try again.",
-        buttonLabel: "Authorize again",
-      };
-    case "needs_auth":
-    default:
-      return {
-        description: "You\u2019ll return here automatically after consent.",
-        buttonLabel: "Authorize",
-      };
-  }
 }
 
 export function SandboxBuilderView({
@@ -906,8 +312,9 @@ export function SandboxBuilderView({
   const { createServer } = useServerMutations();
 
   const [draftSandboxConfig, setDraftSandboxConfig] =
-    useState<SandboxDraftConfig>(
-      draft ??
+    useState<SandboxDraftConfig>(() => {
+      const base =
+        draft ??
         toDraftConfig(
           sandbox ??
             ({
@@ -924,28 +331,35 @@ export function SandboxBuilderView({
               servers: [],
               link: null,
               members: [],
+              welcomeDialog: { enabled: true, body: "" },
+              feedbackDialog: {
+                enabled: true,
+                everyNToolCalls: 1,
+                promptHint: "",
+              },
             } as SandboxSettings),
-        ),
-    );
+        );
+      return {
+        ...base,
+        optionalServerIds: base.optionalServerIds ?? [],
+      };
+    });
   const [viewMode, setViewMode] = useState<ViewMode>(
-    initialViewMode ?? "builder",
+    () => normalizeInitialViewMode(initialViewMode) ?? "setup",
   );
   const [chatKey, setChatKey] = useState(0);
   const [playgroundId, setPlaygroundId] = useState(() => crypto.randomUUID());
-  const [isSettingsOpen, setIsSettingsOpen] = useState(true);
+  const [isSetupSheetOpen, setIsSetupSheetOpen] = useState(true);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>("host");
-  const [activeSettingsTab, setActiveSettingsTab] =
-    useState<SettingsTab>("hostContext");
+  const [focusedSetupSection, setFocusedSetupSection] =
+    useState<SetupSectionId | null>(null);
   const [desktopSettingsPaneSize, setDesktopSettingsPaneSize] = useState(
-    DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT,
+    DESKTOP_SETUP_RAIL_DEFAULT_PERCENT,
   );
-  const [requiredSettingsPanePercent, setRequiredSettingsPanePercent] =
-    useState(DESKTOP_SETTINGS_PANE_DEFAULT_PERCENT);
   const [isSaving, setIsSaving] = useState(false);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
   const panelGroupContainerRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
-  const settingsTabsRowRef = useRef<HTMLDivElement | null>(null);
   const isInitialMountRef = useRef(true);
   const pendingRestartRef = useRef(false);
   const prevViewModeRef = useRef(viewMode);
@@ -969,18 +383,23 @@ export function SandboxBuilderView({
         modelId: draftSandboxConfig.modelId,
         temperature: draftSandboxConfig.temperature,
         requireToolApproval: draftSandboxConfig.requireToolApproval,
+        mode: draftSandboxConfig.mode,
+        allowGuestAccess: draftSandboxConfig.allowGuestAccess,
+        welcomeDialog: draftSandboxConfig.welcomeDialog,
+        feedbackDialog: draftSandboxConfig.feedbackDialog,
         selectedServerIds: [...draftSandboxConfig.selectedServerIds].sort(),
+        optionalServerIds: [...draftSandboxConfig.optionalServerIds].sort(),
       }),
-    [
-      draftSandboxConfig.name,
-      draftSandboxConfig.hostStyle,
-      draftSandboxConfig.systemPrompt,
-      draftSandboxConfig.modelId,
-      draftSandboxConfig.temperature,
-      draftSandboxConfig.requireToolApproval,
-      draftSandboxConfig.selectedServerIds,
-    ],
+    [draftSandboxConfig],
   );
+
+  const setupHasBlockingSections = useMemo(() => {
+    const statuses = computeSectionStatuses(
+      draftSandboxConfig,
+      workspaceServers,
+    );
+    return Object.values(statuses).some((kind) => kind === "attention");
+  }, [draftSandboxConfig, workspaceServers]);
 
   // Debounced auto-restart on behavior-affecting changes
   useEffect(() => {
@@ -1025,20 +444,21 @@ export function SandboxBuilderView({
     if (!sandbox?.link?.token) return;
 
     const servers: SandboxBootstrapServer[] =
-      draftSandboxConfig.selectedServerIds
-        .map((id) => {
-          const server = workspaceServers.find((s) => s._id === id);
-          if (!server) return null;
-          return {
+      draftSandboxConfig.selectedServerIds.flatMap((id) => {
+        const server = workspaceServers.find((s) => s._id === id);
+        if (!server) return [];
+        return [
+          {
             serverId: server._id,
             serverName: server.name,
             useOAuth: Boolean(server.useOAuth),
             serverUrl: server.url ?? null,
             clientId: server.clientId ?? null,
             oauthScopes: server.oauthScopes ?? null,
-          } satisfies SandboxBootstrapServer;
-        })
-        .filter((s): s is SandboxBootstrapServer => s !== null);
+            optional: draftSandboxConfig.optionalServerIds.includes(id),
+          } satisfies SandboxBootstrapServer,
+        ];
+      });
 
     const payload: SandboxBootstrapPayload = {
       workspaceId: sandbox.workspaceId,
@@ -1047,13 +467,14 @@ export function SandboxBuilderView({
       description: draftSandboxConfig.description || undefined,
       hostStyle: draftSandboxConfig.hostStyle,
       mode: draftSandboxConfig.mode,
-      allowGuestAccess: sandbox.allowGuestAccess,
+      allowGuestAccess: draftSandboxConfig.allowGuestAccess,
       viewerIsWorkspaceMember: true,
       systemPrompt: draftSandboxConfig.systemPrompt,
       modelId: draftSandboxConfig.modelId,
       temperature: draftSandboxConfig.temperature,
       requireToolApproval: draftSandboxConfig.requireToolApproval,
       servers,
+      welcomeDialog: draftSandboxConfig.welcomeDialog,
     };
 
     writePlaygroundSession({
@@ -1071,90 +492,11 @@ export function SandboxBuilderView({
     }
   }, [draft, sandbox]);
 
-  useLayoutEffect(() => {
-    if (isMobile || !isSettingsOpen) {
-      return;
+  useEffect(() => {
+    if (viewMode === "setup" && isMobile) {
+      setIsSetupSheetOpen(true);
     }
-
-    const measureRequiredWidth = () => {
-      const panelGroupContainer = panelGroupContainerRef.current;
-      const tabsRow = settingsTabsRowRef.current;
-      const tabsList = tabsRow?.firstElementChild;
-      if (!panelGroupContainer || !(tabsList instanceof HTMLElement)) {
-        return;
-      }
-
-      const panelGroupWidth =
-        panelGroupContainer.getBoundingClientRect().width ||
-        panelGroupContainer.clientWidth;
-      const tabsWidth = tabsList.scrollWidth;
-
-      setRequiredSettingsPanePercent(
-        calculateRequiredSettingsPanePercent({
-          panelGroupWidth,
-          tabsWidth,
-        }),
-      );
-    };
-
-    measureRequiredWidth();
-
-    if (typeof ResizeObserver === "undefined") {
-      return;
-    }
-
-    const resizeObserver = new ResizeObserver(() => {
-      measureRequiredWidth();
-    });
-
-    if (typeof resizeObserver.observe !== "function") {
-      return;
-    }
-
-    const panelGroupContainer = panelGroupContainerRef.current;
-    const tabsRow = settingsTabsRowRef.current;
-    const tabsList = tabsRow?.firstElementChild;
-
-    if (panelGroupContainer) {
-      resizeObserver.observe(panelGroupContainer);
-    }
-    if (tabsRow) {
-      resizeObserver.observe(tabsRow);
-    }
-    if (tabsList instanceof HTMLElement) {
-      resizeObserver.observe(tabsList);
-    }
-
-    return () => {
-      resizeObserver.disconnect();
-    };
-  }, [isMobile, isSettingsOpen]);
-
-  useLayoutEffect(() => {
-    if (isMobile || !isSettingsOpen) {
-      return;
-    }
-
-    const rightPanel = rightPanelRef.current;
-    if (!rightPanel) {
-      return;
-    }
-
-    const targetSize = Math.max(
-      desktopSettingsPaneSize,
-      requiredSettingsPanePercent,
-    );
-    const currentSize = rightPanel.getSize();
-
-    if (currentSize < targetSize) {
-      rightPanel.resize(targetSize);
-    }
-  }, [
-    desktopSettingsPaneSize,
-    isMobile,
-    isSettingsOpen,
-    requiredSettingsPanePercent,
-  ]);
+  }, [viewMode, isMobile]);
 
   const context = useMemo<SandboxBuilderContext>(
     () => ({
@@ -1165,16 +507,18 @@ export function SandboxBuilderView({
     [draftSandboxConfig, sandbox, workspaceServers],
   );
   const viewModel = useMemo(() => buildSandboxCanvas(context), [context]);
-  const desktopRightPanelDefaultSize = Math.max(
-    desktopSettingsPaneSize,
-    requiredSettingsPanePercent,
-  );
+  const desktopRightPanelDefaultSize = desktopSettingsPaneSize;
   const desktopLeftPanelDefaultSize = 100 - desktopRightPanelDefaultSize;
 
   const isDirty = useMemo(() => {
     if (!sandbox) return true;
     const currentIds = sandbox.servers.map((server) => server.serverId).sort();
     const draftIds = [...draftSandboxConfig.selectedServerIds].sort();
+    const optionalFromSandbox = sandbox.servers
+      .filter((s) => s.optional)
+      .map((s) => s.serverId)
+      .sort();
+    const draftOptionalIds = [...draftSandboxConfig.optionalServerIds].sort();
     return (
       draftSandboxConfig.name !== sandbox.name ||
       draftSandboxConfig.description !== (sandbox.description ?? "") ||
@@ -1183,17 +527,128 @@ export function SandboxBuilderView({
       draftSandboxConfig.modelId !== sandbox.modelId ||
       draftSandboxConfig.temperature !== sandbox.temperature ||
       draftSandboxConfig.requireToolApproval !== sandbox.requireToolApproval ||
-      JSON.stringify(currentIds) !== JSON.stringify(draftIds)
+      draftSandboxConfig.mode !== sandbox.mode ||
+      draftSandboxConfig.allowGuestAccess !== sandbox.allowGuestAccess ||
+      JSON.stringify(draftSandboxConfig.welcomeDialog) !==
+        JSON.stringify({
+          enabled: sandbox.welcomeDialog?.enabled ?? true,
+          body: sandbox.welcomeDialog?.body ?? "",
+        }) ||
+      JSON.stringify(draftSandboxConfig.feedbackDialog) !==
+        JSON.stringify({
+          enabled: sandbox.feedbackDialog?.enabled ?? true,
+          everyNToolCalls: Math.max(
+            1,
+            sandbox.feedbackDialog?.everyNToolCalls ?? 1,
+          ),
+          promptHint: sandbox.feedbackDialog?.promptHint ?? "",
+        }) ||
+      JSON.stringify(currentIds) !== JSON.stringify(draftIds) ||
+      JSON.stringify(optionalFromSandbox) !== JSON.stringify(draftOptionalIds)
     );
   }, [draftSandboxConfig, sandbox]);
+
+  const hasSavedSandbox = Boolean(sandbox?.sandboxId);
 
   const shareLink = sandbox?.link?.token
     ? buildSandboxLink(sandbox.link.token, sandbox.name)
     : null;
 
-  const sandboxServerConfigs = useMemo(() => {
-    const entries = draftSandboxConfig.selectedServerIds.flatMap((id) => {
+  const introSandboxId = sandbox?.sandboxId ?? sandboxId ?? "";
+
+  const [previewEnabledOptionalIds, setPreviewEnabledOptionalIds] = useState<
+    string[]
+  >([]);
+
+  const optionalServerIdsKey = [...draftSandboxConfig.optionalServerIds]
+    .sort()
+    .join(",");
+
+  useEffect(() => {
+    if (!introSandboxId) return;
+    try {
+      const raw = sessionStorage.getItem(
+        sandboxPreviewEnabledOptionalStorageKey(introSandboxId),
+      );
+      if (!raw) {
+        setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
+        return;
+      }
+      const parsed = JSON.parse(raw) as unknown;
+      if (!Array.isArray(parsed)) return;
+      const optionalSet = new Set(draftSandboxConfig.optionalServerIds);
+      const next = parsed.filter(
+        (id): id is string => typeof id === "string" && optionalSet.has(id),
+      );
+      setPreviewEnabledOptionalIds((prev) => {
+        if (
+          prev.length === next.length &&
+          prev.every((id, i) => id === next[i])
+        ) {
+          return prev;
+        }
+        return next;
+      });
+    } catch {
+      setPreviewEnabledOptionalIds((prev) => (prev.length === 0 ? prev : []));
+    }
+  }, [introSandboxId, optionalServerIdsKey]);
+
+  useEffect(() => {
+    if (!introSandboxId) return;
+    try {
+      const storageKey =
+        sandboxPreviewEnabledOptionalStorageKey(introSandboxId);
+      const serialized = JSON.stringify(previewEnabledOptionalIds);
+      if (sessionStorage.getItem(storageKey) === serialized) return;
+      sessionStorage.setItem(storageKey, serialized);
+    } catch {
+      // ignore
+    }
+  }, [introSandboxId, previewEnabledOptionalIds]);
+
+  const selectedPreviewServers = useMemo((): SandboxBootstrapServer[] => {
+    return draftSandboxConfig.selectedServerIds.flatMap((id) => {
       const server = workspaceServers.find((s) => s._id === id);
+      if (!server) return [];
+      return [
+        {
+          serverId: server._id,
+          serverName: server.name,
+          useOAuth: Boolean(server.useOAuth),
+          serverUrl: server.url ?? null,
+          clientId: server.clientId ?? null,
+          oauthScopes: server.oauthScopes ?? null,
+          optional: draftSandboxConfig.optionalServerIds.includes(server._id),
+        } satisfies SandboxBootstrapServer,
+      ];
+    });
+  }, [
+    draftSandboxConfig.selectedServerIds,
+    draftSandboxConfig.optionalServerIds,
+    workspaceServers,
+  ]);
+
+  const requiredPreviewServers = useMemo(
+    () => selectedPreviewServers.filter((s) => !s.optional),
+    [selectedPreviewServers],
+  );
+
+  const activePreviewServers = useMemo(() => {
+    const enabled = new Set(previewEnabledOptionalIds);
+    const optionalActive = selectedPreviewServers.filter(
+      (s) => s.optional && enabled.has(s.serverId),
+    );
+    return [...requiredPreviewServers, ...optionalActive];
+  }, [
+    requiredPreviewServers,
+    selectedPreviewServers,
+    previewEnabledOptionalIds,
+  ]);
+
+  const sandboxServerConfigs = useMemo(() => {
+    const entries = activePreviewServers.flatMap((preview) => {
+      const server = workspaceServers.find((s) => s._id === preview.serverId);
       if (!server) return [];
       return [
         [
@@ -1210,38 +665,27 @@ export function SandboxBuilderView({
       ];
     });
     return Object.fromEntries(entries);
-  }, [draftSandboxConfig.selectedServerIds, workspaceServers]);
+  }, [activePreviewServers, workspaceServers]);
 
-  const selectedPreviewServers = useMemo(() => {
-    return draftSandboxConfig.selectedServerIds
-      .map((id) => {
-        const server = workspaceServers.find((s) => s._id === id);
-        if (!server) return null;
-        return {
-          serverId: server._id,
-          serverName: server.name,
-          useOAuth: Boolean(server.useOAuth),
-          serverUrl: server.url ?? null,
-          clientId: server.clientId ?? null,
-          oauthScopes: server.oauthScopes ?? null,
-        } satisfies SandboxBootstrapServer;
-      })
-      .filter((s): s is SandboxBootstrapServer => s !== null);
-  }, [draftSandboxConfig.selectedServerIds, workspaceServers]);
+  const previewOAuthGateServers = useMemo(
+    () => activePreviewServers.map(bootstrapServerToHostedOAuthDescriptor),
+    [activePreviewServers],
+  );
 
   const {
     oauthStateByServerId,
     pendingOAuthServers,
     authorizeServer,
     markOAuthRequired,
+    hasBusyOAuth,
   } = useHostedOAuthGate({
     surface: "sandbox",
     pendingKey: SANDBOX_OAUTH_PENDING_KEY,
-    servers: selectedPreviewServers,
+    servers: previewOAuthGateServers,
   });
 
   const previewOAuthTokens = useMemo(() => {
-    const entries = selectedPreviewServers
+    const entries = activePreviewServers
       .map((server) => {
         const token = getStoredTokens(server.serverName)?.access_token;
         return token ? ([server.serverId, token] as const) : null;
@@ -1250,11 +694,20 @@ export function SandboxBuilderView({
         Array.isArray(entry),
       );
     return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-  }, [oauthStateByServerId, selectedPreviewServers]);
+  }, [oauthStateByServerId, activePreviewServers]);
 
   const isFinishingPreviewOAuth =
     pendingOAuthServers.length > 0 &&
     pendingOAuthServers.every(({ state }) => isHostedOAuthBusy(state.status));
+
+  const oauthPending = pendingOAuthServers.length > 0;
+  const introGate = useSandboxHostIntroGate({
+    sandboxId: introSandboxId,
+    servers: requiredPreviewServers,
+    oauthPending,
+    hasBusyOAuth,
+    pendingOAuthServers,
+  });
 
   const handlePreviewOAuthRequired = useCallback(
     (details?: HostedOAuthRequiredDetails) => {
@@ -1263,22 +716,31 @@ export function SandboxBuilderView({
     [markOAuthRequired],
   );
 
-  const saveSandbox = useCallback(async () => {
+  const saveSandbox = useCallback(async (): Promise<boolean> => {
     const trimmedName = draftSandboxConfig.name.trim();
     if (!trimmedName) {
       toast.error("Sandbox name is required");
-      return;
+      return false;
     }
     if (draftSandboxConfig.selectedServerIds.length === 0) {
       toast.error("Select at least one HTTPS server");
-      return;
+      return false;
+    }
+    if (
+      countRequiredServers(
+        draftSandboxConfig.selectedServerIds,
+        draftSandboxConfig.optionalServerIds,
+      ) < 1
+    ) {
+      toast.error("At least one server must be required (on by default)");
+      return false;
     }
     const selectedServers = workspaceServers.filter((server) =>
       draftSandboxConfig.selectedServerIds.includes(server._id),
     );
     if (selectedServers.some((server) => isInsecureUrl(server.url))) {
       toast.error("Only HTTPS servers can be used in sandboxes");
-      return;
+      return false;
     }
 
     setIsSaving(true);
@@ -1293,11 +755,10 @@ export function SandboxBuilderView({
         temperature: draftSandboxConfig.temperature,
         requireToolApproval: draftSandboxConfig.requireToolApproval,
         serverIds: draftSandboxConfig.selectedServerIds,
-        allowGuestAccess:
-          (draftSandboxConfig as { allowGuestAccess?: boolean })
-            .allowGuestAccess ??
-          sandbox?.allowGuestAccess ??
-          false,
+        optionalServerIds: draftSandboxConfig.optionalServerIds,
+        allowGuestAccess: draftSandboxConfig.allowGuestAccess,
+        welcomeDialog: draftSandboxConfig.welcomeDialog,
+        feedbackDialog: draftSandboxConfig.feedbackDialog,
       };
 
       if (!sandbox) {
@@ -1312,8 +773,9 @@ export function SandboxBuilderView({
           })) as SandboxSettings;
         }
         toast.success("Sandbox created");
+        setViewMode("preview");
         onSavedDraft(created);
-        return;
+        return true;
       }
 
       await updateSandbox({
@@ -1321,8 +783,10 @@ export function SandboxBuilderView({
         ...payload,
       });
       toast.success("Sandbox updated");
+      return true;
     } catch (error) {
       toast.error(getBillingErrorMessage(error, "Failed to save sandbox"));
+      return false;
     } finally {
       setIsSaving(false);
     }
@@ -1337,6 +801,13 @@ export function SandboxBuilderView({
     workspaceServers,
   ]);
 
+  const saveAndOpenPreview = useCallback(async () => {
+    const ok = await saveSandbox();
+    if (ok) {
+      setViewMode("preview");
+    }
+  }, [saveSandbox]);
+
   const handleCopyLink = useCallback(async () => {
     if (!shareLink) {
       toast.error("Sandbox link unavailable");
@@ -1349,14 +820,6 @@ export function SandboxBuilderView({
       toast.error("Failed to copy link");
     }
   }, [shareLink]);
-
-  const handleOpenPreview = useCallback(() => {
-    if (!sandbox?.link?.token) {
-      toast.error("Save the sandbox first to preview");
-      return;
-    }
-    setViewMode("preview");
-  }, [sandbox]);
 
   const handleOpenFullPreview = useCallback(() => {
     if (!sandbox?.link?.token) {
@@ -1403,14 +866,39 @@ export function SandboxBuilderView({
           ),
         }));
         setSelectedNodeId(`server:${serverId}`);
-        setActiveSettingsTab("servers");
-        setIsSettingsOpen(true);
+        setFocusedSetupSection("servers");
+        setIsSetupSheetOpen(true);
         toast.success(`Server "${formData.name}" added`);
       } catch (error) {
         toast.error(getBillingErrorMessage(error, "Failed to add server"));
       }
     },
     [createServer, workspaceId],
+  );
+
+  const handleServerOptionalChange = useCallback(
+    (serverId: string, optional: boolean) => {
+      setDraftSandboxConfig((current) => {
+        const requiredIds = current.selectedServerIds.filter(
+          (id) => !current.optionalServerIds.includes(id),
+        );
+        if (
+          optional &&
+          requiredIds.length === 1 &&
+          requiredIds[0] === serverId
+        ) {
+          toast.error(
+            "Add another required server or mark another as required first.",
+          );
+          return current;
+        }
+        const nextOptional = optional
+          ? [...new Set([...current.optionalServerIds, serverId])]
+          : current.optionalServerIds.filter((id) => id !== serverId);
+        return { ...current, optionalServerIds: nextOptional };
+      });
+    },
+    [],
   );
 
   const handleToggleServer = useCallback(
@@ -1426,16 +914,21 @@ export function SandboxBuilderView({
           return current;
         }
 
+        const optionalServerIds = checked
+          ? current.optionalServerIds
+          : current.optionalServerIds.filter((id) => id !== serverId);
+
         return {
           ...current,
           selectedServerIds,
+          optionalServerIds,
         };
       });
 
       if (checked) {
         setSelectedNodeId(`server:${serverId}`);
-        setActiveSettingsTab("servers");
-        setIsSettingsOpen(true);
+        setFocusedSetupSection("servers");
+        setIsSetupSheetOpen(true);
         return;
       }
 
@@ -1446,259 +939,388 @@ export function SandboxBuilderView({
     [],
   );
 
-  const rightPaneContent = (
-    <div className="sandbox-builder-pane h-full min-h-0 border-l border-border/70">
-      <BuilderSettingsPanel
-        sandboxDraft={draftSandboxConfig}
-        activeTab={activeSettingsTab}
-        workspaceServers={workspaceServers}
-        workspaceName={workspaceName}
-        savedSandbox={sandbox ?? null}
-        onDraftChange={(updater) =>
-          setDraftSandboxConfig((current) => updater(current))
-        }
-        tabsRowRef={settingsTabsRowRef}
-        onTabChange={setActiveSettingsTab}
-        onOpenAddServer={() => {
-          setActiveSettingsTab("servers");
-          setIsSettingsOpen(true);
-          setIsAddServerOpen(true);
-        }}
-        onToggleServer={handleToggleServer}
-        onClose={() => setIsSettingsOpen(false)}
+  const previewRailConfig = useMemo(() => {
+    if (sandbox && isDirty) {
+      return {
+        hostStyle: sandbox.hostStyle,
+        serverCount: sandbox.servers.length,
+        welcomeOn: sandbox.welcomeDialog?.enabled ?? true,
+        feedbackOn: sandbox.feedbackDialog?.enabled ?? true,
+        feedbackEvery: Math.max(
+          1,
+          sandbox.feedbackDialog?.everyNToolCalls ?? 1,
+        ),
+      };
+    }
+    return {
+      hostStyle: draftSandboxConfig.hostStyle,
+      serverCount: draftSandboxConfig.selectedServerIds.length,
+      welcomeOn: draftSandboxConfig.welcomeDialog.enabled,
+      feedbackOn: draftSandboxConfig.feedbackDialog.enabled,
+      feedbackEvery: draftSandboxConfig.feedbackDialog.everyNToolCalls,
+    };
+  }, [sandbox, isDirty, draftSandboxConfig]);
+
+  const reloadPreview = useCallback(() => {
+    const nextId = crypto.randomUUID();
+    setPlaygroundId(nextId);
+    setChatKey((k) => k + 1);
+  }, []);
+
+  const setupPanelSharedProps = {
+    sandboxDraft: draftSandboxConfig,
+    savedSandbox: sandbox ?? null,
+    workspaceServers,
+    workspaceName,
+    focusedSection: focusedSetupSection,
+    isUnsavedNewDraft: !sandboxId,
+    onDraftChange: (updater: (d: SandboxDraftConfig) => SandboxDraftConfig) =>
+      setDraftSandboxConfig((current) => updater(current)),
+    onOpenAddServer: () => {
+      setFocusedSetupSection("servers");
+      setIsSetupSheetOpen(true);
+      setIsAddServerOpen(true);
+    },
+    onToggleServer: handleToggleServer,
+    onServerOptionalChange: handleServerOptionalChange,
+  };
+
+  const setupPanelDesktop = (
+    <div className="sandbox-builder-pane flex h-full min-h-0 flex-col border-l border-border/70">
+      <SetupChecklistPanel {...setupPanelSharedProps} />
+    </div>
+  );
+
+  const setupPanelMobile = (
+    <div className="sandbox-builder-pane flex h-full min-h-0 flex-col border-l border-border/70">
+      <SetupChecklistPanel
+        {...setupPanelSharedProps}
+        onCloseMobile={() => setIsSetupSheetOpen(false)}
       />
     </div>
   );
 
+  const showDesktopSetupPanel = viewMode === "setup" && !isMobile;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <BuilderHeader
+      <SandboxBuilderChrome
         title={viewModel.title}
+        subtitle={
+          viewMode === "usage"
+            ? (sandbox?.description ?? undefined)
+            : viewModel.description || undefined
+        }
+        headerMode={
+          viewMode === "usage"
+            ? "usage"
+            : viewMode === "preview"
+              ? "preview"
+              : "setup"
+        }
         isDirty={isDirty}
         isSaving={isSaving}
-        canPreview={!!shareLink}
-        isCanvasActive={viewMode === "builder"}
-        isPreviewActive={viewMode === "preview"}
-        isInsightsActive={viewMode === "insights"}
-        canOpenInsights={!!sandbox}
-        isSettingsOpen={isSettingsOpen}
+        hasSavedSandbox={hasSavedSandbox}
+        setupHasBlockingSections={setupHasBlockingSections}
+        viewMode={viewMode}
         onBack={onBack}
         onSave={() => void saveSandbox()}
-        onShowCanvas={() => setViewMode("builder")}
-        onShowPreview={handleOpenPreview}
-        onOpenFullPreview={handleOpenFullPreview}
         onCopyLink={() => void handleCopyLink()}
-        onOpenShareSettings={() => {
-          setIsSettingsOpen(true);
-          setActiveSettingsTab("share");
-        }}
-        onToggleInsights={() => {
-          setViewMode((current) =>
-            current === "insights" ? "builder" : "insights",
-          );
-        }}
-        onToggleSettings={() => {
-          setIsSettingsOpen((current) => !current);
+        onOpenFullPreview={handleOpenFullPreview}
+        onReloadPreview={reloadPreview}
+        onEditSetup={() => setViewMode("setup")}
+        onModeChange={(mode) => {
+          if (mode === "preview" && !sandbox?.link?.token) {
+            toast.error("Save the sandbox first to preview");
+            return;
+          }
+          if (mode === "usage" && !sandbox) {
+            return;
+          }
+          setViewMode(mode);
         }}
       />
 
-      {viewMode === "insights" && sandbox ? (
+      {viewMode === "usage" && sandbox ? (
         <div className="min-h-0 flex-1">
           <SandboxUsagePanel sandbox={sandbox} />
         </div>
       ) : (
-        <div className="min-h-0 flex-1 p-4">
+        <div className="relative min-h-0 flex-1 p-4">
+          {isMobile && viewMode === "setup" && !isSetupSheetOpen ? (
+            <Button
+              type="button"
+              className="absolute right-6 bottom-6 z-10 rounded-full shadow-lg"
+              onClick={() => setIsSetupSheetOpen(true)}
+            >
+              Setup
+            </Button>
+          ) : null}
           <div ref={panelGroupContainerRef} className="h-full">
             <ResizablePanelGroup direction="horizontal" className="h-full">
               <ResizablePanel
                 defaultSize={desktopLeftPanelDefaultSize}
                 minSize={30}
               >
-                <div className="h-full pr-2">
+                <div className="h-full min-h-0 pr-2">
                   {viewMode === "preview" ? (
-                    <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card/60">
-                      <div className="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
-                        <div>
-                          <h3 className="text-sm font-semibold">Preview</h3>
-                          <p className="text-xs text-muted-foreground">
-                            Preview traffic is recorded in insights.
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => {
-                              const nextId = crypto.randomUUID();
-                              setPlaygroundId(nextId);
-                              setChatKey((k) => k + 1);
-                            }}
-                          >
-                            Reload
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={handleOpenFullPreview}
-                            disabled={!sandbox?.link?.token}
-                          >
-                            Open full preview
-                          </Button>
-                        </div>
-                      </div>
-                      <div className="flex min-h-0 flex-1">
-                        {sandbox?.link?.token ? (
-                          pendingOAuthServers.length > 0 ? (
-                            <div className="flex flex-1 items-center justify-center p-6">
-                              <div className="w-full max-w-xl rounded-2xl border bg-background p-6">
-                                <h3 className="text-center text-base font-semibold">
-                                  {isFinishingPreviewOAuth
-                                    ? "Finishing authorization"
-                                    : "Authorization Required"}
-                                </h3>
-                                <p className="mt-2 text-center text-sm text-muted-foreground">
-                                  {isFinishingPreviewOAuth
-                                    ? "Finishing authorization for the required sandbox servers."
-                                    : "Authorize the required sandbox servers to continue."}
-                                </p>
-                                <div className="mt-5 space-y-3">
-                                  {pendingOAuthServers.map(
-                                    ({ server, state }) => {
-                                      const rowCopy = getSandboxOAuthRowCopy(
-                                        state.status,
-                                      );
-                                      return (
-                                        <div
-                                          key={server.serverId}
-                                          className="flex items-center justify-between gap-3 rounded-lg border px-3 py-2"
-                                        >
-                                          <div className="min-w-0">
-                                            <p className="truncate text-sm font-medium">
-                                              {server.serverName}
-                                            </p>
-                                            <p className="text-xs text-muted-foreground">
-                                              {state.status === "error" &&
-                                              state.errorMessage
-                                                ? state.errorMessage
-                                                : rowCopy.description}
-                                            </p>
-                                          </div>
-                                          {rowCopy.buttonLabel ? (
-                                            <Button
-                                              size="sm"
-                                              onClick={() =>
-                                                void authorizeServer(server)
-                                              }
-                                            >
-                                              {rowCopy.buttonLabel}
-                                            </Button>
-                                          ) : (
-                                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                                          )}
-                                        </div>
-                                      );
-                                    },
+                    <div className="flex h-full min-h-0 flex-col gap-3 md:flex-row">
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-border/70 bg-card/60">
+                        {isDirty && sandbox ? (
+                          <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-950 dark:text-amber-100">
+                            <span className="font-medium">
+                              Preview is showing the last saved sandbox
+                              configuration.
+                            </span>{" "}
+                            <Button
+                              variant="link"
+                              className="h-auto p-0 text-amber-950 underline dark:text-amber-100"
+                              onClick={() => void saveSandbox()}
+                            >
+                              Save changes
+                            </Button>
+                            {" · "}
+                            <Button
+                              variant="link"
+                              className="h-auto p-0 text-amber-950 underline dark:text-amber-100"
+                              onClick={reloadPreview}
+                            >
+                              Reload preview
+                            </Button>
+                          </div>
+                        ) : null}
+                        <div className="flex min-h-0 flex-1 flex-col">
+                          {sandbox?.link?.token ? (
+                            <div className="relative flex min-h-0 flex-1 flex-col">
+                              <SandboxHostStyleProvider
+                                value={draftSandboxConfig.hostStyle}
+                              >
+                                <ChatTabV2
+                                  key={chatKey}
+                                  connectedOrConnectingServerConfigs={
+                                    sandboxServerConfigs
+                                  }
+                                  selectedServerNames={Object.keys(
+                                    sandboxServerConfigs,
                                   )}
-                                </div>
-                              </div>
+                                  minimalMode
+                                  reasoningDisplayMode="hidden"
+                                  hostedWorkspaceIdOverride={
+                                    sandbox!.workspaceId
+                                  }
+                                  hostedSelectedServerIdsOverride={activePreviewServers.map(
+                                    (s) => s.serverId,
+                                  )}
+                                  hostedOAuthTokensOverride={previewOAuthTokens}
+                                  hostedSandboxToken={sandbox.link.token}
+                                  hostedSandboxSurface="preview"
+                                  initialModelId={draftSandboxConfig.modelId}
+                                  initialSystemPrompt={
+                                    draftSandboxConfig.systemPrompt
+                                  }
+                                  initialTemperature={
+                                    draftSandboxConfig.temperature
+                                  }
+                                  initialRequireToolApproval={
+                                    draftSandboxConfig.requireToolApproval
+                                  }
+                                  onOAuthRequired={handlePreviewOAuthRequired}
+                                  sandboxComposerBlocked={
+                                    introGate.composerBlocked
+                                  }
+                                  sandboxComposerBlockedReason="Get started or authorize to send messages…"
+                                  sandboxOptionalInventory={selectedPreviewServers
+                                    .filter(
+                                      (s) =>
+                                        s.optional &&
+                                        !previewEnabledOptionalIds.includes(
+                                          s.serverId,
+                                        ),
+                                    )
+                                    .map((s) => ({
+                                      serverId: s.serverId,
+                                      serverName: s.serverName,
+                                      useOAuth: s.useOAuth,
+                                    }))}
+                                  onEnableSandboxOptionalServer={(id) => {
+                                    setPreviewEnabledOptionalIds((prev) =>
+                                      prev.includes(id) ? prev : [...prev, id],
+                                    );
+                                  }}
+                                />
+                              </SandboxHostStyleProvider>
+                              <SandboxHostOnboardingOverlays
+                                showWelcome={introGate.showWelcome}
+                                onGetStarted={introGate.dismissIntro}
+                                welcomeBody={
+                                  draftSandboxConfig.welcomeDialog.enabled
+                                    ? draftSandboxConfig.welcomeDialog.body
+                                    : undefined
+                                }
+                                showAuthPanel={introGate.showAuthPanel}
+                                pendingOAuthServers={pendingOAuthServers}
+                                authorizeServer={authorizeServer}
+                                isFinishingOAuth={isFinishingPreviewOAuth}
+                              />
                             </div>
                           ) : (
-                            <SandboxHostStyleProvider
-                              value={draftSandboxConfig.hostStyle}
-                            >
-                              <ChatTabV2
-                                key={chatKey}
-                                connectedOrConnectingServerConfigs={
-                                  sandboxServerConfigs
-                                }
-                                selectedServerNames={Object.keys(
-                                  sandboxServerConfigs,
+                            <div className="flex flex-1 items-center justify-center p-6">
+                              <Card className="max-w-sm rounded-3xl border-dashed p-6 text-center">
+                                <h3 className="text-base font-semibold">
+                                  Preview unavailable
+                                </h3>
+                                <p className="mt-2 text-sm text-muted-foreground">
+                                  Save the sandbox to generate a preview link.
+                                </p>
+                              </Card>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      <div className="hidden w-full shrink-0 flex-col gap-4 rounded-[28px] border border-border/70 bg-card/50 p-4 md:flex md:w-[300px] lg:w-[320px]">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            Sandbox config
+                          </p>
+                          <dl className="mt-3 space-y-2 text-sm">
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-muted-foreground">
+                                Host style
+                              </dt>
+                              <dd>
+                                {getSandboxHostStyleShortLabel(
+                                  previewRailConfig.hostStyle,
                                 )}
-                                minimalMode
-                                reasoningDisplayMode="hidden"
-                                hostedWorkspaceIdOverride={sandbox.workspaceId}
-                                hostedSelectedServerIdsOverride={
-                                  draftSandboxConfig.selectedServerIds
-                                }
-                                hostedOAuthTokensOverride={previewOAuthTokens}
-                                hostedSandboxToken={sandbox.link.token}
-                                hostedSandboxSurface="preview"
-                                initialModelId={draftSandboxConfig.modelId}
-                                initialSystemPrompt={
-                                  draftSandboxConfig.systemPrompt
-                                }
-                                initialTemperature={
-                                  draftSandboxConfig.temperature
-                                }
-                                initialRequireToolApproval={
-                                  draftSandboxConfig.requireToolApproval
-                                }
-                                onOAuthRequired={handlePreviewOAuthRequired}
-                              />
-                            </SandboxHostStyleProvider>
-                          )
-                        ) : (
-                          <div className="flex flex-1 items-center justify-center p-6">
-                            <Card className="max-w-sm rounded-3xl border-dashed p-6 text-center">
-                              <h3 className="text-base font-semibold">
-                                Preview unavailable
-                              </h3>
-                              <p className="mt-2 text-sm text-muted-foreground">
-                                Save the sandbox to generate a preview link.
-                              </p>
-                            </Card>
-                          </div>
-                        )}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-muted-foreground">Servers</dt>
+                              <dd>{previewRailConfig.serverCount} connected</dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-muted-foreground">
+                                Welcome dialog
+                              </dt>
+                              <dd>
+                                {previewRailConfig.welcomeOn ? "On" : "Off"}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-muted-foreground">
+                                Feedback
+                              </dt>
+                              <dd>
+                                {previewRailConfig.feedbackOn
+                                  ? `Every ${previewRailConfig.feedbackEvery} tool call(s)`
+                                  : "Off"}
+                              </dd>
+                            </div>
+                          </dl>
+                        </div>
+                        <div className="border-t border-border/60 pt-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                            Current test status
+                          </p>
+                          <dl className="mt-3 space-y-2 text-sm">
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-muted-foreground">State</dt>
+                              <dd>
+                                {pendingOAuthServers.length > 0
+                                  ? "Auth required"
+                                  : sandbox?.link?.token
+                                    ? "Ready to test"
+                                    : "Unavailable"}
+                              </dd>
+                            </div>
+                            <div className="flex justify-between gap-2">
+                              <dt className="text-muted-foreground">
+                                Tool calls (this run)
+                              </dt>
+                              <dd className="font-mono">—</dd>
+                            </div>
+                          </dl>
+                        </div>
                       </div>
                     </div>
                   ) : (
-                    <ReactFlowProvider>
-                      <SandboxCanvas
-                        viewModel={viewModel}
-                        selectedNodeId={selectedNodeId}
-                        onAddServer={() => {
-                          setActiveSettingsTab("servers");
-                          setIsSettingsOpen(true);
-                          setIsAddServerOpen(true);
-                        }}
-                        onSelectNode={(nodeId) => {
-                          setSelectedNodeId(nodeId);
-                          setActiveSettingsTab(getSettingsTabForNode(nodeId));
-                          setIsSettingsOpen(true);
-                        }}
-                        onClearSelection={() => {
-                          setSelectedNodeId(null);
-                        }}
-                      />
-                    </ReactFlowProvider>
+                    <div className="flex h-full min-h-0 flex-col">
+                      <div className="min-h-0 flex-1">
+                        <ReactFlowProvider>
+                          <SandboxCanvas
+                            viewModel={viewModel}
+                            selectedNodeId={selectedNodeId}
+                            canvasServerPicker={{
+                              workspaceServers,
+                              selectedServerIds:
+                                draftSandboxConfig.selectedServerIds,
+                              onToggleServer: handleToggleServer,
+                              onOpenAddWorkspaceServer: () => {
+                                setFocusedSetupSection("servers");
+                                setIsSetupSheetOpen(true);
+                                setIsAddServerOpen(true);
+                              },
+                            }}
+                            onSelectNode={(nodeId) => {
+                              setSelectedNodeId(nodeId);
+                              setFocusedSetupSection(
+                                getSetupSectionForNode(nodeId),
+                              );
+                              setIsSetupSheetOpen(true);
+                            }}
+                            onClearSelection={() => {
+                              setSelectedNodeId(null);
+                            }}
+                          />
+                        </ReactFlowProvider>
+                      </div>
+                    </div>
                   )}
                 </div>
               </ResizablePanel>
 
-              {!isMobile && isSettingsOpen ? (
+              {showDesktopSetupPanel ? (
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel
                     ref={rightPanelRef}
                     defaultSize={desktopRightPanelDefaultSize}
-                    minSize={requiredSettingsPanePercent}
-                    maxSize={DESKTOP_SETTINGS_PANE_MAX_PERCENT}
+                    minSize={DESKTOP_SETUP_RAIL_MIN_PERCENT}
+                    maxSize={DESKTOP_SETUP_RAIL_MAX_PERCENT}
                     onResize={(size) => setDesktopSettingsPaneSize(size)}
                   >
-                    {rightPaneContent}
+                    {setupPanelDesktop}
                   </ResizablePanel>
                 </>
               ) : null}
             </ResizablePanelGroup>
           </div>
+          {viewMode === "setup" ? (
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-4 pb-5">
+              <div className="pointer-events-auto flex max-w-lg flex-col items-center gap-2 rounded-4xl border border-border/50 bg-background/90 px-5 py-3 shadow-[0_12px_40px_-8px_rgba(0,0,0,0.28)] backdrop-blur-md dark:shadow-[0_12px_48px_-10px_rgba(0,0,0,0.55)]">
+                <Button
+                  size="lg"
+                  className="h-12 rounded-full px-8 text-base font-semibold shadow-md"
+                  onClick={() => void saveAndOpenPreview()}
+                  disabled={isSaving || setupHasBlockingSections}
+                  title={
+                    setupHasBlockingSections
+                      ? "Resolve every section marked Attention in Setup before previewing."
+                      : undefined
+                  }
+                >
+                  Save and open preview
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
 
       <Sheet
-        open={isMobile && isSettingsOpen}
+        open={isMobile && viewMode === "setup" && isSetupSheetOpen}
         onOpenChange={(open) => {
           if (!open) {
-            setIsSettingsOpen(false);
+            setIsSetupSheetOpen(false);
           }
         }}
       >
@@ -1707,12 +1329,12 @@ export function SandboxBuilderView({
           className="h-[78vh] rounded-t-[28px] border-border/70 p-0"
         >
           <SheetHeader className="sr-only">
-            <SheetTitle>Sandbox settings</SheetTitle>
+            <SheetTitle>Sandbox setup</SheetTitle>
             <SheetDescription>
-              Manage general, host, server, and sharing settings.
+              Configure host style, servers, access, and feedback.
             </SheetDescription>
           </SheetHeader>
-          {rightPaneContent}
+          {setupPanelMobile}
         </SheetContent>
       </Sheet>
 

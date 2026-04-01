@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import {
+  render,
+  screen,
+  fireEvent,
+  waitFor,
+  act,
+} from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 
 // Mock lucide-react icons
@@ -162,9 +168,13 @@ const mockUseChatSession = {
   disableForAuthentication: false,
   submitBlocked: false,
 };
+let capturedChatSessionOptions: any = null;
 
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: () => mockUseChatSession,
+  useChatSession: (options: any) => {
+    capturedChatSessionOptions = options;
+    return mockUseChatSession;
+  },
 }));
 
 // Mock use-stick-to-bottom
@@ -213,12 +223,14 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onSubmit,
     disabled,
     placeholder,
+    pulseSubmit,
   }: {
     value: string;
     onChange: (v: string) => void;
     onSubmit: (e: any) => void;
     disabled: boolean;
     placeholder: string;
+    pulseSubmit?: boolean;
   }) => (
     <form
       data-testid="chat-input"
@@ -234,7 +246,12 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
         disabled={disabled}
         placeholder={placeholder}
       />
-      <button type="submit" disabled={disabled}>
+      <button
+        type="submit"
+        disabled={disabled}
+        data-testid="chat-submit-button"
+        data-pulsing={pulseSubmit ? "true" : "false"}
+      >
         Send
       </button>
     </form>
@@ -297,19 +314,22 @@ vi.mock("../playground-helpers", () => ({
 }));
 
 // Mock preferences store
+const mockPreferencesState = {
+  themeMode: "light",
+  themePreset: "soft-pop",
+  setThemeMode: vi.fn(),
+};
+
 vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: (selector: any) => {
-    const state = {
-      themeMode: "light",
-      setThemeMode: vi.fn(),
-    };
-    return selector ? selector(state) : state;
-  },
+  usePreferencesStore: (selector: any) =>
+    selector ? selector(mockPreferencesState) : mockPreferencesState,
 }));
 
 // Mock theme-utils
+const mockUpdateThemeMode = vi.fn();
+
 vi.mock("@/lib/theme-utils", () => ({
-  updateThemeMode: vi.fn(),
+  updateThemeMode: mockUpdateThemeMode,
 }));
 
 // Mock UI Playground store
@@ -318,6 +338,8 @@ const mockUIPlaygroundStore = {
   customViewport: { width: 375, height: 667 },
   setCustomViewport: vi.fn(),
   setPlaygroundActive: vi.fn(),
+  hostStyle: "claude",
+  setHostStyle: vi.fn(),
   cspMode: "widget-declared",
   setCspMode: vi.fn(),
   mcpAppsCspMode: "widget-declared",
@@ -339,7 +361,29 @@ vi.mock("@/stores/ui-playground-store", () => ({
 
 // Mock DisplayContextHeader which exports PRESET_DEVICE_CONFIGS
 vi.mock("@/components/shared/DisplayContextHeader", () => ({
-  DisplayContextHeader: () => <div data-testid="display-context-header" />,
+  DisplayContextHeader: ({
+    showThemeToggle,
+    themeModeOverride,
+    onThemeToggleOverride,
+  }: {
+    showThemeToggle?: boolean;
+    themeModeOverride?: string;
+    onThemeToggleOverride?: () => void;
+  }) => (
+    <div
+      data-testid="display-context-header"
+      data-theme-mode-override={themeModeOverride ?? ""}
+    >
+      {showThemeToggle ? (
+        <button
+          data-testid="display-context-theme-toggle"
+          onClick={() => onThemeToggleOverride?.()}
+        >
+          Toggle theme
+        </button>
+      ) : null}
+    </div>
+  ),
   PRESET_DEVICE_CONFIGS: {
     mobile: { width: 375, height: 667, label: "Phone", icon: () => null },
     tablet: { width: 768, height: 1024, label: "Tablet", icon: () => null },
@@ -386,6 +430,9 @@ describe("PlaygroundMain", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    capturedChatSessionOptions = null;
+    mockPreferencesState.themeMode = "light";
+    mockPreferencesState.themePreset = "soft-pop";
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -414,9 +461,67 @@ describe("PlaygroundMain", () => {
     it("renders theme toggle button", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Theme toggle should exist (sun/moon icon)
-      const buttons = screen.getAllByRole("button");
-      expect(buttons.length).toBeGreaterThan(0);
+      expect(
+        screen.getByTestId("display-context-theme-toggle"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  describe("thread theme override", () => {
+    it("scopes theme changes to the thread shell and composer surface", () => {
+      render(<PlaygroundMain {...defaultProps} />);
+
+      const header = screen.getByTestId("playground-main-header");
+      const displayContextHeader = screen.getByTestId("display-context-header");
+      const threadShell = screen.getByTestId("playground-thread-shell");
+
+      expect(displayContextHeader).toHaveAttribute(
+        "data-theme-mode-override",
+        "light",
+      );
+      expect(threadShell).toHaveAttribute("data-host-style", "claude");
+      expect(threadShell).toHaveAttribute("data-theme-preset", "soft-pop");
+      expect(threadShell).toHaveAttribute("data-thread-theme", "light");
+      expect(threadShell).not.toHaveClass("dark");
+      expect(header).not.toHaveClass("dark");
+
+      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
+
+      expect(displayContextHeader).toHaveAttribute(
+        "data-theme-mode-override",
+        "dark",
+      );
+      expect(threadShell).toHaveAttribute("data-thread-theme", "dark");
+      expect(threadShell).toHaveClass("dark");
+      expect(header).not.toHaveClass("dark");
+      expect(mockPreferencesState.setThemeMode).not.toHaveBeenCalled();
+      expect(mockUpdateThemeMode).not.toHaveBeenCalled();
+    });
+
+    it("resets the local thread theme override on remount", () => {
+      const firstRender = render(<PlaygroundMain {...defaultProps} />);
+
+      fireEvent.click(screen.getByTestId("display-context-theme-toggle"));
+      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
+        "data-thread-theme",
+        "dark",
+      );
+
+      firstRender.unmount();
+
+      render(<PlaygroundMain {...defaultProps} />);
+
+      expect(screen.getByTestId("display-context-header")).toHaveAttribute(
+        "data-theme-mode-override",
+        "light",
+      );
+      expect(screen.getByTestId("playground-thread-shell")).toHaveAttribute(
+        "data-thread-theme",
+        "light",
+      );
+      expect(screen.getByTestId("playground-thread-shell")).not.toHaveClass(
+        "dark",
+      );
     });
   });
 
@@ -444,6 +549,22 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByText("Loading...")).toBeInTheDocument();
+    });
+
+    it("does not render a skip action in the post-connect guide", () => {
+      render(<PlaygroundMain {...defaultProps} showPostConnectGuide={true} />);
+
+      expect(
+        screen.queryByRole("button", { name: /Skip onboarding/i }),
+      ).not.toBeInTheDocument();
+    });
+
+    it("shows the ticket hint copy in the post-connect guide", () => {
+      render(<PlaygroundMain {...defaultProps} showPostConnectGuide={true} />);
+
+      expect(
+        screen.getByText("Try asking Excalidraw to draw something."),
+      ).toBeInTheDocument();
     });
   });
 
@@ -505,6 +626,105 @@ describe("PlaygroundMain", () => {
       expect(
         screen.getByPlaceholderText("Ask something to render UI..."),
       ).toBeInTheDocument();
+    });
+
+    it("shows the guided prompt in the input when post-connect onboarding is active", () => {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={true}
+          initialInput="Draw me an MCP architecture diagram"
+        />,
+      );
+
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Draw me an MCP architecture diagram",
+      );
+    });
+
+    it("restores the footer composer after the first guided message even without an onboarding callback", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        {
+          id: "2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Hi there!" }],
+        },
+      ];
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={true}
+          initialInput="Draw me an MCP architecture diagram"
+        />,
+      );
+
+      expect(screen.getByTestId("thread")).toBeInTheDocument();
+      expect(screen.getByTestId("chat-input-field")).toBeInTheDocument();
+    });
+
+    it("preserves the guided prompt if chat reset fires before the first message", () => {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={true}
+          initialInput="Draw me an MCP architecture diagram"
+        />,
+      );
+
+      act(() => {
+        capturedChatSessionOptions.onReset();
+      });
+
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Draw me an MCP architecture diagram",
+      );
+    });
+
+    it("stops the onboarding pulse after the user edits the prefilled prompt", () => {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={true}
+          initialInput="Draw me an MCP architecture diagram"
+          pulseSubmit={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
+        "data-pulsing",
+        "true",
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "Draw me a sequence diagram instead" },
+      });
+
+      expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
+        "data-pulsing",
+        "false",
+      );
+    });
+
+    it("stops preserving the guided prompt once the user edits it", () => {
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={true}
+          initialInput="Draw me an MCP architecture diagram"
+        />,
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "Draw me a sequence diagram instead" },
+      });
+
+      act(() => {
+        capturedChatSessionOptions.onReset();
+      });
+
+      expect(screen.getByTestId("chat-input-field")).toHaveValue("");
     });
 
     it("shows sign in placeholder when auth required", () => {

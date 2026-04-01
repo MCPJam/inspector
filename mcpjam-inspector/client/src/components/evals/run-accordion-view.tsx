@@ -9,7 +9,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ChevronDown, ChevronRight, RotateCw } from "lucide-react";
-import { formatRunId, getIterationBorderColor } from "./helpers";
+import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -46,13 +46,11 @@ export function RunAccordionView({
   // Sort runs by time (latest first)
   const sortedRuns = useMemo(
     () =>
-      [...runs]
-        .filter((r) => r.isActive !== false)
-        .sort((a, b) => {
-          const aTime = a.completedAt ?? a.createdAt ?? 0;
-          const bTime = b.completedAt ?? b.createdAt ?? 0;
-          return bTime - aTime;
-        }),
+      [...runs].sort((a, b) => {
+        const aTime = a.completedAt ?? a.createdAt ?? 0;
+        const bTime = b.completedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      }),
     [runs],
   );
 
@@ -132,7 +130,11 @@ export function RunAccordionView({
             : run.status === "cancelled"
               ? "cancelled"
               : "pending");
-        const borderColor = getIterationBorderColor(runResult);
+        const runAccent = evalStatusLeftBorderClasses(
+          run.status === "running" || run.status === "pending"
+            ? "running"
+            : runResult,
+        );
 
         const duration =
           run.completedAt && run.createdAt
@@ -153,12 +155,15 @@ export function RunAccordionView({
           !!run.ciMetadata?.runUrl;
 
         return (
-          <div key={run._id} className="relative">
-            {/* Colored left border */}
-            <div
-              className={`absolute left-0 top-0 h-full w-1 ${borderColor} ${index === 0 ? "rounded-tl-xl" : ""} ${index === sortedRuns.length - 1 && !isExpanded ? "rounded-bl-xl" : ""}`}
-            />
-
+          <div
+            key={run._id}
+            className={cn(
+              "relative border-l-2",
+              runAccent,
+              index === 0 && "rounded-tl-xl",
+              index === sortedRuns.length - 1 && !isExpanded && "rounded-bl-xl",
+            )}
+          >
             {/* Run header */}
             <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50">
               <button
@@ -216,11 +221,13 @@ export function RunAccordionView({
                   {total > 0 && (
                     <span className="flex items-center gap-2 shrink-0">
                       <span className="text-xs font-mono">
-                        <span className="text-green-500">{passed}</span>
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          {passed}
+                        </span>
                         {failed > 0 && (
                           <>
                             <span className="text-muted-foreground"> / </span>
-                            <span className="text-red-500">{failed}</span>
+                            <span className="text-destructive">{failed}</span>
                           </>
                         )}
                       </span>
@@ -229,10 +236,10 @@ export function RunAccordionView({
                           className={cn(
                             "text-xs font-medium px-1.5 py-0.5 rounded",
                             passRate === 100
-                              ? "bg-green-500/15 text-green-500"
+                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
                               : passRate >= 80
-                                ? "bg-yellow-500/15 text-yellow-500"
-                                : "bg-red-500/15 text-red-500",
+                                ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                                : "bg-destructive/10 text-destructive",
                           )}
                         >
                           {passRate}%
@@ -242,7 +249,7 @@ export function RunAccordionView({
                   )}
 
                   {run.status === "running" && (
-                    <span className="text-xs text-yellow-500 font-medium shrink-0">
+                    <span className="text-xs text-amber-600 dark:text-amber-400 font-medium shrink-0">
                       Running...
                     </span>
                   )}
@@ -303,13 +310,9 @@ export function RunAccordionView({
                 ) : (
                   <div className="divide-y divide-border/50">
                     {testCases.map((tc, tcIndex) => {
-                      const resultIcon =
-                        tc.result === "passed"
-                          ? "text-green-500"
-                          : tc.result === "failed"
-                            ? "text-red-500"
-                            : "text-muted-foreground";
-
+                      const tcAccent = evalStatusLeftBorderClasses(
+                        tc.result === "pending" ? "running" : tc.result,
+                      );
                       return (
                         <button
                           key={`${tc.testCaseId}-${tcIndex}`}
@@ -321,54 +324,35 @@ export function RunAccordionView({
                               onRunClick(run._id);
                             }
                           }}
-                          className="flex w-full items-center gap-3 px-4 pl-11 py-2 text-left transition-colors hover:bg-muted/50"
+                          title={
+                            tc.result === "passed"
+                              ? "Passed"
+                              : tc.result === "failed"
+                                ? "Failed"
+                                : tc.result === "cancelled"
+                                  ? "Cancelled"
+                                  : "Pending"
+                          }
+                          className={cn(
+                            "flex w-full items-center gap-3 border-l-2 py-2 pl-[2.75rem] pr-4 text-left transition-colors hover:bg-muted/50",
+                            tcAccent,
+                          )}
                         >
-                          {/* Status dot */}
-                          <span
-                            className={cn(
-                              "h-2 w-2 rounded-full shrink-0",
-                              tc.result === "passed"
-                                ? "bg-green-500"
-                                : tc.result === "failed"
-                                  ? "bg-red-500"
-                                  : "bg-muted-foreground",
-                            )}
-                          />
-
-                          {/* Test name */}
                           <span className="text-xs flex-1 min-w-0 truncate">
                             {tc.title}
                           </span>
 
-                          {/* Model (if shown) */}
                           {tc.model && (
                             <span className="text-[10px] text-muted-foreground shrink-0">
                               {tc.model}
                             </span>
                           )}
 
-                          {/* Duration */}
                           {tc.duration > 0 && (
                             <span className="text-xs font-mono text-muted-foreground shrink-0">
                               {formatDuration(tc.duration)}
                             </span>
                           )}
-
-                          {/* Result label */}
-                          <span
-                            className={cn(
-                              "text-xs font-medium shrink-0",
-                              resultIcon,
-                            )}
-                          >
-                            {tc.result === "passed"
-                              ? "Passed"
-                              : tc.result === "failed"
-                                ? "Failed"
-                                : tc.result === "cancelled"
-                                  ? "Cancelled"
-                                  : "Pending"}
-                          </span>
                         </button>
                       );
                     })}
