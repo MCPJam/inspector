@@ -29,10 +29,7 @@ import {
 } from "@/lib/sandbox-host-style";
 import { SandboxDeleteConfirmDialog } from "@/components/sandboxes/SandboxDeleteConfirmDialog";
 import { SandboxIndexRowActionsMenu } from "./sandbox-index-row-actions";
-import {
-  SANDBOX_BLANK_STARTER,
-  SANDBOX_TEMPLATE_STARTERS,
-} from "./drafts";
+import { SANDBOX_BLANK_STARTER, SANDBOX_TEMPLATE_STARTERS } from "./drafts";
 import type { SandboxStarterDefinition } from "./types";
 
 export type SandboxOpenOptions = {
@@ -416,7 +413,10 @@ export function SandboxIndexPage({
                   className="flex w-full flex-col gap-3 rounded-2xl border border-border/70 bg-card/70 p-5 text-left shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:border-primary/30 hover:bg-card hover:shadow-md"
                 >
                   <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border/60 bg-muted/35">
-                    <Plus className="size-5 text-muted-foreground" aria-hidden />
+                    <Plus
+                      className="size-5 text-muted-foreground"
+                      aria-hidden
+                    />
                   </span>
                   <span className="text-base font-semibold leading-snug text-foreground">
                     Create New
@@ -502,7 +502,9 @@ export function SandboxIndexPage({
                     <Badge variant="outline">
                       {getSandboxHostStyleShortLabel(sandbox.hostStyle)}
                     </Badge>
-                    <Badge variant="outline">{sandbox.serverCount} servers</Badge>
+                    <Badge variant="outline">
+                      {sandbox.serverCount} servers
+                    </Badge>
                   </div>
                 </button>
                 <div className="flex shrink-0 items-center pr-2">

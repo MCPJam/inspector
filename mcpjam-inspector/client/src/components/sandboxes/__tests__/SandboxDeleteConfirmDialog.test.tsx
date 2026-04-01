@@ -28,14 +28,20 @@ describe("SandboxDeleteConfirmDialog", () => {
     fireEvent.click(confirmButton);
     expect(onConfirm).not.toHaveBeenCalled();
 
-    fireEvent.change(screen.getByPlaceholderText(SANDBOX_DELETE_CONFIRM_PHRASE), {
-      target: { value: "DELETE" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(SANDBOX_DELETE_CONFIRM_PHRASE),
+      {
+        target: { value: "DELETE" },
+      },
+    );
     expect(confirmButton).toBeDisabled();
 
-    fireEvent.change(screen.getByPlaceholderText(SANDBOX_DELETE_CONFIRM_PHRASE), {
-      target: { value: SANDBOX_DELETE_CONFIRM_PHRASE },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText(SANDBOX_DELETE_CONFIRM_PHRASE),
+      {
+        target: { value: SANDBOX_DELETE_CONFIRM_PHRASE },
+      },
+    );
     fireEvent.click(confirmButton);
 
     await waitFor(() => {

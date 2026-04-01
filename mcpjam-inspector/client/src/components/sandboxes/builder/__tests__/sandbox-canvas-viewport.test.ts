@@ -45,9 +45,7 @@ describe("sandbox-canvas-viewport", () => {
     const vm = buildSandboxCanvas(minimalContext());
     const b = getSandboxCanvasStaticFitBounds(vm.nodes);
     expect(b).not.toBeNull();
-    expect(b!.height).toBe(
-      128 + SANDBOX_BUILDER_HOST_OVERFLOW_BELOW,
-    );
+    expect(b!.height).toBe(128 + SANDBOX_BUILDER_HOST_OVERFLOW_BELOW);
     expect(b!.width).toBe(280);
   });
 });

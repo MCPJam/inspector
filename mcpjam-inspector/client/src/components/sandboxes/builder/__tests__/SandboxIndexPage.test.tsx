@@ -44,7 +44,9 @@ describe("SandboxIndexPage", () => {
     expect(
       screen.queryByPlaceholderText(/Search sandboxes/),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Create New/i })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Create New/i }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Recommended templates" }),
     ).toBeInTheDocument();
@@ -52,9 +54,7 @@ describe("SandboxIndexPage", () => {
       screen.getByRole("heading", { name: "Or start from scratch" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Internal QA")).toBeInTheDocument();
-    expect(
-      screen.getByText("External Beta Test"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("External Beta Test")).toBeInTheDocument();
     expect(screen.getByText("Browse all starters")).toBeInTheDocument();
   });
 

@@ -770,10 +770,8 @@ export function SetupChecklistPanel({
                           {sandboxDraft.mode === "any_signed_in_with_link"
                             ? "Any signed-in user with the link can open this sandbox."
                             : "Only people you invite can access this sandbox."}{" "}
-                          Guest access {sandboxDraft.allowGuestAccess
-                            ? "on"
-                            : "off"}
-                          .
+                          Guest access{" "}
+                          {sandboxDraft.allowGuestAccess ? "on" : "off"}.
                         </p>
                       </div>
                     </div>
@@ -788,7 +786,10 @@ export function SetupChecklistPanel({
                     </Button>
                   </div>
 
-                  <Dialog open={accessDialogOpen} onOpenChange={setAccessDialogOpen}>
+                  <Dialog
+                    open={accessDialogOpen}
+                    onOpenChange={setAccessDialogOpen}
+                  >
                     <DialogContent className="sm:max-w-md">
                       <DialogHeader>
                         <DialogTitle>Access settings</DialogTitle>
@@ -798,56 +799,56 @@ export function SetupChecklistPanel({
                         </DialogDescription>
                       </DialogHeader>
                       <div className="space-y-6">
-                          <RadioGroup
-                            value={sandboxDraft.mode}
-                            onValueChange={(value) =>
-                              onDraftChange((draft) => ({
-                                ...draft,
-                                mode: value as SandboxMode,
-                              }))
-                            }
-                            className="grid gap-2"
+                        <RadioGroup
+                          value={sandboxDraft.mode}
+                          onValueChange={(value) =>
+                            onDraftChange((draft) => ({
+                              ...draft,
+                              mode: value as SandboxMode,
+                            }))
+                          }
+                          className="grid gap-2"
+                        >
+                          <label
+                            htmlFor="access-mode-link"
+                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
                           >
-                            <label
-                              htmlFor="access-mode-link"
-                              className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
-                            >
-                              <RadioGroupItem
-                                value="any_signed_in_with_link"
-                                id="access-mode-link"
-                                className="mt-0.5"
-                              />
-                              <span className="min-w-0">
-                                <span className="block text-sm font-medium">
-                                  Anyone with the link
-                                </span>
-                                <span className="mt-0.5 block text-xs text-muted-foreground">
-                                  Any signed-in user with the link can open this
-                                  sandbox.
-                                </span>
+                            <RadioGroupItem
+                              value="any_signed_in_with_link"
+                              id="access-mode-link"
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">
+                                Anyone with the link
                               </span>
-                            </label>
-                            <label
-                              htmlFor="access-mode-invite"
-                              className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
-                            >
-                              <RadioGroupItem
-                                value="invited_only"
-                                id="access-mode-invite"
-                                className="mt-0.5"
-                              />
-                              <span className="min-w-0">
-                                <span className="block text-sm font-medium">
-                                  Invited users only
-                                </span>
-                                <span className="mt-0.5 block text-xs text-muted-foreground">
-                                  Only people you invite by email can open this
-                                  sandbox. Workspace membership does not grant
-                                  access by itself.
-                                </span>
+                              <span className="mt-0.5 block text-xs text-muted-foreground">
+                                Any signed-in user with the link can open this
+                                sandbox.
                               </span>
-                            </label>
-                          </RadioGroup>
+                            </span>
+                          </label>
+                          <label
+                            htmlFor="access-mode-invite"
+                            className="flex cursor-pointer items-start gap-3 rounded-xl border border-border/70 bg-card/50 p-3 has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring/50"
+                          >
+                            <RadioGroupItem
+                              value="invited_only"
+                              id="access-mode-invite"
+                              className="mt-0.5"
+                            />
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium">
+                                Invited users only
+                              </span>
+                              <span className="mt-0.5 block text-xs text-muted-foreground">
+                                Only people you invite by email can open this
+                                sandbox. Workspace membership does not grant
+                                access by itself.
+                              </span>
+                            </span>
+                          </label>
+                        </RadioGroup>
 
                         {sandboxDraft.mode === "invited_only" ? (
                           <div className="space-y-3 rounded-xl border border-border/70 bg-card/50 p-4">

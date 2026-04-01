@@ -165,7 +165,9 @@ export default function SandboxBuilderExperience({
           sandboxId: sandbox.sandboxId,
         })) as { sandboxId?: string } | null | undefined;
         const newId =
-          result && typeof result === "object" && typeof result.sandboxId === "string"
+          result &&
+          typeof result === "object" &&
+          typeof result.sandboxId === "string"
             ? result.sandboxId
             : null;
         toast.success("Sandbox duplicated");
@@ -177,7 +179,9 @@ export default function SandboxBuilderExperience({
         }
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "Failed to duplicate sandbox",
+          error instanceof Error
+            ? error.message
+            : "Failed to duplicate sandbox",
         );
         throw error;
       } finally {
@@ -228,10 +232,7 @@ export default function SandboxBuilderExperience({
         <SandboxIndexPage
           sandboxes={sandboxes}
           isLoading={isLoading}
-          onOpenSandbox={(
-            sandboxId: string,
-            options?: SandboxOpenOptions,
-          ) => {
+          onOpenSandbox={(sandboxId: string, options?: SandboxOpenOptions) => {
             startTransition(() => {
               setSelectedSandboxId(sandboxId);
               setRestoredViewMode(options?.initialViewMode);

@@ -146,7 +146,9 @@ describe("SetupChecklistPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Access/i }));
     fireEvent.click(screen.getByRole("button", { name: /Configure access/i }));
     expect(screen.getByText("Invite people")).toBeInTheDocument();
-    expect(screen.getByPlaceholderText(/colleague@company.com/i)).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText(/colleague@company.com/i),
+    ).toBeInTheDocument();
   });
 });
 

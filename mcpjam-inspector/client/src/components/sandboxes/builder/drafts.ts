@@ -91,16 +91,14 @@ export const SANDBOX_STARTERS: SandboxStarterDefinition[] = [
   {
     id: "icp-demo",
     title: "External Beta Test",
-    description:
-      "For prospects and partners who open via signed-in link.",
+    description: "For prospects and partners who open via signed-in link.",
     promptHint:
       "Use when you want prospects to try your assistant with guided access.",
     templateTooltip:
       "Signed-in link access. Tool approval on. ChatGPT-style host. Welcome and feedback tuned for external testers; lighter feedback cadence.",
     createDraft: (defaultModelId) => ({
       name: "External Beta Test",
-      description:
-        "External testing for prospects and design partners.",
+      description: "External testing for prospects and design partners.",
       hostStyle: "chatgpt",
       systemPrompt: DEFAULT_SYSTEM_PROMPT,
       modelId: defaultModelId,

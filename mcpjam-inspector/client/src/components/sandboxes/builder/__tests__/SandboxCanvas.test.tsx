@@ -61,15 +61,15 @@ beforeEach(() => {
   mockViewportInitialized = true;
   mockNodesInitialized = true;
   resizeObserverInstances = [];
-  global.ResizeObserver = vi.fn().mockImplementation(
-    (callback: ResizeObserverCallback) => ({
+  global.ResizeObserver = vi
+    .fn()
+    .mockImplementation((callback: ResizeObserverCallback) => ({
       observe: vi.fn((el: Element) => {
         resizeObserverInstances.push({ callback, observed: el });
       }),
       disconnect: vi.fn(),
       unobserve: vi.fn(),
-    }),
-  ) as unknown as typeof ResizeObserver;
+    })) as unknown as typeof ResizeObserver;
 
   boundingRectSpy = vi
     .spyOn(HTMLElement.prototype, "getBoundingClientRect")

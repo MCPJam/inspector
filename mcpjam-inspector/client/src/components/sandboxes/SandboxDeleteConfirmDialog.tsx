@@ -37,8 +37,7 @@ export function SandboxDeleteConfirmDialog({
     if (open) setConfirmText("");
   }, [open]);
 
-  const phraseMatches =
-    confirmText.trim() === SANDBOX_DELETE_CONFIRM_PHRASE;
+  const phraseMatches = confirmText.trim() === SANDBOX_DELETE_CONFIRM_PHRASE;
 
   const handleConfirm = async () => {
     if (!phraseMatches || isDeleting) return;
@@ -58,7 +57,10 @@ export function SandboxDeleteConfirmDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent showCloseButton={!isDeleting} className="gap-4 sm:max-w-md">
+      <DialogContent
+        showCloseButton={!isDeleting}
+        className="gap-4 sm:max-w-md"
+      >
         <DialogHeader className="gap-2 text-left">
           <DialogTitle className="text-foreground">Delete sandbox?</DialogTitle>
           <DialogDescription asChild>
