@@ -21,8 +21,14 @@ import {
   getSandboxHostLogo,
   getSandboxHostStyleShortLabel,
 } from "@/lib/sandbox-host-style";
+import { SandboxDeleteConfirmDialog } from "@/components/sandboxes/SandboxDeleteConfirmDialog";
+import { SandboxIndexRowActionsMenu } from "./sandbox-index-row-actions";
 import { SANDBOX_STARTERS } from "./drafts";
 import type { SandboxStarterDefinition } from "./types";
+
+export type SandboxOpenOptions = {
+  initialViewMode?: "setup" | "preview" | "usage";
+};
 
 // ---------------------------------------------------------------------------
 // SandboxSummaryCard — info-first layout
@@ -31,9 +37,21 @@ import type { SandboxStarterDefinition } from "./types";
 function SandboxSummaryCard({
   sandbox,
   onOpen,
+  onEdit,
+  onUsage,
+  onDuplicate,
+  onDelete,
+  isDeleting,
+  isDuplicating,
 }: {
   sandbox: SandboxListItem;
   onOpen: () => void;
+  onEdit: () => void;
+  onUsage: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  isDeleting: boolean;
+  isDuplicating: boolean;
 }) {
   const modeLabel =
     sandbox.mode === "invited_only" ? "Invited only" : "Anyone with link";
@@ -45,9 +63,20 @@ function SandboxSummaryCard({
 
   return (
     <CardInteractive className="flex flex-col gap-4" onClick={onOpen}>
-      <h3 className="truncate text-lg font-bold tracking-tight">
-        {sandbox.name}
-      </h3>
+      <div className="flex items-start justify-between gap-2">
+        <h3 className="min-w-0 flex-1 truncate text-lg font-bold tracking-tight">
+          {sandbox.name}
+        </h3>
+        <SandboxIndexRowActionsMenu
+          sandbox={sandbox}
+          onEdit={onEdit}
+          onUsage={onUsage}
+          onDuplicate={onDuplicate}
+          onDelete={onDelete}
+          isDeleting={isDeleting}
+          isDuplicating={isDuplicating}
+        />
+      </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
         <Badge
@@ -91,7 +120,13 @@ const STARTER_ICONS = {
 interface SandboxIndexPageProps {
   sandboxes: SandboxListItem[] | undefined;
   isLoading: boolean;
-  onOpenSandbox: (sandboxId: string) => void;
+  onOpenSandbox: (sandboxId: string, options?: SandboxOpenOptions) => void;
+  onDuplicateSandbox: (sandbox: SandboxListItem) => void;
+  onDeleteSandbox: (sandbox: SandboxListItem) => void;
+  /** Sandbox id currently being deleted (disables that row’s delete control). */
+  deletingSandboxId?: string | null;
+  /** Sandbox id currently being duplicated. */
+  duplicatingSandboxId?: string | null;
   /** Opens the starter chooser (e.g. Command dialog). */
   onOpenStarterLauncher: () => void;
   /** Creates a builder draft from a starter (inline tiles or launcher). */
@@ -112,6 +147,10 @@ export function SandboxIndexPage({
   sandboxes,
   isLoading,
   onOpenSandbox,
+  onDuplicateSandbox,
+  onDeleteSandbox,
+  deletingSandboxId = null,
+  duplicatingSandboxId = null,
   onOpenStarterLauncher,
   onSelectStarter,
   isCreateSandboxDisabled = false,
@@ -120,6 +159,9 @@ export function SandboxIndexPage({
 }: SandboxIndexPageProps) {
   const [query, setQuery] = useState("");
   const [viewMode, setViewMode] = useState<"cards" | "list">("cards");
+  const [pendingDelete, setPendingDelete] = useState<SandboxListItem | null>(
+    null,
+  );
   const deferredQuery = useDeferredValue(query);
 
   const filteredSandboxes = useMemo(() => {
@@ -148,6 +190,20 @@ export function SandboxIndexPage({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
+      <SandboxDeleteConfirmDialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => {
+          if (!open) setPendingDelete(null);
+        }}
+        sandboxName={pendingDelete?.name ?? ""}
+        isDeleting={
+          !!pendingDelete && deletingSandboxId === pendingDelete.sandboxId
+        }
+        onConfirm={async () => {
+          if (!pendingDelete) return;
+          await onDeleteSandbox(pendingDelete);
+        }}
+      />
       <div className="border-b px-6 py-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -317,33 +373,63 @@ export function SandboxIndexPage({
                 key={sandbox.sandboxId}
                 sandbox={sandbox}
                 onOpen={() => onOpenSandbox(sandbox.sandboxId)}
+                onEdit={() => onOpenSandbox(sandbox.sandboxId)}
+                onUsage={() =>
+                  onOpenSandbox(sandbox.sandboxId, {
+                    initialViewMode: "usage",
+                  })
+                }
+                onDuplicate={() => onDuplicateSandbox(sandbox)}
+                onDelete={() => setPendingDelete(sandbox)}
+                isDeleting={deletingSandboxId === sandbox.sandboxId}
+                isDuplicating={duplicatingSandboxId === sandbox.sandboxId}
               />
             ))}
           </div>
         ) : (
           <div className="space-y-3">
             {filteredSandboxes.map((sandbox) => (
-              <button
+              <div
                 key={sandbox.sandboxId}
-                type="button"
-                className="flex w-full items-center justify-between rounded-2xl border border-border/70 bg-card/70 px-4 py-4 text-left transition-colors hover:border-primary/40 hover:bg-card"
-                onClick={() => onOpenSandbox(sandbox.sandboxId)}
+                className="flex w-full items-stretch gap-1 rounded-2xl border border-border/70 bg-card/70 transition-colors hover:border-primary/40 hover:bg-card"
               >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold">
-                    {sandbox.name}
-                  </p>
-                  <p className="mt-1 truncate text-sm text-muted-foreground">
-                    {sandbox.description || "No description yet."}
-                  </p>
+                <button
+                  type="button"
+                  className="flex min-w-0 flex-1 items-center justify-between px-4 py-4 text-left"
+                  onClick={() => onOpenSandbox(sandbox.sandboxId)}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">
+                      {sandbox.name}
+                    </p>
+                    <p className="mt-1 truncate text-sm text-muted-foreground">
+                      {sandbox.description || "No description yet."}
+                    </p>
+                  </div>
+                  <div className="ml-4 flex shrink-0 items-center gap-2">
+                    <Badge variant="outline">
+                      {getSandboxHostStyleShortLabel(sandbox.hostStyle)}
+                    </Badge>
+                    <Badge variant="outline">{sandbox.serverCount} servers</Badge>
+                  </div>
+                </button>
+                <div className="flex shrink-0 items-center pr-2">
+                  <SandboxIndexRowActionsMenu
+                    triggerClassName="text-muted-foreground shrink-0"
+                    sandbox={sandbox}
+                    onEdit={() => onOpenSandbox(sandbox.sandboxId)}
+                    onUsage={() =>
+                      onOpenSandbox(sandbox.sandboxId, {
+                        initialViewMode: "usage",
+                      })
+                    }
+                    onDuplicate={() => onDuplicateSandbox(sandbox)}
+                    onDelete={() => setPendingDelete(sandbox)}
+                    isDeleting={deletingSandboxId === sandbox.sandboxId}
+                    isDuplicating={duplicatingSandboxId === sandbox.sandboxId}
+                  />
                 </div>
-                <div className="ml-4 flex shrink-0 items-center gap-2">
-                  <Badge variant="outline">
-                    {getSandboxHostStyleShortLabel(sandbox.hostStyle)}
-                  </Badge>
-                  <Badge variant="outline">{sandbox.serverCount} servers</Badge>
-                </div>
-              </button>
+              </div>
             ))}
           </div>
         )}
