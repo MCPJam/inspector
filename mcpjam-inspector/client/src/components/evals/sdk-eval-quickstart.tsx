@@ -38,11 +38,8 @@ export LLM_API_KEY=<your-llm-api-key>
 export EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
 
 const ENV_TAIL_DOTENV = `MCP_SERVER_URL=${LEARN_MCP_URL}
-# EVAL_MODEL = <provider>/<model-id>. TestAgent providers: ${SDK_TEST_AGENT_PROVIDERS}
-# Examples: openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514
-EVAL_MODEL=<provider/model-id>
-# Match your provider's usual env var name; sync with apiKey in the sample test below.
-LLM_API_KEY=<your-llm-api-key>`;
+LLM_API_KEY=<your-llm-api-key>
+EVAL_MODEL=<provider/model-id> # e.g. openai/gpt-4o-mini, anthropic/claude-sonnet-4-20250514`;
 
 function escapeDoubleQuotes(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -544,7 +541,7 @@ export function SdkEvalQuickstart({
   const activeKeys = maybeApiKey?.filter((k) => !k.revokedAt) ?? [];
   const existingKey = activeKeys.length > 0 ? activeKeys[0] : null;
 
-  const shellEnv = buildShellEnvSnippet(plaintextKey);
+  const dotenvEnv = buildDotEnvSnippet(plaintextKey);
 
   return (
     <div className="w-full max-w-2xl space-y-3">
@@ -582,9 +579,9 @@ export function SdkEvalQuickstart({
           headerCopied={headerCopied}
         />
         <QuickstartCodeBlock
-          code={shellEnv}
-          copyLabel="Copy exports"
-          toolbarLabel="Terminal"
+          code={dotenvEnv}
+          copyLabel="Copy .env"
+          toolbarLabel=".env"
         />
         <div className="flex justify-end text-[11px] text-muted-foreground">
           <a

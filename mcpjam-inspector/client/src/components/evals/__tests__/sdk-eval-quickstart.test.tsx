@@ -124,9 +124,9 @@ describe("SdkEvalQuickstart", () => {
 
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    await user.click(screen.getByRole("button", { name: "Copy exports" }));
+    await user.click(screen.getByRole("button", { name: "Copy .env" }));
 
-    expect(copyToClipboard).toHaveBeenCalledWith(buildShellEnvSnippet(null));
+    expect(copyToClipboard).toHaveBeenCalledWith(buildDotEnvSnippet(null));
   });
 
   it("embeds revealed API key in .env snippet after Generate API key", async () => {
