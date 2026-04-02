@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import {
   computeSectionStatuses,
   ServerSelectionEditor,
@@ -69,6 +69,86 @@ describe("SetupChecklistPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Basics/i }));
     const description = screen.getByLabelText(/Description/i);
     expect(description).toHaveAttribute("rows", "2");
+  });
+
+  it("opens consolidated access settings in a dialog (no General access heading)", () => {
+    render(
+      <SetupChecklistPanel
+        sandboxDraft={baseDraft}
+        savedSandbox={null}
+        workspaceServers={[]}
+        focusedSection={null}
+        isUnsavedNewDraft
+        onDraftChange={() => {}}
+        onOpenAddServer={() => {}}
+        onToggleServer={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Access/i }));
+    expect(screen.queryByText("General access")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Configure access/i }));
+    expect(
+      screen.getByRole("heading", { name: "Access settings" }),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("dialog");
+    expect(
+      within(dialog).getByText("Anyone with the link"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("Allow guest access")).toBeInTheDocument();
+  });
+
+  it("shows invite-only save prompt in access dialog when sandbox is unsaved", () => {
+    const internalDraft = SANDBOX_STARTERS.find(
+      (s) => s.id === "internal-qa",
+    )!.createDraft("openai/gpt-5-mini");
+    render(
+      <SetupChecklistPanel
+        sandboxDraft={internalDraft}
+        savedSandbox={null}
+        workspaceServers={[]}
+        focusedSection={null}
+        isUnsavedNewDraft
+        onDraftChange={() => {}}
+        onOpenAddServer={() => {}}
+        onToggleServer={() => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Access/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Configure access/i }));
+    expect(
+      screen.getByText(/Save the sandbox to invite people by email/i),
+    ).toBeInTheDocument();
+    const emailInput = screen.getByLabelText(/email address/i);
+    expect(emailInput).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^Invite$/i })).toBeDisabled();
+  });
+
+  it("shows invite email field when inviteSandboxMember is wired (e.g. saved sandbox id)", () => {
+    const internalDraft = SANDBOX_STARTERS.find(
+      (s) => s.id === "internal-qa",
+    )!.createDraft("openai/gpt-5-mini");
+    render(
+      <SetupChecklistPanel
+        sandboxDraft={internalDraft}
+        savedSandbox={null}
+        workspaceServers={[]}
+        focusedSection={null}
+        isUnsavedNewDraft
+        onDraftChange={() => {}}
+        onOpenAddServer={() => {}}
+        onToggleServer={() => {}}
+        inviteSandboxMember={async () => {}}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /Access/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Configure access/i }));
+    expect(screen.getByText("Invite people")).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText(/colleague@company.com/i),
+    ).toBeInTheDocument();
   });
 });
 

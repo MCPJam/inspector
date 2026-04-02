@@ -6,13 +6,19 @@ import {
   useState,
 } from "react";
 import { useConvexAuth } from "convex/react";
-import { useSandboxList, type SandboxSettings } from "@/hooks/useSandboxes";
+import { toast } from "sonner";
+import {
+  useSandboxList,
+  useSandboxMutations,
+  type SandboxListItem,
+  type SandboxSettings,
+} from "@/hooks/useSandboxes";
 import {
   useWorkspaceQueries,
   useWorkspaceServers,
 } from "@/hooks/useWorkspaces";
 import { readBuilderSession, clearBuilderSession } from "@/lib/sandbox-session";
-import { SandboxIndexPage } from "./SandboxIndexPage";
+import { SandboxIndexPage, type SandboxOpenOptions } from "./SandboxIndexPage";
 import { SandboxBuilderView } from "./SandboxBuilderView";
 import { SandboxLauncher } from "./SandboxLauncher";
 import { getDefaultHostedModelId } from "./drafts";
@@ -43,6 +49,7 @@ export default function SandboxBuilderExperience({
     isAuthenticated,
     workspaceId,
   });
+  const { deleteSandbox, duplicateSandbox } = useSandboxMutations();
   const { workspaces = [] } = useWorkspaceQueries({ isAuthenticated });
   const { servers = [] } = useWorkspaceServers({
     isAuthenticated,
@@ -59,6 +66,12 @@ export default function SandboxBuilderExperience({
     "setup" | "preview" | "usage" | undefined
   >();
   const [starterLauncherOpen, setStarterLauncherOpen] = useState(false);
+  const [deletingSandboxId, setDeletingSandboxId] = useState<string | null>(
+    null,
+  );
+  const [duplicatingSandboxId, setDuplicatingSandboxId] = useState<
+    string | null
+  >(null);
 
   // Restore builder session from sessionStorage when workspaceId becomes
   // available. After an OAuth redirect the page reloads and Convex needs to
@@ -126,6 +139,58 @@ export default function SandboxBuilderExperience({
     });
   }, []);
 
+  const handleDeleteSandbox = useCallback(
+    async (sandbox: SandboxListItem) => {
+      setDeletingSandboxId(sandbox.sandboxId);
+      try {
+        await deleteSandbox({ sandboxId: sandbox.sandboxId });
+        toast.success("Sandbox deleted");
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "Failed to delete sandbox",
+        );
+        throw error;
+      } finally {
+        setDeletingSandboxId(null);
+      }
+    },
+    [deleteSandbox],
+  );
+
+  const handleDuplicateSandbox = useCallback(
+    async (sandbox: SandboxListItem) => {
+      setDuplicatingSandboxId(sandbox.sandboxId);
+      try {
+        const result = (await duplicateSandbox({
+          sandboxId: sandbox.sandboxId,
+        })) as { sandboxId?: string } | null | undefined;
+        const newId =
+          result &&
+          typeof result === "object" &&
+          typeof result.sandboxId === "string"
+            ? result.sandboxId
+            : null;
+        toast.success("Sandbox duplicated");
+        if (newId) {
+          startTransition(() => {
+            setSelectedSandboxId(newId);
+            setRestoredViewMode(undefined);
+          });
+        }
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to duplicate sandbox",
+        );
+        throw error;
+      } finally {
+        setDuplicatingSandboxId(null);
+      }
+    },
+    [duplicateSandbox],
+  );
+
   if (!workspaceId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -167,12 +232,16 @@ export default function SandboxBuilderExperience({
         <SandboxIndexPage
           sandboxes={sandboxes}
           isLoading={isLoading}
-          onOpenSandbox={(sandboxId) =>
+          onOpenSandbox={(sandboxId: string, options?: SandboxOpenOptions) => {
             startTransition(() => {
               setSelectedSandboxId(sandboxId);
-              setRestoredViewMode(undefined);
-            })
-          }
+              setRestoredViewMode(options?.initialViewMode);
+            });
+          }}
+          onDuplicateSandbox={handleDuplicateSandbox}
+          onDeleteSandbox={handleDeleteSandbox}
+          deletingSandboxId={deletingSandboxId}
+          duplicatingSandboxId={duplicatingSandboxId}
           onOpenStarterLauncher={handleOpenStarterLauncher}
           onSelectStarter={applyStarterDraft}
           isCreateSandboxDisabled={isCreateSandboxDisabled}

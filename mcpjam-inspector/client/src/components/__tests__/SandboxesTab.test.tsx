@@ -177,6 +177,16 @@ vi.mock("@/hooks/useSandboxes", () => ({
     sandboxes: sandboxList,
     isLoading: false,
   }),
+  useSandboxMutations: () => ({
+    createSandbox: vi.fn(),
+    duplicateSandbox: vi.fn(),
+    updateSandbox: vi.fn(),
+    deleteSandbox: vi.fn(),
+    setSandboxMode: vi.fn(),
+    rotateSandboxLink: vi.fn(),
+    upsertSandboxMember: vi.fn(),
+    removeSandboxMember: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useWorkspaces", () => ({

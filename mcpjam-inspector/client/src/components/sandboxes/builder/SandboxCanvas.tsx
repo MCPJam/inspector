@@ -44,13 +44,14 @@ import { cn } from "@/lib/utils";
 import type {
   SandboxBuilderNodeData,
   SandboxBuilderViewModel,
+  SandboxFlowNode,
   SandboxSectionLabelData,
 } from "./types";
 import {
+  extendSandboxViewportBoundsForHostOverflow,
+  getSandboxBuilderRenderableNodeIds,
   getSandboxCanvasLayoutSignature,
-  SANDBOX_BUILDER_HOST_NODE_ID,
-  SANDBOX_BUILDER_NODE_HEIGHT,
-  SANDBOX_BUILDER_NODE_WIDTH,
+  getSandboxCanvasStaticFitBounds,
 } from "./sandbox-canvas-viewport";
 
 export type SandboxCanvasServerPickerProps = {
@@ -351,22 +352,39 @@ const VIEWPORT_ANIMATION_DURATION = 400;
 const VIEWPORT_FIT_PADDING = 0.18;
 const VIEWPORT_SETTLE_DELAY_MS = 50;
 
+function isValidMeasuredFitBounds(bounds: {
+  width: number;
+  height: number;
+}): boolean {
+  return (
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width >= 16 &&
+    bounds.height >= 16
+  );
+}
+
 interface CanvasViewportControllerProps {
   containerRef: RefObject<HTMLDivElement | null>;
   layoutSignature: string;
+  layoutNodes: SandboxFlowNode[];
+  /** Bumps when setup canvas becomes visible again (mode / mobile sheet) so refit runs even if layout is unchanged. */
+  canvasViewportRefitNonce: number;
 }
 
 function CanvasViewportController({
   containerRef,
   layoutSignature,
+  layoutNodes,
+  canvasViewportRefitNonce,
 }: CanvasViewportControllerProps) {
-  const { fitBounds, getNode, getNodesBounds, viewportInitialized } =
-    useReactFlow();
+  const { fitBounds, getNodesBounds, viewportInitialized } = useReactFlow();
   const nodesInitialized = useNodesInitialized();
   const [containerBox, setContainerBox] = useState<{
     width: number;
     height: number;
   }>({ width: 0, height: 0 });
+  const lastAppliedViewportInputKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -412,30 +430,43 @@ function CanvasViewportController({
       return;
     }
 
+    const renderableIds = getSandboxBuilderRenderableNodeIds(layoutNodes);
+    if (renderableIds.length === 0) {
+      return;
+    }
+
+    const viewportInputKey = `${layoutSignature}|${Math.round(containerBox.width)}|${Math.round(containerBox.height)}|${canvasViewportRefitNonce}`;
+
+    const autoFitCanvas = () => {
+      if (viewportInputKey === lastAppliedViewportInputKeyRef.current) {
+        return;
+      }
+
+      const staticBounds = getSandboxCanvasStaticFitBounds(layoutNodes);
+      let bounds = getNodesBounds(renderableIds);
+      if (!isValidMeasuredFitBounds(bounds)) {
+        if (!staticBounds) {
+          return;
+        }
+        bounds = staticBounds;
+      } else {
+        bounds = extendSandboxViewportBoundsForHostOverflow(
+          bounds,
+          layoutNodes,
+        );
+      }
+
+      void fitBounds(bounds, {
+        padding: VIEWPORT_FIT_PADDING,
+        duration: VIEWPORT_ANIMATION_DURATION,
+      });
+      lastAppliedViewportInputKeyRef.current = viewportInputKey;
+    };
+
     const timer = window.setTimeout(() => {
-      /** Wait two frames so panZoom + store width/height match the visible pane. */
       requestAnimationFrame(() => {
         requestAnimationFrame(() => {
-          let bounds = getNodesBounds([SANDBOX_BUILDER_HOST_NODE_ID]);
-          if (
-            !Number.isFinite(bounds.width) ||
-            !Number.isFinite(bounds.height) ||
-            bounds.width < 16 ||
-            bounds.height < 16
-          ) {
-            const node = getNode(SANDBOX_BUILDER_HOST_NODE_ID);
-            if (!node) return;
-            bounds = {
-              x: node.position.x,
-              y: node.position.y,
-              width: SANDBOX_BUILDER_NODE_WIDTH,
-              height: SANDBOX_BUILDER_NODE_HEIGHT,
-            };
-          }
-          void fitBounds(bounds, {
-            padding: VIEWPORT_FIT_PADDING,
-            duration: VIEWPORT_ANIMATION_DURATION,
-          });
+          autoFitCanvas();
         });
       });
     }, VIEWPORT_SETTLE_DELAY_MS);
@@ -445,10 +476,11 @@ function CanvasViewportController({
     viewportInitialized,
     nodesInitialized,
     layoutSignature,
+    layoutNodes,
     containerBox.width,
     containerBox.height,
+    canvasViewportRefitNonce,
     fitBounds,
-    getNode,
     getNodesBounds,
   ]);
 
@@ -461,6 +493,8 @@ interface SandboxCanvasProps {
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
   canvasServerPicker?: SandboxCanvasServerPickerProps;
+  /** Incremented by the builder shell when the setup canvas is shown again or mobile setup chrome changes. */
+  canvasViewportRefitNonce?: number;
 }
 
 export function SandboxCanvas({
@@ -469,6 +503,7 @@ export function SandboxCanvas({
   onSelectNode,
   onClearSelection,
   canvasServerPicker,
+  canvasViewportRefitNonce = 0,
 }: SandboxCanvasProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const nodes = viewModel.nodes.map((node) =>
@@ -538,6 +573,8 @@ export function SandboxCanvas({
           <CanvasViewportController
             containerRef={canvasRef}
             layoutSignature={layoutSignature}
+            layoutNodes={viewModel.nodes}
+            canvasViewportRefitNonce={canvasViewportRefitNonce}
           />
           <Background
             id="sandbox-builder-dots"
