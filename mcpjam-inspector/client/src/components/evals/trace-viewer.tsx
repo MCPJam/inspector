@@ -227,6 +227,17 @@ export function TraceViewer({
     }
   }, [hasEvalToolCalls]);
 
+  useEffect(() => {
+    if (viewMode !== "raw" && viewMode !== "chat") return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      setViewMode("timeline");
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [viewMode]);
+
   function handleRevealInTranscript(selection: TraceRevealSelection) {
     const highlightedIds = new Set<string>();
     for (const sourceIndex of selection.highlightSourceIndices) {
@@ -281,25 +292,29 @@ export function TraceViewer({
 
   return (
     <div
-      className={cn(
-        compactChrome ? "space-y-2" : "space-y-3",
-        flexFillChrome && "flex min-h-0 flex-1 flex-col",
-      )}
+      className={cn(flexFillChrome && "flex min-h-0 flex-1 flex-col")}
+      data-testid="trace-viewer-root"
     >
       <div
         className={cn(
-          "rounded-lg border border-border/50 bg-muted/15",
-          flexFillChrome && "shrink-0",
-          compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
+          compactChrome ? "space-y-2" : "space-y-3",
+          flexFillChrome && "flex min-h-0 flex-1 flex-col",
         )}
       >
         <div
           className={cn(
-            "flex min-w-0 flex-row items-center justify-between gap-2",
-            compactChrome ? "min-h-8" : "min-h-9",
+            "sticky top-0 z-20 rounded-lg border border-border/50 bg-muted/95 shadow-sm backdrop-blur-sm",
+            flexFillChrome && "shrink-0",
+            compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
           )}
         >
-          <div className="flex min-w-0 min-h-0 flex-1 items-center gap-2">
+          <div
+            className={cn(
+              "flex min-w-0 flex-row items-center justify-between gap-2",
+              compactChrome ? "min-h-8" : "min-h-9",
+            )}
+          >
+            <div className="flex min-w-0 min-h-0 flex-1 items-center gap-2">
             {showRecordedChrome ? (
               <RecordedTraceToolbar
                 filter={timelineFilter}
@@ -369,8 +384,8 @@ export function TraceViewer({
                       : "Trace"}
               </div>
             )}
-          </div>
-          <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
+            </div>
+            <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
             <button
               type="button"
               onClick={() => setViewMode("timeline")}
@@ -426,24 +441,28 @@ export function TraceViewer({
                 Tools
               </button>
             ) : null}
+            </div>
           </div>
         </div>
+
         {traceInsight ? (
           <div
-            className={
-              compactChrome
-                ? "mt-1.5 border-t border-border/40 pt-1.5"
-                : "mt-2 border-t border-border/40 pt-2"
-            }
+            className={cn(
+              "rounded-lg border border-border/50 bg-muted/15",
+              flexFillChrome && "shrink-0",
+              compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
+            )}
             data-testid="trace-viewer-insight-slot"
           >
             {traceInsight}
           </div>
         ) : null}
-      </div>
 
-      {viewMode === "raw" && (
-        <div className="min-w-0 overflow-hidden rounded-md border border-border/30 bg-background/50">
+        {viewMode === "raw" && (
+        <div
+          className="min-h-0 min-w-0 max-h-[min(70vh,36rem)] overflow-y-auto rounded-md border border-border/30 bg-background/50"
+          data-testid="trace-viewer-raw-json"
+        >
           <JsonEditor
             height="auto"
             viewOnly
@@ -451,9 +470,9 @@ export function TraceViewer({
             className="min-h-0"
           />
         </div>
-      )}
+        )}
 
-      {viewMode === "timeline" && (
+        {viewMode === "timeline" && (
         <Suspense
           fallback={
             <div className="flex justify-center py-8">
@@ -489,42 +508,47 @@ export function TraceViewer({
             viewportMaxMs={hasRecordedSpans ? timelineViewportMaxMs : undefined}
           />
         </Suspense>
-      )}
+        )}
 
-      {viewMode === "chat" &&
+        {viewMode === "chat" &&
         (traceMessages.length === 0 ? (
           <div className="text-xs text-muted-foreground">
             No messages in trace
           </div>
         ) : (
-          <TranscriptThread
-            messages={adaptedTrace.messages}
-            model={resolvedModel}
-            sendFollowUpMessage={NOOP}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-            toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-            showSaveViewButton={false}
-            minimalMode={true}
-            interactive={false}
-            reasoningDisplayMode="collapsed"
-            focusMessageId={transcriptNavigation.focusMessageId}
-            highlightedMessageIds={transcriptNavigation.highlightedMessageIds}
-            navigationKey={transcriptNavigation.navigationKey}
-            contentClassName="max-w-4xl space-y-8 px-4 pt-2"
-            getMessageWrapperProps={({ message }) => {
-              const sourceRange =
-                adaptedTrace.uiMessageSourceRanges[message.id];
-              return {
-                "data-source-range": sourceRange
-                  ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
-                  : undefined,
-              };
-            }}
-          />
+          <div
+            className="min-h-0 min-w-0 max-h-[min(70vh,36rem)] overflow-y-auto rounded-md border border-border/30 bg-background/50"
+            data-testid="trace-viewer-chat"
+          >
+            <TranscriptThread
+              messages={adaptedTrace.messages}
+              model={resolvedModel}
+              sendFollowUpMessage={NOOP}
+              toolsMetadata={toolsMetadata}
+              toolServerMap={toolServerMap}
+              toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+              showSaveViewButton={false}
+              minimalMode={true}
+              interactive={false}
+              reasoningDisplayMode="collapsed"
+              focusMessageId={transcriptNavigation.focusMessageId}
+              highlightedMessageIds={transcriptNavigation.highlightedMessageIds}
+              navigationKey={transcriptNavigation.navigationKey}
+              contentClassName="max-w-4xl space-y-8 px-4 pt-2"
+              getMessageWrapperProps={({ message }) => {
+                const sourceRange =
+                  adaptedTrace.uiMessageSourceRanges[message.id];
+                return {
+                  "data-source-range": sourceRange
+                    ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
+                    : undefined,
+                };
+              }}
+            />
+          </div>
         ))}
 
-      {viewMode === "tools" && hasEvalToolCalls ? (
+        {viewMode === "tools" && hasEvalToolCalls ? (
         <div
           className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row"
           data-testid="trace-viewer-tools-compare"
@@ -574,7 +598,8 @@ export function TraceViewer({
             )}
           </div>
         </div>
-      ) : null}
+        ) : null}
+      </div>
     </div>
   );
 }

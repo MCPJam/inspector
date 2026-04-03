@@ -700,8 +700,7 @@ export function IterationDetails({
       ) : null}
       <div
         className={cn(
-          layoutMode === "compact" &&
-            "rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto",
+          layoutMode === "compact" && "rounded-md bg-muted/20 p-3",
           layoutMode === "full" &&
             iteration.blob &&
             !error &&

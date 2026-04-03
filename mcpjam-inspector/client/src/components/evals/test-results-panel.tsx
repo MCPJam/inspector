@@ -1,4 +1,3 @@
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { CheckCircle2, XCircle, Loader2 } from "lucide-react";
 import { IterationDetails } from "./iteration-details";
 import type { EvalIteration, EvalCase } from "./types";
@@ -90,7 +89,7 @@ export function TestResultsPanel({
             </p>
           </div>
         ) : (
-          <ScrollArea className="h-full">
+          <div className="h-full min-h-0 overflow-y-auto overflow-x-hidden">
             <div className="p-3">
               <IterationDetails
                 iteration={iteration}
@@ -98,7 +97,7 @@ export function TestResultsPanel({
                 serverNames={serverNames}
               />
             </div>
-          </ScrollArea>
+          </div>
         )}
       </div>
     </div>
