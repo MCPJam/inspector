@@ -85,6 +85,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     selectedServer !== "none" &&
     appState.servers[selectedServer]?.connectionStatus === "connected";
 
+  const hasPlaygroundServerTab =
+    Boolean(selectedServer) && selectedServer !== "none";
+
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(workspaceId),
     user: workspaceId ? user : null,
@@ -103,7 +106,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   );
 
   const exploreSuiteEntry = useMemo(() => {
-    if (!selectedServer || !isServerConnected) return null;
+    if (!hasPlaygroundServerTab) return null;
     return (
       manualSuiteEntries.find(
         (entry) =>
@@ -111,7 +114,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           entry.suite.environment?.servers?.[0] === selectedServer,
       ) ?? null
     );
-  }, [manualSuiteEntries, selectedServer, isServerConnected]);
+  }, [manualSuiteEntries, selectedServer, hasPlaygroundServerTab]);
 
   const selectedSuiteId = exploreSuiteEntry?.suite._id ?? null;
 
@@ -396,12 +399,12 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     >
       <div className="h-full flex flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {!isServerConnected ? (
+          {!hasPlaygroundServerTab ? (
             <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
               <EmptyState
                 icon={FlaskConical}
-                title="Connect a server to start exploring"
-                description="MCPJam generates explore cases after you connect."
+                title="Select a server to explore"
+                description="Pick a server from the header to view Explore cases. Connect it to run tests or generate new cases."
                 className="h-auto min-h-[240px]"
               />
             </div>
@@ -499,7 +502,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                         duplicatingTestCaseId={handlers.duplicatingTestCaseId}
                         isGeneratingTests={handlers.isGeneratingTests}
                         showingOverview={!selectedTestId}
-                        noServerSelected={!isServerConnected}
+                        noServerSelected={!hasPlaygroundServerTab}
                         selectedServer={selectedServer}
                         suite={exploreSuite}
                         connectedServerNames={connectedServerNames}

@@ -105,6 +105,33 @@ describe("TestCaseListSidebar", () => {
     ).toBeDisabled();
   });
 
+  it("still lists cases when the suite server is disconnected (noServerSelected false)", () => {
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[baseCase]}
+        suiteId="suite-1"
+        selectedTestId="case-1"
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        noServerSelected={false}
+        suite={baseSuite}
+        onRunTestCase={vi.fn()}
+        runningTestCaseId={null}
+        connectedServerNames={new Set()}
+      />,
+    );
+
+    expect(
+      screen.queryByText("Select a server to view cases."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Test case")).toBeVisible();
+  });
+
   it("calls onCopySdkEvalBrief when Copy SDK eval agent brief is clicked", async () => {
     const onCopy = vi.fn();
     const user = userEvent.setup();
