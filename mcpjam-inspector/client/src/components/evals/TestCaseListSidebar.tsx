@@ -406,14 +406,6 @@ export function TestCaseListSidebar({
                             >
                               {line1}
                             </span>
-                            {testCase.isNegativeTest && (
-                              <span
-                                className="text-[10px] text-orange-500 shrink-0"
-                                title="Negative case"
-                              >
-                                NEG
-                              </span>
-                            )}
                           </div>
                           {line2 ? (
                             <span
