@@ -76,7 +76,10 @@ import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
-import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
+import type {
+  ActiveServerSelectorProps,
+  PlaygroundServerSelectorProps,
+} from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
@@ -1143,6 +1146,33 @@ export default function App() {
       pendingCheckoutIntent?.plan,
     ]);
 
+  const playgroundServerSelectorProps = useMemo(():
+    | PlaygroundServerSelectorProps
+    | undefined => {
+    if (activeTab !== "app-builder") return undefined;
+    return {
+      serverConfigs: workspaceServers,
+      selectedServer: appState.selectedServer,
+      selectedMultipleServers: appState.selectedMultipleServers,
+      isMultiSelectEnabled: false,
+      onServerChange: setSelectedServer,
+      onMultiServerToggle: toggleServerSelection,
+      onConnect: handleConnect,
+      onReconnect: handleReconnect,
+      showOnlyOAuthServers: false,
+      showOnlyServersWithViews: false,
+    };
+  }, [
+    activeTab,
+    workspaceServers,
+    appState.selectedServer,
+    appState.selectedMultipleServers,
+    setSelectedServer,
+    toggleServerSelection,
+    handleConnect,
+    handleReconnect,
+  ]);
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
@@ -1210,7 +1240,6 @@ export default function App() {
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
-    activeTab === "app-builder" ||
     activeTab === "evals" ||
     activeTab === "views";
 
@@ -1218,11 +1247,7 @@ export default function App() {
     shouldShowActiveServerSelector
       ? {
           serverConfigs:
-            activeTab === "oauth-flow"
-              ? appState.servers
-              : activeTab === "views"
-                ? workspaceServers
-                : connectedOrConnectingServerConfigs,
+            activeTab === "oauth-flow" ? appState.servers : workspaceServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
@@ -1476,6 +1501,7 @@ export default function App() {
               isAuthLoading={isAuthLoading}
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
             />
           )}
           {activeTab === "client-config" && (

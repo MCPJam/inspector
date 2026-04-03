@@ -48,6 +48,7 @@ import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
 import { toast } from "sonner";
+import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
 
 interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
@@ -57,6 +58,7 @@ interface AppBuilderTabProps {
   isAuthLoading?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
+  playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
 }
 
 export function AppBuilderTab({
@@ -67,6 +69,7 @@ export function AppBuilderTab({
   isAuthLoading = false,
   onConnect,
   onOnboardingChange,
+  playgroundServerSelectorProps,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
   // Compute server key for saved requests storage
@@ -366,6 +369,7 @@ export function AppBuilderTab({
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}
+            playgroundServerSelectorProps={playgroundServerSelectorProps}
             initialInput={
               onboarding.isGuidedPostConnect
                 ? "Draw me an MCP architecture diagram"
