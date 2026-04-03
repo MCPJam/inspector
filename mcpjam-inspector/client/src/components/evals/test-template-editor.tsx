@@ -264,6 +264,9 @@ export function TestTemplateEditor({
     }
   };
 
+  const isEffectivelyNegative =
+    optimisticNegative ?? currentTestCase?.isNegativeTest ?? false;
+
   // Check if there are unsaved changes
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
@@ -288,7 +291,10 @@ export function TestTemplateEditor({
       normalizedExpectedToolCalls !== normalizedCurrentExpectedToolCalls ||
       normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
       (editForm.scenario || "") !== (currentTestCase.scenario || "") ||
-      (editForm.expectedOutput || "") !== (currentTestCase.expectedOutput || "")
+      (editForm.expectedOutput || "") !==
+        (currentTestCase.expectedOutput || "") ||
+      (editForm.isNegativeTest ?? false) !==
+        (currentTestCase.isNegativeTest ?? false)
     );
   }, [editForm, currentTestCase]);
 
@@ -297,9 +303,9 @@ export function TestTemplateEditor({
     if (!editForm) return true; // Allow saving if form is not loaded yet
     return validateExpectedToolCalls(
       editForm.expectedToolCalls || [],
-      currentTestCase?.isNegativeTest,
+      isEffectivelyNegative,
     );
-  }, [editForm, currentTestCase?.isNegativeTest]);
+  }, [editForm, isEffectivelyNegative]);
 
   // Separate save handler
   const handleSave = async () => {
@@ -309,7 +315,7 @@ export function TestTemplateEditor({
     if (
       !validateExpectedToolCalls(
         editForm.expectedToolCalls || [],
-        currentTestCase.isNegativeTest,
+        isEffectivelyNegative,
       )
     ) {
       toast.error(
@@ -325,11 +331,14 @@ export function TestTemplateEditor({
         query: editForm.query,
         runs: editForm.runs,
         expectedToolCalls: editForm.expectedToolCalls,
+        isNegativeTest: isEffectivelyNegative,
         scenario: editForm.scenario,
         expectedOutput: editForm.expectedOutput,
         advancedConfig: editForm.advancedConfig,
       });
       toast.success("Changes saved");
+      // Clear optimistic state after server confirms
+      setOptimisticNegative(null);
     } catch (error) {
       console.error("Failed to save:", error);
       toast.error(getBillingErrorMessage(error, "Failed to save changes"));
@@ -431,15 +440,34 @@ export function TestTemplateEditor({
   const handleToggleNegative = async () => {
     if (!currentTestCase) return;
 
-    const newValue = !currentTestCase.isNegativeTest;
-    // Optimistically update the UI immediately
+    const newValue = !isEffectivelyNegative;
+
+    if (!newValue) {
+      // Switching neg → pos: defer to save so user can add tool calls first
+      setOptimisticNegative(false);
+      if (editForm) {
+        setEditForm({ ...editForm, isNegativeTest: false });
+      }
+      return;
+    }
+
+    // Switching pos → neg
+    if (currentTestCase.isNegativeTest) {
+      // Server already has isNegativeTest=true, just revert the optimistic toggle
+      setOptimisticNegative(null);
+      if (editForm) {
+        setEditForm({ ...editForm, isNegativeTest: true });
+      }
+      return;
+    }
+
+    // Server has isNegativeTest=false, send mutation
     setOptimisticNegative(newValue);
     try {
       await updateTestCaseMutation({
         testCaseId: currentTestCase._id,
         isNegativeTest: newValue,
-        // Clear expected tool calls when converting to negative test
-        ...(newValue && { expectedToolCalls: [] }),
+        expectedToolCalls: [],
       });
       // Clear optimistic state after server confirms (Convex query will take over)
       setOptimisticNegative(null);
@@ -641,7 +669,7 @@ export function TestTemplateEditor({
                     Scenario
                   </Label>
                   <p className="text-[10px] text-muted-foreground mb-1.5">
-                    {currentTestCase?.isNegativeTest
+                    {isEffectivelyNegative
                       ? "Describe the scenario where your app should not trigger"
                       : "Describe the use case to test"}
                   </p>
@@ -652,7 +680,7 @@ export function TestTemplateEditor({
                     }
                     rows={2}
                     placeholder={
-                      currentTestCase?.isNegativeTest
+                      isEffectivelyNegative
                         ? "e.g., User asks about unrelated topic..."
                         : "e.g., Check current time display..."
                     }
@@ -665,7 +693,7 @@ export function TestTemplateEditor({
                     User Prompt
                   </Label>
                   <p className="text-[10px] text-muted-foreground mb-1.5">
-                    {currentTestCase?.isNegativeTest
+                    {isEffectivelyNegative
                       ? "Example prompt where your app should not trigger"
                       : "The exact prompt or interaction to begin the test"}
                   </p>
@@ -681,7 +709,7 @@ export function TestTemplateEditor({
                 </div>
 
                 {/* Tool Triggered and Expected Output - only for positive tests */}
-                {!currentTestCase?.isNegativeTest && (
+                {!isEffectivelyNegative && (
                   <>
                     <div className="px-1 pt-3">
                       <Label className="text-xs text-muted-foreground font-medium">
