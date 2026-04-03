@@ -3,6 +3,8 @@
  * Supports both built-in providers and user-defined custom providers.
  */
 
+import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createAzure } from "@ai-sdk/azure";
 import { createDeepSeek } from "@ai-sdk/deepseek";
@@ -32,8 +34,8 @@ export interface CreateModelOptions {
   baseUrls?: BaseUrls;
   /** Custom providers registry (name -> config) */
   customProviders?:
-    | Map<string, CustomProvider>
-    | Record<string, CustomProvider>;
+  | Map<string, CustomProvider>
+  | Record<string, CustomProvider>;
 }
 
 /** Built-in providers list */
@@ -47,6 +49,7 @@ const BUILT_IN_PROVIDERS: LLMProvider[] = [
   "mistral",
   "openrouter",
   "xai",
+  "bedrock",
 ];
 
 /**
@@ -250,6 +253,14 @@ export function createModelFromString(
         baseURL: baseUrls?.azure,
       });
       return azure(model) as ProviderLanguageModel;
+    }
+
+    case "bedrock": {
+      const credentialProvider = fromNodeProviderChain();
+      const bedrock = createAmazonBedrock({
+        credentialProvider,
+      });
+      return bedrock(model) as ProviderLanguageModel;
     }
 
     default: {
