@@ -36,10 +36,18 @@ export function TabHeader({
   onRefresh,
   onClose,
 }: TabHeaderProps) {
+  const tabButtonClass = (active: boolean) =>
+    `shrink-0 whitespace-nowrap rounded-md py-1.5 text-xs font-medium transition-colors cursor-pointer px-2 sm:px-3 ${
+      active
+        ? "bg-primary/10 text-primary"
+        : "text-muted-foreground hover:text-foreground"
+    }`;
+
   return (
-    <div className="h-11 border-b border-border flex-shrink-0">
-      <div className="h-full px-2 flex items-center gap-2">
-        <div className="flex items-center gap-2 min-w-0">
+    <div className="@container/tab-header h-11 min-w-0 shrink border-b border-border">
+      <div className="flex h-full min-w-0 items-center gap-1.5 px-2 sm:gap-2">
+        {/* Left: hide + tabs — scrolls horizontally when the panel is narrow */}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 sm:gap-2">
           {onClose && (
             <Button
               onClick={onClose}
@@ -51,32 +59,30 @@ export function TabHeader({
               <PanelLeftClose className="h-3.5 w-3.5" />
             </Button>
           )}
-          {/* Tabs */}
-          <div className="flex items-center gap-1.5 min-w-0">
+          <div
+            className="scrollbar-hidden flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden"
+            role="tablist"
+          >
             <button
+              type="button"
+              role="tab"
               onClick={() => onTabChange("tools")}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeTab === "tools"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              className={tabButtonClass(activeTab === "tools")}
             >
               Tools
-              <span className="ml-1 text-[10px] font-mono opacity-70">
+              <span className="ml-1 inline text-[10px] font-mono opacity-70">
                 {toolCount}
               </span>
             </button>
             <button
+              type="button"
+              role="tab"
               onClick={() => onTabChange("saved")}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-                activeTab === "saved"
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
+              className={tabButtonClass(activeTab === "saved")}
             >
               Saved
               {savedCount > 0 && (
-                <span className="ml-1 text-[10px] font-mono opacity-70">
+                <span className="ml-1 inline text-[10px] font-mono opacity-70">
                   {savedCount}
                 </span>
               )}
@@ -84,46 +90,46 @@ export function TabHeader({
           </div>
         </div>
 
-        {/* Secondary actions */}
-        <div className="flex items-center gap-0.5 text-muted-foreground/80">
+        {/* Right: save + refresh only when the header is wide enough; Run always */}
+        <div className="flex shrink-0 items-center gap-0.5 text-muted-foreground/80">
+          <div className="hidden items-center gap-0.5 @min-[320px]/tab-header:flex">
+            <Button
+              onClick={onSave}
+              disabled={!canSave}
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 p-0"
+              title="Save request"
+            >
+              <Save className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              onClick={onRefresh}
+              variant="ghost"
+              size="sm"
+              disabled={fetchingTools}
+              className="h-7 w-7 p-0"
+              title="Refresh tools"
+            >
+              <RefreshCw
+                className={`h-3.5 w-3.5 ${fetchingTools ? "animate-spin" : ""}`}
+              />
+            </Button>
+          </div>
           <Button
-            onClick={onSave}
-            disabled={!canSave}
-            variant="ghost"
+            onClick={onExecute}
+            disabled={isExecuting || !canExecute}
             size="sm"
-            className="h-7 w-7 p-0"
-            title="Save request"
+            className="h-8 shrink-0 px-2 text-xs sm:px-3"
           >
-            <Save className="h-3.5 w-3.5" />
-          </Button>
-          <Button
-            onClick={onRefresh}
-            variant="ghost"
-            size="sm"
-            disabled={fetchingTools}
-            className="h-7 w-7 p-0"
-            title="Refresh tools"
-          >
-            <RefreshCw
-              className={`h-3.5 w-3.5 ${fetchingTools ? "animate-spin" : ""}`}
-            />
+            {isExecuting ? (
+              <RefreshCw className="h-3 w-3 animate-spin" />
+            ) : (
+              <Play className="h-3 w-3" />
+            )}
+            <span className="ml-1">Run</span>
           </Button>
         </div>
-
-        {/* Run button */}
-        <Button
-          onClick={onExecute}
-          disabled={isExecuting || !canExecute}
-          size="sm"
-          className="h-8 px-3 text-xs ml-auto"
-        >
-          {isExecuting ? (
-            <RefreshCw className="h-3 w-3 animate-spin" />
-          ) : (
-            <Play className="h-3 w-3" />
-          )}
-          <span className="ml-1">Run</span>
-        </Button>
       </div>
     </div>
   );

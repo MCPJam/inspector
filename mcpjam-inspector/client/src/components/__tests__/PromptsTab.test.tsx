@@ -189,9 +189,9 @@ describe("PromptsTab", () => {
       // Click prompt-b in the list
       fireEvent.click(screen.getByText("prompt-b"));
 
-      // After selection, the SelectedToolHeader should show with "Click to change tool"
+      // After selection, the SelectedToolHeader shows a switch-tool control
       await waitFor(() => {
-        expect(screen.getByTitle("Click to change tool")).toBeInTheDocument();
+        expect(screen.getByTitle("Switch tool")).toBeInTheDocument();
       });
     });
   });

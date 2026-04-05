@@ -31,6 +31,7 @@ import { generateFormFieldsFromSchema } from "@/lib/tool-form";
 import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
+import { motion, useReducedMotion } from "framer-motion";
 
 // Custom hooks
 import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
@@ -58,6 +59,8 @@ interface AppBuilderTabProps {
 const APP_BUILDER_FIRST_RUN_PROMPT =
   "Draw me an MCP architecture diagram";
 
+const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
+
 export function AppBuilderTab({
   serverConfig,
   serverName,
@@ -68,6 +71,7 @@ export function AppBuilderTab({
   onOnboardingChange,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
+  const prefersReducedMotion = useReducedMotion();
   // Compute server key for saved requests storage
   const serverKey = useServerKey(serverConfig);
 
@@ -109,16 +113,30 @@ export function AppBuilderTab({
 
   useLayoutEffect(() => {
     onOnboardingChange?.(false);
-    setSidebarVisible(true);
     setMcpSidebarOpen(true);
+    // NUX: collapse tools sidebar for the whole first-run connect + guided flow. While the server is
+    // still connecting, `isGuidedPostConnect` is false (no connected server yet); include phase so we
+    // don't flash the sidebar open until connect completes.
+    const collapsePlaygroundToolsForNux =
+      onboarding.phase === "connecting_excalidraw" ||
+      onboarding.isGuidedPostConnect;
+    if (collapsePlaygroundToolsForNux) {
+      setSidebarVisible(false);
+    } else {
+      setSidebarVisible(true);
+    }
     return () => {
       onOnboardingChange?.(false);
       setSidebarVisible(true);
       setMcpSidebarOpen(true);
     };
-    // Intentionally once on mount/unmount — App Builder no longer toggles chrome for NUX.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [
+    onboarding.phase,
+    onboarding.isGuidedPostConnect,
+    onOnboardingChange,
+    setMcpSidebarOpen,
+    setSidebarVisible,
+  ]);
 
   // Log when App Builder tab is viewed
   useEffect(() => {
@@ -265,9 +283,21 @@ export function AppBuilderTab({
     );
   }
 
+  const sidebarMotionProps = prefersReducedMotion
+    ? {
+        initial: false as const,
+        animate: { opacity: 1 },
+        transition: { duration: 0 },
+      }
+    : {
+        initial: { opacity: 0, x: -12 },
+        animate: { opacity: 1, x: 0 },
+        transition: { duration: 0.22, ease: SIDEBAR_EASE },
+      };
+
   return (
-    <div className="h-full flex flex-col overflow-hidden relative">
-      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+    <div className="relative flex h-full flex-col overflow-hidden">
+      <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
         {/* Left Panel - Tools Sidebar */}
         {isSidebarVisible ? (
           <>
@@ -281,35 +311,45 @@ export function AppBuilderTab({
               collapsedSize={0}
               onCollapse={() => setSidebarVisible(false)}
             >
-              <PlaygroundLeft
-                tools={tools}
-                selectedToolName={selectedTool}
-                fetchingTools={fetchingTools}
-                onRefresh={fetchTools}
-                onSelectTool={setSelectedTool}
-                formFields={formFields}
-                onFieldChange={updateFormField}
-                onToggleField={updateFormFieldIsSet}
-                isExecuting={isExecuting}
-                onExecute={executeTool}
-                onSave={savedRequestsHook.openSaveDialog}
-                savedRequests={savedRequestsHook.savedRequests}
-                highlightedRequestId={savedRequestsHook.highlightedRequestId}
-                onLoadRequest={savedRequestsHook.handleLoadRequest}
-                onRenameRequest={savedRequestsHook.handleRenameRequest}
-                onDuplicateRequest={savedRequestsHook.handleDuplicateRequest}
-                onDeleteRequest={savedRequestsHook.handleDeleteRequest}
-                onClose={toggleSidebar}
-              />
+              <motion.div
+                className="h-full min-w-0"
+                {...sidebarMotionProps}
+              >
+                <PlaygroundLeft
+                  tools={tools}
+                  selectedToolName={selectedTool}
+                  fetchingTools={fetchingTools}
+                  onRefresh={fetchTools}
+                  onSelectTool={setSelectedTool}
+                  formFields={formFields}
+                  onFieldChange={updateFormField}
+                  onToggleField={updateFormFieldIsSet}
+                  isExecuting={isExecuting}
+                  onExecute={executeTool}
+                  onSave={savedRequestsHook.openSaveDialog}
+                  savedRequests={savedRequestsHook.savedRequests}
+                  highlightedRequestId={savedRequestsHook.highlightedRequestId}
+                  onLoadRequest={savedRequestsHook.handleLoadRequest}
+                  onRenameRequest={savedRequestsHook.handleRenameRequest}
+                  onDuplicateRequest={savedRequestsHook.handleDuplicateRequest}
+                  onDeleteRequest={savedRequestsHook.handleDeleteRequest}
+                  onClose={toggleSidebar}
+                />
+              </motion.div>
             </ResizablePanel>
             <ResizableHandle withHandle />
           </>
         ) : (
-          <CollapsedPanelStrip
-            side="left"
-            onOpen={toggleSidebar}
-            tooltipText="Show tools sidebar"
-          />
+          <motion.div
+            className="flex h-full min-w-0 shrink-0"
+            {...sidebarMotionProps}
+          >
+            <CollapsedPanelStrip
+              side="left"
+              onOpen={toggleSidebar}
+              tooltipText="Show tools sidebar"
+            />
+          </motion.div>
         )}
 
         {/* Center Panel - Chat Thread */}
@@ -338,7 +378,10 @@ export function AppBuilderTab({
             showPostConnectGuide={false}
             onFirstMessageSent={
               onboarding.isGuidedPostConnect
-                ? onboarding.completeOnboarding
+                ? () => {
+                    setSidebarVisible(true);
+                    onboarding.completeOnboarding();
+                  }
                 : undefined
             }
           />

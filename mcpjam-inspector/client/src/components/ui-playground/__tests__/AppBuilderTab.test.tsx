@@ -613,6 +613,28 @@ describe("AppBuilderTab", () => {
           "Draw me an MCP architecture diagram",
         );
       });
+
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        false,
+      );
+    });
+
+    it("collapses tools sidebar during connect before isGuidedPostConnect is true", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isGuidedPostConnect = false;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("playground-main")).toBeInTheDocument();
+      });
+
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        false,
+      );
     });
 
     it("completes onboarding after the first guided message is sent", async () => {
@@ -630,6 +652,7 @@ describe("AppBuilderTab", () => {
 
       fireEvent.click(screen.getByTestId("first-message-sent"));
 
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(true);
       expect(mockOnboarding.completeOnboarding).toHaveBeenCalledTimes(1);
     });
 

@@ -927,7 +927,7 @@ export function PlaygroundMain({
       {/* Device frame header — hidden during onboarding */}
       {!showPostConnectGuide && (
         <div
-          className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
+          className="relative flex h-11 min-w-0 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
           data-testid="playground-main-header"
         >
           {/* All controls centered */}
