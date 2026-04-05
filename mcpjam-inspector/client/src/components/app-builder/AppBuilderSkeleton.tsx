@@ -1,5 +1,5 @@
 /**
- * Empty placeholder behind the welcome overlay.
+ * Lightweight loading shell for App Builder while auth or first-run connect settles.
  * Sidebars are collapsed during onboarding so no skeleton is needed.
  */
 export function AppBuilderSkeleton() {

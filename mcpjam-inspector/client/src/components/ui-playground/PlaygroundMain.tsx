@@ -11,7 +11,14 @@
  * which manages PiP/fullscreen at the widget level.
  */
 
-import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
+import {
+  FormEvent,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -202,6 +209,15 @@ export function PlaygroundMain({
     showPostConnectGuide && !!initialInput,
   );
 
+  /** When true, the next useChatSession reset should clear the composer (user cleared chat / reset). */
+  const skipNextComposerClearFromSessionResetRef = useRef(false);
+
+  // Prefill composer when initialInput is provided without the guided post-connect shell (e.g. App Builder no-NUX).
+  useEffect(() => {
+    if (showPostConnectGuide || !initialInput) return;
+    setInput((prev) => (prev === "" ? initialInput : prev));
+  }, [initialInput, showPostConnectGuide]);
+
   // Seed the guided prompt when the post-connect flow becomes active.
   useEffect(() => {
     if (showPostConnectGuide && initialInput) {
@@ -286,6 +302,29 @@ export function PlaygroundMain({
     [selectedServers, serversByName, appState.servers],
   );
 
+  const handleComposerResetFromChatSession = useCallback(() => {
+    if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
+      setInput((currentInput) => currentInput || initialInput);
+      setGuidedInputCursorTrigger((current) => current + 1);
+      return;
+    }
+    if (skipNextComposerClearFromSessionResetRef.current) {
+      skipNextComposerClearFromSessionResetRef.current = false;
+      setInput("");
+      return;
+    }
+    if (initialInput && !showPostConnectGuide) {
+      setInput((currentInput) => {
+        if (currentInput === "" || currentInput === initialInput) {
+          return initialInput;
+        }
+        return currentInput;
+      });
+      return;
+    }
+    setInput("");
+  }, [initialInput, showPostConnectGuide, isGuidedInputPristine]);
+
   // Use shared chat session hook
   const {
     messages,
@@ -317,15 +356,7 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => {
-      if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
-        setInput((currentInput) => currentInput || initialInput);
-        setGuidedInputCursorTrigger((current) => current + 1);
-        return;
-      }
-
-      setInput("");
-    },
+    onReset: handleComposerResetFromChatSession,
   });
 
   // Set playground active flag for widget renderers to read
@@ -495,6 +526,7 @@ export function PlaygroundMain({
 
   // Handle clear chat
   const handleClearChat = useCallback(() => {
+    skipNextComposerClearFromSessionResetRef.current = true;
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
@@ -624,11 +656,14 @@ export function PlaygroundMain({
       setSelectedModel(model);
       resetChat();
     },
+    onResetChat: () => {
+      skipNextComposerClearFromSessionResetRef.current = true;
+      resetChat();
+    },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
-    onResetChat: resetChat,
     submitDisabled: submitBlocked,
     tokenUsage,
     selectedServers,

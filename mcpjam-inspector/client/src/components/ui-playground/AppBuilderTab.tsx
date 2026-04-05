@@ -10,7 +10,6 @@ import {
   useEffect,
   useCallback,
   useMemo,
-  useRef,
   useState,
   useLayoutEffect,
 } from "react";
@@ -42,13 +41,10 @@ import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
 // Onboarding
 import { useOnboarding } from "@/hooks/use-onboarding";
-import { WelcomeOverlay } from "@/components/app-builder/WelcomeOverlay";
 import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
-import { toast } from "sonner";
-
 interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
@@ -58,6 +54,9 @@ interface AppBuilderTabProps {
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
 }
+
+const APP_BUILDER_FIRST_RUN_PROMPT =
+  "Draw me an MCP architecture diagram";
 
 export function AppBuilderTab({
   serverConfig,
@@ -106,50 +105,20 @@ export function AppBuilderTab({
     setSidebarVisible,
   } = useUIPlaygroundStore();
 
-  // Hide both sidebars and header during onboarding, restore when done
-  const isOnboarding =
-    onboarding.isOverlayVisible || onboarding.isGuidedPostConnect;
   const { setOpen: setMcpSidebarOpen } = useSidebar();
-  const latestIsOnboardingRef = useRef(isOnboarding);
-  useEffect(() => {
-    latestIsOnboardingRef.current = isOnboarding;
-  }, [isOnboarding]);
 
   useLayoutEffect(() => {
-    onOnboardingChange?.(isOnboarding);
-    if (isOnboarding) {
-      setSidebarVisible(false);
-      setMcpSidebarOpen(false);
-    } else {
-      // Restore sidebars when onboarding ends
-      setSidebarVisible(true);
-      setMcpSidebarOpen(true);
-    }
-  }, [isOnboarding, setSidebarVisible, setMcpSidebarOpen, onOnboardingChange]);
-
-  useLayoutEffect(() => {
+    onOnboardingChange?.(false);
+    setSidebarVisible(true);
+    setMcpSidebarOpen(true);
     return () => {
-      if (!latestIsOnboardingRef.current) {
-        return;
-      }
-
       onOnboardingChange?.(false);
       setSidebarVisible(true);
       setMcpSidebarOpen(true);
     };
-  }, [onOnboardingChange, setSidebarVisible, setMcpSidebarOpen]);
-
-  useEffect(() => {
-    if (!isOnboarding) {
-      return;
-    }
-
-    // Some onboarding toasts, including connection success, are emitted during
-    // phase transitions after onboarding has already started.
-    toast.dismiss();
-    const timer = setTimeout(() => toast.dismiss(), 300);
-    return () => clearTimeout(timer);
-  }, [isOnboarding, onboarding.phase]);
+    // Intentionally once on mount/unmount — App Builder no longer toggles chrome for NUX.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Log when App Builder tab is viewed
   useEffect(() => {
@@ -277,19 +246,10 @@ export function AppBuilderTab({
     );
   }
 
-  if (onboarding.isOverlayVisible) {
+  if (onboarding.isBootstrappingFirstRunConnection) {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
         <AppBuilderSkeleton />
-
-        {onboarding.isOverlayVisible && (
-          <WelcomeOverlay
-            phase={onboarding.phase}
-            connectError={onboarding.connectError}
-            onConnectExcalidraw={onboarding.connectExcalidraw}
-            onRetry={onboarding.retryConnect}
-          />
-        )}
       </div>
     );
   }
@@ -341,13 +301,13 @@ export function AppBuilderTab({
             </ResizablePanel>
             <ResizableHandle withHandle />
           </>
-        ) : !isOnboarding ? (
+        ) : (
           <CollapsedPanelStrip
             side="left"
             onOpen={toggleSidebar}
             tooltipText="Show tools sidebar"
           />
-        ) : null}
+        )}
 
         {/* Center Panel - Chat Thread */}
         <ResizablePanel
@@ -368,11 +328,11 @@ export function AppBuilderTab({
             onDeviceTypeChange={setDeviceType}
             initialInput={
               onboarding.isGuidedPostConnect
-                ? "Draw me an MCP architecture diagram"
+                ? APP_BUILDER_FIRST_RUN_PROMPT
                 : undefined
             }
-            pulseSubmit={onboarding.isGuidedPostConnect}
-            showPostConnectGuide={onboarding.isGuidedPostConnect}
+            pulseSubmit={false}
+            showPostConnectGuide={false}
             onFirstMessageSent={
               onboarding.isGuidedPostConnect
                 ? onboarding.completeOnboarding

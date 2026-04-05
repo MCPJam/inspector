@@ -211,6 +211,7 @@ const mockOnboarding = {
   isOverlayVisible: false,
   isGuidedPostConnect: false,
   isResolvingRemoteCompletion: false,
+  isBootstrappingFirstRunConnection: false,
   connectExcalidraw: vi.fn(),
   completeOnboarding: vi.fn(),
   connectError: null as string | null,
@@ -218,13 +219,6 @@ const mockOnboarding = {
 };
 vi.mock("@/hooks/use-onboarding", () => ({
   useOnboarding: () => mockOnboarding,
-}));
-
-// Mock WelcomeOverlay
-vi.mock("../../app-builder/WelcomeOverlay", () => ({
-  WelcomeOverlay: () => (
-    <div data-testid="welcome-overlay">Welcome Overlay</div>
-  ),
 }));
 
 // Mock PostConnectGuide
@@ -283,6 +277,7 @@ describe("AppBuilderTab", () => {
       isOverlayVisible: false,
       isGuidedPostConnect: false,
       isResolvingRemoteCompletion: false,
+      isBootstrappingFirstRunConnection: false,
       connectError: null,
     });
   });
@@ -523,13 +518,11 @@ describe("AppBuilderTab", () => {
   });
 
   describe("onboarding", () => {
-    it("renders welcome overlay when onboarding is active and no server", () => {
-      mockOnboarding.phase = "welcome";
-      mockOnboarding.isOverlayVisible = true;
+    it("renders bootstrap skeleton before the Excalidraw server row exists on first run", () => {
+      mockOnboarding.isBootstrappingFirstRunConnection = true;
 
       render(<AppBuilderTab />);
 
-      expect(screen.getByTestId("welcome-overlay")).toBeInTheDocument();
       expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
     });
 
@@ -539,25 +532,24 @@ describe("AppBuilderTab", () => {
       render(<AppBuilderTab />);
 
       expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
-      expect(screen.queryByTestId("welcome-overlay")).not.toBeInTheDocument();
       expect(screen.queryByText("No Server Selected")).not.toBeInTheDocument();
     });
 
-    it("keeps showing the onboarding overlay while Excalidraw is connecting even after a server config exists", () => {
+    it("shows App Builder while Excalidraw is connecting when not bootstrapping", () => {
       const serverConfig = createServerConfig();
       mockOnboarding.phase = "connecting_excalidraw";
-      mockOnboarding.isOverlayVisible = true;
+      mockOnboarding.isOverlayVisible = false;
+      mockOnboarding.isBootstrappingFirstRunConnection = false;
 
       render(
         <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
       );
 
-      expect(screen.getByTestId("welcome-overlay")).toBeInTheDocument();
-      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
-      expect(screen.queryByTestId("playground-main")).not.toBeInTheDocument();
+      expect(screen.getByTestId("playground-main")).toBeInTheDocument();
+      expect(screen.queryByTestId("app-builder-skeleton")).not.toBeInTheDocument();
     });
 
-    it("renders post-connect guide when in guided mode with server", async () => {
+    it("does not render the post-connect guide shell (NUX uses prefilled prompt only)", async () => {
       const serverConfig = createServerConfig();
       mockOnboarding.phase = "connected_guided";
       mockOnboarding.isGuidedPostConnect = true;
@@ -567,7 +559,9 @@ describe("AppBuilderTab", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByTestId("post-connect-guide")).toBeInTheDocument();
+        expect(
+          screen.queryByTestId("post-connect-guide"),
+        ).not.toBeInTheDocument();
       });
     });
 
@@ -605,47 +599,16 @@ describe("AppBuilderTab", () => {
       expect(mockOnboarding.completeOnboarding).toHaveBeenCalledTimes(1);
     });
 
-    it("dismisses onboarding toasts when the onboarding phase changes", async () => {
-      const serverConfig = createServerConfig();
-      mockOnboarding.phase = "connecting_excalidraw";
-      mockOnboarding.isOverlayVisible = true;
-
-      const { rerender } = render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
-      );
-
-      await waitFor(() => {
-        expect(mockToastDismiss).toHaveBeenCalled();
-      });
-
-      mockToastDismiss.mockClear();
-      mockOnboarding.phase = "connected_guided";
-      mockOnboarding.isOverlayVisible = false;
-      mockOnboarding.isGuidedPostConnect = true;
-
-      rerender(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
-      );
-
-      await waitFor(() => {
-        expect(mockToastDismiss).toHaveBeenCalled();
-      });
-    });
-
-    it("clears onboarding chrome and restores sidebars when unmounted mid-onboarding", () => {
-      mockOnboarding.phase = "welcome";
-      mockOnboarding.isOverlayVisible = true;
+    it("restores sidebars and reports no onboarding when unmounted", () => {
       const onOnboardingChange = vi.fn();
 
       const { unmount } = render(
         <AppBuilderTab onOnboardingChange={onOnboardingChange} />,
       );
 
-      expect(onOnboardingChange).toHaveBeenCalledWith(true);
-      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
-        false,
-      );
-      expect(mockSetMcpSidebarOpen).toHaveBeenCalledWith(false);
+      expect(onOnboardingChange).toHaveBeenCalledWith(false);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(true);
+      expect(mockSetMcpSidebarOpen).toHaveBeenCalledWith(true);
 
       unmount();
 
@@ -656,13 +619,12 @@ describe("AppBuilderTab", () => {
       expect(mockSetMcpSidebarOpen).toHaveBeenLastCalledWith(true);
     });
 
-    it("does not show overlay when onboarding is dismissed", () => {
+    it("shows empty state when onboarding is dismissed and no server", () => {
       mockOnboarding.phase = "dismissed";
       mockOnboarding.isOverlayVisible = false;
 
       render(<AppBuilderTab />);
 
-      expect(screen.queryByTestId("welcome-overlay")).not.toBeInTheDocument();
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
   });

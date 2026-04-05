@@ -1,9 +1,8 @@
 import type { ServerFormData } from "@/shared/types.js";
 
 /**
- * Hardcoded Excalidraw server config for the onboarding quick-connect flow.
- * This fallback ensures the "Connect Excalidraw" CTA works even when
- * registry metadata is unavailable.
+ * Hardcoded Excalidraw server config for the App Builder first-run quick-connect flow.
+ * This fallback ensures auto-connect works even when registry metadata is unavailable.
  *
  * Name follows the `getRegistryServerName()` convention: "${displayName} (App)".
  */

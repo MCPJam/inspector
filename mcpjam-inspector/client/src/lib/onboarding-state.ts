@@ -1,6 +1,5 @@
 export type OnboardingPhase =
   | "first_run_eligible"
-  | "welcome"
   | "connecting_excalidraw"
   | "connected_guided"
   | "connect_error"

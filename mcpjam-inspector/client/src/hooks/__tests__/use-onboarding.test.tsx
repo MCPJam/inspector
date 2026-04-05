@@ -35,6 +35,13 @@ vi.mock("@/lib/PosthogUtils", () => ({
   detectPlatform: mockState.detectPlatform,
 }));
 
+vi.mock("sonner", () => ({
+  toast: {
+    dismiss: vi.fn(),
+    error: vi.fn(),
+  },
+}));
+
 function createServer(
   name: string,
   connectionStatus: ServerWithName["connectionStatus"],
@@ -59,18 +66,23 @@ describe("useOnboarding", () => {
     mockState.convexUser = undefined;
   });
 
-  it("shows the welcome phase for a fresh first run", () => {
+  it("auto-connects Excalidraw for a fresh first run", async () => {
+    const onConnect = vi.fn();
     const { result } = renderHook(() =>
       useOnboarding({
         servers: {},
-        onConnect: vi.fn(),
+        onConnect,
         isAuthenticated: false,
         isAuthLoading: false,
       }),
     );
 
-    expect(result.current.phase).toBe("welcome");
-    expect(result.current.isOverlayVisible).toBe(true);
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    expect(result.current.isOverlayVisible).toBe(false);
+    expect(result.current.isBootstrappingFirstRunConnection).toBe(true);
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
   });
 
   it("does not show the onboarding overlay while auth is still settling", () => {
@@ -87,12 +99,13 @@ describe("useOnboarding", () => {
     expect(result.current.isOverlayVisible).toBe(false);
   });
 
-  it("re-derives the guest welcome phase once auth settles", () => {
+  it("re-derives the guest first-run phase once auth settles", async () => {
+    const onConnect = vi.fn();
     const { result, rerender } = renderHook(
       ({ isAuthLoading }: { isAuthLoading: boolean }) =>
         useOnboarding({
           servers: {},
-          onConnect: vi.fn(),
+          onConnect,
           isAuthenticated: false,
           isAuthLoading,
         }),
@@ -108,8 +121,13 @@ describe("useOnboarding", () => {
 
     rerender({ isAuthLoading: false });
 
-    expect(result.current.phase).toBe("welcome");
-    expect(result.current.isOverlayVisible).toBe(true);
+    await waitFor(() => {
+      expect(result.current.phase).toBe("connecting_excalidraw");
+    });
+    expect(result.current.isOverlayVisible).toBe(false);
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
   });
 
   it("skips onboarding immediately for signed-in users", async () => {
@@ -168,13 +186,11 @@ describe("useOnboarding", () => {
       },
     );
 
-    expect(result.current.phase).toBe("welcome");
+    expect(result.current.phase).toBe("connecting_excalidraw");
 
-    act(() => {
-      result.current.connectExcalidraw();
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
     });
-
-    expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
 
     rerender({ servers: connectedServers });
 
@@ -230,8 +246,8 @@ describe("useOnboarding", () => {
       },
     );
 
-    act(() => {
-      result.current.connectExcalidraw();
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
     });
 
     rerender({ servers: connectedServers });
