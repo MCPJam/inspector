@@ -542,7 +542,7 @@ export function PlaygroundMain({
   );
 
   // Placeholder text
-  let placeholder = "Ask something to render UI...";
+  let placeholder = "Ask something to test your integration...";
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
@@ -715,19 +715,24 @@ export function PlaygroundMain({
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - centered when onboarding, otherwise top-aligned
+        // Empty state — centered (welcome + composer, or post-connect guide)
         <div
           className={cn(
             "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
             "items-center justify-center",
+            hostStyle === "chatgpt"
+              ? effectiveThreadTheme === "dark"
+                ? "bg-[#212121] text-neutral-50"
+                : "bg-white text-neutral-950"
+              : effectiveThreadTheme === "dark"
+                ? "bg-[#262624] text-[#F1F0ED]"
+                : "bg-[#FAF9F5] text-[rgba(61,57,41,1)]",
           )}
         >
           <div
             className={cn(
-              "text-center mx-auto",
-              showPostConnectGuide
-                ? "max-w-3xl w-full"
-                : "max-w-md space-y-6 py-8",
+              "mx-auto w-full max-w-3xl text-center",
+              !showPostConnectGuide && "py-8",
             )}
           >
             {isAuthLoading ? (
@@ -743,9 +748,74 @@ export function PlaygroundMain({
                 <ChatInput {...sharedChatInputProps} hasMessages={false} />
               </>
             ) : (
-              <h3 className="text-sm font-semibold text-foreground mb-2">
-                Test ChatGPT Apps and MCP Apps
-              </h3>
+              <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
+                <div className="text-center max-w-md">
+                  <img
+                    src={
+                      effectiveThreadTheme === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCPJam"
+                    draggable={false}
+                    className="h-10 w-auto mx-auto mb-4"
+                  />
+                  <div className="space-y-3">
+                    <h3
+                      className={cn(
+                        "text-lg font-semibold",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-white"
+                            : "text-neutral-950"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]"
+                            : "text-[rgba(61,57,41,1)]",
+                      )}
+                    >
+                      Your playground for MCP servers
+                    </h3>
+                    <p
+                      className={cn(
+                        "text-base leading-7",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-neutral-400"
+                            : "text-neutral-600"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]/80"
+                            : "text-[rgba(61,57,41,0.72)]",
+                      )}
+                    >
+                      Inspect tools, test prompts, and build AI powered apps.
+                      Choose a tool on the left or type a message here.
+                    </p>
+                  </div>
+                </div>
+                {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
+                  <div className="w-full shrink-0">
+                    {errorMessage && (
+                      <div className="pb-3">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          code={errorMessage.code}
+                          statusCode={errorMessage.statusCode}
+                          isRetryable={errorMessage.isRetryable}
+                          isMCPJamPlatformError={
+                            errorMessage.isMCPJamPlatformError
+                          }
+                          onResetChat={resetChat}
+                        />
+                      </div>
+                    )}
+                    <ChatInput
+                      {...sharedChatInputProps}
+                      hasMessages={false}
+                    />
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -790,16 +860,16 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput that persists - hidden when widget takes over.
-          During guided onboarding it moves inline while the thread is empty,
-          then returns to the footer after the first message. */}
+      {/* Single ChatInput: centered with welcome when thread is empty; footer when
+          there are messages. Empty + auth upsell keeps a footer composer (disabled).
+          Hidden when widget takes over. Post-connect guide uses inline composer. */}
       {!isWidgetFullTakeover &&
         !showFullscreenChatOverlay &&
-        (!showPostConnectGuide || !isThreadEmpty) && (
+        (!isThreadEmpty || shouldShowUpsell) && (
           <div
             className={cn(
-              "flex-shrink-0 max-w-3xl mx-auto w-full",
-              isThreadEmpty ? "px-4 pb-4" : "p-3",
+              "flex-shrink-0 max-w-4xl mx-auto w-full",
+              isThreadEmpty ? "px-4 pb-4" : "px-4 pb-3 pt-3",
             )}
           >
             {errorMessage && (

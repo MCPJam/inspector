@@ -382,15 +382,17 @@ export function ChatInput({
   const composerClasses =
     sandboxHostStyle === "chatgpt"
       ? cn(
-          "sandbox-host-composer rounded-[1.75rem] border-transparent shadow-none",
-          isDarkSandboxTheme ? "bg-[#2f2f2f]" : "bg-[#f4f4f4]",
+          "sandbox-host-composer rounded-[1.75rem]",
+          isDarkSandboxTheme
+            ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
+            : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]",
         )
       : sandboxHostStyle === "claude"
         ? cn(
-            "sandbox-host-composer rounded-[1.35rem] shadow-none",
+            "sandbox-host-composer rounded-[1.35rem]",
             isDarkSandboxTheme
-              ? "border-[#4b463d] bg-[#34322e]"
-              : "border-[#d7cfbf] bg-[#f5f0e8]",
+              ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
+              : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]",
           )
         : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =

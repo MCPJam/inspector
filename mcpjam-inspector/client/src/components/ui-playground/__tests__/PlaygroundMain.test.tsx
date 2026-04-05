@@ -529,8 +529,16 @@ describe("PlaygroundMain", () => {
     it("shows welcome message when thread is empty", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
+      expect(screen.getByRole("img", { name: /MCPJam/i })).toBeInTheDocument();
       expect(
-        screen.getByText("Test ChatGPT Apps and MCP Apps"),
+        screen.getByRole("heading", {
+          name: /Your playground for MCP servers/i,
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          /Inspect tools, test prompts, and build AI powered apps/i,
+        ),
       ).toBeInTheDocument();
     });
 
@@ -624,7 +632,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.getByPlaceholderText("Ask something to render UI..."),
+        screen.getByPlaceholderText("Ask something to test your integration..."),
       ).toBeInTheDocument();
     });
 
