@@ -1,4 +1,4 @@
-import { useConvexAuth, useQuery } from "convex/react";
+import { useConvexAuth } from "convex/react";
 import {
   useCallback,
   useEffect,
@@ -9,7 +9,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -34,6 +34,7 @@ import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
 import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
+import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
 import { OrganizationsTab } from "./components/OrganizationsTab";
 import { SupportTab } from "./components/SupportTab";
 import { RegistryTab } from "./components/RegistryTab";
@@ -41,6 +42,15 @@ import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { MCPSidebar } from "./components/mcp-sidebar";
 import { SidebarInset, SidebarProvider } from "./components/ui/sidebar";
 import { Alert, AlertDescription, AlertTitle } from "./components/ui/alert";
+import { Button } from "./components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./components/ui/dialog";
 import { useAppState } from "./hooks/use-app-state";
 import { PreferencesStoreProvider } from "./stores/preferences/preferences-provider";
 import { Toaster } from "./components/ui/sonner";
@@ -50,6 +60,8 @@ import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { AppStateProvider } from "./state/app-state-context";
 import { useOrganizationQueries } from "./hooks/useOrganizations";
+import { useOrganizationBilling } from "./hooks/useOrganizationBilling";
+import type { BillingFeatureName } from "./hooks/useOrganizationBilling";
 
 // Import global styles
 import "./index.css";
@@ -79,6 +91,23 @@ import {
 import { useHostedApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { HOSTED_MODE } from "./lib/config";
 import {
+  clearBillingSignInReturnPath,
+  clearCheckoutIntentFromUrl,
+  clearPersistedCheckoutIntent,
+  hasInvalidCheckoutIntervalParam,
+  hasInvalidCheckoutQueryParams,
+  hashMatchesOrganizationBilling,
+  isBillingEntryPathname,
+  persistCheckoutIntent,
+  type CheckoutIntent,
+  readBillingSignInReturnPath,
+  readCheckoutIntentFromSearch,
+  readPersistedCheckoutIntent,
+  resolveCheckoutOrganizationId,
+  type CheckoutIntentWithOrganization,
+  writeBillingSignInReturnPath,
+} from "./lib/billing-deep-link";
+import {
   getInvalidOrganizationRouteNavigationTarget,
   getWorkspaceSwitchNavigationTarget,
   resolveHostedNavigation,
@@ -87,12 +116,15 @@ import {
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import {
   formatBillingFeatureName,
-  formatGracePeriodEndsAt,
   formatPlanName,
+  getPremiumnessGateForTab,
   getRequiredBillingFeatureForTab,
-  isBillingFeatureLocked,
-  isBillingGracePeriodActive,
+  getUpgradePlanForDeniedGate,
+  isBillingEnforcementActive,
+  isGateAccessDenied,
+  isPremiumnessGateDeniedForShell,
 } from "./lib/billing-entitlements";
+import { BILLING_GATES, resolveBillingGateState } from "./lib/billing-gates";
 import { getNewlyConnectedServers } from "./lib/connected-server-auto-open";
 import {
   clearHostedOAuthPendingState,
@@ -120,10 +152,6 @@ import {
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
-import type {
-  BillingRolloutState,
-  OrganizationEntitlements,
-} from "./hooks/useOrganizationBilling";
 import { useClientConfigStore } from "./stores/client-config-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -139,6 +167,49 @@ function getHostedOAuthCallbackErrorMessage(): string {
     description || error,
     "Authorization could not be completed. Try again.",
   );
+}
+
+function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
+  return (
+    <div
+      className={
+        overlay
+          ? "fixed inset-0 z-[100] flex items-center justify-center bg-background"
+          : "min-h-screen bg-background flex items-center justify-center"
+      }
+      data-testid={
+        overlay ? "billing-handoff-overlay" : "billing-handoff-loading"
+      }
+    >
+      <div className="text-center">
+        <Loader2 className="mx-auto size-12 animate-spin text-muted-foreground" />
+        <p className="mt-4 text-muted-foreground">Preparing checkout...</p>
+      </div>
+    </div>
+  );
+}
+
+function getInitialPendingCheckoutIntent(): CheckoutIntent | null {
+  if (typeof window === "undefined") {
+    return null;
+  }
+
+  if (isBillingEntryPathname(window.location.pathname)) {
+    const search = window.location.search;
+    const invalid =
+      hasInvalidCheckoutQueryParams(search) ||
+      hasInvalidCheckoutIntervalParam(search);
+    if (invalid) {
+      return null;
+    }
+
+    const fromUrl = readCheckoutIntentFromSearch(search);
+    if (fromUrl) {
+      return fromUrl;
+    }
+  }
+
+  return readPersistedCheckoutIntent();
 }
 
 type AppChromeSidebarProps = ComponentProps<typeof MCPSidebar> & {
@@ -173,6 +244,12 @@ export default function App() {
   const [appBuilderOnboarding, setAppBuilderOnboarding] = useState(false);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
+  const billingDeepLinkNavRef = useRef(false);
+  /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
+  const billingCheckoutQueryConsumedRef = useRef(false);
+  const [pendingCheckoutIntent, setPendingCheckoutIntent] =
+    useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
+  const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
@@ -244,6 +321,18 @@ export default function App() {
   const isSandboxChatRoute =
     HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
   const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
+  const currentHash = window.location.hash || "#servers";
+  const currentHashRoute = useMemo(
+    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
+    [currentHash],
+  );
+  const { sortedOrganizations, isLoading: isLoadingOrganizations } =
+    useOrganizationQueries({ isAuthenticated });
+  const hasRouteOrganization = !!currentHashRoute.organizationId
+    ? sortedOrganizations.some(
+        (org) => org._id === currentHashRoute.organizationId,
+      )
+    : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
   useEffect(() => {
@@ -356,12 +445,17 @@ export default function App() {
     if (!isAuthLoading && isAuthenticated) {
       const sandboxReturnPath = readSandboxSignInReturnPath();
       const sharedReturnPath = readSharedSignInReturnPath();
+      const persistedCheckoutIntent = readPersistedCheckoutIntent();
+      const billingReturnPath = persistedCheckoutIntent
+        ? readBillingSignInReturnPath()
+        : null;
       clearSandboxSignInReturnPath();
       clearSharedSignInReturnPath();
+      clearBillingSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        sandboxReturnPath ?? sharedReturnPath ?? "/",
+        sandboxReturnPath ?? sharedReturnPath ?? billingReturnPath ?? "/",
       );
       setCallbackCompleted(true);
       setCallbackRecoveryExpired(false);
@@ -394,10 +488,10 @@ export default function App() {
     activeWorkspaceId,
     handleSwitchWorkspace,
     handleCreateWorkspace,
+    handleLeaveWorkspace,
     handleUpdateWorkspace,
     handleUpdateClientConfig,
     handleDeleteWorkspace,
-    handleLeaveWorkspace,
     handleWorkspaceShared,
     saveServerConfigWithoutConnecting,
     handleConnectWithTokensFromOAuthFlow,
@@ -406,24 +500,14 @@ export default function App() {
     setActiveOrganizationId,
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
+    routeOrganizationId: hasRouteOrganization
+      ? currentHashRoute.organizationId
+      : undefined,
   });
-
-  const { sortedOrganizations, isLoading: isLoadingOrganizations } =
-    useOrganizationQueries({ isAuthenticated });
-  const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
-  const currentHash = window.location.hash || "#servers";
-  const currentHashRoute = useMemo(
-    () => resolveHostedNavigation(currentHash, HOSTED_MODE),
-    [currentHash],
-  );
   const activeOrganizationName = sortedOrganizations.find(
     (org) => org._id === activeOrganizationId,
   )?.name;
-  const hasRouteOrganization = !!currentHashRoute.organizationId
-    ? sortedOrganizations.some(
-        (org) => org._id === currentHashRoute.organizationId,
-      )
-    : false;
+  const hasAnyWorkspaceServers = Object.keys(workspaceServers).length > 0;
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     isConvexAuthLoading: isAuthLoading,
@@ -546,43 +630,78 @@ export default function App() {
     activeWorkspace?.clientConfig,
   ) as Record<string, unknown>;
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
+  const routeScopedOrganizationId = hasRouteOrganization
+    ? (currentHashRoute.organizationId ?? null)
+    : null;
   const rawBillingOrganizationId =
-    activeOrganizationId ?? activeWorkspace?.organizationId ?? null;
+    routeScopedOrganizationId ??
+    activeOrganizationId ??
+    activeWorkspace?.organizationId ??
+    null;
   const billingOrganizationId =
     !isLoadingOrganizations &&
     rawBillingOrganizationId &&
     sortedOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
       : null;
-  const billingEntitlements = useQuery(
-    "billing:getOrganizationEntitlements" as any,
-    isAuthenticated && billingOrganizationId
-      ? ({ organizationId: billingOrganizationId } as any)
-      : "skip",
-  ) as OrganizationEntitlements | undefined;
-  const billingRolloutState = useQuery(
-    "billing:getBillingRolloutState" as any,
-    isAuthenticated && billingOrganizationId
-      ? ({ organizationId: billingOrganizationId } as any)
-      : "skip",
-  ) as BillingRolloutState | undefined;
-  const billingUiEnabled = billingEntitlementsUiEnabled === true;
-  const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
-  const activeTabBillingLocked = isBillingFeatureLocked({
-    billingUiEnabled,
-    entitlements: billingEntitlements,
-    rolloutState: billingRolloutState,
-    feature: activeTabBillingFeature,
+  const {
+    billingStatus: shellBillingStatus,
+    organizationPremiumness,
+    workspacePremiumness,
+    selectFreeAfterTrial,
+    isSelectingFreeAfterTrial,
+  } = useOrganizationBilling(isAuthenticated ? billingOrganizationId : null, {
+    workspaceId: convexWorkspaceId,
   });
-  const activeTabGracePeriodBanner =
-    billingUiEnabled &&
-    !!activeTabBillingFeature &&
-    !!billingEntitlements &&
-    billingEntitlements.features[activeTabBillingFeature] === false &&
-    isBillingGracePeriodActive(billingRolloutState);
-  const billingGracePeriodEndsAt = formatGracePeriodEndsAt(
-    billingRolloutState?.gracePeriodEndsAt,
+  const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const navPremiumness =
+    convexWorkspaceId && workspacePremiumness
+      ? workspacePremiumness
+      : organizationPremiumness;
+  const activeTabGate = getPremiumnessGateForTab(activeTab);
+  const activeTabBillingLocked = isPremiumnessGateDeniedForShell({
+    billingUiEnabled,
+    workspacePremiumness,
+    organizationPremiumness,
+    hasWorkspace: !!convexWorkspaceId,
+    gateKey: activeTabGate,
+  });
+  const activeTabBillingFeature = getRequiredBillingFeatureForTab(activeTab);
+  const upgradePlanForActiveTab = getUpgradePlanForDeniedGate(
+    navPremiumness,
+    activeTabGate,
   );
+  const workspaceCreationGate = resolveBillingGateState({
+    billingUiEnabled,
+    organizationId: billingOrganizationId,
+    billingStatus: shellBillingStatus,
+    premiumness: organizationPremiumness,
+    gate: BILLING_GATES.workspaceCreation,
+  });
+  const sidebarGateDenied = useMemo(() => {
+    const denied: Partial<Record<BillingFeatureName, boolean>> = {};
+    for (const key of ["evals", "sandboxes", "cicd"] as const) {
+      denied[key] = isGateAccessDenied(navPremiumness, key);
+    }
+    return denied;
+  }, [navPremiumness]);
+  const billingGateEnforcementActive =
+    billingUiEnabled && isBillingEnforcementActive(navPremiumness);
+  const guestWorkspaceLimitReached =
+    !isAuthenticated && Object.keys(workspaces).length >= 1;
+  const isCreateWorkspaceDisabled =
+    workspaceCreationGate.isDenied || guestWorkspaceLimitReached;
+  const createWorkspaceDisabledReason = guestWorkspaceLimitReached
+    ? "Sign in to create more workspaces"
+    : (workspaceCreationGate.denialMessage ?? undefined);
+  const showTrialDecisionModal =
+    billingUiEnabled &&
+    shellBillingStatus?.decisionRequired === true &&
+    shellBillingStatus?.isOwner === true;
+  const showTrialDecisionNotice =
+    billingUiEnabled &&
+    shellBillingStatus?.decisionRequired === true &&
+    shellBillingStatus?.isOwner === false;
 
   // Fetch views for the workspace to determine which servers have saved views
   const { viewsByServer } = useViewQueries({
@@ -773,11 +892,148 @@ export default function App() {
     isHostedChatRoute,
   ]);
 
+  const consumeCheckoutIntent = useCallback(() => {
+    clearPersistedCheckoutIntent();
+    clearBillingSignInReturnPath();
+    clearCheckoutIntentFromUrl();
+    setPendingCheckoutIntent(null);
+    billingDeepLinkNavRef.current = false;
+    billingCheckoutQueryConsumedRef.current = false;
+  }, []);
+
+  const handleCheckoutIntentNavigationStarted = useCallback(() => {
+    consumeCheckoutIntent();
+  }, [consumeCheckoutIntent]);
+
+  // `/billing?plan=&interval=` → auth (if needed) → org billing hash → auto-checkout when intent is valid.
+  useEffect(() => {
+    if (isDebugCallback) return;
+    if (isHostedChatRoute) return;
+
+    const path = window.location.pathname;
+    if (!isBillingEntryPathname(path)) {
+      billingCheckoutQueryConsumedRef.current = false;
+    }
+
+    if (window.location.pathname === "/callback") return;
+
+    const onBillingEntry = isBillingEntryPathname(path);
+
+    if (onBillingEntry) {
+      billingDeepLinkNavRef.current = false;
+      const search = window.location.search;
+      const invalid =
+        hasInvalidCheckoutQueryParams(search) ||
+        hasInvalidCheckoutIntervalParam(search);
+
+      if (invalid) {
+        clearPersistedCheckoutIntent();
+        clearBillingSignInReturnPath();
+        setPendingCheckoutIntent(null);
+        billingCheckoutQueryConsumedRef.current = false;
+      } else {
+        const fromUrl = readCheckoutIntentFromSearch(search);
+        if (fromUrl) {
+          persistCheckoutIntent(fromUrl);
+          setPendingCheckoutIntent(fromUrl);
+          billingCheckoutQueryConsumedRef.current = true;
+        } else if (!new URLSearchParams(search).has("plan")) {
+          const persistedIntent = readPersistedCheckoutIntent();
+          if (persistedIntent) {
+            billingCheckoutQueryConsumedRef.current = true;
+            if (
+              pendingCheckoutIntent?.plan !== persistedIntent.plan ||
+              pendingCheckoutIntent?.interval !== persistedIntent.interval
+            ) {
+              setPendingCheckoutIntent(persistedIntent);
+            }
+          } else if (!billingCheckoutQueryConsumedRef.current) {
+            clearPersistedCheckoutIntent();
+            clearBillingSignInReturnPath();
+            setPendingCheckoutIntent(null);
+          }
+        }
+      }
+
+      clearCheckoutIntentFromUrl();
+
+      if (!isAuthenticated) {
+        if (!isAuthLoading) {
+          writeBillingSignInReturnPath(path);
+          void signIn();
+        }
+        return;
+      }
+
+      if (path !== "/" && path !== "") {
+        window.history.replaceState(
+          {},
+          "",
+          `${window.location.origin}/${window.location.hash}`,
+        );
+        setBillingPathSync((n) => n + 1);
+      }
+    }
+
+    if (!isAuthenticated || isAuthLoading) return;
+    if (isLoadingOrganizations) return;
+
+    if (billingEntitlementsUiEnabled === false) {
+      return;
+    }
+
+    if (!pendingCheckoutIntent) {
+      billingDeepLinkNavRef.current = false;
+      return;
+    }
+
+    const workspaceOrgId = activeWorkspace?.organizationId;
+    const orgId = resolveCheckoutOrganizationId(
+      sortedOrganizations,
+      activeOrganizationId,
+      workspaceOrgId,
+    );
+
+    if (!orgId) {
+      toast.error("Create or join an organization to continue with checkout.");
+      consumeCheckoutIntent();
+      return;
+    }
+
+    const h = window.location.hash || "";
+    if (hashMatchesOrganizationBilling(h, orgId)) {
+      return;
+    }
+
+    if (billingDeepLinkNavRef.current) {
+      return;
+    }
+
+    applyNavigation(`organizations/${orgId}/billing`, { updateHash: true });
+    billingDeepLinkNavRef.current = true;
+  }, [
+    activeOrganizationId,
+    activeWorkspace?.organizationId,
+    applyNavigation,
+    billingEntitlementsUiEnabled,
+    billingPathSync,
+    consumeCheckoutIntent,
+    isAuthLoading,
+    isAuthenticated,
+    isDebugCallback,
+    isHostedChatRoute,
+    isLoadingOrganizations,
+    pendingCheckoutIntent,
+    signIn,
+    sortedOrganizations,
+    workOsUser?.id,
+  ]);
+
   useEffect(() => {
     if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
-          billingEntitlements?.plan,
+          shellBillingStatus?.plan,
         )} plan. Upgrade the organization to continue.`,
       );
       applyNavigation("servers", { updateHash: true });
@@ -797,13 +1053,10 @@ export default function App() {
   }, [
     clientConfigEnabled,
     registryEnabled,
-    activeTabBillingFeature,
-    activeTabBillingLocked,
     learningEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
-    billingEntitlements?.plan,
   ]);
 
   const handleNavigate = (section: string) => {
@@ -861,6 +1114,35 @@ export default function App() {
     ],
   );
 
+  const isBillingEntryHandoff =
+    !isHostedChatRoute &&
+    isBillingEntryPathname(window.location.pathname) &&
+    pendingCheckoutIntent !== null;
+  const checkoutIntentForBilling =
+    useMemo((): CheckoutIntentWithOrganization | null => {
+      if (
+        !billingUiEnabled ||
+        activeTab !== "organizations" ||
+        !currentHashRoute.organizationId ||
+        currentHashRoute.organizationSection !== "billing" ||
+        !pendingCheckoutIntent
+      ) {
+        return null;
+      }
+      return {
+        plan: pendingCheckoutIntent.plan,
+        interval: pendingCheckoutIntent.interval,
+        organizationId: currentHashRoute.organizationId,
+      };
+    }, [
+      billingUiEnabled,
+      activeTab,
+      currentHashRoute.organizationId,
+      currentHashRoute.organizationSection,
+      pendingCheckoutIntent?.interval,
+      pendingCheckoutIntent?.plan,
+    ]);
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
@@ -902,9 +1184,19 @@ export default function App() {
     return <CompletingSignInLoading />;
   }
 
+  if (isBillingEntryHandoff) {
+    return <BillingHandoffLoading />;
+  }
+
   if (isLoading && !isHostedChatRoute) {
     return <LoadingScreen />;
   }
+
+  const shouldShowBillingHandoffOverlay =
+    !isHostedChatRoute &&
+    !isOAuthCallback &&
+    billingEntitlementsUiEnabled !== false &&
+    pendingCheckoutIntent !== null;
 
   if (shouldHoldHostedDefaultRouteForAuth) {
     return <LoadingScreen />;
@@ -959,10 +1251,11 @@ export default function App() {
         onDeleteWorkspace={handleDeleteWorkspace}
         isLoadingWorkspaces={isLoadingRemoteWorkspaces}
         activeOrganizationId={activeOrganizationId}
-        billingFeatureAvailability={billingEntitlements?.features ?? {}}
-        billingEnforcementActive={
-          billingUiEnabled && billingRolloutState?.enforcementActive === true
-        }
+        billingUiEnabled={billingUiEnabled}
+        billingGateDenied={sidebarGateDenied}
+        billingGateEnforcementActive={billingGateEnforcementActive}
+        isCreateWorkspaceDisabled={isCreateWorkspaceDisabled}
+        createWorkspaceDisabledReason={createWorkspaceDisabledReason}
       />
       <SidebarInset className="flex flex-col min-h-0">
         <AppChromeHeader
@@ -970,27 +1263,14 @@ export default function App() {
           activeServerSelectorProps={activeServerSelectorProps}
         />
         <div className="flex flex-1 min-h-0 flex-col overflow-hidden h-full">
-          {activeTabGracePeriodBanner && activeTabBillingFeature ? (
+          {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
-              <Alert className="border-amber-500/30 bg-amber-500/5">
-                <AlertTriangle className="h-4 w-4 text-amber-600" />
-                <AlertTitle>
-                  {formatBillingFeatureName(activeTabBillingFeature)} trial
-                  access
-                </AlertTitle>
+              <Alert>
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Billing decision required</AlertTitle>
                 <AlertDescription>
-                  <p>
-                    {formatBillingFeatureName(activeTabBillingFeature)} is not
-                    included in the {formatPlanName(billingEntitlements?.plan)}{" "}
-                    plan.
-                  </p>
-                  <p>
-                    Access remains available until{" "}
-                    {billingGracePeriodEndsAt ??
-                      "the rollout grace period ends"}
-                    . Upgrade from Organization settings before then to avoid a
-                    lockout.
-                  </p>
+                  This organization&apos;s trial has ended. An owner must
+                  upgrade or choose the free plan to restore full access.
                 </AlertDescription>
               </Alert>
             </div>
@@ -1035,21 +1315,87 @@ export default function App() {
               />
             </div>
           )}
-          {activeTab === "evals" && (
-            <EvalsTab
-              selectedServer={appState.selectedServer}
-              workspaceId={convexWorkspaceId}
-            />
-          )}
-          {activeTab === "ci-evals" && (
-            <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
-          )}
+          {activeTab === "evals" &&
+            (billingUiEnabled &&
+            activeTabBillingLocked &&
+            activeTabBillingFeature ? (
+              <BillingUpsellGate
+                feature={activeTabBillingFeature}
+                currentPlan={
+                  shellBillingStatus?.effectivePlan ??
+                  shellBillingStatus?.plan ??
+                  "free"
+                }
+                upgradePlan={upgradePlanForActiveTab}
+                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
+                onNavigateToBilling={() => {
+                  if (billingOrganizationId) {
+                    applyNavigation(
+                      `organizations/${billingOrganizationId}/billing`,
+                      { updateHash: true },
+                    );
+                  }
+                }}
+              />
+            ) : (
+              <EvalsTab
+                selectedServer={appState.selectedServer}
+                workspaceId={convexWorkspaceId}
+              />
+            ))}
+          {activeTab === "ci-evals" &&
+            (billingUiEnabled &&
+            activeTabBillingLocked &&
+            activeTabBillingFeature ? (
+              <BillingUpsellGate
+                feature={activeTabBillingFeature}
+                currentPlan={
+                  shellBillingStatus?.effectivePlan ??
+                  shellBillingStatus?.plan ??
+                  "free"
+                }
+                upgradePlan={upgradePlanForActiveTab}
+                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
+                onNavigateToBilling={() => {
+                  if (billingOrganizationId) {
+                    applyNavigation(
+                      `organizations/${billingOrganizationId}/billing`,
+                      { updateHash: true },
+                    );
+                  }
+                }}
+              />
+            ) : (
+              <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+            ))}
           {activeTab === "views" && (
             <ViewsTab selectedServer={appState.selectedServer} />
           )}
-          {activeTab === "sandboxes" && (
-            <SandboxesTab workspaceId={convexWorkspaceId} />
-          )}
+          {activeTab === "sandboxes" &&
+            (billingUiEnabled &&
+            activeTabBillingLocked &&
+            activeTabBillingFeature ? (
+              <BillingUpsellGate
+                feature={activeTabBillingFeature}
+                currentPlan={
+                  shellBillingStatus?.effectivePlan ??
+                  shellBillingStatus?.plan ??
+                  "free"
+                }
+                upgradePlan={upgradePlanForActiveTab}
+                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
+                onNavigateToBilling={() => {
+                  if (billingOrganizationId) {
+                    applyNavigation(
+                      `organizations/${billingOrganizationId}/billing`,
+                      { updateHash: true },
+                    );
+                  }
+                }}
+              />
+            ) : (
+              <SandboxesTab workspaceId={convexWorkspaceId} />
+            ))}
           {activeTab === "resources" && (
             <div className="h-full overflow-hidden">
               <ResourcesTab
@@ -1162,10 +1508,62 @@ export default function App() {
                 currentHashRoute.organizationSection ??
                 activeOrganizationSection
               }
+              checkoutIntent={checkoutIntentForBilling}
+              onCheckoutIntentConsumed={consumeCheckoutIntent}
+              onCheckoutIntentNavigationStarted={
+                handleCheckoutIntentNavigationStarted
+              }
             />
           )}
         </div>
       </SidebarInset>
+      <Dialog open={showTrialDecisionModal}>
+        <DialogContent
+          onPointerDownOutside={(e) => e.preventDefault()}
+          onEscapeKeyDown={(e) => e.preventDefault()}
+          data-testid="trial-decision-modal"
+        >
+          <DialogHeader>
+            <DialogTitle>Choose how to continue</DialogTitle>
+            <DialogDescription>
+              Your trial has ended. Upgrade to keep paid features, or move this
+              organization to the Free plan.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSelectingFreeAfterTrial}
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await selectFreeAfterTrial();
+                    toast.success("This organization is now on the Free plan.");
+                  } catch {
+                    toast.error("Could not update plan. Try again.");
+                  }
+                })();
+              }}
+            >
+              {isSelectingFreeAfterTrial ? "Saving…" : "Choose free"}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => {
+                if (billingOrganizationId) {
+                  applyNavigation(
+                    `organizations/${billingOrganizationId}/billing`,
+                    { updateHash: true },
+                  );
+                }
+              }}
+            >
+              Upgrade
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </SidebarProvider>
   );
 
@@ -1180,34 +1578,49 @@ export default function App() {
       />
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
-        <HostedShellGate
-          state={
-            isHostedChatRoute ? hostedChatShellGateState : hostedShellGateState
+        <div
+          aria-hidden={shouldShowBillingHandoffOverlay || undefined}
+          className={
+            shouldShowBillingHandoffOverlay
+              ? "pointer-events-none opacity-0"
+              : undefined
           }
-          onSignIn={() => {
-            if (sharedPathToken) {
-              writeSharedSignInReturnPath(window.location.pathname);
-            }
-            if (sandboxPathToken) {
-              writeSandboxSignInReturnPath(window.location.pathname);
-            }
-            signIn();
-          }}
+          inert={shouldShowBillingHandoffOverlay || undefined}
         >
-          {isSharedChatRoute ? (
-            <SharedServerChatPage
-              pathToken={sharedPathToken}
-              onExitSharedChat={() => setExitedSharedChat(true)}
-            />
-          ) : isSandboxChatRoute ? (
-            <SandboxChatPage
-              pathToken={sandboxPathToken}
-              onExitSandboxChat={() => setExitedSandboxChat(true)}
-            />
-          ) : (
-            appContent
-          )}
-        </HostedShellGate>
+          <HostedShellGate
+            state={
+              isHostedChatRoute
+                ? hostedChatShellGateState
+                : hostedShellGateState
+            }
+            onSignIn={() => {
+              if (sharedPathToken) {
+                writeSharedSignInReturnPath(window.location.pathname);
+              }
+              if (sandboxPathToken) {
+                writeSandboxSignInReturnPath(window.location.pathname);
+              }
+              signIn();
+            }}
+          >
+            {isSharedChatRoute ? (
+              <SharedServerChatPage
+                pathToken={sharedPathToken}
+                onExitSharedChat={() => setExitedSharedChat(true)}
+              />
+            ) : isSandboxChatRoute ? (
+              <SandboxChatPage
+                pathToken={sandboxPathToken}
+                onExitSandboxChat={() => setExitedSandboxChat(true)}
+              />
+            ) : (
+              appContent
+            )}
+          </HostedShellGate>
+        </div>
+        {shouldShowBillingHandoffOverlay ? (
+          <BillingHandoffLoading overlay />
+        ) : null}
       </AppStateProvider>
     </PreferencesStoreProvider>
   );

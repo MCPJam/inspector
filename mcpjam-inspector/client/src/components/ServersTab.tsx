@@ -41,6 +41,7 @@ import {
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
+import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -435,6 +436,12 @@ export function ServersTab({
 
   const [quickConnectMiniCardsExpanded, setQuickConnectMiniCardsExpanded] =
     useState(() => Object.keys(workspaceServers).length <= 2);
+
+  // Billing gate for server creation
+  const serverCreationGate = useWorkspaceBillingGate({
+    workspaceId: registryWorkspaceId,
+    gate: BILLING_GATES.serverCreation,
+  });
 
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
@@ -961,6 +968,13 @@ export function ServersTab({
   };
 
   const handleAddServerClick = () => {
+    if (serverCreationGate.isDenied) {
+      toast.error(
+        serverCreationGate.denialMessage ??
+          "Upgrade required to add more servers",
+      );
+      return;
+    }
     posthog.capture("add_server_button_clicked", {
       location: "servers_tab",
       platform: detectPlatform(),
@@ -971,6 +985,13 @@ export function ServersTab({
   };
 
   const handleImportJsonClick = () => {
+    if (serverCreationGate.isDenied) {
+      toast.error(
+        serverCreationGate.denialMessage ??
+          "Upgrade required to add more servers",
+      );
+      return;
+    }
     posthog.capture("import_json_button_clicked", {
       location: "servers_tab",
       platform: detectPlatform(),
@@ -1310,7 +1331,7 @@ export function ServersTab({
             Get started by connecting to your first MCP server
           </p>
           <Button
-            onClick={() => setIsAddingServer(true)}
+            onClick={handleAddServerClick}
             className="mt-4 cursor-pointer"
           >
             <Plus className="h-4 w-4 mr-2" />
