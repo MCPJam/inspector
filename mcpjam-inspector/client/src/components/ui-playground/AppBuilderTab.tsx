@@ -277,6 +277,9 @@ export function AppBuilderTab({
               defaultSize={PANEL_SIZES.LEFT.DEFAULT}
               minSize={PANEL_SIZES.LEFT.MIN}
               maxSize={PANEL_SIZES.LEFT.MAX}
+              collapsible
+              collapsedSize={0}
+              onCollapse={() => setSidebarVisible(false)}
             >
               <PlaygroundLeft
                 tools={tools}

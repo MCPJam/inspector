@@ -39,36 +39,49 @@ export function TabHeader({
   return (
     <div className="h-11 border-b border-border flex-shrink-0">
       <div className="h-full px-2 flex items-center gap-2">
-        {/* Tabs */}
-        <div className="flex items-center gap-1.5">
-          <button
-            onClick={() => onTabChange("tools")}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === "tools"
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Tools
-            <span className="ml-1 text-[10px] font-mono opacity-70">
-              {toolCount}
-            </span>
-          </button>
-          <button
-            onClick={() => onTabChange("saved")}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
-              activeTab === "saved"
-                ? "bg-primary/10 text-primary"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            Saved
-            {savedCount > 0 && (
+        <div className="flex items-center gap-2 min-w-0">
+          {onClose && (
+            <Button
+              onClick={onClose}
+              variant="ghost"
+              size="sm"
+              className="h-7 w-7 shrink-0 p-0 text-muted-foreground/80"
+              title="Hide sidebar"
+            >
+              <PanelLeftClose className="h-3.5 w-3.5" />
+            </Button>
+          )}
+          {/* Tabs */}
+          <div className="flex items-center gap-1.5 min-w-0">
+            <button
+              onClick={() => onTabChange("tools")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "tools"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Tools
               <span className="ml-1 text-[10px] font-mono opacity-70">
-                {savedCount}
+                {toolCount}
               </span>
-            )}
-          </button>
+            </button>
+            <button
+              onClick={() => onTabChange("saved")}
+              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors cursor-pointer ${
+                activeTab === "saved"
+                  ? "bg-primary/10 text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Saved
+              {savedCount > 0 && (
+                <span className="ml-1 text-[10px] font-mono opacity-70">
+                  {savedCount}
+                </span>
+              )}
+            </button>
+          </div>
         </div>
 
         {/* Secondary actions */}
@@ -95,17 +108,6 @@ export function TabHeader({
               className={`h-3.5 w-3.5 ${fetchingTools ? "animate-spin" : ""}`}
             />
           </Button>
-          {onClose && (
-            <Button
-              onClick={onClose}
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              title="Hide sidebar"
-            >
-              <PanelLeftClose className="h-3.5 w-3.5" />
-            </Button>
-          )}
         </div>
 
         {/* Run button */}

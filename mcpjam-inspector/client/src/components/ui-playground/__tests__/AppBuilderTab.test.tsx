@@ -123,8 +123,25 @@ vi.mock("../../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="resizable-panel-group">{children}</div>
   ),
-  ResizablePanel: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="resizable-panel">{children}</div>
+  ResizablePanel: ({
+    children,
+    onCollapse,
+  }: {
+    children: React.ReactNode;
+    onCollapse?: () => void;
+  }) => (
+    <div data-testid="resizable-panel">
+      {onCollapse && (
+        <button
+          type="button"
+          data-testid="simulate-panel-collapse"
+          onClick={onCollapse}
+        >
+          Simulate collapse
+        </button>
+      )}
+      {children}
+    </div>
   ),
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
@@ -478,6 +495,23 @@ describe("AppBuilderTab", () => {
       fireEvent.click(screen.getByTestId("collapsed-panel"));
 
       expect(mockUIPlaygroundStore.toggleSidebar).toHaveBeenCalled();
+    });
+
+    it("calls setSidebarVisible(false) when the left panel collapses (e.g. drag)", async () => {
+      const serverConfig = createServerConfig();
+      mockUIPlaygroundStore.isSidebarVisible = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("simulate-panel-collapse")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId("simulate-panel-collapse"));
+
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(false);
     });
   });
 
