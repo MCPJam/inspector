@@ -257,6 +257,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const {
     getAccessToken,
     signIn,
@@ -1049,11 +1050,17 @@ export default function App() {
       (clientConfigEnabled !== true || !isAuthenticated)
     ) {
       applyNavigation("servers", { updateHash: true });
+    } else if (
+      (activeTab === "evals" || activeTab === "ci-evals") &&
+      evalsEnabled !== true
+    ) {
+      applyNavigation("servers", { updateHash: true });
     }
   }, [
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,
+    evalsEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
@@ -1315,7 +1322,7 @@ export default function App() {
               />
             </div>
           )}
-          {activeTab === "evals" &&
+          {activeTab === "evals" && evalsEnabled === true &&
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (
@@ -1343,7 +1350,7 @@ export default function App() {
                 workspaceId={convexWorkspaceId}
               />
             ))}
-          {activeTab === "ci-evals" &&
+          {activeTab === "ci-evals" && evalsEnabled === true &&
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (
