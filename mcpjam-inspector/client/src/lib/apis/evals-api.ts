@@ -70,6 +70,17 @@ type RunTestCaseRequest = EvalRequestWithServers & {
     expectedToolCalls?: Array<unknown>;
     isNegativeTest?: boolean;
     runs?: number;
+    expectedOutput?: string;
+    promptTurns?: Array<{
+      id: string;
+      prompt: string;
+      expectedToolCalls: Array<{
+        toolName: string;
+        arguments: Record<string, unknown>;
+      }>;
+      expectedOutput?: string;
+    }>;
+    advancedConfig?: Record<string, unknown>;
   };
 };
 

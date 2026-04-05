@@ -16,6 +16,27 @@ import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
+import { type PromptTurn } from "@/shared/prompt-turns";
+
+const toolChoiceSchema = z.union([
+  z.enum(["auto", "none", "required"]),
+  z.object({
+    type: z.literal("tool"),
+    toolName: z.string().min(1),
+  }),
+]);
+
+const promptTurnSchema = z.object({
+  id: z.string(),
+  prompt: z.string(),
+  expectedToolCalls: z.array(
+    z.object({
+      toolName: z.string(),
+      arguments: z.record(z.string(), z.any()),
+    }),
+  ),
+  expectedOutput: z.string().optional(),
+});
 
 export const RunEvalsRequestSchema = z.object({
   workspaceId: z.string().optional(),
@@ -37,11 +58,13 @@ export const RunEvalsRequestSchema = z.object({
       ),
       isNegativeTest: z.boolean().optional(),
       scenario: z.string().optional(),
+      expectedOutput: z.string().optional(),
+      promptTurns: z.array(promptTurnSchema).optional(),
       advancedConfig: z
         .object({
           system: z.string().optional(),
           temperature: z.number().optional(),
-          toolChoice: z.string().optional(),
+          toolChoice: toolChoiceSchema.optional(),
         })
         .passthrough()
         .optional(),
@@ -78,6 +101,16 @@ export const RunTestCaseRequestSchema = z.object({
       expectedToolCalls: z.array(z.any()).optional(),
       isNegativeTest: z.boolean().optional(),
       runs: z.number().optional(),
+      expectedOutput: z.string().optional(),
+      promptTurns: z.array(promptTurnSchema).optional(),
+      advancedConfig: z
+        .object({
+          system: z.string().optional(),
+          temperature: z.number().optional(),
+          toolChoice: toolChoiceSchema.optional(),
+        })
+        .passthrough()
+        .optional(),
     })
     .optional(),
 });
@@ -496,7 +529,13 @@ export async function runEvalTestCaseWithManager(
       testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
     isNegativeTest:
       testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
-    advancedConfig: testCase.advancedConfig,
+    expectedOutput:
+      testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
+    promptTurns:
+      (testCaseOverrides?.promptTurns as PromptTurn[] | undefined) ??
+      testCase.promptTurns,
+    advancedConfig:
+      testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
     testCaseId: testCase._id,
   };
 

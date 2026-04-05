@@ -23,12 +23,12 @@ describe("eval-trace-capture", () => {
 
   it("backend success: one step, LLM only — parent wraps LLM child", () => {
     const spans: EvalTraceSpan[] = [];
-    pushBackendStepSuccessSpans(spans, runAt, 0, runAt + 0, {
+    pushBackendStepSuccessSpans(spans, runAt, 0, 0, runAt + 0, {
       startAbs: runAt + 0,
       endAbs: runAt + 50,
     });
-    const parent = spans.find((s) => s.id === "eval-backend-step-0");
-    const llm = spans.find((s) => s.id === "eval-backend-step-0-llm");
+    const parent = spans.find((s) => s.id === "eval-backend-prompt-0-step-0");
+    const llm = spans.find((s) => s.id === "eval-backend-prompt-0-step-0-llm");
     expect(parent?.category).toBe("step");
     expect(llm?.parentId).toBe(parent?.id);
     expect(parent!.startMs).toBeLessThan(parent!.endMs);
@@ -42,12 +42,13 @@ describe("eval-trace-capture", () => {
       spans,
       runAt,
       0,
+      0,
       runAt + 0,
       { startAbs: runAt + 0, endAbs: runAt + 50 },
       undefined,
       { modelId: "claude-3-opus" },
     );
-    const llm = spans.find((s) => s.id === "eval-backend-step-0-llm");
+    const llm = spans.find((s) => s.id === "eval-backend-prompt-0-step-0-llm");
     expect(llm?.name).toBe("claude-3-opus · response");
   });
 
@@ -57,18 +58,27 @@ describe("eval-trace-capture", () => {
       spans,
       runAt,
       0,
+      0,
       runAt,
       { startAbs: runAt, endAbs: runAt + 20 },
       { startAbs: runAt + 20, endAbs: runAt + 40 },
     );
-    const parent = spans.find((s) => s.id === "eval-backend-step-0");
-    const tools = spans.find((s) => s.id === "eval-backend-step-0-tools");
+    const parent = spans.find((s) => s.id === "eval-backend-prompt-0-step-0");
+    const tools = spans.find((s) => s.id === "eval-backend-prompt-0-step-0-tools");
     expect(tools?.endMs).toBeLessThanOrEqual(parent!.endMs);
   });
 
   it("backend LLM failure — error child under step", () => {
     const spans: EvalTraceSpan[] = [];
-    pushBackendStepLlmFailureSpans(spans, runAt, 0, runAt, runAt, runAt + 5);
+    pushBackendStepLlmFailureSpans(
+      spans,
+      runAt,
+      0,
+      0,
+      runAt,
+      runAt,
+      runAt + 5,
+    );
     expect(spans.some((s) => s.category === "error")).toBe(true);
   });
 
@@ -77,6 +87,7 @@ describe("eval-trace-capture", () => {
     pushBackendStepToolFailureSpans(
       spans,
       runAt,
+      0,
       0,
       runAt,
       { startAbs: runAt, endAbs: runAt + 10 },
@@ -98,12 +109,12 @@ describe("eval-trace-capture", () => {
       messageEndIndex: 2,
       status: "ok",
     });
-    const step = ctx.recordedSpans.find((s) => s.id === "step-0");
-    const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
+    const step = ctx.recordedSpans.find((s) => s.id === "prompt-0-step-0");
+    const llm = ctx.recordedSpans.find((s) => s.id === "prompt-0-step-0-llm");
     expect(step?.category).toBe("step");
     expect(llm?.category).toBe("llm");
     expect(llm?.name).toBe("gpt-4o · response");
-    expect(llm?.parentId).toBe("step-0");
+    expect(llm?.parentId).toBe("prompt-0-step-0");
     expect(ctx.recordedSpans.filter((s) => s.category === "tool")).toHaveLength(
       0,
     );
@@ -150,7 +161,7 @@ describe("eval-trace-capture", () => {
         },
       },
       ctx,
-    );
+    ) as any;
 
     wall = runAt + 50;
     await tools.search.execute({}, { toolCallId: "tc1", messages: [] });
@@ -158,11 +169,11 @@ describe("eval-trace-capture", () => {
     wall = runAt + 120;
     emitAiSdkOnStepFinish(ctx, wall);
 
-    const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
+    const llm = ctx.recordedSpans.find((s) => s.id === "prompt-0-step-0-llm");
     const tool = ctx.recordedSpans.find((s) => s.id === "tool-tc1");
     expect(llm!.endMs - llm!.startMs).toBe(50);
     expect(tool?.name).toBe("search");
-    expect(tool?.parentId).toBe("step-0");
+    expect(tool?.parentId).toBe("prompt-0-step-0");
   });
 
   it("AI SDK: failed tool execute — tool + tool error spans", async () => {
@@ -178,7 +189,7 @@ describe("eval-trace-capture", () => {
         },
       },
       ctx,
-    );
+    ) as any;
     await expect(
       tools.boom.execute({}, { toolCallId: "tcfail", messages: [] }),
     ).rejects.toThrow("fail");
@@ -239,8 +250,8 @@ describe("eval-trace-capture", () => {
         },
       },
     ]);
-    const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
-    const step = ctx.recordedSpans.find((s) => s.id === "step-0");
+    const llm = ctx.recordedSpans.find((s) => s.id === "prompt-0-step-0-llm");
+    const step = ctx.recordedSpans.find((s) => s.id === "prompt-0-step-0");
     expect(llm?.messageStartIndex).toBe(2);
     expect(llm?.messageEndIndex).toBe(2);
     expect(step?.messageStartIndex).toBe(2);
@@ -263,7 +274,7 @@ describe("eval-trace-capture", () => {
         },
       },
     ]);
-    const llm = ctx.recordedSpans.find((s) => s.id === "step-0-llm");
+    const llm = ctx.recordedSpans.find((s) => s.id === "prompt-0-step-0-llm");
     expect(llm?.messageStartIndex).toBe(5);
     expect(llm?.messageEndIndex).toBe(6);
   });
@@ -284,7 +295,7 @@ describe("eval-trace-capture", () => {
         },
       },
       ctx,
-    );
+    ) as any;
     wall = runAt + 50;
     await tools.search.execute({}, { toolCallId: "tc-patch", messages: [] });
     wall = runAt + 120;
@@ -315,7 +326,10 @@ describe("eval-trace-capture", () => {
     registerAiSdkPrepareStep(ctx, 1);
     emitAiSdkOnStepFinish(ctx, runAt + 25);
     const steps = ctx.recordedSpans.filter((s) => s.category === "step");
-    expect(steps.map((s) => s.id)).toEqual(["step-0", "step-1"]);
+    expect(steps.map((s) => s.id)).toEqual([
+      "prompt-0-step-0",
+      "prompt-0-step-1",
+    ]);
     expect(steps.map((s) => s.name)).toEqual(["Step 1", "Step 2"]);
   });
 
@@ -339,10 +353,11 @@ describe("eval-trace-capture", () => {
       },
       {
         runStartedAt: runAt,
+        promptIndex: 0,
         stepIndex: 2,
         spans,
       },
-    );
+    ) as any;
 
     wall = runAt + 15;
     await backendTools.search.execute(

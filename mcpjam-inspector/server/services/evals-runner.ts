@@ -7,7 +7,9 @@ import {
 } from "ai";
 import {
   evaluateResults,
+  evaluateMultiTurnResults,
   type EvaluationResult,
+  type MultiTurnEvaluationResult,
   type UsageTotals,
 } from "./evals/types";
 import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
@@ -41,8 +43,18 @@ import {
   registerAiSdkPrepareStep,
   wrapToolSetForEvalTrace,
 } from "./evals/eval-trace-capture";
-import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
+import {
+  deriveLegacyPromptFields,
+  resolvePromptTurns,
+  stripPromptTurnsFromAdvancedConfig,
+  type PromptTurn,
+} from "@/shared/prompt-turns";
+import {
+  normalizeToolChoice,
+  type EvalToolChoice,
+} from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 
 export type EvalTestCase = {
@@ -56,10 +68,12 @@ export type EvalTestCase = {
     arguments: Record<string, any>;
   }>;
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
+  expectedOutput?: string;
+  promptTurns?: PromptTurn[];
   advancedConfig?: {
     system?: string;
     temperature?: number;
-    toolChoice?: string;
+    toolChoice?: EvalToolChoice | string;
   } & Record<string, unknown>;
   testCaseId?: string;
 };
@@ -94,6 +108,149 @@ export type RunEvalSuiteWithAiSdkResult = {
 const MAX_STEPS = 20;
 
 type ToolSet = Record<string, any>;
+type ToolCall = { toolName: string; arguments: Record<string, any> };
+
+type ResolvedEvalTestCase = {
+  promptTurns: PromptTurn[];
+  query: string;
+  expectedToolCalls: ToolCall[];
+  expectedOutput?: string;
+  advancedConfig?: Record<string, unknown>;
+};
+
+function resolveEvalTestCase(test: EvalTestCase): ResolvedEvalTestCase {
+  const promptTurns = resolvePromptTurns(test);
+  const legacy = deriveLegacyPromptFields(promptTurns);
+  return {
+    promptTurns,
+    query: legacy.query,
+    expectedToolCalls: legacy.expectedToolCalls,
+    expectedOutput: legacy.expectedOutput,
+    advancedConfig: stripPromptTurnsFromAdvancedConfig(test.advancedConfig),
+  };
+}
+
+function buildPromptTraceSummaries(
+  evaluation: MultiTurnEvaluationResult,
+): PromptTraceSummary[] {
+  return evaluation.promptSummaries.map((summary) => ({
+    promptIndex: summary.promptIndex,
+    prompt: summary.prompt,
+    expectedToolCalls: summary.expectedToolCalls,
+    actualToolCalls: summary.actualToolCalls,
+    expectedOutput: summary.expectedOutput,
+    passed: summary.passed,
+    missing: summary.missing,
+    unexpected: summary.unexpected,
+    argumentMismatches: summary.argumentMismatches.map((mismatch) => {
+      const mismatchedArguments = new Set<string>([
+        ...Object.keys(mismatch.expectedArgs ?? {}),
+        ...Object.keys(mismatch.actualArgs ?? {}),
+      ]);
+
+      return {
+        expected: {
+          toolName: mismatch.toolName,
+          arguments: mismatch.expectedArgs,
+        },
+        actual: {
+          toolName: mismatch.toolName,
+          arguments: mismatch.actualArgs,
+        },
+        mismatchedArguments: Array.from(mismatchedArguments).filter(
+          (key) =>
+            JSON.stringify(mismatch.expectedArgs?.[key]) !==
+            JSON.stringify(mismatch.actualArgs?.[key]),
+        ),
+      };
+    }),
+  }));
+}
+
+function buildIterationMetadata(
+  evaluation: MultiTurnEvaluationResult,
+): Record<string, string | number | boolean> {
+  const metadata: Record<string, string | number | boolean> = {
+    turnCount: evaluation.turnCount,
+    failedTurnCount: evaluation.failedTurnCount,
+  };
+
+  if (typeof evaluation.firstFailedTurnIndex === "number") {
+    metadata.firstFailedTurnIndex = evaluation.firstFailedTurnIndex;
+  }
+
+  return metadata;
+}
+
+function extractToolCallsFromConversation(params: {
+  steps?: ReadonlyArray<any>;
+  messages: ModelMessage[];
+}): ToolCall[] {
+  const toolsCalled: ToolCall[] = [];
+
+  if (params.steps && Array.isArray(params.steps)) {
+    for (const step of params.steps) {
+      const stepToolCalls = (step as any).toolCalls || [];
+      for (const call of stepToolCalls) {
+        if (call?.toolName || call?.name) {
+          toolsCalled.push({
+            toolName: call.toolName ?? call.name,
+            arguments: call.args ?? call.input ?? {},
+          });
+        }
+      }
+    }
+  }
+
+  for (const msg of params.messages) {
+    if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
+      for (const item of (msg as any).content) {
+        if (item?.type === "tool-call") {
+          const name = item.toolName ?? item.name;
+          if (name) {
+            const argumentsValue =
+              item.input ?? item.parameters ?? item.args ?? {};
+            const alreadyAdded = toolsCalled.some(
+              (toolCall) =>
+                toolCall.toolName === name &&
+                JSON.stringify(toolCall.arguments) ===
+                  JSON.stringify(argumentsValue),
+            );
+            if (!alreadyAdded) {
+              toolsCalled.push({
+                toolName: name,
+                arguments: argumentsValue,
+              });
+            }
+          }
+        }
+      }
+    }
+
+    if (msg?.role === "assistant" && Array.isArray((msg as any).toolCalls)) {
+      for (const call of (msg as any).toolCalls) {
+        if (call?.toolName || call?.name) {
+          const toolName = call.toolName ?? call.name;
+          const argumentsValue = call.args ?? call.input ?? {};
+          const alreadyAdded = toolsCalled.some(
+            (toolCall) =>
+              toolCall.toolName === toolName &&
+              JSON.stringify(toolCall.arguments) ===
+                JSON.stringify(argumentsValue),
+          );
+          if (!alreadyAdded) {
+            toolsCalled.push({
+              toolName,
+              arguments: argumentsValue,
+            });
+          }
+        }
+      }
+    }
+  }
+
+  return toolsCalled;
+}
 
 // Helper to create iteration directly (for quick runs without a recorder)
 async function createIterationDirectly(
@@ -107,6 +264,8 @@ async function createIterationDirectly(
       model: string;
       runs?: number;
       expectedToolCalls: any[];
+      expectedOutput?: string;
+      promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
     };
     iterationNumber: number;
@@ -141,10 +300,13 @@ async function finishIterationDirectly(
     usage: UsageTotals;
     messages: ModelMessage[];
     spans?: EvalTraceSpan[];
+    prompts?: PromptTraceSummary[];
     status?: "completed" | "failed" | "cancelled";
     startedAt?: number;
     error?: string;
     errorDetails?: string;
+    resultSource?: "reported" | "derived";
+    metadata?: Record<string, string | number | boolean>;
   },
 ): Promise<void> {
   if (!params.iterationId) return;
@@ -181,8 +343,13 @@ async function finishIterationDirectly(
       ...(params.spans?.length
         ? { spans: sanitizeForConvexTransport(params.spans) }
         : {}),
+      ...(params.prompts?.length
+        ? { prompts: sanitizeForConvexTransport(params.prompts) }
+        : {}),
       error: params.error,
       errorDetails: params.errorDetails,
+      resultSource: params.resultSource,
+      metadata: params.metadata,
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -248,6 +415,8 @@ const runIterationWithAiSdk = async ({
   runId,
   abortSignal,
 }: RunIterationAiSdkParams) => {
+  const resolvedTest = resolveEvalTestCase(test);
+
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
@@ -257,8 +426,8 @@ const runIterationWithAiSdk = async ({
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateResults(
-            test.expectedToolCalls,
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
           ),
@@ -274,8 +443,8 @@ const runIterationWithAiSdk = async ({
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateResults(
-            test.expectedToolCalls,
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
           ),
@@ -285,8 +454,15 @@ const runIterationWithAiSdk = async ({
     }
   }
 
-  const { advancedConfig, query, expectedToolCalls } = test;
-  const { system, temperature, toolChoice } = advancedConfig ?? {};
+  const { advancedConfig, query, expectedToolCalls, expectedOutput, promptTurns } =
+    resolvedTest;
+  const system =
+    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+  const temperature =
+    typeof advancedConfig?.temperature === "number"
+      ? advancedConfig.temperature
+      : undefined;
+  const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   // Get API key for this model's provider
   // Try exact match first, then lowercase
@@ -301,17 +477,23 @@ const runIterationWithAiSdk = async ({
   }
 
   const runStartedAt = Date.now();
+  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  if (promptTurns.length > 1) {
+    iterationMetadataBase.multiTurn = true;
+  }
   const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
-      query: test.query,
+      query,
       provider: test.provider,
       model: test.model,
       runs: test.runs,
-      expectedToolCalls: test.expectedToolCalls,
+      expectedToolCalls,
       isNegativeTest: test.isNegativeTest,
-      advancedConfig: test.advancedConfig,
+      expectedOutput,
+      promptTurns,
+      advancedConfig,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -325,183 +507,180 @@ const runIterationWithAiSdk = async ({
   if (system) {
     baseMessages.push({ role: "system", content: system });
   }
-  baseMessages.push({ role: "user", content: query });
-
-  const traceCtx = createAiSdkEvalTraceContext(runStartedAt);
-  let partialResponseMessages: ModelMessage[] = [];
-  let completedStepCount = 0;
-
-  const tracedTools = wrapToolSetForEvalTrace(tools, traceCtx);
+  let conversationMessages: ModelMessage[] = [...baseMessages];
+  const recordedSpans: EvalTraceSpan[] = [];
+  const toolsCalledByPrompt: ToolCall[][] = [];
+  const accumulatedUsage: UsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+  let activePromptIndex = -1;
+  let activePromptInputMessages: ModelMessage[] = [];
+  let activePartialResponseMessages: ModelMessage[] = [];
+  let activeCompletedStepCount = 0;
+  let activeTraceCtx:
+    | ReturnType<typeof createAiSdkEvalTraceContext>
+    | null = null;
 
   try {
     const llmModel = createLlmModel(modelDefinition, apiKey);
 
-    const result = await generateText({
-      model: llmModel,
-      messages: baseMessages,
-      tools: tracedTools,
-      stopWhen: stepCountIs(20),
-      ...(temperature == null ? {} : { temperature }),
-      ...(toolChoice
-        ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
-        : {}),
-      ...(abortSignal ? { abortSignal } : {}),
-      experimental_telemetry: {
-        isEnabled: true,
-        functionId: "evals.generateText",
-        recordInputs: false,
-        recordOutputs: false,
-        metadata: {
-          source: "evals",
-          ...(suiteId ? { suiteId } : {}),
-          ...(runId ? { runId } : {}),
-          ...(testCaseId ? { testCaseId } : {}),
-          ...(iterationId ? { iterationId } : {}),
-          iterationNumber: runIndex + 1,
-          provider: test.provider,
-          model: test.model,
-        },
-      },
-      // AI SDK `generateText` does not expose `experimental_onStepStart` (see ai@6 types); `prepareStep` runs once per step before the LLM call with the same `stepNumber`.
-      prepareStep: ({ stepNumber }) => {
-        registerAiSdkPrepareStep(traceCtx, stepNumber, {
-          modelId: test.model,
-        });
-        return undefined;
-      },
-      onStepFinish: async (step) => {
-        completedStepCount += 1;
-        const stepFinishedAt = Date.now();
-        const responseMessages = step.response?.messages ?? [];
-        const responseMessageCountBeforeAppend = partialResponseMessages.length;
-        const messageStartIndex =
-          responseMessages.length > 0
-            ? baseMessages.length + responseMessageCountBeforeAppend
-            : undefined;
-        appendDedupedModelMessages(
-          partialResponseMessages,
-          responseMessages as ModelMessage[],
-        );
-        const appendedMessageCount =
-          partialResponseMessages.length - responseMessageCountBeforeAppend;
-        const messageEndIndex =
-          messageStartIndex != null && appendedMessageCount > 0
-            ? messageStartIndex + appendedMessageCount - 1
-            : undefined;
-        emitAiSdkOnStepFinish(traceCtx, stepFinishedAt, {
-          modelId: step.response?.modelId ?? test.model,
-          inputTokens: step.usage?.inputTokens,
-          outputTokens: step.usage?.outputTokens,
-          totalTokens: step.usage?.totalTokens,
-          messageStartIndex,
-          messageEndIndex,
-          status: "ok",
-        });
-      },
-      onFinish: async () => {
-        /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
-      },
-    });
-
-    const finalMessagesRaw = result.response?.messages as
-      | ModelMessage[]
-      | undefined;
-    const finalResponseMessages =
-      finalMessagesRaw && finalMessagesRaw.length > 0
-        ? finalMessagesRaw
-        : partialResponseMessages;
-    const finalMessages = [...baseMessages, ...finalResponseMessages];
-
-    if (traceCtx.recordedSpans.length > 0) {
-      patchAiSdkRecordedSpansMessageRangesFromSteps(
-        traceCtx.recordedSpans,
-        baseMessages.length,
-        result.steps,
+    if (
+      toolChoice &&
+      typeof toolChoice === "object" &&
+      !Object.hasOwn(tools, toolChoice.toolName)
+    ) {
+      throw new Error(
+        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
       );
     }
 
-    // Extract all tool calls from all steps in the conversation
-    const toolsCalled: Array<{
-      toolName: string;
-      arguments: Record<string, any>;
-    }> = [];
+    for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+      const promptTurn = promptTurns[promptIndex]!;
+      activePromptIndex = promptIndex;
+      activePromptInputMessages = [
+        ...conversationMessages,
+        { role: "user", content: promptTurn.prompt },
+      ];
+      activePartialResponseMessages = [];
+      activeCompletedStepCount = 0;
+      activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
+      const tracedTools = wrapToolSetForEvalTrace(
+        tools,
+        activeTraceCtx,
+        promptIndex,
+      );
 
-    // First, extract from result.steps if available (more reliable for multi-step conversations)
-    if (result.steps && Array.isArray(result.steps)) {
-      for (const step of result.steps) {
-        const stepToolCalls = (step as any).toolCalls || [];
-        for (const call of stepToolCalls) {
-          if (call?.toolName || call?.name) {
-            toolsCalled.push({
-              toolName: call.toolName ?? call.name,
-              arguments: call.args ?? call.input ?? {},
-            });
-          }
-        }
+      const result = await generateText({
+        model: llmModel,
+        messages: activePromptInputMessages,
+        tools: tracedTools,
+        stopWhen: stepCountIs(20),
+        ...(temperature == null ? {} : { temperature }),
+        ...(toolChoice
+          ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
+          : {}),
+        ...(abortSignal ? { abortSignal } : {}),
+        experimental_telemetry: {
+          isEnabled: true,
+          functionId: "evals.generateText",
+          recordInputs: false,
+          recordOutputs: false,
+          metadata: {
+            source: "evals",
+            ...(suiteId ? { suiteId } : {}),
+            ...(runId ? { runId } : {}),
+            ...(testCaseId ? { testCaseId } : {}),
+            ...(iterationId ? { iterationId } : {}),
+            iterationNumber: runIndex + 1,
+            provider: test.provider,
+            model: test.model,
+            promptIndex,
+          },
+        },
+        prepareStep: ({ stepNumber }) => {
+          registerAiSdkPrepareStep(activeTraceCtx!, stepNumber, {
+            modelId: test.model,
+            promptIndex,
+          });
+          return undefined;
+        },
+        onStepFinish: async (step) => {
+          activeCompletedStepCount += 1;
+          const stepFinishedAt = Date.now();
+          const responseMessages = step.response?.messages ?? [];
+          const responseMessageCountBeforeAppend =
+            activePartialResponseMessages.length;
+          const messageStartIndex =
+            responseMessages.length > 0
+              ? activePromptInputMessages.length + responseMessageCountBeforeAppend
+              : undefined;
+          appendDedupedModelMessages(
+            activePartialResponseMessages,
+            responseMessages as ModelMessage[],
+          );
+          const appendedMessageCount =
+            activePartialResponseMessages.length - responseMessageCountBeforeAppend;
+          const messageEndIndex =
+            messageStartIndex != null && appendedMessageCount > 0
+              ? messageStartIndex + appendedMessageCount - 1
+              : undefined;
+          emitAiSdkOnStepFinish(activeTraceCtx!, stepFinishedAt, {
+            modelId: step.response?.modelId ?? test.model,
+            inputTokens: step.usage?.inputTokens,
+            outputTokens: step.usage?.outputTokens,
+            totalTokens: step.usage?.totalTokens,
+            messageStartIndex,
+            messageEndIndex,
+            status: "ok",
+          });
+        },
+        onFinish: async () => {
+          /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
+        },
+      });
+
+      const finalMessagesRaw = result.response?.messages as
+        | ModelMessage[]
+        | undefined;
+      const promptResponseMessages =
+        finalMessagesRaw && finalMessagesRaw.length > 0
+          ? finalMessagesRaw
+          : activePartialResponseMessages;
+
+      if (activeTraceCtx.recordedSpans.length > 0) {
+        patchAiSdkRecordedSpansMessageRangesFromSteps(
+          activeTraceCtx.recordedSpans,
+          activePromptInputMessages.length,
+          result.steps,
+          promptIndex,
+        );
       }
+
+      const promptToolsCalled = extractToolCallsFromConversation({
+        steps: result.steps,
+        messages: promptResponseMessages,
+      });
+      toolsCalledByPrompt.push(promptToolsCalled);
+      recordedSpans.push(...activeTraceCtx.recordedSpans);
+
+      conversationMessages = [
+        ...activePromptInputMessages,
+        ...promptResponseMessages,
+      ];
+
+      accumulatedUsage.inputTokens =
+        (accumulatedUsage.inputTokens ?? 0) + (result.usage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        (accumulatedUsage.outputTokens ?? 0) +
+        (result.usage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        (accumulatedUsage.totalTokens ?? 0) + (result.usage?.totalTokens ?? 0);
+
+      activeTraceCtx = null;
+      activePromptInputMessages = [];
+      activePartialResponseMessages = [];
+      activeCompletedStepCount = 0;
     }
 
-    // Fallback: also check messages (in case steps don't have all info)
-    for (const msg of finalMessages) {
-      if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
-        for (const item of (msg as any).content) {
-          if (item?.type === "tool-call") {
-            const name = item.toolName ?? item.name;
-            if (name) {
-              // Check if not already added from steps
-              const alreadyAdded = toolsCalled.some(
-                (tc) =>
-                  tc.toolName === name &&
-                  JSON.stringify(tc.arguments) ===
-                    JSON.stringify(
-                      item.input ?? item.parameters ?? item.args ?? {},
-                    ),
-              );
-              if (!alreadyAdded) {
-                toolsCalled.push({
-                  toolName: name,
-                  arguments: item.input ?? item.parameters ?? item.args ?? {},
-                });
-              }
-            }
-          }
-        }
-      }
-      // Also check legacy toolCalls array format
-      if (msg?.role === "assistant" && Array.isArray((msg as any).toolCalls)) {
-        for (const call of (msg as any).toolCalls) {
-          if (call?.toolName || call?.name) {
-            const alreadyAdded = toolsCalled.some(
-              (tc) =>
-                tc.toolName === (call.toolName ?? call.name) &&
-                JSON.stringify(tc.arguments) ===
-                  JSON.stringify(call.args ?? call.input ?? {}),
-            );
-            if (!alreadyAdded) {
-              toolsCalled.push({
-                toolName: call.toolName ?? call.name,
-                arguments: call.args ?? call.input ?? {},
-              });
-            }
-          }
-        }
-      }
-    }
-
-    const evaluation = evaluateResults(
-      expectedToolCalls,
-      toolsCalled,
+    const evaluation = evaluateMultiTurnResults(
+      promptTurns,
+      toolsCalledByPrompt,
       test.isNegativeTest,
     );
+    const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
-    const failOnToolError = test.advancedConfig?.failOnToolError !== false;
+    const failOnToolError =
+      (advancedConfig as { failOnToolError?: boolean } | undefined)
+        ?.failOnToolError !== false;
     const traceForGate =
-      traceCtx.recordedSpans.length > 0 || finalMessages.length > 0
+      recordedSpans.length > 0 || conversationMessages.length > 0
         ? {
-            ...(traceCtx.recordedSpans.length > 0
-              ? { spans: traceCtx.recordedSpans }
+            ...(recordedSpans.length > 0
+              ? { spans: recordedSpans }
               : {}),
-            messages: finalMessages as ModelMessage[] as Array<{
+            messages: conversationMessages as ModelMessage[] as Array<{
               role: string;
               content: unknown;
             }>,
@@ -514,22 +693,28 @@ const runIterationWithAiSdk = async ({
     });
 
     const usage: UsageTotals = {
-      inputTokens: result.usage?.inputTokens,
-      outputTokens: result.usage?.outputTokens,
-      totalTokens: result.usage?.totalTokens,
+      inputTokens: accumulatedUsage.inputTokens,
+      outputTokens: accumulatedUsage.outputTokens,
+      totalTokens: accumulatedUsage.totalTokens,
     };
 
     const finishParams = {
       iterationId,
       passed,
-      toolsCalled,
+      toolsCalled: evaluation.toolsCalled,
       usage,
-      messages: finalMessages,
-      ...(traceCtx.recordedSpans.length
-        ? { spans: traceCtx.recordedSpans }
+      messages: conversationMessages,
+      ...(recordedSpans.length
+        ? { spans: recordedSpans }
         : {}),
+      ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
+      resultSource: "reported" as const,
+      metadata: {
+        ...iterationMetadataBase,
+        ...buildIterationMetadata(evaluation),
+      },
     };
 
     if (recorder) {
@@ -548,7 +733,11 @@ const runIterationWithAiSdk = async ({
       logger.debug("[evals] iteration aborted due to cancellation");
       // Don't record anything for aborted iterations
       return {
-        evaluation: evaluateResults(expectedToolCalls, [], test.isNegativeTest),
+        evaluation: evaluateMultiTurnResults(
+          promptTurns,
+          toolsCalledByPrompt,
+          test.isNegativeTest,
+        ),
         iterationId: undefined,
       };
     }
@@ -572,32 +761,49 @@ const runIterationWithAiSdk = async ({
     }
 
     const failAt = Date.now();
-    finalizeAiSdkTraceOnFailure(traceCtx, failAt, {
-      completedStepCount,
-      lastStepEndedAt: traceCtx.lastStepClosedEndAt,
-      modelId: test.model,
-    });
-    const failSpans = traceCtx.recordedSpans;
+    if (activeTraceCtx) {
+      finalizeAiSdkTraceOnFailure(activeTraceCtx, failAt, {
+        completedStepCount: activeCompletedStepCount,
+        lastStepEndedAt: activeTraceCtx.lastStepClosedEndAt,
+        modelId: test.model,
+        promptIndex: activePromptIndex >= 0 ? activePromptIndex : 0,
+      });
+      recordedSpans.push(...activeTraceCtx.recordedSpans);
+    }
     const failMessages =
-      completedStepCount > 0 || partialResponseMessages.length > 0
-        ? [...baseMessages, ...partialResponseMessages]
-        : baseMessages;
+      activePromptInputMessages.length > 0
+        ? activeCompletedStepCount > 0 || activePartialResponseMessages.length > 0
+          ? [...activePromptInputMessages, ...activePartialResponseMessages]
+          : activePromptInputMessages
+        : conversationMessages;
+    const evaluation = evaluateMultiTurnResults(
+      promptTurns,
+      toolsCalledByPrompt,
+      test.isNegativeTest,
+    );
+    const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
     const failParams = {
       iterationId,
       passed: false,
-      toolsCalled: [],
+      toolsCalled: evaluation.toolsCalled,
       usage: {
-        inputTokens: undefined,
-        outputTokens: undefined,
-        totalTokens: undefined,
+        inputTokens: accumulatedUsage.inputTokens,
+        outputTokens: accumulatedUsage.outputTokens,
+        totalTokens: accumulatedUsage.totalTokens,
       },
       messages: failMessages,
-      ...(failSpans.length ? { spans: failSpans } : {}),
+      ...(recordedSpans.length ? { spans: recordedSpans } : {}),
+      ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       status: "failed" as const,
       startedAt: runStartedAt,
       error: errorMessage,
       errorDetails,
+      resultSource: "reported" as const,
+      metadata: {
+        ...iterationMetadataBase,
+        ...buildIterationMetadata(evaluation),
+      },
     };
 
     if (recorder) {
@@ -606,7 +812,7 @@ const runIterationWithAiSdk = async ({
       await finishIterationDirectly(convexClient, failParams);
     }
     return {
-      evaluation: evaluateResults(expectedToolCalls, [], test.isNegativeTest),
+      evaluation,
       iterationId: iterationId ?? undefined,
     };
   }
@@ -624,6 +830,8 @@ const runIterationViaBackend = async ({
   runId,
   abortSignal,
 }: RunIterationBackendParams) => {
+  const resolvedTest = resolveEvalTestCase(test);
+
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
     try {
@@ -633,8 +841,8 @@ const runIterationViaBackend = async ({
       );
       if (currentRun?.status === "cancelled") {
         return {
-          evaluation: evaluateResults(
-            test.expectedToolCalls,
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
           ),
@@ -650,8 +858,8 @@ const runIterationViaBackend = async ({
         errorMessage.includes("unauthorized")
       ) {
         return {
-          evaluation: evaluateResults(
-            test.expectedToolCalls,
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
             [],
             test.isNegativeTest,
           ),
@@ -661,32 +869,36 @@ const runIterationViaBackend = async ({
     }
   }
 
-  const { query, expectedToolCalls, advancedConfig } = test;
-  const { system: systemPrompt, temperature } = advancedConfig ?? {};
+  const { query, expectedToolCalls, expectedOutput, promptTurns, advancedConfig } =
+    resolvedTest;
+  const systemPrompt =
+    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+  const temperature =
+    typeof advancedConfig?.temperature === "number"
+      ? advancedConfig.temperature
+      : undefined;
 
-  const messageHistory: ModelMessage[] = [
-    {
-      role: "user",
-      content: query,
-    },
-  ];
-  const toolsCalled: Array<{
-    toolName: string;
-    arguments: Record<string, any>;
-  }> = [];
+  const messageHistory: ModelMessage[] = [];
+  const toolsCalledByPrompt: ToolCall[][] = [];
   const runStartedAt = Date.now();
+  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  if (promptTurns.length > 1) {
+    iterationMetadataBase.multiTurn = true;
+  }
 
   const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
     testCaseSnapshot: {
       title: test.title,
-      query: test.query,
+      query,
       provider: test.provider,
       model: test.model,
       runs: test.runs,
-      expectedToolCalls: test.expectedToolCalls,
+      expectedToolCalls,
       isNegativeTest: test.isNegativeTest,
-      advancedConfig: test.advancedConfig,
+      expectedOutput,
+      promptTurns,
+      advancedConfig,
     },
     iterationNumber: runIndex + 1,
     startedAt: runStartedAt,
@@ -746,151 +958,227 @@ const runIterationViaBackend = async ({
   let iterationError: string | undefined = undefined;
   let iterationErrorDetails: string | undefined = undefined;
   const capturedSpans: EvalTraceSpan[] = [];
-  let steps = 0;
-  while (steps < MAX_STEPS) {
-    const stepStartAbs = Date.now();
-    const stepIndex = steps;
-    const llmStartAbs = stepStartAbs;
-    const stepMessageStartIndex = messageHistory.length;
-    try {
-      const res = await fetch(`${convexHttpUrl}/stream`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(authHeader ? { ...authHeader } : {}),
-        },
-        body: JSON.stringify({
-          mode: "step",
-          messages: JSON.stringify(messageHistory),
-          model: String(test.model),
-          ...(systemPrompt ? { systemPrompt } : {}),
-          ...(temperature == null ? {} : { temperature }),
-          tools: toolDefs,
-          maxOutputTokens: 16384,
-        }),
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
+  for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+    const promptTurn = promptTurns[promptIndex]!;
+    const promptToolsCalled: ToolCall[] = [];
+    toolsCalledByPrompt.push(promptToolsCalled);
+    messageHistory.push({
+      role: "user",
+      content: promptTurn.prompt,
+    });
 
-      if (!res.ok) {
-        const errorText = await res.text().catch(() => res.statusText);
-        iterationError = `Backend stream error: ${res.status} ${errorText}`;
-        iterationErrorDetails = errorText;
-        logger.error("[evals] backend stream error", new Error(res.statusText));
-        const failAbs = Date.now();
-        pushBackendStepLlmFailureSpans(
-          capturedSpans,
-          runStartedAt,
-          stepIndex,
-          stepStartAbs,
-          llmStartAbs,
-          failAbs,
-        );
-        break;
-      }
-
-      const json: any = await res.json();
-      const llmEndAbs = Date.now();
-      if (!json?.ok || !Array.isArray(json.messages)) {
-        iterationError = "Invalid backend response payload";
-        iterationErrorDetails = JSON.stringify(json, null, 2);
-        logger.error(
-          "[evals] invalid backend response payload",
-          new Error("Invalid backend response payload"),
-        );
-        const failAbs = Date.now();
-        pushBackendStepLlmFailureSpans(
-          capturedSpans,
-          runStartedAt,
-          stepIndex,
-          stepStartAbs,
-          llmStartAbs,
-          failAbs,
-          {
-            modelId: test.model,
+    let steps = 0;
+    while (steps < MAX_STEPS) {
+      const stepStartAbs = Date.now();
+      const stepIndex = steps;
+      const llmStartAbs = stepStartAbs;
+      const stepMessageStartIndex = messageHistory.length;
+      try {
+        const res = await fetch(`${convexHttpUrl}/stream`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(authHeader ? { ...authHeader } : {}),
           },
-        );
-        break;
-      }
-
-      if (json.usage) {
-        accumulatedUsage.inputTokens =
-          (accumulatedUsage.inputTokens || 0) + (json.usage.promptTokens || 0);
-        accumulatedUsage.outputTokens =
-          (accumulatedUsage.outputTokens || 0) +
-          (json.usage.completionTokens || 0);
-        accumulatedUsage.totalTokens =
-          (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
-      }
-
-      for (const msg of json.messages as any[]) {
-        if (msg?.role === "assistant" && Array.isArray(msg.content)) {
-          for (const item of msg.content) {
-            if (item?.type === "tool-call") {
-              const name = item.toolName ?? item.name;
-              if (name) {
-                toolsCalled.push({
-                  toolName: name,
-                  arguments: item.input ?? item.parameters ?? item.args ?? {},
-                });
-              }
-              if (!item.toolCallId) {
-                item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-              }
-              if (item.input == null) {
-                item.input = item.parameters ?? item.args ?? {};
-              }
-            }
-          }
-        }
-        messageHistory.push(msg);
-      }
-
-      if (hasUnresolvedToolCalls(messageHistory as any)) {
-        const toolsStartAbs = Date.now();
-        const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
-          runStartedAt,
-          stepIndex,
-          spans: capturedSpans,
+          body: JSON.stringify({
+            mode: "step",
+            messages: JSON.stringify(messageHistory),
+            model: String(test.model),
+            ...(systemPrompt ? { systemPrompt } : {}),
+            ...(temperature == null ? {} : { temperature }),
+            tools: toolDefs,
+            maxOutputTokens: 16384,
+          }),
+          ...(abortSignal ? { signal: abortSignal } : {}),
         });
-        try {
-          const newToolMessages = await executeToolCallsFromMessages(
-            messageHistory,
+
+        if (!res.ok) {
+          const errorText = await res.text().catch(() => res.statusText);
+          iterationError = `Backend stream error: ${res.status} ${errorText}`;
+          iterationErrorDetails = errorText;
+          logger.error(
+            "[evals] backend stream error",
+            new Error(res.statusText),
+          );
+          const failAbs = Date.now();
+          pushBackendStepLlmFailureSpans(
+            capturedSpans,
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            stepStartAbs,
+            llmStartAbs,
+            failAbs,
+          );
+          break;
+        }
+
+        const json: any = await res.json();
+        const llmEndAbs = Date.now();
+        if (!json?.ok || !Array.isArray(json.messages)) {
+          iterationError = "Invalid backend response payload";
+          iterationErrorDetails = JSON.stringify(json, null, 2);
+          logger.error(
+            "[evals] invalid backend response payload",
+            new Error("Invalid backend response payload"),
+          );
+          const failAbs = Date.now();
+          pushBackendStepLlmFailureSpans(
+            capturedSpans,
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            stepStartAbs,
+            llmStartAbs,
+            failAbs,
             {
-              tools: tracedBackendTools as any,
+              modelId: test.model,
             },
           );
-          const toolsEndAbs = Date.now();
-          const toolMessageIndexByCallId = new Map<string, number>();
-          for (let index = 0; index < messageHistory.length; index++) {
-            const msg = messageHistory[index] as any;
-            if (msg?.role !== "tool" || !Array.isArray(msg.content)) {
-              continue;
-            }
-            for (const part of msg.content) {
-              if (
-                part?.type === "tool-result" &&
-                typeof part.toolCallId === "string"
-              ) {
-                toolMessageIndexByCallId.set(part.toolCallId, index);
+          break;
+        }
+
+        if (json.usage) {
+          accumulatedUsage.inputTokens =
+            (accumulatedUsage.inputTokens || 0) +
+            (json.usage.promptTokens || 0);
+          accumulatedUsage.outputTokens =
+            (accumulatedUsage.outputTokens || 0) +
+            (json.usage.completionTokens || 0);
+          accumulatedUsage.totalTokens =
+            (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
+        }
+
+        for (const msg of json.messages as any[]) {
+          if (msg?.role === "assistant" && Array.isArray(msg.content)) {
+            for (const item of msg.content) {
+              if (item?.type === "tool-call") {
+                const name = item.toolName ?? item.name;
+                if (name) {
+                  promptToolsCalled.push({
+                    toolName: name,
+                    arguments: item.input ?? item.parameters ?? item.args ?? {},
+                  });
+                }
+                if (!item.toolCallId) {
+                  item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                }
+                if (item.input == null) {
+                  item.input = item.parameters ?? item.args ?? {};
+                }
               }
             }
           }
-          for (const span of capturedSpans) {
-            if (
-              span.stepIndex !== stepIndex ||
-              typeof span.toolCallId !== "string" ||
-              typeof span.messageStartIndex === "number"
-            ) {
-              continue;
-            }
-            const toolMessageIndex = toolMessageIndexByCallId.get(
-              span.toolCallId,
+          messageHistory.push(msg);
+        }
+
+        if (hasUnresolvedToolCalls(messageHistory as any)) {
+          const toolsStartAbs = Date.now();
+          const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            spans: capturedSpans,
+          });
+          try {
+            const newToolMessages = await executeToolCallsFromMessages(
+              messageHistory as any,
+              {
+                tools: tracedBackendTools as any,
+              },
             );
-            if (typeof toolMessageIndex === "number") {
-              span.messageStartIndex = toolMessageIndex;
-              span.messageEndIndex = toolMessageIndex;
+            const toolsEndAbs = Date.now();
+            const toolMessageIndexByCallId = new Map<string, number>();
+            for (let index = 0; index < messageHistory.length; index++) {
+              const msg = messageHistory[index] as any;
+              if (msg?.role !== "tool" || !Array.isArray(msg.content)) {
+                continue;
+              }
+              for (const part of msg.content) {
+                if (
+                  part?.type === "tool-result" &&
+                  typeof part.toolCallId === "string"
+                ) {
+                  toolMessageIndexByCallId.set(part.toolCallId, index);
+                }
+              }
             }
+            for (const span of capturedSpans) {
+              if (
+                span.stepIndex !== stepIndex ||
+                (span.promptIndex ?? 0) !== promptIndex ||
+                typeof span.toolCallId !== "string" ||
+                typeof span.messageStartIndex === "number"
+              ) {
+                continue;
+              }
+              const toolMessageIndex = toolMessageIndexByCallId.get(
+                span.toolCallId,
+              );
+              if (typeof toolMessageIndex === "number") {
+                span.messageStartIndex = toolMessageIndex;
+                span.messageEndIndex = toolMessageIndex;
+              }
+            }
+            const stepMessageEndIndex =
+              messageHistory.length > stepMessageStartIndex
+                ? messageHistory.length - 1
+                : undefined;
+            pushBackendStepSuccessSpans(
+              capturedSpans,
+              runStartedAt,
+              promptIndex,
+              stepIndex,
+              stepStartAbs,
+              { startAbs: llmStartAbs, endAbs: llmEndAbs },
+              {
+                startAbs: toolsStartAbs,
+                endAbs: toolsEndAbs,
+                pushAggregateSpan: newToolMessages.length === 0,
+              },
+              {
+                modelId: test.model,
+                inputTokens: json.usage?.promptTokens,
+                outputTokens: json.usage?.completionTokens,
+                totalTokens: json.usage?.totalTokens,
+                messageStartIndex:
+                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                messageEndIndex: stepMessageEndIndex,
+                status: "ok",
+              },
+            );
+          } catch (toolErr) {
+            const failAbs = Date.now();
+            const stepMessageEndIndex =
+              messageHistory.length > stepMessageStartIndex
+                ? messageHistory.length - 1
+                : undefined;
+            pushBackendStepToolFailureSpans(
+              capturedSpans,
+              runStartedAt,
+              promptIndex,
+              stepIndex,
+              stepStartAbs,
+              { startAbs: llmStartAbs, endAbs: llmEndAbs },
+              toolsStartAbs,
+              failAbs,
+              {
+                modelId: test.model,
+                inputTokens: json.usage?.promptTokens,
+                outputTokens: json.usage?.completionTokens,
+                totalTokens: json.usage?.totalTokens,
+                messageStartIndex:
+                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                messageEndIndex: stepMessageEndIndex,
+                pushAggregateSpan: false,
+              },
+            );
+            iterationError =
+              toolErr instanceof Error ? toolErr.message : String(toolErr);
+            logger.error("[evals] tool execution failed", toolErr);
+            break;
           }
+        } else {
           const stepMessageEndIndex =
             messageHistory.length > stepMessageStartIndex
               ? messageHistory.length - 1
@@ -898,14 +1186,11 @@ const runIterationViaBackend = async ({
           pushBackendStepSuccessSpans(
             capturedSpans,
             runStartedAt,
+            promptIndex,
             stepIndex,
             stepStartAbs,
             { startAbs: llmStartAbs, endAbs: llmEndAbs },
-            {
-              startAbs: toolsStartAbs,
-              endAbs: toolsEndAbs,
-              pushAggregateSpan: newToolMessages.length === 0,
-            },
+            undefined,
             {
               modelId: test.model,
               inputTokens: json.usage?.promptTokens,
@@ -917,121 +1202,77 @@ const runIterationViaBackend = async ({
               status: "ok",
             },
           );
-        } catch (toolErr) {
-          const failAbs = Date.now();
-          const stepMessageEndIndex =
-            messageHistory.length > stepMessageStartIndex
-              ? messageHistory.length - 1
-              : undefined;
-          pushBackendStepToolFailureSpans(
-            capturedSpans,
-            runStartedAt,
-            stepIndex,
-            stepStartAbs,
-            { startAbs: llmStartAbs, endAbs: llmEndAbs },
-            toolsStartAbs,
-            failAbs,
-            {
-              modelId: test.model,
-              inputTokens: json.usage?.promptTokens,
-              outputTokens: json.usage?.completionTokens,
-              totalTokens: json.usage?.totalTokens,
-              messageStartIndex:
-                stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
-              messageEndIndex: stepMessageEndIndex,
-              pushAggregateSpan: false,
-            },
-          );
-          iterationError =
-            toolErr instanceof Error ? toolErr.message : String(toolErr);
-          logger.error("[evals] tool execution failed", toolErr);
+        }
+
+        steps += 1;
+
+        const finishReason: string | undefined = json.finishReason;
+        if (finishReason && finishReason !== "tool-calls") {
           break;
         }
-      } else {
-        const stepMessageEndIndex =
-          messageHistory.length > stepMessageStartIndex
-            ? messageHistory.length - 1
-            : undefined;
-        pushBackendStepSuccessSpans(
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          logger.debug("[evals] backend iteration aborted due to cancellation");
+          return {
+            evaluation: evaluateMultiTurnResults(
+              promptTurns,
+              toolsCalledByPrompt,
+              test.isNegativeTest,
+            ),
+            iterationId: undefined,
+          };
+        }
+
+        if (error instanceof Error) {
+          iterationError = error.message || error.toString();
+
+          const responseBody = (error as any).responseBody;
+          if (responseBody && typeof responseBody === "string") {
+            iterationErrorDetails = responseBody;
+          }
+        } else if (typeof error === "string") {
+          iterationError = error;
+        } else {
+          iterationError = String(error);
+        }
+
+        if (iterationError && iterationError.length > 500) {
+          iterationError = iterationError.substring(0, 497) + "...";
+        }
+
+        logger.error("[evals] backend fetch failed", error);
+        const failAbs = Date.now();
+        pushBackendStepLlmFailureSpans(
           capturedSpans,
           runStartedAt,
+          promptIndex,
           stepIndex,
           stepStartAbs,
-          { startAbs: llmStartAbs, endAbs: llmEndAbs },
-          undefined,
+          llmStartAbs,
+          failAbs,
           {
             modelId: test.model,
-            inputTokens: json.usage?.promptTokens,
-            outputTokens: json.usage?.completionTokens,
-            totalTokens: json.usage?.totalTokens,
-            messageStartIndex:
-              stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
-            messageEndIndex: stepMessageEndIndex,
-            status: "ok",
           },
         );
-      }
-
-      steps += 1;
-
-      const finishReason: string | undefined = json.finishReason;
-      if (finishReason && finishReason !== "tool-calls") {
         break;
       }
-    } catch (error) {
-      if (error instanceof Error && error.name === "AbortError") {
-        logger.debug("[evals] backend iteration aborted due to cancellation");
-        return {
-          evaluation: evaluateResults(
-            expectedToolCalls,
-            [],
-            test.isNegativeTest,
-          ),
-          iterationId: undefined,
-        };
-      }
+    }
 
-      if (error instanceof Error) {
-        iterationError = error.message || error.toString();
-
-        const responseBody = (error as any).responseBody;
-        if (responseBody && typeof responseBody === "string") {
-          iterationErrorDetails = responseBody;
-        }
-      } else if (typeof error === "string") {
-        iterationError = error;
-      } else {
-        iterationError = String(error);
-      }
-
-      if (iterationError && iterationError.length > 500) {
-        iterationError = iterationError.substring(0, 497) + "...";
-      }
-
-      logger.error("[evals] backend fetch failed", error);
-      const failAbs = Date.now();
-      pushBackendStepLlmFailureSpans(
-        capturedSpans,
-        runStartedAt,
-        stepIndex,
-        stepStartAbs,
-        llmStartAbs,
-        failAbs,
-        {
-          modelId: test.model,
-        },
-      );
+    if (iterationError) {
       break;
     }
   }
 
-  const evaluation = evaluateResults(
-    expectedToolCalls,
-    toolsCalled,
+  const evaluation = evaluateMultiTurnResults(
+    promptTurns,
+    toolsCalledByPrompt,
     test.isNegativeTest,
   );
+  const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
 
-  const failOnToolError = test.advancedConfig?.failOnToolError !== false;
+  const failOnToolError =
+    (advancedConfig as { failOnToolError?: boolean } | undefined)
+      ?.failOnToolError !== false;
   const traceForGate =
     capturedSpans.length > 0 || messageHistory.length > 0
       ? {
@@ -1052,14 +1293,20 @@ const runIterationViaBackend = async ({
   const finishParams = {
     iterationId,
     passed,
-    toolsCalled,
+    toolsCalled: evaluation.toolsCalled,
     usage: accumulatedUsage,
     messages: messageHistory,
     ...(capturedSpans.length ? { spans: capturedSpans } : {}),
+    ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
     status: "completed" as const,
     startedAt: runStartedAt,
     error: iterationError,
     errorDetails: iterationErrorDetails,
+    resultSource: "reported" as const,
+    metadata: {
+      ...iterationMetadataBase,
+      ...buildIterationMetadata(evaluation),
+    },
   };
 
   if (recorder) {

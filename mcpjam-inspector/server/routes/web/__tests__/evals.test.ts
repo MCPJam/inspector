@@ -64,6 +64,12 @@ const endpointCases: EndpointCase[] = [
           model: "openai/gpt-5-mini",
           provider: "openai",
           expectedToolCalls: [],
+          advancedConfig: {
+            toolChoice: {
+              type: "tool",
+              toolName: "search_docs",
+            },
+          },
         },
       ],
     },
@@ -78,6 +84,14 @@ const endpointCases: EndpointCase[] = [
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
+      testCaseOverrides: {
+        advancedConfig: {
+          toolChoice: {
+            type: "tool",
+            toolName: "search_docs",
+          },
+        },
+      },
     },
     successBody: { success: true, iteration: { _id: "iter-1" } },
     successMock: runEvalTestCaseWithManagerMock,

@@ -70,7 +70,8 @@ describe("SdkEvalQuickstart", () => {
 
     expect(SDK_EVAL_QUICKSTART_ENV).toMatch(/MCPJAM_API_KEY/);
     expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/createEvalRunReporter/);
-    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/greet/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/recordFromPrompts/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/promptTurns/);
   });
 
   it("shows provider list and SDK README link", () => {

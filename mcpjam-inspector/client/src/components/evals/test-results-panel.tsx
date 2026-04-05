@@ -31,6 +31,14 @@ export function TestResultsPanel({
   const completedAt = iteration?.updatedAt ?? iteration?.createdAt;
   const durationMs =
     startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
+  const turnCount =
+    typeof iteration?.metadata?.turnCount === "number"
+      ? iteration.metadata.turnCount
+      : iteration?.testCaseSnapshot?.promptTurns?.length ?? 1;
+  const firstFailedTurnIndex =
+    typeof iteration?.metadata?.firstFailedTurnIndex === "number"
+      ? iteration.metadata.firstFailedTurnIndex
+      : null;
 
   return (
     <div className="h-full flex flex-col bg-muted/20">
@@ -57,9 +65,15 @@ export function TestResultsPanel({
               <span className="font-mono font-medium text-foreground">
                 {modelName}
               </span>
+              <span>
+                {turnCount} turn{turnCount === 1 ? "" : "s"}
+              </span>
               <span>{iteration.actualToolCalls?.length || 0} tools</span>
               <span>{iteration.tokensUsed?.toLocaleString() || 0} tokens</span>
               {durationMs !== null && <span>{formatDuration(durationMs)}</span>}
+              {firstFailedTurnIndex !== null && (
+                <span>failed on turn {firstFailedTurnIndex + 1}</span>
+              )}
             </div>
           </div>
           {onClear && (

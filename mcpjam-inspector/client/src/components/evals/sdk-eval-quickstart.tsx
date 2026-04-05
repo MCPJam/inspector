@@ -97,6 +97,18 @@ const LLM_API_KEY = process.env.LLM_API_KEY!;
 // provider/model-id — must match an allowed TestAgent provider (see Configure environment in the app or SDK README).
 const MODEL = process.env.EVAL_MODEL!;
 const MCPJAM_API_KEY = process.env.MCPJAM_API_KEY!;
+const promptTurns = [
+  {
+    id: "turn-1",
+    prompt: "Use the greet tool to say hello to Ada.",
+    expectedToolCalls: [{ toolName: "greet" }],
+  },
+  {
+    id: "turn-2",
+    prompt: "Now greet Grace too.",
+    expectedToolCalls: [{ toolName: "greet" }],
+  },
+];
 
 describe("MCP eval quickstart", () => {
   let manager: MCPClientManager;
@@ -137,17 +149,23 @@ describe("MCP eval quickstart", () => {
   }, 120_000);
 
   it(
-    "agent calls greet on the learning server",
+    "agent calls greet across a two-turn case",
     async () => {
-      const result = await agent.prompt(
-        "Use the greet tool to say hello to Ada.",
-      );
-      const passed = result.hasToolCall("greet");
+      const promptResults = [];
+      for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+        const promptTurn = promptTurns[promptIndex]!;
+        const result = await agent.prompt(promptTurn.prompt, {
+          context: promptResults.length > 0 ? promptResults : undefined,
+        });
+        promptResults.push(result);
+      }
+      const passed = promptResults.every((result) => result.hasToolCall("greet"));
       expect(passed).toBe(true);
-      await reporter!.recordFromPrompt(result, {
-        caseTitle: "learning-server-greet",
+      await reporter!.recordFromPrompts(promptResults, {
+        caseTitle: "learning-server-greet-multi-turn",
         passed,
-        expectedToolCalls: [{ toolName: "greet" }],
+        externalCaseId: "learning-server-greet-multi-turn",
+        advancedConfig: { promptTurns },
       });
     },
     90_000,
