@@ -91,6 +91,53 @@ describe("filterByFeatureFlags", () => {
     expect(result[0].items).toHaveLength(1);
     expect(result[0].items[0].title).toBe("Plain");
   });
+
+  it("hides Evaluate item when evals-enabled flag is off", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "mcp-apps",
+          items: [
+            { title: "App Builder", url: "#app-builder", icon: FakeIcon },
+            {
+              title: "Evaluate",
+              url: "#evals",
+              icon: FakeIcon,
+              featureFlag: "evals-enabled",
+              billingFeature: "evals" as const,
+              evalsSubnav: true,
+            },
+          ],
+        },
+      ],
+      { "evals-enabled": false },
+    );
+    const titles = result[0].items.map((i) => i.title);
+    expect(titles).toEqual(["App Builder"]);
+  });
+
+  it("shows Evaluate item when evals-enabled flag is on", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "mcp-apps",
+          items: [
+            {
+              title: "Evaluate",
+              url: "#evals",
+              icon: FakeIcon,
+              featureFlag: "evals-enabled",
+              billingFeature: "evals" as const,
+              evalsSubnav: true,
+            },
+          ],
+        },
+      ],
+      { "evals-enabled": true },
+    );
+    expect(result[0].items).toHaveLength(1);
+    expect(result[0].items[0].title).toBe("Evaluate");
+  });
 });
 
 describe("applyBillingGateNavState", () => {
