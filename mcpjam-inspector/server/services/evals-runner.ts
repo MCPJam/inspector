@@ -1,5 +1,6 @@
 import {
   generateText,
+  streamText,
   type ModelMessage,
   type Tool as AiTool,
   type ToolChoice,
@@ -57,6 +58,7 @@ import {
   type EvalToolChoice,
 } from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
+import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 
 export type EvalTestCase = {
   title: string;
@@ -1595,3 +1597,1093 @@ export const runEvalSuiteWithAiSdk = async ({
     throw error;
   }
 };
+
+export type StreamEmit = (event: EvalStreamEvent) => void;
+
+const streamIterationWithAiSdk = async ({
+  test,
+  runIndex,
+  tools,
+  recorder,
+  testCaseId,
+  suiteId,
+  modelDefinition,
+  modelApiKeys,
+  convexClient,
+  runId,
+  abortSignal,
+  emit,
+}: RunIterationAiSdkParams & { emit: StreamEmit }): Promise<EvalIterationOutcome> => {
+  const resolvedTest = resolveEvalTestCase(test);
+
+  // Check if run was cancelled before starting iteration
+  if (runId !== null) {
+    try {
+      const currentRun = await convexClient.query(
+        "testSuites:getTestSuiteRun" as any,
+        { runId },
+      );
+      if (currentRun?.status === "cancelled") {
+        return {
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
+            [],
+            test.isNegativeTest,
+          ),
+          iterationId: undefined,
+        };
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("not found") ||
+        errorMessage.includes("unauthorized")
+      ) {
+        return {
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
+            [],
+            test.isNegativeTest,
+          ),
+          iterationId: undefined,
+        };
+      }
+    }
+  }
+
+  const { advancedConfig, query, expectedToolCalls, expectedOutput, promptTurns } =
+    resolvedTest;
+  const system =
+    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+  const temperature =
+    typeof advancedConfig?.temperature === "number"
+      ? advancedConfig.temperature
+      : undefined;
+  const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
+
+  const apiKey =
+    modelApiKeys?.[test.provider] ??
+    modelApiKeys?.[test.provider.toLowerCase()] ??
+    "";
+  if (!apiKey) {
+    throw new Error(
+      `Missing API key for provider ${test.provider} (test: ${test.title})`,
+    );
+  }
+
+  const runStartedAt = Date.now();
+  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  if (promptTurns.length > 1) {
+    iterationMetadataBase.multiTurn = true;
+  }
+  const iterationParams = {
+    testCaseId: test.testCaseId ?? testCaseId,
+    testCaseSnapshot: {
+      title: test.title,
+      query,
+      provider: test.provider,
+      model: test.model,
+      runs: test.runs,
+      expectedToolCalls,
+      isNegativeTest: test.isNegativeTest,
+      expectedOutput,
+      promptTurns,
+      advancedConfig,
+    },
+    iterationNumber: runIndex + 1,
+    startedAt: runStartedAt,
+  };
+
+  const iterationId = recorder
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
+
+  const baseMessages: ModelMessage[] = [];
+  if (system) {
+    baseMessages.push({ role: "system", content: system });
+  }
+  let conversationMessages: ModelMessage[] = [...baseMessages];
+  const recordedSpans: EvalTraceSpan[] = [];
+  const toolsCalledByPrompt: ToolCall[][] = [];
+  const accumulatedUsage: UsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+  let activePromptIndex = -1;
+  let activePromptInputMessages: ModelMessage[] = [];
+  let activePartialResponseMessages: ModelMessage[] = [];
+  let activeCompletedStepCount = 0;
+  let activeTraceCtx:
+    | ReturnType<typeof createAiSdkEvalTraceContext>
+    | null = null;
+
+  try {
+    const llmModel = createLlmModel(modelDefinition, apiKey);
+
+    if (
+      toolChoice &&
+      typeof toolChoice === "object" &&
+      !Object.hasOwn(tools, toolChoice.toolName)
+    ) {
+      throw new Error(
+        `Configured tool choice '${toolChoice.toolName}' is not available for this eval run.`,
+      );
+    }
+
+    for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+      const promptTurn = promptTurns[promptIndex]!;
+      activePromptIndex = promptIndex;
+      activePromptInputMessages = [
+        ...conversationMessages,
+        { role: "user", content: promptTurn.prompt },
+      ];
+      activePartialResponseMessages = [];
+      activeCompletedStepCount = 0;
+      activeTraceCtx = createAiSdkEvalTraceContext(runStartedAt);
+      const tracedTools = wrapToolSetForEvalTrace(
+        tools,
+        activeTraceCtx,
+        promptIndex,
+      );
+
+      emit({ type: "turn_start", turnIndex: promptIndex, prompt: promptTurn.prompt });
+
+      const result = streamText({
+        model: llmModel,
+        messages: activePromptInputMessages,
+        tools: tracedTools,
+        stopWhen: stepCountIs(20),
+        ...(temperature == null ? {} : { temperature }),
+        ...(toolChoice
+          ? { toolChoice: toolChoice as ToolChoice<Record<string, AiTool>> }
+          : {}),
+        ...(abortSignal ? { abortSignal } : {}),
+        experimental_telemetry: {
+          isEnabled: true,
+          functionId: "evals.streamText",
+          recordInputs: false,
+          recordOutputs: false,
+          metadata: {
+            source: "evals",
+            ...(suiteId ? { suiteId } : {}),
+            ...(runId ? { runId } : {}),
+            ...(testCaseId ? { testCaseId } : {}),
+            ...(iterationId ? { iterationId } : {}),
+            iterationNumber: runIndex + 1,
+            provider: test.provider,
+            model: test.model,
+            promptIndex,
+          },
+        },
+        prepareStep: ({ stepNumber }) => {
+          registerAiSdkPrepareStep(activeTraceCtx!, stepNumber, {
+            modelId: test.model,
+            promptIndex,
+          });
+          return undefined;
+        },
+        onStepFinish: async (step) => {
+          activeCompletedStepCount += 1;
+          const stepFinishedAt = Date.now();
+          const responseMessages = step.response?.messages ?? [];
+          const responseMessageCountBeforeAppend =
+            activePartialResponseMessages.length;
+          const messageStartIndex =
+            responseMessages.length > 0
+              ? activePromptInputMessages.length + responseMessageCountBeforeAppend
+              : undefined;
+          appendDedupedModelMessages(
+            activePartialResponseMessages,
+            responseMessages as ModelMessage[],
+          );
+          const appendedMessageCount =
+            activePartialResponseMessages.length - responseMessageCountBeforeAppend;
+          const messageEndIndex =
+            messageStartIndex != null && appendedMessageCount > 0
+              ? messageStartIndex + appendedMessageCount - 1
+              : undefined;
+          emitAiSdkOnStepFinish(activeTraceCtx!, stepFinishedAt, {
+            modelId: step.response?.modelId ?? test.model,
+            inputTokens: step.usage?.inputTokens,
+            outputTokens: step.usage?.outputTokens,
+            totalTokens: step.usage?.totalTokens,
+            messageStartIndex,
+            messageEndIndex,
+            status: "ok",
+          });
+        },
+        onFinish: async () => {
+          /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
+        },
+      });
+
+      // Consume the full stream and emit events
+      for await (const part of result.fullStream) {
+        switch (part.type) {
+          case "text-delta":
+            emit({ type: "text_delta", content: part.textDelta });
+            break;
+          case "tool-call":
+            emit({
+              type: "tool_call",
+              toolName: part.toolName,
+              toolCallId: part.toolCallId,
+              args: part.args as Record<string, unknown>,
+            });
+            break;
+          case "tool-result":
+            emit({
+              type: "tool_result",
+              toolCallId: part.toolCallId,
+              result: part.result,
+              isError: (part as any).isError,
+            });
+            break;
+          case "step-finish":
+            emit({
+              type: "step_finish",
+              stepNumber: (part as any).stepNumber ?? activeCompletedStepCount,
+              usage: {
+                inputTokens: part.usage?.inputTokens ?? 0,
+                outputTokens: part.usage?.outputTokens ?? 0,
+              },
+            });
+            break;
+        }
+      }
+
+      // After stream completes, resolve the promises on the streamText result
+      const steps = await result.steps;
+      const usage = await result.usage;
+      const responseObj = await result.response;
+      const finalMessagesRaw = responseObj?.messages as
+        | ModelMessage[]
+        | undefined;
+      const promptResponseMessages =
+        finalMessagesRaw && finalMessagesRaw.length > 0
+          ? finalMessagesRaw
+          : activePartialResponseMessages;
+
+      if (activeTraceCtx.recordedSpans.length > 0) {
+        patchAiSdkRecordedSpansMessageRangesFromSteps(
+          activeTraceCtx.recordedSpans,
+          activePromptInputMessages.length,
+          steps,
+          promptIndex,
+        );
+      }
+
+      const promptToolsCalled = extractToolCallsFromConversation({
+        steps,
+        messages: promptResponseMessages,
+      });
+      toolsCalledByPrompt.push(promptToolsCalled);
+      recordedSpans.push(...activeTraceCtx.recordedSpans);
+
+      conversationMessages = [
+        ...activePromptInputMessages,
+        ...promptResponseMessages,
+      ];
+
+      accumulatedUsage.inputTokens =
+        (accumulatedUsage.inputTokens ?? 0) + (usage?.inputTokens ?? 0);
+      accumulatedUsage.outputTokens =
+        (accumulatedUsage.outputTokens ?? 0) + (usage?.outputTokens ?? 0);
+      accumulatedUsage.totalTokens =
+        (accumulatedUsage.totalTokens ?? 0) + (usage?.totalTokens ?? 0);
+
+      activeTraceCtx = null;
+      activePromptInputMessages = [];
+      activePartialResponseMessages = [];
+      activeCompletedStepCount = 0;
+
+      emit({ type: "turn_finish", turnIndex: promptIndex });
+    }
+
+    const evaluation = evaluateMultiTurnResults(
+      promptTurns,
+      toolsCalledByPrompt,
+      test.isNegativeTest,
+    );
+    const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+
+    const failOnToolError =
+      (advancedConfig as { failOnToolError?: boolean } | undefined)
+        ?.failOnToolError !== false;
+    const traceForGate =
+      recordedSpans.length > 0 || conversationMessages.length > 0
+        ? {
+            ...(recordedSpans.length > 0
+              ? { spans: recordedSpans }
+              : {}),
+            messages: conversationMessages as ModelMessage[] as Array<{
+              role: string;
+              content: unknown;
+            }>,
+          }
+        : undefined;
+    const passed = finalizePassedForEval({
+      matchPassed: evaluation.passed,
+      trace: traceForGate,
+      failOnToolError,
+    });
+
+    const usageFinal: UsageTotals = {
+      inputTokens: accumulatedUsage.inputTokens,
+      outputTokens: accumulatedUsage.outputTokens,
+      totalTokens: accumulatedUsage.totalTokens,
+    };
+
+    const finishParams = {
+      iterationId,
+      passed,
+      toolsCalled: evaluation.toolsCalled,
+      usage: usageFinal,
+      messages: conversationMessages,
+      ...(recordedSpans.length
+        ? { spans: recordedSpans }
+        : {}),
+      ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+      status: "completed" as const,
+      startedAt: runStartedAt,
+      resultSource: "reported" as const,
+      metadata: {
+        ...iterationMetadataBase,
+        ...buildIterationMetadata(evaluation),
+      },
+    };
+
+    if (recorder) {
+      await recorder.finishIteration(finishParams);
+    } else {
+      await finishIterationDirectly(convexClient, finishParams);
+    }
+
+    return {
+      evaluation,
+      iterationId: iterationId ?? undefined,
+    };
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      logger.debug("[evals] streaming iteration aborted due to cancellation");
+      return {
+        evaluation: evaluateMultiTurnResults(
+          promptTurns,
+          toolsCalledByPrompt,
+          test.isNegativeTest,
+        ),
+        iterationId: undefined,
+      };
+    }
+
+    logger.error("[evals] streaming iteration failed", error);
+
+    let errorMessage: string | undefined = undefined;
+    let errorDetails: string | undefined = undefined;
+
+    if (error instanceof Error) {
+      errorMessage = error.message || error.toString();
+
+      const responseBody = (error as any).responseBody;
+      if (responseBody && typeof responseBody === "string") {
+        errorDetails = responseBody;
+      }
+    } else if (typeof error === "string") {
+      errorMessage = error;
+    } else {
+      errorMessage = String(error);
+    }
+
+    const failAt = Date.now();
+    if (activeTraceCtx) {
+      finalizeAiSdkTraceOnFailure(activeTraceCtx, failAt, {
+        completedStepCount: activeCompletedStepCount,
+        lastStepEndedAt: activeTraceCtx.lastStepClosedEndAt,
+        modelId: test.model,
+        promptIndex: activePromptIndex >= 0 ? activePromptIndex : 0,
+      });
+      recordedSpans.push(...activeTraceCtx.recordedSpans);
+    }
+    const failMessages =
+      activePromptInputMessages.length > 0
+        ? activeCompletedStepCount > 0 || activePartialResponseMessages.length > 0
+          ? [...activePromptInputMessages, ...activePartialResponseMessages]
+          : activePromptInputMessages
+        : conversationMessages;
+    const evaluation = evaluateMultiTurnResults(
+      promptTurns,
+      toolsCalledByPrompt,
+      test.isNegativeTest,
+    );
+    const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+
+    const failParams = {
+      iterationId,
+      passed: false,
+      toolsCalled: evaluation.toolsCalled,
+      usage: {
+        inputTokens: accumulatedUsage.inputTokens,
+        outputTokens: accumulatedUsage.outputTokens,
+        totalTokens: accumulatedUsage.totalTokens,
+      },
+      messages: failMessages,
+      ...(recordedSpans.length ? { spans: recordedSpans } : {}),
+      ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+      status: "failed" as const,
+      startedAt: runStartedAt,
+      error: errorMessage,
+      errorDetails,
+      resultSource: "reported" as const,
+      metadata: {
+        ...iterationMetadataBase,
+        ...buildIterationMetadata(evaluation),
+      },
+    };
+
+    if (recorder) {
+      await recorder.finishIteration(failParams);
+    } else {
+      await finishIterationDirectly(convexClient, failParams);
+    }
+    return {
+      evaluation,
+      iterationId: iterationId ?? undefined,
+    };
+  }
+};
+
+const streamIterationViaBackend = async ({
+  test,
+  runIndex,
+  tools,
+  recorder,
+  testCaseId,
+  convexHttpUrl,
+  convexAuthToken,
+  convexClient,
+  runId,
+  abortSignal,
+  emit,
+}: RunIterationBackendParams & { emit: StreamEmit }): Promise<EvalIterationOutcome> => {
+  const resolvedTest = resolveEvalTestCase(test);
+
+  // Check if run was cancelled before starting iteration
+  if (runId !== null) {
+    try {
+      const currentRun = await convexClient.query(
+        "testSuites:getTestSuiteRun" as any,
+        { runId },
+      );
+      if (currentRun?.status === "cancelled") {
+        return {
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
+            [],
+            test.isNegativeTest,
+          ),
+          iterationId: undefined,
+        };
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      if (
+        errorMessage.includes("not found") ||
+        errorMessage.includes("unauthorized")
+      ) {
+        return {
+          evaluation: evaluateMultiTurnResults(
+            resolvedTest.promptTurns,
+            [],
+            test.isNegativeTest,
+          ),
+          iterationId: undefined,
+        };
+      }
+    }
+  }
+
+  const { query, expectedToolCalls, expectedOutput, promptTurns, advancedConfig } =
+    resolvedTest;
+  const systemPrompt =
+    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+  const temperature =
+    typeof advancedConfig?.temperature === "number"
+      ? advancedConfig.temperature
+      : undefined;
+
+  const messageHistory: ModelMessage[] = [];
+  const toolsCalledByPrompt: ToolCall[][] = [];
+  const runStartedAt = Date.now();
+  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  if (promptTurns.length > 1) {
+    iterationMetadataBase.multiTurn = true;
+  }
+
+  const iterationParams = {
+    testCaseId: test.testCaseId ?? testCaseId,
+    testCaseSnapshot: {
+      title: test.title,
+      query,
+      provider: test.provider,
+      model: test.model,
+      runs: test.runs,
+      expectedToolCalls,
+      isNegativeTest: test.isNegativeTest,
+      expectedOutput,
+      promptTurns,
+      advancedConfig,
+    },
+    iterationNumber: runIndex + 1,
+    startedAt: runStartedAt,
+  };
+
+  const iterationId = recorder
+    ? await recorder.startIteration(iterationParams)
+    : await createIterationDirectly(convexClient, iterationParams);
+
+  const toolDefs = Object.entries(tools).map(([name, tool]) => {
+    const schema = (tool as any)?.inputSchema;
+    let serializedSchema: Record<string, unknown> | undefined;
+    if (schema) {
+      if (
+        typeof schema === "object" &&
+        schema !== null &&
+        "jsonSchema" in (schema as Record<string, unknown>)
+      ) {
+        serializedSchema = (schema as any).jsonSchema as Record<
+          string,
+          unknown
+        >;
+      } else if (typeof schema === "object" && "safeParse" in (schema as any)) {
+        try {
+          serializedSchema = z.toJSONSchema(schema) as Record<string, unknown>;
+        } catch {
+          serializedSchema = undefined;
+        }
+      } else {
+        serializedSchema = schema as Record<string, unknown>;
+      }
+    }
+
+    return {
+      name,
+      description: (tool as any)?.description,
+      inputSchema:
+        serializedSchema ??
+        ({
+          type: "object",
+          properties: {},
+          additionalProperties: false,
+        } as Record<string, unknown>),
+    };
+  });
+
+  const authHeader = convexAuthToken
+    ? { Authorization: `Bearer ${convexAuthToken}` }
+    : ({} as Record<string, string>);
+
+  let accumulatedUsage: UsageTotals = {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+  };
+
+  let iterationError: string | undefined = undefined;
+  let iterationErrorDetails: string | undefined = undefined;
+  const capturedSpans: EvalTraceSpan[] = [];
+  for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
+    const promptTurn = promptTurns[promptIndex]!;
+    const promptToolsCalled: ToolCall[] = [];
+    toolsCalledByPrompt.push(promptToolsCalled);
+    messageHistory.push({
+      role: "user",
+      content: promptTurn.prompt,
+    });
+
+    emit({ type: "turn_start", turnIndex: promptIndex, prompt: promptTurn.prompt });
+
+    let steps = 0;
+    while (steps < MAX_STEPS) {
+      const stepStartAbs = Date.now();
+      const stepIndex = steps;
+      const llmStartAbs = stepStartAbs;
+      const stepMessageStartIndex = messageHistory.length;
+      try {
+        const res = await fetch(`${convexHttpUrl}/stream`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            ...(authHeader ? { ...authHeader } : {}),
+          },
+          body: JSON.stringify({
+            mode: "step",
+            messages: JSON.stringify(messageHistory),
+            model: String(test.model),
+            ...(systemPrompt ? { systemPrompt } : {}),
+            ...(temperature == null ? {} : { temperature }),
+            tools: toolDefs,
+            maxOutputTokens: 16384,
+          }),
+          ...(abortSignal ? { signal: abortSignal } : {}),
+        });
+
+        if (!res.ok) {
+          const errorText = await res.text().catch(() => res.statusText);
+          iterationError = `Backend stream error: ${res.status} ${errorText}`;
+          iterationErrorDetails = errorText;
+          logger.error(
+            "[evals] backend stream error",
+            new Error(res.statusText),
+          );
+          const failAbs = Date.now();
+          pushBackendStepLlmFailureSpans(
+            capturedSpans,
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            stepStartAbs,
+            llmStartAbs,
+            failAbs,
+          );
+          break;
+        }
+
+        const json: any = await res.json();
+        const llmEndAbs = Date.now();
+        if (!json?.ok || !Array.isArray(json.messages)) {
+          iterationError = "Invalid backend response payload";
+          iterationErrorDetails = JSON.stringify(json, null, 2);
+          logger.error(
+            "[evals] invalid backend response payload",
+            new Error("Invalid backend response payload"),
+          );
+          const failAbs = Date.now();
+          pushBackendStepLlmFailureSpans(
+            capturedSpans,
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            stepStartAbs,
+            llmStartAbs,
+            failAbs,
+            {
+              modelId: test.model,
+            },
+          );
+          break;
+        }
+
+        if (json.usage) {
+          accumulatedUsage.inputTokens =
+            (accumulatedUsage.inputTokens || 0) +
+            (json.usage.promptTokens || 0);
+          accumulatedUsage.outputTokens =
+            (accumulatedUsage.outputTokens || 0) +
+            (json.usage.completionTokens || 0);
+          accumulatedUsage.totalTokens =
+            (accumulatedUsage.totalTokens || 0) + (json.usage.totalTokens || 0);
+        }
+
+        // Emit events for the assistant messages from the backend response
+        for (const msg of json.messages as any[]) {
+          if (msg?.role === "assistant") {
+            if (typeof msg.content === "string" && msg.content.length > 0) {
+              emit({ type: "text_delta", content: msg.content });
+            } else if (Array.isArray(msg.content)) {
+              for (const item of msg.content) {
+                if (item?.type === "text" && typeof item.text === "string" && item.text.length > 0) {
+                  emit({ type: "text_delta", content: item.text });
+                } else if (item?.type === "tool-call") {
+                  const name = item.toolName ?? item.name;
+                  if (name) {
+                    emit({
+                      type: "tool_call",
+                      toolName: name,
+                      toolCallId: item.toolCallId ?? `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                      args: item.input ?? item.parameters ?? item.args ?? {},
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        for (const msg of json.messages as any[]) {
+          if (msg?.role === "assistant" && Array.isArray(msg.content)) {
+            for (const item of msg.content) {
+              if (item?.type === "tool-call") {
+                const name = item.toolName ?? item.name;
+                if (name) {
+                  promptToolsCalled.push({
+                    toolName: name,
+                    arguments: item.input ?? item.parameters ?? item.args ?? {},
+                  });
+                }
+                if (!item.toolCallId) {
+                  item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                }
+                if (item.input == null) {
+                  item.input = item.parameters ?? item.args ?? {};
+                }
+              }
+            }
+          }
+          messageHistory.push(msg);
+        }
+
+        if (hasUnresolvedToolCalls(messageHistory as any)) {
+          const toolsStartAbs = Date.now();
+          const tracedBackendTools = wrapBackendToolsForTrace(tools as any, {
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            spans: capturedSpans,
+          });
+          try {
+            const newToolMessages = await executeToolCallsFromMessages(
+              messageHistory as any,
+              {
+                tools: tracedBackendTools as any,
+              },
+            );
+            const toolsEndAbs = Date.now();
+
+            // Emit tool_result events for each tool result message
+            for (const toolMsg of newToolMessages) {
+              if ((toolMsg as any)?.role === "tool" && Array.isArray((toolMsg as any).content)) {
+                for (const part of (toolMsg as any).content) {
+                  if (part?.type === "tool-result" && typeof part.toolCallId === "string") {
+                    emit({
+                      type: "tool_result",
+                      toolCallId: part.toolCallId,
+                      result: part.result,
+                      isError: part.isError,
+                    });
+                  }
+                }
+              }
+            }
+
+            const toolMessageIndexByCallId = new Map<string, number>();
+            for (let index = 0; index < messageHistory.length; index++) {
+              const msg = messageHistory[index] as any;
+              if (msg?.role !== "tool" || !Array.isArray(msg.content)) {
+                continue;
+              }
+              for (const part of msg.content) {
+                if (
+                  part?.type === "tool-result" &&
+                  typeof part.toolCallId === "string"
+                ) {
+                  toolMessageIndexByCallId.set(part.toolCallId, index);
+                }
+              }
+            }
+            for (const span of capturedSpans) {
+              if (
+                span.stepIndex !== stepIndex ||
+                (span.promptIndex ?? 0) !== promptIndex ||
+                typeof span.toolCallId !== "string" ||
+                typeof span.messageStartIndex === "number"
+              ) {
+                continue;
+              }
+              const toolMessageIndex = toolMessageIndexByCallId.get(
+                span.toolCallId,
+              );
+              if (typeof toolMessageIndex === "number") {
+                span.messageStartIndex = toolMessageIndex;
+                span.messageEndIndex = toolMessageIndex;
+              }
+            }
+            const stepMessageEndIndex =
+              messageHistory.length > stepMessageStartIndex
+                ? messageHistory.length - 1
+                : undefined;
+            pushBackendStepSuccessSpans(
+              capturedSpans,
+              runStartedAt,
+              promptIndex,
+              stepIndex,
+              stepStartAbs,
+              { startAbs: llmStartAbs, endAbs: llmEndAbs },
+              {
+                startAbs: toolsStartAbs,
+                endAbs: toolsEndAbs,
+                pushAggregateSpan: newToolMessages.length === 0,
+              },
+              {
+                modelId: test.model,
+                inputTokens: json.usage?.promptTokens,
+                outputTokens: json.usage?.completionTokens,
+                totalTokens: json.usage?.totalTokens,
+                messageStartIndex:
+                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                messageEndIndex: stepMessageEndIndex,
+                status: "ok",
+              },
+            );
+          } catch (toolErr) {
+            const failAbs = Date.now();
+            const stepMessageEndIndex =
+              messageHistory.length > stepMessageStartIndex
+                ? messageHistory.length - 1
+                : undefined;
+            pushBackendStepToolFailureSpans(
+              capturedSpans,
+              runStartedAt,
+              promptIndex,
+              stepIndex,
+              stepStartAbs,
+              { startAbs: llmStartAbs, endAbs: llmEndAbs },
+              toolsStartAbs,
+              failAbs,
+              {
+                modelId: test.model,
+                inputTokens: json.usage?.promptTokens,
+                outputTokens: json.usage?.completionTokens,
+                totalTokens: json.usage?.totalTokens,
+                messageStartIndex:
+                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                messageEndIndex: stepMessageEndIndex,
+                pushAggregateSpan: false,
+              },
+            );
+            iterationError =
+              toolErr instanceof Error ? toolErr.message : String(toolErr);
+            logger.error("[evals] tool execution failed", toolErr);
+            break;
+          }
+        } else {
+          const stepMessageEndIndex =
+            messageHistory.length > stepMessageStartIndex
+              ? messageHistory.length - 1
+              : undefined;
+          pushBackendStepSuccessSpans(
+            capturedSpans,
+            runStartedAt,
+            promptIndex,
+            stepIndex,
+            stepStartAbs,
+            { startAbs: llmStartAbs, endAbs: llmEndAbs },
+            undefined,
+            {
+              modelId: test.model,
+              inputTokens: json.usage?.promptTokens,
+              outputTokens: json.usage?.completionTokens,
+              totalTokens: json.usage?.totalTokens,
+              messageStartIndex:
+                stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+              messageEndIndex: stepMessageEndIndex,
+              status: "ok",
+            },
+          );
+        }
+
+        steps += 1;
+
+        emit({
+          type: "step_finish",
+          stepNumber: steps,
+          usage: {
+            inputTokens: json.usage?.promptTokens ?? 0,
+            outputTokens: json.usage?.completionTokens ?? 0,
+          },
+        });
+
+        const finishReason: string | undefined = json.finishReason;
+        if (finishReason && finishReason !== "tool-calls") {
+          break;
+        }
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          logger.debug("[evals] backend streaming iteration aborted due to cancellation");
+          return {
+            evaluation: evaluateMultiTurnResults(
+              promptTurns,
+              toolsCalledByPrompt,
+              test.isNegativeTest,
+            ),
+            iterationId: undefined,
+          };
+        }
+
+        if (error instanceof Error) {
+          iterationError = error.message || error.toString();
+
+          const responseBody = (error as any).responseBody;
+          if (responseBody && typeof responseBody === "string") {
+            iterationErrorDetails = responseBody;
+          }
+        } else if (typeof error === "string") {
+          iterationError = error;
+        } else {
+          iterationError = String(error);
+        }
+
+        if (iterationError && iterationError.length > 500) {
+          iterationError = iterationError.substring(0, 497) + "...";
+        }
+
+        logger.error("[evals] backend fetch failed", error);
+        const failAbs = Date.now();
+        pushBackendStepLlmFailureSpans(
+          capturedSpans,
+          runStartedAt,
+          promptIndex,
+          stepIndex,
+          stepStartAbs,
+          llmStartAbs,
+          failAbs,
+          {
+            modelId: test.model,
+          },
+        );
+        break;
+      }
+    }
+
+    if (iterationError) {
+      break;
+    }
+
+    emit({ type: "turn_finish", turnIndex: promptIndex });
+  }
+
+  const evaluation = evaluateMultiTurnResults(
+    promptTurns,
+    toolsCalledByPrompt,
+    test.isNegativeTest,
+  );
+  const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+
+  const failOnToolError =
+    (advancedConfig as { failOnToolError?: boolean } | undefined)
+      ?.failOnToolError !== false;
+  const traceForGate =
+    capturedSpans.length > 0 || messageHistory.length > 0
+      ? {
+          ...(capturedSpans.length > 0 ? { spans: capturedSpans } : {}),
+          messages: messageHistory as ModelMessage[] as Array<{
+            role: string;
+            content: unknown;
+          }>,
+        }
+      : undefined;
+  const passed = finalizePassedForEval({
+    matchPassed: evaluation.passed,
+    trace: traceForGate,
+    iterationError,
+    failOnToolError,
+  });
+
+  const finishParams = {
+    iterationId,
+    passed,
+    toolsCalled: evaluation.toolsCalled,
+    usage: accumulatedUsage,
+    messages: messageHistory,
+    ...(capturedSpans.length ? { spans: capturedSpans } : {}),
+    ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
+    status: "completed" as const,
+    startedAt: runStartedAt,
+    error: iterationError,
+    errorDetails: iterationErrorDetails,
+    resultSource: "reported" as const,
+    metadata: {
+      ...iterationMetadataBase,
+      ...buildIterationMetadata(evaluation),
+    },
+  };
+
+  if (recorder) {
+    await recorder.finishIteration(finishParams);
+  } else {
+    await finishIterationDirectly(convexClient, finishParams);
+  }
+
+  return {
+    evaluation,
+    iterationId: iterationId ?? undefined,
+  };
+};
+
+export const streamTestCase = async (params: {
+  test: EvalTestCase;
+  tools: ToolSet;
+  recorder: SuiteRunRecorder | null;
+  modelApiKeys?: Record<string, string>;
+  convexHttpUrl: string;
+  convexAuthToken: string;
+  convexClient: ConvexHttpClient;
+  testCaseId?: string;
+  suiteId?: string;
+  runId: string | null;
+  abortSignal?: AbortSignal;
+  emit: StreamEmit;
+}) => {
+  const {
+    test,
+    tools,
+    recorder,
+    modelApiKeys,
+    convexHttpUrl,
+    convexAuthToken,
+    convexClient,
+    testCaseId: parentTestCaseId,
+    suiteId,
+    runId,
+    abortSignal,
+    emit,
+  } = params;
+  const testCaseId = test.testCaseId || parentTestCaseId;
+  const modelDefinition = buildModelDefinition(test);
+  const isJamModel = isMCPJamProvidedModel(String(modelDefinition.id));
+
+  const outcomes: EvalIterationOutcome[] = [];
+
+  for (let runIndex = 0; runIndex < test.runs; runIndex++) {
+    if (isJamModel) {
+      const iterationOutcome = await streamIterationViaBackend({
+        test,
+        runIndex,
+        tools,
+        recorder,
+        testCaseId,
+        suiteId,
+        convexHttpUrl,
+        convexAuthToken,
+        convexClient,
+        modelApiKeys,
+        runId,
+        abortSignal,
+        emit,
+      });
+      outcomes.push(iterationOutcome);
+      continue;
+    }
+
+    const iterationOutcome = await streamIterationWithAiSdk({
+      test,
+      runIndex,
+      tools,
+      recorder,
+      testCaseId,
+      suiteId,
+      modelDefinition,
+      modelApiKeys,
+      convexClient,
+      runId,
+      abortSignal,
+      emit,
+    });
+    outcomes.push(iterationOutcome);
+  }
+
+  return outcomes;
+};
+

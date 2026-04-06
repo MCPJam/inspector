@@ -23,7 +23,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { listEvalTools, runEvalTestCase } from "@/lib/apis/evals-api";
+import {
+  listEvalTools,
+  runEvalTestCase,
+  streamEvalTestCase,
+} from "@/lib/apis/evals-api";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -76,6 +80,11 @@ import type {
 } from "./types";
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
+import {
+  reduceEvalStreamEvent,
+  initialEvalStreamState,
+} from "./eval-stream-reducer";
+import { TraceViewer } from "./trace-viewer";
 
 interface TestTemplate {
   title: string;
@@ -306,6 +315,8 @@ export function TestTemplateEditor({
    * different models).
    */
   const compareRequestGenByModelRef = useRef<Record<string, number>>({});
+  /** Per-model AbortControllers for cancelling superseded streaming runs. */
+  const compareAbortControllersRef = useRef<Record<string, AbortController>>({});
   const initializedSelectionCaseRef = useRef<string | null>(null);
 
   const testCases = useQuery("testSuites:listTestCases" as any, {
@@ -1062,45 +1073,139 @@ export function TestTemplateEditor({
       models: preparedRuns.map((run) => run.modelValue),
     });
 
+    // Abort any previous streaming runs for models we're about to re-run
+    for (const { modelValue } of preparedRuns) {
+      compareAbortControllersRef.current[modelValue]?.abort();
+    }
+
     try {
       const completedRecords = await Promise.all(
         preparedRuns.map(async ({ modelValue, modelLabel, request }) => {
           const myGen = modelRequestGen[modelValue];
+          const abortController = new AbortController();
+          compareAbortControllersRef.current[modelValue] = abortController;
+
           try {
-            const data = await runEvalTestCase({
-              ...request.request,
-              skipLastMessageRunUpdate: true,
-            });
-            const record = buildCompareRunRecord({
-              modelValue,
-              modelLabel,
-              iteration: data.iteration ?? null,
-              completedAt: Date.now(),
-            });
+            await streamEvalTestCase(
+              {
+                ...request.request,
+                skipLastMessageRunUpdate: true,
+              },
+              (event) => {
+                if (compareRequestGenByModelRef.current[modelValue] !== myGen) return;
 
-            if (compareRequestGenByModelRef.current[modelValue] === myGen) {
-              setCompareRunRecords((previous) => ({
-                ...previous,
-                [modelValue]: record,
-              }));
-            }
+                if (event.type === "complete") {
+                  const record = buildCompareRunRecord({
+                    modelValue,
+                    modelLabel,
+                    iteration: (event.iteration as EvalIteration) ?? null,
+                    completedAt: Date.now(),
+                  });
+                  setCompareRunRecords((previous) => ({
+                    ...previous,
+                    [modelValue]: {
+                      ...record,
+                      // Keep streamingMessages temporarily to avoid flash
+                      streamingMessages: previous[modelValue]?.streamingMessages,
+                    },
+                  }));
+                  // Clear streamingMessages after a short delay to let EvalTraceSurface load
+                  setTimeout(() => {
+                    if (compareRequestGenByModelRef.current[modelValue] !== myGen) return;
+                    setCompareRunRecords((previous) => {
+                      const current = previous[modelValue];
+                      if (!current) return previous;
+                      const { streamingMessages: _, streamingMetrics: __, ...rest } = current;
+                      return { ...previous, [modelValue]: rest };
+                    });
+                  }, 2000);
 
-            posthog.capture("compare_model_completed", {
-              location: "test_template_editor",
-              platform: detectPlatform(),
-              environment: detectEnvironment(),
-              suite_id: suiteId,
-              test_case_id: currentTestCase._id,
-              compare_run_id: compareRunId,
-              model: modelValue,
-              result: record.result ?? "unknown",
-              duration_ms: record.metrics.durationMs ?? null,
-              tool_call_count: record.metrics.toolCallCount,
-              mismatch_count: record.metrics.mismatchCount,
+                  posthog.capture("compare_model_completed", {
+                    location: "test_template_editor",
+                    platform: detectPlatform(),
+                    environment: detectEnvironment(),
+                    suite_id: suiteId,
+                    test_case_id: currentTestCase._id,
+                    compare_run_id: compareRunId,
+                    model: modelValue,
+                    result: record.result ?? "unknown",
+                    duration_ms: record.metrics.durationMs ?? null,
+                    tool_call_count: record.metrics.toolCallCount,
+                    mismatch_count: record.metrics.mismatchCount,
+                  });
+                  return;
+                }
+
+                if (event.type === "error") {
+                  const failedRecord: CompareRunRecord = {
+                    ...buildCompareRunRecord({
+                      modelValue,
+                      modelLabel,
+                      iteration: null,
+                      error: event.message,
+                      completedAt: Date.now(),
+                    }),
+                    status: "failed",
+                    error: event.message,
+                  };
+                  setCompareRunRecords((previous) => ({
+                    ...previous,
+                    [modelValue]: failedRecord,
+                  }));
+                  return;
+                }
+
+                // Reduce stream event into progressive state
+                setCompareRunRecords((previous) => {
+                  const existing = previous[modelValue];
+                  if (!existing) return previous;
+                  const streamState = reduceEvalStreamEvent(
+                    {
+                      messages: existing.streamingMessages ?? [],
+                      tokensUsed: existing.streamingMetrics?.tokensUsed ?? 0,
+                      toolCallCount: existing.streamingMetrics?.toolCallCount ?? 0,
+                      currentTurnIndex: 0,
+                    },
+                    event,
+                  );
+                  return {
+                    ...previous,
+                    [modelValue]: {
+                      ...existing,
+                      streamingMessages: streamState.messages,
+                      streamingMetrics: {
+                        tokensUsed: streamState.tokensUsed,
+                        toolCallCount: streamState.toolCallCount,
+                      },
+                    },
+                  };
+                });
+              },
+              abortController.signal,
+            );
+
+            // Stream completed — return the final record
+            return new Promise<CompareRunRecord>((resolve) => {
+              // Read the latest state after stream is done
+              setCompareRunRecords((previous) => {
+                resolve(previous[modelValue] ?? buildCompareRunRecord({
+                  modelValue,
+                  modelLabel,
+                  iteration: null,
+                  completedAt: Date.now(),
+                }));
+                return previous;
+              });
             });
-
-            return record;
           } catch (error) {
+            if (abortController.signal.aborted) {
+              return buildCompareRunRecord({
+                modelValue,
+                modelLabel,
+                iteration: null,
+                completedAt: Date.now(),
+              });
+            }
             const message = getBillingErrorMessage(error, "Failed to run model");
             const failedRecord: CompareRunRecord = {
               ...buildCompareRunRecord({
@@ -1846,7 +1951,14 @@ function RunColumn({
           ? "raw"
           : "tools";
 
-  const toolCount = record.metrics.toolCallCount;
+  const displayTokens =
+    record.status === "running" && record.streamingMetrics
+      ? record.streamingMetrics.tokensUsed
+      : record.metrics.tokensUsed;
+  const toolCount =
+    record.status === "running" && record.streamingMetrics
+      ? record.streamingMetrics.toolCallCount
+      : record.metrics.toolCallCount;
   const toolCallLabel =
     toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
 
@@ -1880,7 +1992,7 @@ function RunColumn({
           </span>
           <span className="tabular-nums">
             <span className="font-medium text-foreground">
-              {record.metrics.tokensUsed.toLocaleString()}
+              {displayTokens.toLocaleString()}
             </span>{" "}
             tokens
           </span>
@@ -1901,13 +2013,14 @@ function RunColumn({
             variant="ghost"
             className="h-7 shrink-0 px-2 text-[11px]"
             onClick={onRetry}
-            disabled={record.status === "running" && record.iteration == null}
+            disabled={record.status === "running" && record.iteration == null && !record.streamingMessages?.length}
           >
             <RotateCw
               className={cn(
                 "mr-1 h-3 w-3",
                 record.status === "running" &&
                   record.iteration == null &&
+                  !record.streamingMessages?.length &&
                   "animate-spin",
               )}
             />
@@ -1926,7 +2039,16 @@ function RunColumn({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
-        {record.status === "running" && !record.iteration ? (
+        {record.streamingMessages && record.streamingMessages.length > 0 ? (
+          <div className="min-h-0 flex-1">
+            <TraceViewer
+              trace={record.streamingMessages}
+              forcedViewMode={traceMode}
+              hideToolbar
+              fillContent
+            />
+          </div>
+        ) : record.status === "running" && !record.iteration ? (
           <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10">
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
