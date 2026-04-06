@@ -777,9 +777,9 @@ export function useEvalHandlers({
           num_models: modelsToUse.length,
         });
 
-        // Navigate to the new test case
+        // Open the editor so the new case is configurable (test-detail is iterations-only).
         navigateAfterTestCaseMutation({
-          type: "test-detail",
+          type: "test-edit",
           suiteId,
           testId: testCaseId,
         });

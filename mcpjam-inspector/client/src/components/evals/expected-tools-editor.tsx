@@ -191,7 +191,7 @@ export function ExpectedToolsEditor({
                   className={cn(
                     "w-full justify-between font-mono text-sm h-9",
                     isToolNameInvalid(toolCall.toolName) &&
-                      "border-destructive focus-visible:ring-destructive",
+                      "border-destructive/45 focus-visible:ring-destructive/25 dark:border-destructive/55",
                   )}
                 />
               ) : (
@@ -202,7 +202,7 @@ export function ExpectedToolsEditor({
                   className={cn(
                     "font-mono text-sm",
                     isToolNameInvalid(toolCall.toolName) &&
-                      "border-destructive focus-visible:ring-destructive",
+                      "border-destructive/45 focus-visible:ring-destructive/25 dark:border-destructive/55",
                   )}
                 />
               )}
@@ -286,7 +286,7 @@ export function ExpectedToolsEditor({
                         className={cn(
                           "font-mono text-sm resize-none min-h-[36px]",
                           isArgumentValueInvalid(value) &&
-                            "border-destructive focus-visible:ring-destructive",
+                            "border-destructive/45 focus-visible:ring-destructive/25 dark:border-destructive/55",
                         )}
                         rows={1}
                       />

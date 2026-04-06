@@ -2,8 +2,10 @@ import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
-import { TestTemplateEditor } from "../test-template-editor";
-import type { EvalIteration } from "../types";
+import {
+  getPromptTurnBlockReason,
+  TestTemplateEditor,
+} from "../test-template-editor";
 
 function renderWithProviders(ui: ReactElement) {
   return render(
@@ -40,7 +42,7 @@ vi.mock("@/lib/PosthogUtils", () => ({
 }));
 
 vi.mock("@/lib/apis/evals-api", () => ({
-  listEvalTools: vi.fn().mockResolvedValue([]),
+  listEvalTools: vi.fn().mockResolvedValue({ tools: [] }),
   runEvalTestCase: vi.fn(),
 }));
 
@@ -50,8 +52,50 @@ vi.mock("convex/react", () => ({
   useAction: () => vi.fn(),
 }));
 
-describe("TestTemplateEditor openCompareFromRoute", () => {
-  const baseIteration: EvalIteration = {
+describe("getPromptTurnBlockReason", () => {
+  it("returns guidance when a single step has no prompt", () => {
+    expect(
+      getPromptTurnBlockReason([
+        { id: "1", prompt: "", expectedToolCalls: [] },
+      ]),
+    ).toBe("Enter a user prompt before run or save.");
+  });
+
+  it("returns null for a valid no-tool (negative) case with prompt", () => {
+    expect(
+      getPromptTurnBlockReason([
+        { id: "1", prompt: "Hello", expectedToolCalls: [] },
+      ]),
+    ).toBeNull();
+  });
+
+  it("lists steps when multiple prompts are missing", () => {
+    expect(
+      getPromptTurnBlockReason([
+        { id: "1", prompt: "a", expectedToolCalls: [] },
+        { id: "2", prompt: "", expectedToolCalls: [] },
+        { id: "3", prompt: "", expectedToolCalls: [] },
+      ]),
+    ).toBe("Enter a user prompt for step(s) 2, 3.");
+  });
+
+  it("returns tool-fix message when expected tools are incomplete", () => {
+    expect(
+      getPromptTurnBlockReason([
+        {
+          id: "1",
+          prompt: "Hi",
+          expectedToolCalls: [{ toolName: "", arguments: {} }],
+        },
+      ]),
+    ).toBe(
+      "Finish tool names and arguments, or remove incomplete expected tools.",
+    );
+  });
+});
+
+describe("TestTemplateEditor prompt validation UI", () => {
+  const baseIteration = {
     _id: "iter-1",
     testCaseId: "case-1",
     createdBy: "u1",
@@ -65,7 +109,7 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     tokensUsed: 10,
     testCaseSnapshot: {
       title: "T",
-      query: "Q",
+      query: "",
       provider: "openai",
       model: "gpt-4",
       expectedToolCalls: [],
@@ -77,7 +121,7 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     _id: "case-1",
     testSuiteId: "suite-1",
     title: "T",
-    query: "Q",
+    query: "",
     models: [{ provider: "openai", model: "gpt-4" }],
     runs: 1,
     expectedToolCalls: [],
@@ -115,9 +159,7 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     });
   });
 
-  it("opens compare run mode and clears route when openCompareFromRoute is set", async () => {
-    const onClearOpenCompareRoute = vi.fn();
-
+  it("marks empty user prompt and disables Run", async () => {
     renderWithProviders(
       <TestTemplateEditor
         suiteId="suite-1"
@@ -131,41 +173,17 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
             label: "GPT-4",
           } as any,
         ]}
-        openCompareFromRoute
-        onClearOpenCompareRoute={onClearOpenCompareRoute}
       />,
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Edit config/i })).toBeInTheDocument();
+      expect(screen.getByPlaceholderText("Enter the user prompt…")).toBeInTheDocument();
     });
 
-    expect(onClearOpenCompareRoute).toHaveBeenCalled();
-  });
+    const promptInput = screen.getByPlaceholderText("Enter the user prompt…");
+    expect(promptInput).toHaveAttribute("aria-invalid", "true");
 
-  it("renders flat User prompt / Tool triggered for a single-turn case", async () => {
-    renderWithProviders(
-      <TestTemplateEditor
-        suiteId="suite-1"
-        selectedTestCaseId="case-1"
-        connectedServerNames={new Set(["srv"])}
-        workspaceId={null}
-        availableModels={[
-          {
-            provider: "openai",
-            model: "gpt-4",
-            label: "GPT-4",
-          } as any,
-        ]}
-        onExportDraft={vi.fn()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByText("User prompt")).toBeInTheDocument();
-    });
-
-    expect(screen.getByText("Tool triggered")).toBeInTheDocument();
-    expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
+    const runButton = screen.getByRole("button", { name: /Run compare/i });
+    expect(runButton).toBeDisabled();
   });
 });
