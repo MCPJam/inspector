@@ -45,7 +45,11 @@ import {
   registerAiSdkPrepareStep,
   wrapToolSetForEvalTrace,
 } from "./evals/eval-trace-capture";
-import type { EvalTraceSpan, PromptTraceSummary } from "@/shared/eval-trace";
+import type {
+  EvalTraceBlobV1,
+  EvalTraceSpan,
+  PromptTraceSummary,
+} from "@/shared/eval-trace";
 import { appendDedupedModelMessages } from "@/shared/eval-trace";
 import {
   deriveLegacyPromptFields,
@@ -58,7 +62,10 @@ import {
   type EvalToolChoice,
 } from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
-import type { EvalStreamEvent } from "@/shared/eval-stream-events";
+import type {
+  EvalStreamEvent,
+  EvalStreamToolCall,
+} from "@/shared/eval-stream-events";
 
 export type EvalTestCase = {
   title: string;
@@ -112,6 +119,7 @@ const MAX_STEPS = 20;
 
 type ToolSet = Record<string, any>;
 type ToolCall = { toolName: string; arguments: Record<string, any> };
+type TraceSnapshotKind = "step_finish" | "turn_finish" | "failure";
 
 type ResolvedEvalTestCase = {
   promptTurns: PromptTurn[];
@@ -238,6 +246,53 @@ function extractToolCallsFromConversation(params: {
   }
 
   return toolsCalled;
+}
+
+function toStreamToolCalls(
+  toolCalls: ToolCall[],
+): EvalStreamToolCall[] {
+  return toolCalls.map((toolCall) => ({
+    toolName: toolCall.toolName,
+    arguments: toolCall.arguments,
+  }));
+}
+
+function buildTraceSnapshotEvent(params: {
+  turnIndex: number;
+  stepIndex?: number;
+  snapshotKind: TraceSnapshotKind;
+  messages: ModelMessage[];
+  spans: EvalTraceSpan[];
+  usage: UsageTotals;
+  actualToolCalls: ToolCall[];
+  prompts?: PromptTraceSummary[];
+}): Extract<EvalStreamEvent, { type: "trace_snapshot" }> {
+  const trace: EvalTraceBlobV1 = {
+    traceVersion: 1,
+    messages: params.messages,
+    ...(params.spans.length > 0 ? { spans: params.spans } : {}),
+    ...(params.prompts && params.prompts.length > 0
+      ? { prompts: params.prompts }
+      : {}),
+  };
+
+  return {
+    type: "trace_snapshot",
+    turnIndex: params.turnIndex,
+    ...(typeof params.stepIndex === "number"
+      ? { stepIndex: params.stepIndex }
+      : {}),
+    snapshotKind: params.snapshotKind,
+    trace: sanitizeForConvexTransport(trace),
+    actualToolCalls: sanitizeForConvexTransport(
+      toStreamToolCalls(params.actualToolCalls),
+    ),
+    usage: {
+      inputTokens: params.usage.inputTokens ?? 0,
+      outputTokens: params.usage.outputTokens ?? 0,
+      totalTokens: params.usage.totalTokens ?? 0,
+    },
+  };
 }
 
 // Helper to create iteration directly (for quick runs without a recorder)
@@ -498,7 +553,7 @@ const runIterationWithAiSdk = async ({
   let conversationMessages: ModelMessage[] = [...baseMessages];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
-  const accumulatedUsage: UsageTotals = {
+  let accumulatedUsage: UsageTotals = {
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
@@ -577,6 +632,16 @@ const runIterationWithAiSdk = async ({
         onStepFinish: async (step) => {
           activeCompletedStepCount += 1;
           const stepFinishedAt = Date.now();
+          const stepUsage = {
+            inputTokens: step.usage?.inputTokens ?? 0,
+            outputTokens: step.usage?.outputTokens ?? 0,
+            totalTokens: step.usage?.totalTokens ?? 0,
+          };
+          accumulatedUsage = {
+            inputTokens: accumulatedUsage.inputTokens + stepUsage.inputTokens,
+            outputTokens: accumulatedUsage.outputTokens + stepUsage.outputTokens,
+            totalTokens: accumulatedUsage.totalTokens + stepUsage.totalTokens,
+          };
           const responseMessages = step.response?.messages ?? [];
           const responseMessageCountBeforeAppend =
             activePartialResponseMessages.length;
@@ -603,6 +668,35 @@ const runIterationWithAiSdk = async ({
             messageEndIndex,
             status: "ok",
           });
+          accumulatedUsage.inputTokens =
+            (accumulatedUsage.inputTokens ?? 0) + (step.usage?.inputTokens ?? 0);
+          accumulatedUsage.outputTokens =
+            (accumulatedUsage.outputTokens ?? 0) +
+            (step.usage?.outputTokens ?? 0);
+          accumulatedUsage.totalTokens =
+            (accumulatedUsage.totalTokens ?? 0) +
+            (step.usage?.totalTokens ?? 0);
+
+          const snapshotMessages = [
+            ...activePromptInputMessages,
+            ...activePartialResponseMessages,
+          ];
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              stepIndex: activeCompletedStepCount - 1,
+              snapshotKind: "step_finish",
+              messages: snapshotMessages,
+              spans: [
+                ...recordedSpans,
+                ...activeTraceCtx!.recordedSpans,
+              ],
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: snapshotMessages,
+              }),
+              usage: accumulatedUsage,
+            }),
+          );
         },
         onFinish: async () => {
           /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
@@ -1787,6 +1881,9 @@ const streamIterationWithAiSdk = async ({
         onStepFinish: async (step) => {
           activeCompletedStepCount += 1;
           const stepFinishedAt = Date.now();
+          accumulatedUsage.inputTokens += step.usage?.inputTokens ?? 0;
+          accumulatedUsage.outputTokens += step.usage?.outputTokens ?? 0;
+          accumulatedUsage.totalTokens += step.usage?.totalTokens ?? 0;
           const responseMessages = step.response?.messages ?? [];
           const responseMessageCountBeforeAppend =
             activePartialResponseMessages.length;
@@ -1813,6 +1910,23 @@ const streamIterationWithAiSdk = async ({
             messageEndIndex,
             status: "ok",
           });
+          const snapshotMessages = [
+            ...activePromptInputMessages,
+            ...activePartialResponseMessages,
+          ];
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              stepIndex: activeCompletedStepCount - 1,
+              snapshotKind: "step_finish",
+              messages: snapshotMessages,
+              spans: [...recordedSpans, ...activeTraceCtx!.recordedSpans],
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: snapshotMessages,
+              }),
+              usage: accumulatedUsage,
+            }),
+          );
         },
         onFinish: async () => {
           /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
@@ -1856,7 +1970,6 @@ const streamIterationWithAiSdk = async ({
 
       // After stream completes, resolve the promises on the streamText result
       const steps = await result.steps;
-      const usage = await result.usage;
       const responseObj = await result.response;
       const finalMessagesRaw = responseObj?.messages as
         | ModelMessage[]
@@ -1887,12 +2000,18 @@ const streamIterationWithAiSdk = async ({
         ...promptResponseMessages,
       ];
 
-      accumulatedUsage.inputTokens =
-        (accumulatedUsage.inputTokens ?? 0) + (usage?.inputTokens ?? 0);
-      accumulatedUsage.outputTokens =
-        (accumulatedUsage.outputTokens ?? 0) + (usage?.outputTokens ?? 0);
-      accumulatedUsage.totalTokens =
-        (accumulatedUsage.totalTokens ?? 0) + (usage?.totalTokens ?? 0);
+      emit(
+        buildTraceSnapshotEvent({
+          turnIndex: promptIndex,
+          snapshotKind: "turn_finish",
+          messages: conversationMessages,
+          spans: recordedSpans,
+          actualToolCalls: extractToolCallsFromConversation({
+            messages: conversationMessages,
+          }),
+          usage: accumulatedUsage,
+        }),
+      );
 
       activeTraceCtx = null;
       activePromptInputMessages = [];
@@ -2018,6 +2137,32 @@ const streamIterationWithAiSdk = async ({
       test.isNegativeTest,
     );
     const promptTraceSummaries = buildPromptTraceSummaries(evaluation);
+
+    emit(
+      buildTraceSnapshotEvent({
+        turnIndex: activePromptIndex >= 0 ? activePromptIndex : 0,
+        ...(activeCompletedStepCount > 0
+          ? { stepIndex: activeCompletedStepCount - 1 }
+          : {}),
+        snapshotKind: "failure",
+        messages: failMessages,
+        spans: recordedSpans,
+        actualToolCalls: extractToolCallsFromConversation({
+          messages: failMessages,
+        }),
+        usage: {
+          inputTokens: accumulatedUsage.inputTokens,
+          outputTokens: accumulatedUsage.outputTokens,
+          totalTokens: accumulatedUsage.totalTokens,
+        },
+        prompts: promptTraceSummaries,
+      }),
+    );
+    emit({
+      type: "error",
+      message: errorMessage ?? "Eval iteration failed",
+      details: errorDetails,
+    });
 
     const failParams = {
       iterationId,
@@ -2248,6 +2393,24 @@ const streamIterationViaBackend = async ({
             llmStartAbs,
             failAbs,
           );
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              stepIndex,
+              snapshotKind: "failure",
+              messages: messageHistory,
+              spans: capturedSpans,
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: messageHistory,
+              }),
+              usage: accumulatedUsage,
+            }),
+          );
+          emit({
+            type: "error",
+            message: iterationError,
+            details: iterationErrorDetails,
+          });
           break;
         }
 
@@ -2273,6 +2436,24 @@ const streamIterationViaBackend = async ({
               modelId: test.model,
             },
           );
+          emit(
+            buildTraceSnapshotEvent({
+              turnIndex: promptIndex,
+              stepIndex,
+              snapshotKind: "failure",
+              messages: messageHistory,
+              spans: capturedSpans,
+              actualToolCalls: extractToolCallsFromConversation({
+                messages: messageHistory,
+              }),
+              usage: accumulatedUsage,
+            }),
+          );
+          emit({
+            type: "error",
+            message: iterationError,
+            details: iterationErrorDetails,
+          });
           break;
         }
 
@@ -2456,6 +2637,24 @@ const streamIterationViaBackend = async ({
             iterationError =
               toolErr instanceof Error ? toolErr.message : String(toolErr);
             logger.error("[evals] tool execution failed", toolErr);
+            emit(
+              buildTraceSnapshotEvent({
+                turnIndex: promptIndex,
+                stepIndex,
+                snapshotKind: "failure",
+                messages: messageHistory,
+                spans: capturedSpans,
+                actualToolCalls: extractToolCallsFromConversation({
+                  messages: messageHistory,
+                }),
+                usage: accumulatedUsage,
+              }),
+            );
+            emit({
+              type: "error",
+              message: iterationError,
+              details: iterationErrorDetails,
+            });
             break;
           }
         } else {
@@ -2494,6 +2693,19 @@ const streamIterationViaBackend = async ({
             outputTokens: json.usage?.completionTokens ?? 0,
           },
         });
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            stepIndex,
+            snapshotKind: "step_finish",
+            messages: messageHistory,
+            spans: capturedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: messageHistory,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
 
         const finishReason: string | undefined = json.finishReason;
         if (finishReason && finishReason !== "tool-calls") {
@@ -2543,6 +2755,24 @@ const streamIterationViaBackend = async ({
             modelId: test.model,
           },
         );
+        emit(
+          buildTraceSnapshotEvent({
+            turnIndex: promptIndex,
+            stepIndex,
+            snapshotKind: "failure",
+            messages: messageHistory,
+            spans: capturedSpans,
+            actualToolCalls: extractToolCallsFromConversation({
+              messages: messageHistory,
+            }),
+            usage: accumulatedUsage,
+          }),
+        );
+        emit({
+          type: "error",
+          message: iterationError,
+          details: iterationErrorDetails,
+        });
         break;
       }
     }
@@ -2551,6 +2781,18 @@ const streamIterationViaBackend = async ({
       break;
     }
 
+    emit(
+      buildTraceSnapshotEvent({
+        turnIndex: promptIndex,
+        snapshotKind: "turn_finish",
+        messages: messageHistory,
+        spans: capturedSpans,
+        actualToolCalls: extractToolCallsFromConversation({
+          messages: messageHistory,
+        }),
+        usage: accumulatedUsage,
+      }),
+    );
     emit({ type: "turn_finish", turnIndex: promptIndex });
   }
 
@@ -2686,4 +2928,3 @@ export const streamTestCase = async (params: {
 
   return outcomes;
 };
-

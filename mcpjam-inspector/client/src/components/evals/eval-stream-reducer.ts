@@ -1,19 +1,58 @@
-import type { TraceMessage } from "./trace-viewer-adapter";
-import type { EvalStreamEvent } from "@/shared/eval-stream-events";
+import type { EvalTraceBlobV1 } from "@/shared/eval-trace";
+import type {
+  EvalStreamEvent,
+  EvalStreamToolCall,
+} from "@/shared/eval-stream-events";
+import type { TraceEnvelope, TraceMessage } from "./trace-viewer-adapter";
 
 export type EvalStreamState = {
-  messages: TraceMessage[];
+  trace: EvalTraceBlobV1 | null;
+  draftMessages: TraceMessage[];
+  actualToolCalls: EvalStreamToolCall[];
   tokensUsed: number;
   toolCallCount: number;
   currentTurnIndex: number;
 };
 
 export const initialEvalStreamState: EvalStreamState = {
-  messages: [],
+  trace: null,
+  draftMessages: [],
+  actualToolCalls: [],
   tokensUsed: 0,
   toolCallCount: 0,
   currentTurnIndex: 0,
 };
+
+export function mergeStreamingTrace(
+  trace: EvalTraceBlobV1 | null | undefined,
+  draftMessages: TraceMessage[] | undefined,
+): TraceEnvelope | null {
+  const resolvedDraftMessages = draftMessages ?? [];
+  const hasDraftMessages = resolvedDraftMessages.length > 0;
+
+  if (!trace && !hasDraftMessages) {
+    return null;
+  }
+
+  if (!trace) {
+    return {
+      traceVersion: 1,
+      messages: resolvedDraftMessages,
+    };
+  }
+
+  if (!hasDraftMessages) {
+    return trace as unknown as TraceEnvelope;
+  }
+
+  return {
+    ...(trace as unknown as TraceEnvelope),
+    messages: [
+      ...((trace.messages as unknown as TraceMessage[] | undefined) ?? []),
+      ...resolvedDraftMessages,
+    ],
+  };
+}
 
 export function reduceEvalStreamEvent(
   state: EvalStreamState,
@@ -24,30 +63,34 @@ export function reduceEvalStreamEvent(
       return {
         ...state,
         currentTurnIndex: event.turnIndex,
-        messages: [
-          ...state.messages,
+        draftMessages: [
+          ...state.draftMessages,
           { role: "user", content: event.prompt },
         ],
       };
     }
 
     case "text_delta": {
-      const messages = [...state.messages];
-      const last = messages[messages.length - 1];
-      if (last && last.role === "assistant" && typeof last.content === "string") {
-        messages[messages.length - 1] = {
+      const draftMessages = [...state.draftMessages];
+      const last = draftMessages[draftMessages.length - 1];
+      if (
+        last &&
+        last.role === "assistant" &&
+        typeof last.content === "string"
+      ) {
+        draftMessages[draftMessages.length - 1] = {
           ...last,
           content: last.content + event.content,
         };
       } else {
-        messages.push({ role: "assistant", content: event.content });
+        draftMessages.push({ role: "assistant", content: event.content });
       }
-      return { ...state, messages };
+      return { ...state, draftMessages };
     }
 
     case "tool_call": {
-      const messages = [...state.messages];
-      messages.push({
+      const draftMessages = [...state.draftMessages];
+      draftMessages.push({
         role: "assistant",
         content: [
           {
@@ -60,14 +103,14 @@ export function reduceEvalStreamEvent(
       });
       return {
         ...state,
-        messages,
+        draftMessages,
         toolCallCount: state.toolCallCount + 1,
       };
     }
 
     case "tool_result": {
-      const messages = [...state.messages];
-      messages.push({
+      const draftMessages = [...state.draftMessages];
+      draftMessages.push({
         role: "tool",
         content: [
           {
@@ -78,16 +121,22 @@ export function reduceEvalStreamEvent(
           },
         ],
       });
-      return { ...state, messages };
+      return { ...state, draftMessages };
     }
 
     case "step_finish": {
-      const usage = event.usage;
-      if (!usage) return state;
+      return state;
+    }
+
+    case "trace_snapshot": {
       return {
         ...state,
-        tokensUsed:
-          state.tokensUsed + (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0),
+        currentTurnIndex: event.turnIndex,
+        trace: event.trace,
+        draftMessages: [],
+        actualToolCalls: event.actualToolCalls,
+        tokensUsed: event.usage.totalTokens,
+        toolCallCount: event.actualToolCalls.length,
       };
     }
 

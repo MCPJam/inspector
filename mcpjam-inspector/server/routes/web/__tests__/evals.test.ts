@@ -8,12 +8,14 @@ import { mapRuntimeError, webError } from "../errors.js";
 const {
   runEvalsWithManagerMock,
   runEvalTestCaseWithManagerMock,
+  streamEvalTestCaseWithManagerMock,
   generateEvalTestsWithManagerMock,
   generateNegativeEvalTestsWithManagerMock,
   disconnectAllServersMock,
 } = vi.hoisted(() => ({
   runEvalsWithManagerMock: vi.fn(),
   runEvalTestCaseWithManagerMock: vi.fn(),
+  streamEvalTestCaseWithManagerMock: vi.fn(),
   generateEvalTestsWithManagerMock: vi.fn(),
   generateNegativeEvalTestsWithManagerMock: vi.fn(),
   disconnectAllServersMock: vi.fn().mockResolvedValue(undefined),
@@ -35,6 +37,8 @@ vi.mock("../../shared/evals.js", async () => {
       runEvalsWithManagerMock(...args),
     runEvalTestCaseWithManager: (...args: unknown[]) =>
       runEvalTestCaseWithManagerMock(...args),
+    streamEvalTestCaseWithManager: (...args: unknown[]) =>
+      streamEvalTestCaseWithManagerMock(...args),
     generateEvalTestsWithManager: (...args: unknown[]) =>
       generateEvalTestsWithManagerMock(...args),
     generateNegativeEvalTestsWithManager: (...args: unknown[]) =>
@@ -279,4 +283,49 @@ describe("web routes — evals", () => {
       expect(disconnectAllServersMock).toHaveBeenCalledTimes(1);
     },
   );
+
+  it("streams hosted compare quick runs from /api/web/evals/stream-test-case", async () => {
+    const encoder = new TextEncoder();
+    streamEvalTestCaseWithManagerMock.mockResolvedValueOnce(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(
+            encoder.encode(
+              'data: {"type":"trace_snapshot","turnIndex":0,"snapshotKind":"step_finish","trace":{"traceVersion":1,"messages":[{"role":"user","content":"Hello"}]},"actualToolCalls":[],"usage":{"inputTokens":1,"outputTokens":1,"totalTokens":2}}\n\n',
+            ),
+          );
+          controller.close();
+        },
+      }),
+    );
+
+    const { app, token } = createEvalsTestApp();
+    const response = await postJson(
+      app,
+      "/api/web/evals/stream-test-case",
+      {
+        workspaceId: "workspace-1",
+        serverIds: ["server-1"],
+        testCaseId: "test-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toContain("text/event-stream");
+    await expect(response.text()).resolves.toContain('"type":"trace_snapshot"');
+    expect(streamEvalTestCaseWithManagerMock).toHaveBeenCalledTimes(1);
+    expect(streamEvalTestCaseWithManagerMock.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        workspaceId: "workspace-1",
+        serverIds: ["server-1"],
+        testCaseId: "test-case-1",
+        model: "openai/gpt-5-mini",
+        provider: "openai",
+        convexAuthToken: token,
+      }),
+    );
+  });
 });

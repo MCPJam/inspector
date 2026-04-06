@@ -1,5 +1,5 @@
 import { useAction } from "convex/react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import {
@@ -7,8 +7,14 @@ import {
   ToolServerMap,
   listTools,
 } from "@/lib/apis/mcp-tools-api";
-import { TraceViewer } from "./trace-viewer";
-import { adaptTraceToUiMessages } from "./trace-viewer-adapter";
+import {
+  TraceViewer,
+  type TraceViewerEvalToolCall,
+} from "./trace-viewer";
+import {
+  adaptTraceToUiMessages,
+  type TraceEnvelope,
+} from "./trace-viewer-adapter";
 import { extractFinalAssistantOutput, resolveTraceModel } from "./compare-playground-helpers";
 import type { EvalCase, EvalIteration } from "./types";
 
@@ -20,6 +26,12 @@ interface EvalTraceSurfaceProps {
   emptyMessage?: string;
   /** When mode is controlled by tabs, Reveal in Chat needs this to switch to the chat tab. */
   onNavigateToChat?: () => void;
+  /** Provisional live trace shown until the persisted blob finishes loading. */
+  fallbackTrace?: TraceEnvelope | null;
+  /** Provisional tool calls shown alongside {@link fallbackTrace}. */
+  fallbackActualToolCalls?: TraceViewerEvalToolCall[];
+  /** Called after the persisted blob has loaded successfully. */
+  onTraceLoaded?: () => void;
 }
 
 const EMPTY_SERVER_NAMES: string[] = [];
@@ -61,6 +73,9 @@ export function EvalTraceSurface({
   mode,
   emptyMessage = "Run this test to inspect trace details.",
   onNavigateToChat,
+  fallbackTrace = null,
+  fallbackActualToolCalls = [],
+  onTraceLoaded,
 }: EvalTraceSurfaceProps) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -74,6 +89,11 @@ export function EvalTraceSurface({
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
   const [connectedServerIds, setConnectedServerIds] = useState<string[]>([]);
+  const onTraceLoadedRef = useRef(onTraceLoaded);
+
+  useEffect(() => {
+    onTraceLoadedRef.current = onTraceLoaded;
+  }, [onTraceLoaded]);
 
   useEffect(() => {
     let cancelled = false;
@@ -93,6 +113,7 @@ export function EvalTraceSurface({
         const data = await getBlob({ blobId: iteration.blob });
         if (!cancelled) {
           setBlob(data);
+          onTraceLoadedRef.current?.();
         }
       } catch (loadError: any) {
         if (!cancelled) {
@@ -201,11 +222,14 @@ export function EvalTraceSurface({
     return <SimpleEmptyState message={emptyMessage} />;
   }
 
-  if (loading) {
+  const activeTrace = (blob ?? fallbackTrace) as TraceEnvelope | null;
+  const hasFallbackTrace = fallbackTrace != null;
+
+  if (loading && !hasFallbackTrace && !blob) {
     return <SimpleLoadingState message="Loading trace details…" />;
   }
 
-  if (error) {
+  if (error && !hasFallbackTrace) {
     return <SimpleErrorState message={error} />;
   }
 
@@ -234,7 +258,7 @@ export function EvalTraceSurface({
     );
   }
 
-  if (!blob || !traceModel) {
+  if (!activeTrace || !traceModel) {
     return <SimpleEmptyState message="No trace data is available for this run." />;
   }
 
@@ -244,13 +268,16 @@ export function EvalTraceSurface({
       : null;
 
   const expectedToolCalls = iteration.testCaseSnapshot?.expectedToolCalls ?? [];
-  const actualToolCalls = iteration.actualToolCalls ?? [];
+  const actualToolCalls =
+    blob != null
+      ? iteration.actualToolCalls ?? []
+      : fallbackActualToolCalls;
 
   return (
     <div className="flex h-full min-h-0 flex-col rounded-xl border border-border/50 bg-background">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
         <TraceViewer
-          trace={blob}
+          trace={activeTrace}
           model={traceModel}
           toolsMetadata={toolsMetadata}
           toolServerMap={toolServerMap}

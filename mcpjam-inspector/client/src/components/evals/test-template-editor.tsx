@@ -83,6 +83,7 @@ import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-log
 import {
   reduceEvalStreamEvent,
   initialEvalStreamState,
+  mergeStreamingTrace,
 } from "./eval-stream-reducer";
 import { TraceViewer } from "./trace-viewer";
 
@@ -357,6 +358,21 @@ export function TestTemplateEditor({
     initializedSelectionCaseRef.current = null;
     setAddModelMenuOpen(false);
   }, [selectedTestCaseId]);
+
+  const clearCompareStreamingState = useCallback((modelValue: string) => {
+    setCompareRunRecords((previous) => {
+      const current = previous[modelValue];
+      if (!current) return previous;
+      const {
+        streamingTrace: _streamingTrace,
+        streamingDraftMessages: _streamingDraftMessages,
+        streamingActualToolCalls: _streamingActualToolCalls,
+        streamingMetrics: _streamingMetrics,
+        ...rest
+      } = current;
+      return { ...previous, [modelValue]: rest };
+    });
+  }, []);
 
   useEffect(() => {
     if (!currentTestCase) {
@@ -1105,20 +1121,14 @@ export function TestTemplateEditor({
                     ...previous,
                     [modelValue]: {
                       ...record,
-                      // Keep streamingMessages temporarily to avoid flash
-                      streamingMessages: previous[modelValue]?.streamingMessages,
+                      streamingTrace: previous[modelValue]?.streamingTrace,
+                      streamingDraftMessages:
+                        previous[modelValue]?.streamingDraftMessages,
+                      streamingActualToolCalls:
+                        previous[modelValue]?.streamingActualToolCalls,
+                      streamingMetrics: previous[modelValue]?.streamingMetrics,
                     },
                   }));
-                  // Clear streamingMessages after a short delay to let EvalTraceSurface load
-                  setTimeout(() => {
-                    if (compareRequestGenByModelRef.current[modelValue] !== myGen) return;
-                    setCompareRunRecords((previous) => {
-                      const current = previous[modelValue];
-                      if (!current) return previous;
-                      const { streamingMessages: _, streamingMetrics: __, ...rest } = current;
-                      return { ...previous, [modelValue]: rest };
-                    });
-                  }, 2000);
 
                   posthog.capture("compare_model_completed", {
                     location: "test_template_editor",
@@ -1137,21 +1147,30 @@ export function TestTemplateEditor({
                 }
 
                 if (event.type === "error") {
-                  const failedRecord: CompareRunRecord = {
-                    ...buildCompareRunRecord({
-                      modelValue,
-                      modelLabel,
-                      iteration: null,
+                  setCompareRunRecords((previous) => {
+                    const existing = previous[modelValue];
+                    const failedRecord: CompareRunRecord = {
+                      ...buildCompareRunRecord({
+                        modelValue,
+                        modelLabel,
+                        iteration: null,
+                        error: event.message,
+                        startedAt: existing?.startedAt ?? Date.now(),
+                        completedAt: Date.now(),
+                      }),
+                      status: "failed",
                       error: event.message,
-                      completedAt: Date.now(),
-                    }),
-                    status: "failed",
-                    error: event.message,
-                  };
-                  setCompareRunRecords((previous) => ({
-                    ...previous,
-                    [modelValue]: failedRecord,
-                  }));
+                      streamingTrace: existing?.streamingTrace,
+                      streamingDraftMessages: existing?.streamingDraftMessages,
+                      streamingActualToolCalls:
+                        existing?.streamingActualToolCalls,
+                      streamingMetrics: existing?.streamingMetrics,
+                    };
+                    return {
+                      ...previous,
+                      [modelValue]: failedRecord,
+                    };
+                  });
                   return;
                 }
 
@@ -1161,10 +1180,12 @@ export function TestTemplateEditor({
                   if (!existing) return previous;
                   const streamState = reduceEvalStreamEvent(
                     {
-                      messages: existing.streamingMessages ?? [],
+                      trace: existing.streamingTrace ?? null,
+                      draftMessages: existing.streamingDraftMessages ?? [],
+                      actualToolCalls: existing.streamingActualToolCalls ?? [],
                       tokensUsed: existing.streamingMetrics?.tokensUsed ?? 0,
                       toolCallCount: existing.streamingMetrics?.toolCallCount ?? 0,
-                      currentTurnIndex: 0,
+                      currentTurnIndex: initialEvalStreamState.currentTurnIndex,
                     },
                     event,
                   );
@@ -1172,7 +1193,9 @@ export function TestTemplateEditor({
                     ...previous,
                     [modelValue]: {
                       ...existing,
-                      streamingMessages: streamState.messages,
+                      streamingTrace: streamState.trace ?? undefined,
+                      streamingDraftMessages: streamState.draftMessages,
+                      streamingActualToolCalls: streamState.actualToolCalls,
                       streamingMetrics: {
                         tokensUsed: streamState.tokensUsed,
                         toolCallCount: streamState.toolCallCount,
@@ -1809,6 +1832,60 @@ export function TestTemplateEditor({
               <div className="min-w-0 flex-1 truncate text-lg font-semibold sm:text-xl">
                 {editForm?.title || currentTestCase.title}
               </div>
+              {selectedCompareRecords.length > 0 ? (
+                runDisabledTooltip ? (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex shrink-0">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 shrink-0 text-xs"
+                          onClick={() => void handleRunCompare()}
+                          disabled={runPrimaryDisabled}
+                        >
+                          {isRunningCompare ? (
+                            <>
+                              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                              Retrying…
+                            </>
+                          ) : (
+                            <>
+                              <RotateCw className="mr-2 h-3.5 w-3.5" />
+                              Retry all
+                            </>
+                          )}
+                        </Button>
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent variant="muted" side="bottom" sideOffset={6}>
+                      {runDisabledTooltip}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-8 shrink-0 text-xs"
+                    onClick={() => void handleRunCompare()}
+                    disabled={runPrimaryDisabled}
+                  >
+                    {isRunningCompare ? (
+                      <>
+                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                        Retrying…
+                      </>
+                    ) : (
+                      <>
+                        <RotateCw className="mr-2 h-3.5 w-3.5" />
+                        Retry all
+                      </>
+                    )}
+                  </Button>
+                )
+              ) : null}
             </div>
 
             {selectedCompareRecords.length > 1 ? (
@@ -1869,6 +1946,9 @@ export function TestTemplateEditor({
                         allRecords={selectedCompareRecords}
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
+                        onStreamingTraceLoaded={() =>
+                          clearCompareStreamingState(record.modelValue)
+                        }
                         activeTab={
                           runColumnTabByModel[record.modelValue] ?? "timeline"
                         }
@@ -1894,6 +1974,7 @@ function RunColumn({
   allRecords,
   testCase,
   serverNames,
+  onStreamingTraceLoaded,
   activeTab,
   onTabChange,
   onRetry,
@@ -1902,16 +1983,19 @@ function RunColumn({
   allRecords: CompareRunRecord[];
   testCase: any;
   serverNames: string[];
+  onStreamingTraceLoaded: () => void;
   activeTab: RunColumnTab;
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
 }) {
-  const showToolsTab = useMemo(() => {
-    const expected =
-      record.iteration?.testCaseSnapshot?.expectedToolCalls ?? [];
-    const actual = record.iteration?.actualToolCalls ?? [];
-    return expected.length > 0 || actual.length > 0;
-  }, [record.iteration]);
+  const expectedToolCalls =
+    record.iteration?.testCaseSnapshot?.expectedToolCalls ??
+    testCase?.expectedToolCalls ??
+    [];
+  const actualToolCalls =
+    record.iteration?.actualToolCalls ?? record.streamingActualToolCalls ?? [];
+  const showToolsTab =
+    expectedToolCalls.length > 0 || actualToolCalls.length > 0;
 
   useEffect(() => {
     if (!showToolsTab && activeTab === "tools") {
@@ -1953,18 +2037,24 @@ function RunColumn({
         : activeTab === "raw"
           ? "raw"
           : "tools";
-  const showStreamingTimelineHint =
+  const streamingTraceEnvelope = useMemo(
+    () =>
+      mergeStreamingTrace(
+        record.streamingTrace,
+        record.streamingDraftMessages,
+      ),
+    [record.streamingDraftMessages, record.streamingTrace],
+  );
+  const hasStreamingTrace = streamingTraceEnvelope != null;
+  const isWaitingForFirstTimelineSnapshot =
     traceMode === "timeline" &&
-    Boolean(record.streamingMessages && record.streamingMessages.length > 0);
+    record.iteration == null &&
+    record.streamingTrace == null &&
+    hasStreamingTrace;
 
-  const displayTokens =
-    record.status === "running" && record.streamingMetrics
-      ? record.streamingMetrics.tokensUsed
-      : record.metrics.tokensUsed;
+  const displayTokens = record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
   const toolCount =
-    record.status === "running" && record.streamingMetrics
-      ? record.streamingMetrics.toolCallCount
-      : record.metrics.toolCallCount;
+    record.streamingMetrics?.toolCallCount ?? record.metrics.toolCallCount;
   const toolCallLabel =
     toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
 
@@ -2119,14 +2209,14 @@ function RunColumn({
             variant="ghost"
             className="h-7 shrink-0 px-2 text-[11px]"
             onClick={onRetry}
-            disabled={record.status === "running" && record.iteration == null && !record.streamingMessages?.length}
+            disabled={record.status === "running" && record.iteration == null && !hasStreamingTrace}
           >
             <RotateCw
               className={cn(
                 "mr-1 h-3 w-3",
                 record.status === "running" &&
                   record.iteration == null &&
-                  !record.streamingMessages?.length &&
+                  !hasStreamingTrace &&
                   "animate-spin",
               )}
             />
@@ -2145,16 +2235,30 @@ function RunColumn({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
-        {record.streamingMessages && record.streamingMessages.length > 0 ? (
-          showStreamingTimelineHint ? (
+        {record.iteration ? (
+          <div className="min-h-0 flex-1">
+            <EvalTraceSurface
+              iteration={record.iteration}
+              testCase={testCase}
+              serverNames={serverNames}
+              mode={traceMode}
+              emptyMessage={`No ${activeTab} data is available for this run.`}
+              fallbackTrace={streamingTraceEnvelope}
+              fallbackActualToolCalls={actualToolCalls}
+              onTraceLoaded={onStreamingTraceLoaded}
+              onNavigateToChat={() => onTabChange("chat")}
+            />
+          </div>
+        ) : hasStreamingTrace ? (
+          isWaitingForFirstTimelineSnapshot ? (
             <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10 px-6 py-10 text-center">
               <div className="max-w-sm">
                 <div className="text-sm font-medium">
-                  Live output is streaming in Chat
+                  Timeline appears after the first step completes
                 </div>
                 <p className="mt-2 text-sm text-muted-foreground">
-                  Timeline data appears after the run completes and the persisted
-                  trace finishes loading.
+                  Chat and raw output are already streaming for the current
+                  in-flight step.
                 </p>
                 <Button
                   type="button"
@@ -2170,8 +2274,10 @@ function RunColumn({
           ) : (
             <div className="min-h-0 flex-1">
               <TraceViewer
-                trace={record.streamingMessages}
+                trace={streamingTraceEnvelope}
                 forcedViewMode={traceMode}
+                expectedToolCalls={expectedToolCalls}
+                actualToolCalls={actualToolCalls}
                 hideToolbar
                 fillContent
               />
@@ -2197,17 +2303,6 @@ function RunColumn({
                 {record.error || "No run data is available for this model."}
               </p>
             </div>
-          </div>
-        ) : record.iteration ? (
-          <div className="min-h-0 flex-1">
-            <EvalTraceSurface
-              iteration={record.iteration}
-              testCase={testCase}
-              serverNames={serverNames}
-              mode={traceMode}
-              emptyMessage={`No ${activeTab} data is available for this run.`}
-              onNavigateToChat={() => onTabChange("chat")}
-            />
           </div>
         ) : (
           <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">

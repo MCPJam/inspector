@@ -42,6 +42,7 @@ vi.mock("@/lib/PosthogUtils", () => ({
 vi.mock("@/lib/apis/evals-api", () => ({
   listEvalTools: vi.fn().mockResolvedValue([]),
   runEvalTestCase: vi.fn(),
+  streamEvalTestCase: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -140,6 +141,10 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
       expect(onClearOpenCompareRoute).toHaveBeenCalled();
       expect(screen.queryByText("No compare run yet")).not.toBeInTheDocument();
     });
+
+    expect(
+      screen.getByRole("button", { name: /retry all/i }),
+    ).toBeInTheDocument();
   });
 
   it("renders flat User prompt / Tool triggered for a single-turn case", async () => {
