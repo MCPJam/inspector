@@ -165,7 +165,7 @@ export function getClaudeDesktopStyleVariables(
 /** Actual Claude Desktop chat area background (not a widget design token) */
 export const CLAUDE_DESKTOP_CHAT_BACKGROUND = {
   light: "rgba(249, 247, 243, 1)",
-  dark: "rgba(38, 38, 37, 1)",
+  dark: "rgba(38, 38, 36, 1)",
 };
 
 // Empty: Anthropic Sans requires external URLs (assets.claude.ai) blocked by the

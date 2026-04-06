@@ -79,7 +79,7 @@ apps.post("/widget-content", async (c) => {
 
     const resolvedResourceUri = templateUri || resourceUri;
 
-    const effectiveCspMode = cspMode ?? "widget-declared";
+    const effectiveCspMode = cspMode ?? "permissive";
     const mcpClientManager = c.mcpClientManager;
 
     // REUSE existing mcpClientManager.readResource (same as resources.ts)

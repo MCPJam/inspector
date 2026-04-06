@@ -11,7 +11,14 @@
  * which manages PiP/fullscreen at the widget level.
  */
 
-import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
+import {
+  FormEvent,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -69,6 +76,8 @@ import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
+import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { HandDrawnSendHint } from "./HandDrawnSendHint";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -116,6 +125,10 @@ interface PlaygroundMainProps {
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
+  /** When true with `initialInput`, reveals the string with a typewriter effect (App Builder NUX). */
+  initialInputTypewriter?: boolean;
+  /** When true, Send / Enter are blocked until the playground server is connected. */
+  blockSubmitUntilServerConnected?: boolean;
   pulseSubmit?: boolean;
   showPostConnectGuide?: boolean;
   onFirstMessageSent?: () => void;
@@ -189,6 +202,8 @@ export function PlaygroundMain({
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
+  initialInputTypewriter = false,
+  blockSubmitUntilServerConnected = false,
   pulseSubmit = false,
   showPostConnectGuide = false,
   onFirstMessageSent,
@@ -196,23 +211,7 @@ export function PlaygroundMain({
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const [input, setInput] = useState(initialInput ?? "");
-  const [guidedInputCursorTrigger, setGuidedInputCursorTrigger] = useState(0);
-  const [isGuidedInputPristine, setIsGuidedInputPristine] = useState(
-    showPostConnectGuide && !!initialInput,
-  );
 
-  // Seed the guided prompt when the post-connect flow becomes active.
-  useEffect(() => {
-    if (showPostConnectGuide && initialInput) {
-      setInput(initialInput);
-      setIsGuidedInputPristine(true);
-      setGuidedInputCursorTrigger((current) => current + 1);
-      return;
-    }
-
-    setIsGuidedInputPristine(false);
-  }, [initialInput, showPostConnectGuide]);
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
@@ -262,6 +261,10 @@ export function PlaygroundMain({
     [serverName, servers],
   );
 
+  const serverConnected = Boolean(
+    serverName && servers[serverName]?.connectionStatus === "connected",
+  );
+
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
@@ -287,6 +290,7 @@ export function PlaygroundMain({
   );
 
   // Use shared chat session hook
+  const composerOnResetRef = useRef<() => void>(() => {});
   const {
     messages,
     setMessages,
@@ -317,15 +321,7 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => {
-      if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
-        setInput((currentInput) => currentInput || initialInput);
-        setGuidedInputCursorTrigger((current) => current + 1);
-        return;
-      }
-
-      setInput("");
-    },
+    onReset: () => composerOnResetRef.current(),
   });
 
   // Set playground active flag for widget renderers to read
@@ -383,6 +379,18 @@ export function PlaygroundMain({
   const isThreadEmpty = !messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
+
+  // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
+  const composer = useComposerOnboarding({
+    initialInput,
+    initialInputTypewriter,
+    blockSubmitUntilServerConnected,
+    pulseSubmit,
+    showPostConnectGuide,
+    serverConnected,
+    isThreadEmpty,
+  });
+  composerOnResetRef.current = composer.onSessionReset;
 
   // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
   useEffect(() => {
@@ -495,6 +503,7 @@ export function PlaygroundMain({
 
   // Handle clear chat
   const handleClearChat = useCallback(() => {
+    composer.prepareForClearChat();
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
@@ -510,7 +519,7 @@ export function PlaygroundMain({
   );
 
   // Placeholder text
-  let placeholder = "Ask something to render UI...";
+  let placeholder = "Try a prompt that could call your tools...";
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
@@ -534,11 +543,15 @@ export function PlaygroundMain({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasContent =
-      input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
-    if (hasContent && status === "ready" && !submitBlocked) {
-      if (showPostConnectGuide && isGuidedInputPristine) {
-        setIsGuidedInputPristine(false);
-      }
+      composer.input.trim() ||
+      mcpPromptResults.length > 0 ||
+      fileAttachments.length > 0;
+    if (
+      hasContent &&
+      status === "ready" &&
+      !submitBlocked &&
+      !composer.submitGatedByServer
+    ) {
       if (displayMode === "fullscreen" && isWidgetFullscreen) {
         setIsFullscreenChatOpen(true);
       }
@@ -580,8 +593,8 @@ export function PlaygroundMain({
           ? await attachmentsToFileUIParts(fileAttachments)
           : undefined;
 
-      sendMessage({ text: input, files });
-      setInput("");
+      sendMessage({ text: composer.input, files });
+      composer.setInput("");
       setMcpPromptResults([]);
       // Revoke object URLs and clear file attachments
       revokeFileAttachmentUrls(fileAttachments);
@@ -595,24 +608,11 @@ export function PlaygroundMain({
 
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
-  const handleInputChange = useCallback(
-    (nextInput: string) => {
-      setInput(nextInput);
-      if (
-        showPostConnectGuide &&
-        isGuidedInputPristine &&
-        nextInput !== initialInput
-      ) {
-        setIsGuidedInputPristine(false);
-      }
-    },
-    [initialInput, isGuidedInputPristine, showPostConnectGuide],
-  );
 
   // Shared chat input props
   const sharedChatInputProps = {
-    value: input,
-    onChange: handleInputChange,
+    value: composer.input,
+    onChange: composer.handleInputChange,
     onSubmit,
     stop,
     disabled: inputDisabled,
@@ -628,8 +628,11 @@ export function PlaygroundMain({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
-    onResetChat: resetChat,
-    submitDisabled: submitBlocked,
+    onResetChat: () => {
+      composer.prepareForClearChat();
+      resetChat();
+    },
+    submitDisabled: submitBlocked || composer.submitGatedByServer,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -647,12 +650,9 @@ export function PlaygroundMain({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
-    pulseSubmit: pulseSubmit && isGuidedInputPristine,
+    pulseSubmit: composer.sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
-    moveCaretToEndTrigger:
-      showPostConnectGuide && isThreadEmpty
-        ? guidedInputCursorTrigger
-        : undefined,
+    moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
   };
 
   // Check if widget should take over the full container
@@ -680,19 +680,24 @@ export function PlaygroundMain({
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - centered when onboarding, otherwise top-aligned
+        // Empty state — centered (welcome + composer, or post-connect guide)
         <div
           className={cn(
             "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
             "items-center justify-center",
+            hostStyle === "chatgpt"
+              ? effectiveThreadTheme === "dark"
+                ? "bg-[#212121] text-neutral-50"
+                : "bg-white text-neutral-950"
+              : effectiveThreadTheme === "dark"
+                ? "bg-[#262624] text-[#F1F0ED]"
+                : "bg-[#FAF9F5] text-[rgba(61,57,41,1)]",
           )}
         >
           <div
             className={cn(
-              "text-center mx-auto",
-              showPostConnectGuide
-                ? "max-w-3xl w-full"
-                : "max-w-md space-y-6 py-8",
+              "mx-auto w-full max-w-4xl text-center",
+              !showPostConnectGuide && "py-8",
             )}
           >
             {isAuthLoading ? (
@@ -708,9 +713,77 @@ export function PlaygroundMain({
                 <ChatInput {...sharedChatInputProps} hasMessages={false} />
               </>
             ) : (
-              <h3 className="text-sm font-semibold text-foreground mb-2">
-                Test ChatGPT Apps and MCP Apps
-              </h3>
+              <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
+                <div className="text-center max-w-md">
+                  <img
+                    src={
+                      effectiveThreadTheme === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCPJam"
+                    draggable={false}
+                    className="h-10 w-auto mx-auto mb-4"
+                  />
+                  <div className="space-y-3">
+                    <h3
+                      className={cn(
+                        "text-lg font-semibold",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-white"
+                            : "text-neutral-950"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]"
+                            : "text-[rgba(61,57,41,1)]",
+                      )}
+                    >
+                      This is your playground for MCP.
+                    </h3>
+                    <p
+                      className={cn(
+                        "text-base leading-7",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-neutral-400"
+                            : "text-neutral-600"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]/80"
+                            : "text-[rgba(61,57,41,0.72)]",
+                      )}
+                    >
+                      Test prompts, inspect tools, and debug AI-powered apps.
+                      Type a message here, or run a tool on the left.
+                    </p>
+                  </div>
+                </div>
+                {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
+                  <div className="w-full shrink-0">
+                    {errorMessage && (
+                      <div className="pb-3">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          code={errorMessage.code}
+                          statusCode={errorMessage.statusCode}
+                          isRetryable={errorMessage.isRetryable}
+                          isMCPJamPlatformError={
+                            errorMessage.isMCPJamPlatformError
+                          }
+                          onResetChat={resetChat}
+                        />
+                      </div>
+                    )}
+                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                    {composer.sendNuxCtaVisible && (
+                      <HandDrawnSendHint
+                        hostStyle={hostStyle}
+                        theme={effectiveThreadTheme}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -755,15 +828,14 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput that persists - hidden when widget takes over.
-          During guided onboarding it moves inline while the thread is empty,
-          then returns to the footer after the first message. */}
+      {/* Footer ChatInput: with messages, or empty when center has no composer
+          (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
       {!isWidgetFullTakeover &&
         !showFullscreenChatOverlay &&
-        (!showPostConnectGuide || !isThreadEmpty) && (
+        (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
           <div
             className={cn(
-              "flex-shrink-0 max-w-3xl mx-auto w-full",
+              "mx-auto w-full max-w-4xl shrink-0",
               isThreadEmpty ? "px-4 pb-4" : "p-3",
             )}
           >
@@ -790,20 +862,20 @@ export function PlaygroundMain({
           messages={messages}
           open={isFullscreenChatOpen}
           onOpenChange={setIsFullscreenChatOpen}
-          input={input}
-          onInputChange={setInput}
+          input={composer.input}
+          onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={inputDisabled}
           canSend={
             !disableChatInput &&
             status === "ready" &&
             !submitBlocked &&
-            input.trim().length > 0
+            composer.input.trim().length > 0
           }
           isThinking={status === "submitted"}
           onSend={() => {
-            sendMessage({ text: input });
-            setInput("");
+            sendMessage({ text: composer.input });
+            composer.setInput("");
             setMcpPromptResults([]);
           }}
         />

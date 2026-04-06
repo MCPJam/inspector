@@ -9,7 +9,8 @@
 export const PANEL_SIZES = {
   LEFT: {
     DEFAULT: 30,
-    MIN: 0,
+    /** Minimum % width when expanded; drag-to-hide uses `collapsible` → same strip as the hide button */
+    MIN: 10,
     MAX: 40,
   },
   CENTER: {

@@ -291,7 +291,19 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
             toolName={selectedPrompt}
             description={selectedPromptData?.description}
             onExpand={() => setSelectedPrompt("")}
-            onClear={() => setSelectedPrompt("")}
+            toolSwitchList={{
+              names: prompts.map((p) => p.name),
+              onSelect: (name) => {
+                setSelectedPrompt(name);
+                setError("");
+                setPromptContent(null);
+
+                const prompt = prompts.find((p) => p.name === name);
+                if (!prompt?.arguments || prompt.arguments.length === 0) {
+                  void getPrompt(name, {});
+                }
+              },
+            }}
           />
 
           <ScrollArea className="flex-1">
