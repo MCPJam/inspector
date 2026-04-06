@@ -19,6 +19,7 @@ vi.mock("framer-motion", async (importOriginal) => {
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
   ArrowDown: () => <span data-testid="icon-arrow-down" />,
+  ArrowUp: () => <span data-testid="icon-arrow-up" />,
   Braces: () => <span data-testid="icon-braces" />,
   Loader2: () => <span data-testid="icon-loader" />,
   Smartphone: () => <span data-testid="icon-smartphone" />,
@@ -545,12 +546,12 @@ describe("PlaygroundMain", () => {
       expect(screen.getByRole("img", { name: /MCPJam/i })).toBeInTheDocument();
       expect(
         screen.getByRole("heading", {
-          name: /Your playground for MCP servers/i,
+          name: /This is your playground for MCP./i,
         }),
       ).toBeInTheDocument();
       expect(
         screen.getByText(
-          /Inspect tools, test prompts, and build AI powered apps/i,
+          /Test prompts, inspect tools, and debug AI-powered apps/i,
         ),
       ).toBeInTheDocument();
     });
@@ -738,6 +739,51 @@ describe("PlaygroundMain", () => {
       );
 
       expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("shows App Builder send NUX hint outside ChatInput while typewriter NUX is active", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connecting",
+      };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Draw me an MCP architecture diagram"
+          initialInputTypewriter={true}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      const hint = screen.getByTestId("app-builder-send-nux-hint");
+      const chatInput = screen.getByTestId("chat-input");
+      expect(hint).toHaveTextContent(
+        "Try this prompt with a demo MCP server",
+      );
+      expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
+      expect(
+        chatInput.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(screen.getByTestId("icon-arrow-up")).toBeInTheDocument();
+    });
+
+    it("keeps App Builder send NUX hint visible after server connects", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connected",
+      };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Draw me an MCP architecture diagram"
+          initialInputTypewriter={true}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("app-builder-send-nux-hint")).toHaveTextContent(
+        "Try this prompt with a demo MCP server",
+      );
     });
 
     it("restores the footer composer after the first guided message even without an onboarding callback", () => {

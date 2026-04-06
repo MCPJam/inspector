@@ -32,6 +32,10 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
+vi.mock("@/lib/convex-site-url", () => ({
+  getConvexSiteUrl: () => "https://test.convex.site",
+}));
+
 vi.mock("../state-machines/shared/helpers", () => ({
   generateRandomString: vi.fn(() => "mock-random-string"),
 }));

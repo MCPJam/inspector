@@ -80,10 +80,10 @@ export function WelcomeOverlay({
 
               <div className="space-y-2 text-center">
                 <p className="text-xl font-semibold text-foreground">
-                  Your playground for MCP servers
+                  This is your playground for MCP.
                 </p>
                 <p className="text-sm leading-6 text-muted-foreground">
-                  Inspect tools, test prompts, and build AI powered apps.
+                Test prompts, inspect tools, and debug AI-powered apps.
                 </p>
               </div>
             </div>

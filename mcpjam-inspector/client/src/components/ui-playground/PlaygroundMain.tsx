@@ -19,7 +19,7 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
@@ -84,6 +84,9 @@ const CUSTOM_DEVICE_BASE = {
   label: "Custom",
   icon: Settings2,
 };
+
+const SEND_ACTION_NUX_HINT_LABEL =
+  "Try this prompt with a demo MCP server";
 
 type ThreadThemeMode = "light" | "dark";
 
@@ -718,6 +721,10 @@ export function PlaygroundMain({
     ],
   );
 
+  /** Outside ChatInput: show until first message, not tied to server connect (avoids flicker). */
+  const sendNuxCtaVisible =
+    initialInputTypewriter && !showPostConnectGuide && isThreadEmpty;
+
   // Shared chat input props
   const sharedChatInputProps = {
     value: input,
@@ -850,7 +857,7 @@ export function PlaygroundMain({
                             : "text-[rgba(61,57,41,1)]",
                       )}
                     >
-                      Your playground for MCP servers
+                      This is your playground for MCP.
                     </h3>
                     <p
                       className={cn(
@@ -864,8 +871,8 @@ export function PlaygroundMain({
                             : "text-[rgba(61,57,41,0.72)]",
                       )}
                     >
-                      Inspect tools, test prompts, and build AI powered apps.
-                      Choose a tool on the left or type a message here.
+                      Test prompts, inspect tools, and debug AI-powered apps.
+                      Type a message here, or run a tool on the left.
                     </p>
                   </div>
                 </div>
@@ -890,6 +897,68 @@ export function PlaygroundMain({
                       {...sharedChatInputProps}
                       hasMessages={false}
                     />
+                    {sendNuxCtaVisible ? (
+                      <div
+                        className="relative mt-2 flex w-full flex-col px-2"
+                        role="note"
+                        aria-live="polite"
+                        data-testid="app-builder-send-nux-hint"
+                      >
+                        {/* Match ChatInput: composer px-2 + toolbar row px-2, justify-between + right cluster gap-2 (Context + Send size-[34px]) */}
+                        <div className="flex w-full min-w-0 items-center justify-between gap-2 px-2">
+                          <div className="min-w-0 flex-1" aria-hidden />
+                          <div className="flex flex-shrink-0 items-center gap-2">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              tabIndex={-1}
+                              aria-hidden
+                              className="pointer-events-none invisible h-9 shrink-0 px-3 has-[>svg]:px-3"
+                            >
+                              <svg
+                                width="20"
+                                height="20"
+                                viewBox="0 0 24 24"
+                                aria-hidden
+                              />
+                            </Button>
+                            <div className="flex size-[34px] shrink-0 items-center justify-center">
+                              <ArrowUp
+                                className={cn(
+                                  "h-9 w-9 shrink-0 drop-shadow-sm motion-reduce:animate-none",
+                                  "animate-app-builder-send-hint-nudge",
+                                  hostStyle === "chatgpt"
+                                    ? effectiveThreadTheme === "dark"
+                                      ? "text-neutral-100"
+                                      : "text-neutral-900"
+                                    : effectiveThreadTheme === "dark"
+                                      ? "text-[#e8a077]"
+                                      : "text-primary",
+                                )}
+                                strokeWidth={2.25}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                        <p
+                          className={cn(
+                            "mt-1.5 ml-auto max-w-[min(100%,22rem)] text-right text-xs leading-snug",
+                            "rounded-md border border-orange-500/65 px-3 py-2",
+                            "shadow-[0_0_16px_rgba(249,115,22,0.2)]",
+                            "animate-in fade-in slide-in-from-bottom-2 duration-300 motion-reduce:animate-none",
+                            hostStyle === "chatgpt"
+                              ? effectiveThreadTheme === "dark"
+                                ? "bg-neutral-900/50 text-neutral-200"
+                                : "bg-white text-neutral-700"
+                              : effectiveThreadTheme === "dark"
+                                ? "bg-[rgba(38,38,36,0.65)] text-[#F1F0ED]/90"
+                                : "bg-[rgba(250,249,245,0.98)] text-[rgba(61,57,41,0.82)]",
+                          )}
+                        >
+                          {SEND_ACTION_NUX_HINT_LABEL}
+                        </p>
+                      </div>
+                    ) : null}
                   </div>
                 )}
               </div>

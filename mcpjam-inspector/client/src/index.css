@@ -797,6 +797,30 @@
   }
 }
 
+/* App Builder: arrow nudge toward Send (below composer) */
+@keyframes app-builder-send-hint-nudge {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+    opacity: 0.75;
+  }
+  50% {
+    transform: translateY(-10px) scale(1.08);
+    opacity: 1;
+  }
+}
+
+.animate-app-builder-send-hint-nudge {
+  animation: app-builder-send-hint-nudge 1.35s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-app-builder-send-hint-nudge {
+    animation: none;
+    opacity: 1;
+  }
+}
+
 /* Font code variable for theme */
 @theme inline {
   --font-code: var(--font-code);

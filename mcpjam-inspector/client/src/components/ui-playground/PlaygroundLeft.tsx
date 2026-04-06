@@ -163,7 +163,9 @@ export function PlaygroundLeft({
           tools={tools}
           toolNames={toolNames}
           filteredToolNames={filteredToolNames}
-          selectedToolName={selectedToolName}
+          selectedToolName={
+            isListExpanded ? null : selectedToolName
+          }
           fetchingTools={fetchingTools}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
