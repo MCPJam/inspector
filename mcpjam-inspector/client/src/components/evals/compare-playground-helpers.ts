@@ -56,6 +56,74 @@ export function resolveModelOptionLabel(
   return modelLabelByValue[modelValue] ?? modelValue;
 }
 
+const MISMATCH_METADATA_KEYS = [
+  "missingCount",
+  "unexpectedCount",
+  "argumentMismatchCount",
+  "mismatchCount",
+] as const;
+
+function readFiniteMetadataNumber(
+  metadata: EvalIteration["metadata"],
+  key: (typeof MISMATCH_METADATA_KEYS)[number],
+): number | null {
+  if (!metadata) {
+    return null;
+  }
+  const value = metadata[key];
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return null;
+}
+
+/** Full server-side prompt-aware aggregate counts; all four keys required. */
+function parsePersistedMismatchCounts(
+  metadata: EvalIteration["metadata"],
+): {
+  missingCount: number;
+  unexpectedCount: number;
+  argumentMismatchCount: number;
+  mismatchCount: number;
+} | null {
+  const missingCount = readFiniteMetadataNumber(metadata, "missingCount");
+  const unexpectedCount = readFiniteMetadataNumber(metadata, "unexpectedCount");
+  const argumentMismatchCount = readFiniteMetadataNumber(
+    metadata,
+    "argumentMismatchCount",
+  );
+  const mismatchCount = readFiniteMetadataNumber(metadata, "mismatchCount");
+
+  if (
+    missingCount === null ||
+    unexpectedCount === null ||
+    argumentMismatchCount === null ||
+    mismatchCount === null
+  ) {
+    return null;
+  }
+
+  return {
+    missingCount,
+    unexpectedCount,
+    argumentMismatchCount,
+    mismatchCount,
+  };
+}
+
+function isMultiTurnTestCaseSnapshot(
+  snapshot: EvalIteration["testCaseSnapshot"] | undefined,
+): boolean {
+  const turns = snapshot?.promptTurns;
+  return Array.isArray(turns) && turns.length > 1;
+}
+
 export function resolveInitialCompareModelValues(params: {
   testCase: Pick<EvalCase, "models"> | null | undefined;
   modelOptions: Array<{ value: string }>;
@@ -241,30 +309,54 @@ export function buildCompareRunRecord(params: {
         durationMs: null,
         toolCallCount: 0,
         tokensUsed: 0,
-        missingCount: 0,
-        unexpectedCount: 0,
-        argumentMismatchCount: 0,
-        mismatchCount: 0,
+        missingCount: null,
+        unexpectedCount: null,
+        argumentMismatchCount: null,
+        mismatchCount: null,
       },
     };
   }
 
   const expectedToolCalls = iteration.testCaseSnapshot?.expectedToolCalls ?? [];
   const actualToolCalls = iteration.actualToolCalls ?? [];
-  const match = matchToolCalls(
-    expectedToolCalls,
-    actualToolCalls,
-    iteration.testCaseSnapshot?.isNegativeTest,
-  );
   const durationMs =
     iteration.startedAt && iteration.updatedAt
       ? Math.max(iteration.updatedAt - iteration.startedAt, 0)
       : null;
   const result = computeIterationResult(iteration);
-  const mismatchCount =
-    match.missing.length +
-    match.unexpected.length +
-    match.argumentMismatches.length;
+
+  const persisted = parsePersistedMismatchCounts(iteration.metadata);
+  let missingCount: number | null;
+  let unexpectedCount: number | null;
+  let argumentMismatchCount: number | null;
+  let mismatchCount: number | null;
+
+  if (persisted) {
+    ({
+      missingCount,
+      unexpectedCount,
+      argumentMismatchCount,
+      mismatchCount,
+    } = persisted);
+  } else if (!isMultiTurnTestCaseSnapshot(iteration.testCaseSnapshot)) {
+    const match = matchToolCalls(
+      expectedToolCalls,
+      actualToolCalls,
+      iteration.testCaseSnapshot?.isNegativeTest,
+    );
+    missingCount = match.missing.length;
+    unexpectedCount = match.unexpected.length;
+    argumentMismatchCount = match.argumentMismatches.length;
+    mismatchCount =
+      match.missing.length +
+      match.unexpected.length +
+      match.argumentMismatches.length;
+  } else {
+    missingCount = null;
+    unexpectedCount = null;
+    argumentMismatchCount = null;
+    mismatchCount = null;
+  }
 
   return {
     modelValue,
@@ -281,9 +373,9 @@ export function buildCompareRunRecord(params: {
       durationMs,
       toolCallCount: actualToolCalls.length,
       tokensUsed: iteration.tokensUsed ?? 0,
-      missingCount: match.missing.length,
-      unexpectedCount: match.unexpected.length,
-      argumentMismatchCount: match.argumentMismatches.length,
+      missingCount,
+      unexpectedCount,
+      argumentMismatchCount,
       mismatchCount,
     },
   };

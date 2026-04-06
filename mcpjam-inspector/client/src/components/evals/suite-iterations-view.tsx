@@ -11,6 +11,7 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
+import { EvalExportModal } from "./eval-export-modal";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -21,6 +22,7 @@ import type {
 } from "./types";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { useSharedAppState } from "@/state/app-state-context";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   useAiProviderKeys,
@@ -28,6 +30,13 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2 } from "lucide-react";
+import {
+  normalizeDraftEvalCaseForExport,
+  normalizeEvalCaseForExport,
+  pickSuiteExportCases,
+  type EvalExportCaseInput,
+  type EvalExportDraftInput,
+} from "@/lib/evals/eval-export";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
@@ -54,14 +63,14 @@ export function SuiteIterationsView({
   onReplayRun,
   onCancelRun,
   onDelete,
-  onDeleteRun,
+  onDeleteRun: _onDeleteRun,
   onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
   replayingRunId,
   cancellingRunId,
   deletingSuiteId,
-  deletingRunId,
+  deletingRunId: _deletingRunId,
   availableModels,
   route,
   userMap,
@@ -147,6 +156,7 @@ export function SuiteIterationsView({
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;
 }) {
+  const appState = useSharedAppState();
   // Derive view state from route
   const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
   const selectedTestId =
@@ -181,6 +191,10 @@ export function SuiteIterationsView({
     suite.description || "",
   );
   const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [exportState, setExportState] = useState<{
+    scope: "suite" | "test-case";
+    cases: EvalExportCaseInput[];
+  } | null>(null);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
@@ -334,6 +348,27 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
+  const handleOpenSuiteExport = useCallback(() => {
+    setExportState({
+      scope: "suite",
+      cases: pickSuiteExportCases(cases, runs),
+    });
+  }, [cases, runs]);
+
+  const handleOpenTestCaseExport = useCallback((testCase: EvalCase) => {
+    setExportState({
+      scope: "test-case",
+      cases: [normalizeEvalCaseForExport(testCase)],
+    });
+  }, []);
+
+  const handleOpenDraftExport = useCallback((draft: EvalExportDraftInput) => {
+    setExportState({
+      scope: "test-case",
+      cases: [normalizeDraftEvalCaseForExport(draft)],
+    });
+  }, []);
+
   const { hasToken } = useAiProviderKeys();
   const missingReplayProviderKeys = useMemo(() => {
     if (!cases || cases.length === 0) return [];
@@ -409,6 +444,7 @@ export function SuiteIterationsView({
             onUpdateModels={handleUpdateTests}
             onEditSuite={() => navigation.toSuiteEdit(suite._id)}
             onSetupCi={onSetupCi}
+            onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             casesSidebarHidden={casesSidebarHidden}
@@ -438,6 +474,7 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   workspaceId={workspaceId}
                   availableModels={availableModels}
+                  onExportDraft={handleOpenDraftExport}
                   onBackToList={() =>
                     navigation.toSuiteOverview(suite._id, "test-cases")
                   }
@@ -479,6 +516,9 @@ export function SuiteIterationsView({
                       testCase={selectedCase}
                       runs={runs}
                       iterations={caseIterations}
+                      onOpenExportCase={() =>
+                        handleOpenTestCaseExport(selectedCase)
+                      }
                       serverNames={(suite.environment?.servers || []).filter(
                         (name) => connectedServerNames.has(name),
                       )}
@@ -795,6 +835,18 @@ export function SuiteIterationsView({
           </div>
         </div>
       )}
+      <EvalExportModal
+        open={exportState !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setExportState(null);
+          }
+        }}
+        scope={exportState?.scope ?? "suite"}
+        suite={suite}
+        cases={exportState?.cases ?? []}
+        serverEntries={appState.servers}
+      />
     </div>
   );
 }

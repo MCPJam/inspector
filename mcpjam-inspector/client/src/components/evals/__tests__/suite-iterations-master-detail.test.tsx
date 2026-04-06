@@ -34,6 +34,14 @@ vi.mock("../suite-header", () => ({
   },
 }));
 
+vi.mock("../eval-export-modal", () => ({
+  EvalExportModal: () => null,
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({ servers: {} }),
+}));
+
 vi.mock("../run-overview", () => ({
   RunOverview: (props: unknown) => {
     mocks.runOverview(props);

@@ -15,7 +15,14 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { GitBranch, PanelLeft, RotateCw, Settings2, X } from "lucide-react";
+import {
+  Code2,
+  GitBranch,
+  PanelLeft,
+  RotateCw,
+  Settings2,
+  X,
+} from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -71,6 +78,7 @@ interface SuiteHeaderProps {
   hideRunActions?: boolean;
   onEditSuite?: () => void;
   onSetupCi?: () => void;
+  onOpenExportSuite?: () => void;
   /** When the parent hides the cases sidebar (e.g. Explore run insights landing). */
   casesSidebarHidden?: boolean;
   onShowCasesSidebar?: () => void;
@@ -98,6 +106,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     hideRunActions = false,
     onEditSuite,
     onSetupCi,
+    onOpenExportSuite,
     casesSidebarHidden = false,
     onShowCasesSidebar,
     runsViewMode = "runs",
@@ -423,6 +432,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             Setup CI
           </Button>
         )}
+        {onOpenExportSuite ? (
+          <Button size="sm" variant="outline" onClick={onOpenExportSuite}>
+            <Code2 className="mr-2 h-4 w-4" />
+            Export
+          </Button>
+        ) : null}
         {/* Models picker - compact dropdown */}
         {onUpdateModels && !readOnlyConfig && (
           <DropdownMenu

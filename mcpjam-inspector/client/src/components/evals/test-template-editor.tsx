@@ -15,6 +15,7 @@ import {
   ArrowUp,
   ChevronDown,
   ChevronRight,
+  Code2,
   Loader2,
   MoreHorizontal,
   Play,
@@ -90,6 +91,7 @@ import type {
   EvalIteration,
   RunColumnTab,
 } from "./types";
+import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 
 interface TestTemplate {
   title: string;
@@ -107,6 +109,7 @@ interface TestTemplateEditorProps {
   availableModels: ModelDefinition[];
   onBackToList?: () => void;
   onOpenLastRun?: (iteration: EvalIteration) => void;
+  onExportDraft?: (draft: EvalExportDraftInput) => void;
 }
 
 type RunArtifactMode = "output" | "raw";
@@ -251,6 +254,7 @@ export function TestTemplateEditor({
   availableModels,
   onBackToList,
   onOpenLastRun,
+  onExportDraft,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -563,6 +567,26 @@ export function TestTemplateEditor({
       isNegativeTest,
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
     };
+  };
+
+  const handleExport = () => {
+    if (!editForm || !currentTestCase || !onExportDraft) {
+      return;
+    }
+
+    const savePayload = buildSavePayload(editForm);
+    onExportDraft({
+      testCaseId: currentTestCase._id,
+      title: savePayload.title,
+      query: savePayload.query,
+      runs: savePayload.runs,
+      expectedToolCalls: savePayload.expectedToolCalls,
+      expectedOutput: savePayload.expectedOutput,
+      promptTurns: savePayload.promptTurns,
+      isNegativeTest: savePayload.isNegativeTest,
+      advancedConfig: savePayload.advancedConfig,
+      scenario: currentTestCase.scenario,
+    });
   };
 
   const handleSave = async () => {
@@ -1228,6 +1252,17 @@ export function TestTemplateEditor({
                   ) : null}
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
+                  {onExportDraft ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={handleExport}
+                      disabled={!editForm}
+                    >
+                      <Code2 className="mr-2 h-4 w-4" />
+                      Export
+                    </Button>
+                  ) : null}
                   {hasUnsavedChanges ? (
                     <Button
                       type="button"
@@ -1982,7 +2017,8 @@ function RunColumn({
           </div>
         </div>
 
-        {record.metrics.mismatchCount > 0 ? (
+        {record.metrics.mismatchCount != null &&
+        record.metrics.mismatchCount > 0 ? (
           <div className="mt-3 text-[11px] text-muted-foreground">
             {record.metrics.mismatchCount} mismatch
             {record.metrics.mismatchCount === 1 ? "" : "es"} across expected tool

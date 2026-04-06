@@ -139,10 +139,10 @@ export type CompareRunRecord = {
     durationMs: number | null;
     toolCallCount: number;
     tokensUsed: number;
-    missingCount: number;
-    unexpectedCount: number;
-    argumentMismatchCount: number;
-    mismatchCount: number;
+    missingCount: number | null;
+    unexpectedCount: number | null;
+    argumentMismatchCount: number | null;
+    mismatchCount: number | null;
   };
 };
 

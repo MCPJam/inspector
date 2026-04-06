@@ -12,6 +12,7 @@ import {
   type MultiTurnEvaluationResult,
   type UsageTotals,
 } from "./evals/types";
+import { buildIterationMetadata } from "./evals/iteration-metadata";
 import { finalizePassedForEval, type MCPClientManager } from "@mcpjam/sdk";
 import { createLlmModel } from "../utils/chat-helpers";
 import { logger } from "../utils/logger";
@@ -165,21 +166,6 @@ function buildPromptTraceSummaries(
       };
     }),
   }));
-}
-
-function buildIterationMetadata(
-  evaluation: MultiTurnEvaluationResult,
-): Record<string, string | number | boolean> {
-  const metadata: Record<string, string | number | boolean> = {
-    turnCount: evaluation.turnCount,
-    failedTurnCount: evaluation.failedTurnCount,
-  };
-
-  if (typeof evaluation.firstFailedTurnIndex === "number") {
-    metadata.firstFailedTurnIndex = evaluation.firstFailedTurnIndex;
-  }
-
-  return metadata;
 }
 
 function extractToolCallsFromConversation(params: {

@@ -92,7 +92,87 @@ describe("compare-playground-helpers", () => {
     expect(record.metrics.toolCallCount).toBe(1);
     expect(record.metrics.missingCount).toBe(1);
     expect(record.metrics.unexpectedCount).toBe(1);
+    expect(record.metrics.argumentMismatchCount).toBe(0);
     expect(record.metrics.mismatchCount).toBe(2);
+  });
+
+  it("uses persisted prompt-aware mismatch totals for multi-turn iterations", () => {
+    const record = buildCompareRunRecord({
+      modelValue: "openai/gpt-5",
+      modelLabel: "GPT-5",
+      iteration: {
+        status: "completed",
+        result: "failed",
+        resultSource: "derived",
+        actualToolCalls: [],
+        metadata: {
+          missingCount: 2,
+          unexpectedCount: 1,
+          argumentMismatchCount: 3,
+          mismatchCount: 6,
+        },
+        tokensUsed: 100,
+        createdBy: "user",
+        createdAt: 1,
+        updatedAt: 2,
+        startedAt: 1,
+        iterationNumber: 1,
+        _id: "iter-mt",
+        testCaseSnapshot: {
+          title: "Multi",
+          query: "Q1",
+          provider: "openai",
+          model: "gpt-5",
+          expectedToolCalls: [{ toolName: "only_first_turn", arguments: {} }],
+          promptTurns: [
+            { id: "a", prompt: "A", expectedToolCalls: [] },
+            { id: "b", prompt: "B", expectedToolCalls: [{ toolName: "b", arguments: {} }] },
+          ],
+        },
+      } as any,
+    });
+
+    expect(record.metrics.missingCount).toBe(2);
+    expect(record.metrics.unexpectedCount).toBe(1);
+    expect(record.metrics.argumentMismatchCount).toBe(3);
+    expect(record.metrics.mismatchCount).toBe(6);
+  });
+
+  it("sets mismatch counters to null for legacy multi-turn iterations without metadata", () => {
+    const record = buildCompareRunRecord({
+      modelValue: "openai/gpt-5",
+      modelLabel: "GPT-5",
+      iteration: {
+        status: "completed",
+        result: "passed",
+        resultSource: "reported",
+        actualToolCalls: [{ toolName: "x", arguments: {} }],
+        tokensUsed: 50,
+        createdBy: "user",
+        createdAt: 1,
+        updatedAt: 2,
+        startedAt: 1,
+        iterationNumber: 1,
+        _id: "iter-legacy-mt",
+        testCaseSnapshot: {
+          title: "Legacy MT",
+          query: "Q",
+          provider: "openai",
+          model: "gpt-5",
+          expectedToolCalls: [],
+          promptTurns: [
+            { id: "a", prompt: "A", expectedToolCalls: [] },
+            { id: "b", prompt: "B", expectedToolCalls: [{ toolName: "b", arguments: {} }] },
+          ],
+        },
+      } as any,
+    });
+
+    expect(record.metrics.toolCallCount).toBe(1);
+    expect(record.metrics.missingCount).toBeNull();
+    expect(record.metrics.unexpectedCount).toBeNull();
+    expect(record.metrics.argumentMismatchCount).toBeNull();
+    expect(record.metrics.mismatchCount).toBeNull();
   });
 
   it("resolves an iteration model value from the snapshot", () => {

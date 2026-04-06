@@ -169,4 +169,22 @@ describe("SuiteHeader", () => {
     expect(onShowCasesSidebar).toHaveBeenCalled();
   });
 
+  it("fires the export callback when Export is clicked", async () => {
+    const user = userEvent.setup();
+    const onOpenExportSuite = vi.fn();
+
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        onOpenExportSuite={onOpenExportSuite}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Export" }));
+
+    expect(onOpenExportSuite).toHaveBeenCalledTimes(1);
+  });
+
 });
