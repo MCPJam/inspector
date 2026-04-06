@@ -48,6 +48,7 @@
     "dev:default": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:win32": "concurrently --raw \"npm run dev:server\" \"npm run dev:client\"",
     "dev:worktree": "node scripts/dev-worktree.mjs",
+    "worktree": "node scripts/worktree.mjs",
     "dev:hosted": "npm run sdk:build && cross-env VITE_MCPJAM_HOSTED_MODE=true WEB_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173 npm run dev",
     "sdk:build": "npm --prefix ../sdk run build",
     "dev:convex": "convex dev",
