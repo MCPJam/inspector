@@ -84,7 +84,6 @@ interface ServerConnectionCardProps {
     server: ServerWithName,
     defaultTab: ServerDetailTab,
   ) => void;
-  footerActions?: React.ReactNode;
   /** When set (e.g. active workspace on Servers tab), prefetches Explore AI test cases on MCP connect. */
   workspaceId?: string | null;
 }
@@ -98,7 +97,6 @@ export function ServerConnectionCard({
   serverTunnelUrl,
   hostedServerId,
   onOpenDetailModal,
-  footerActions,
   workspaceId,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(workspaceId ?? null, server, hostedServerId);
@@ -610,7 +608,6 @@ export function ServerConnectionCard({
               className="flex flex-wrap items-center justify-end gap-2"
               onClick={(e) => e.stopPropagation()}
             >
-              {footerActions}
               {canShareServer && (
                 <button
                   onClick={() => {
