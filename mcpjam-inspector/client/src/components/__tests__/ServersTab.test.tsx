@@ -181,6 +181,13 @@ vi.mock("@/hooks/useWorkspaces", () => ({
   useWorkspaceServers: () => ({
     serversRecord: {},
   }),
+  useWorkspaceQueries: () => ({
+    allWorkspaces: undefined,
+    workspaces: [],
+    sortedWorkspaces: [],
+    isLoading: false,
+    hasWorkspaces: false,
+  }),
 }));
 
 vi.mock("../connection/ServerConnectionCard", () => ({
