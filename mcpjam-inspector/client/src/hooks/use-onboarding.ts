@@ -47,7 +47,7 @@ function getInitialLocalPhase(
   if (persisted?.status === "dismissed") return "dismissed";
 
   const hasAnyServers = Object.keys(servers).length > 0;
-  if (!hasAnyServers && !persisted) {
+  if (!hasAnyServers && (!persisted || persisted.status === "seen")) {
     return "connecting_excalidraw";
   }
 

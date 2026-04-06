@@ -48,7 +48,7 @@ function shouldSuppressExcalidrawConnectToastForOnboarding(
 ): boolean {
   if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
   const status = readOnboardingState()?.status;
-  return status !== "completed" && status !== "dismissed";
+  return status === "seen";
 }
 
 /**

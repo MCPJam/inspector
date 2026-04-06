@@ -567,9 +567,20 @@ describe("AppBuilderTab", () => {
     it("renders bootstrap skeleton before the Excalidraw server row exists on first run", () => {
       mockOnboarding.isBootstrappingFirstRunConnection = true;
 
-      render(<AppBuilderTab />);
+      render(<AppBuilderTab onConnect={vi.fn()} />);
 
       expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+    });
+
+    it("falls back to empty state when bootstrapping but onConnect is not provided", () => {
+      mockOnboarding.isBootstrappingFirstRunConnection = true;
+
+      render(<AppBuilderTab onConnect={undefined} />);
+
+      expect(
+        screen.queryByTestId("app-builder-skeleton"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
 
     it("renders only the skeleton while signed-in onboarding state is resolving", () => {

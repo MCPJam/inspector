@@ -267,7 +267,7 @@ export function AppBuilderTab({
     );
   }
 
-  if (onboarding.isBootstrappingFirstRunConnection) {
+  if (onboarding.isBootstrappingFirstRunConnection && onConnect) {
     return (
       <div className="h-full flex flex-col overflow-hidden relative">
         <AppBuilderSkeleton />

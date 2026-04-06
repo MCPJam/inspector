@@ -196,6 +196,39 @@ describe("PromptsTab", () => {
     });
   });
 
+  describe("prompt switching via list selection", () => {
+    it("auto-runs zero-arg prompt when selected from the list", async () => {
+      const serverConfig = createServerConfig();
+
+      mockListPrompts.mockResolvedValue([
+        { name: "prompt-a", arguments: [{ name: "x", required: true }] },
+        { name: "prompt-b", arguments: [] },
+      ]);
+
+      mockGetPrompt.mockResolvedValue({ content: "Result from prompt-b" });
+
+      render(
+        <PromptsTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      // Wait for list to load
+      await waitFor(() => {
+        expect(screen.getByText("prompt-b")).toBeInTheDocument();
+      });
+
+      // Click prompt-b (zero args) — should auto-run
+      fireEvent.click(screen.getByText("prompt-b"));
+
+      await waitFor(() => {
+        expect(mockGetPrompt).toHaveBeenCalledWith(
+          "test-server",
+          "prompt-b",
+          {},
+        );
+      });
+    });
+  });
+
   describe("getting prompts", () => {
     it("gets prompt when Run button is clicked", async () => {
       const serverConfig = createServerConfig();

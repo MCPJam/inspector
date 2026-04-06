@@ -218,6 +218,29 @@ describe("useOnboarding", () => {
     expect(resumed.result.current.isGuidedPostConnect).toBe(false);
   });
 
+  it("resumes auto-connect on refresh when status is 'seen' but no servers exist yet", async () => {
+    // Simulate a refresh mid-bootstrap: "seen" was written but Excalidraw hasn't been registered
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen" }),
+    );
+
+    const onConnect = vi.fn();
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect,
+        isAuthenticated: false,
+        isAuthLoading: false,
+      }),
+    );
+
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
   it("does not call the Convex completion mutation when Excalidraw connects", async () => {
     const onConnect = vi.fn();
     const connectedServers = {

@@ -293,7 +293,16 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
             onExpand={() => setSelectedPrompt("")}
             toolSwitchList={{
               names: prompts.map((p) => p.name),
-              onSelect: (name) => setSelectedPrompt(name),
+              onSelect: (name) => {
+                setSelectedPrompt(name);
+                setError("");
+                setPromptContent(null);
+
+                const prompt = prompts.find((p) => p.name === name);
+                if (!prompt?.arguments || prompt.arguments.length === 0) {
+                  void getPrompt(name, {});
+                }
+              },
             }}
           />
 
