@@ -590,6 +590,13 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 <div className="flex flex-1 items-center justify-center">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
+              ) : queries.isOverviewLoading ? (
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                    <p className="mt-4 text-muted-foreground">Loading runs...</p>
+                  </div>
+                </div>
               ) : !hasVisibleSuites ? (
                 <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <div className="mx-auto w-full max-w-4xl px-6 py-8 pb-12">
