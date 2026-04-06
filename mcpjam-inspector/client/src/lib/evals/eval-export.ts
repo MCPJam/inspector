@@ -233,44 +233,25 @@ export function buildSdkTestFile({
   serverConnections,
   usedPlaceholderFallback = false,
 }: SdkTestFileInput): string {
+  const needsPartialArgMatching = anyTestCaseUsesPartialArgMatching(cases);
+  const sdkImports = [
+    "  MCPClientManager,",
+    "  TestAgent,",
+    "  EvalTest,",
+  ];
+  if (needsPartialArgMatching) {
+    sdkImports.push("  matchToolCallWithPartialArgs,");
+  }
+
   const lines: string[] = [
     'import { describe, it, expect, beforeAll, afterAll } from "vitest";',
     "import {",
-    "  MCPClientManager,",
-    "  TestAgent,",
-    "  createEvalRunReporter,",
-    "  matchNoToolCalls,",
-    "  matchToolCallWithPartialArgs,",
+    ...sdkImports,
     '} from "@mcpjam/sdk";',
     "",
     'type ServerConnection =',
     '  | { id: string; kind: "http"; url: string }',
     '  | { id: string; kind: "stdio"; command: string; args: string[] };',
-    "",
-    "function evaluateExpectedToolCalls(",
-    "  result: Awaited<ReturnType<TestAgent[\"prompt\"]>>,",
-    "  expectedToolCalls: Array<{ toolName: string; arguments: Record<string, unknown> }>,",
-    "  isNegativeTest: boolean,",
-    "): boolean {",
-    "  if (isNegativeTest) {",
-    "    return matchNoToolCalls(result.toolsCalled());",
-    "  }",
-    "",
-    "  if (expectedToolCalls.length === 0) {",
-    "    return true;",
-    "  }",
-    "",
-    "  return expectedToolCalls.every((expectedCall) => {",
-    "    if (Object.keys(expectedCall.arguments ?? {}).length > 0) {",
-    "      return matchToolCallWithPartialArgs(",
-    "        expectedCall.toolName,",
-    "        expectedCall.arguments,",
-    "        result.getToolCalls(),",
-    "      );",
-    "    }",
-    "    return result.hasToolCall(expectedCall.toolName);",
-    "  });",
-    "}",
     "",
     "const SERVER_CONFIGS: ServerConnection[] = [",
     indentBlock(renderServerConnectionEntries(serverConnections), 2),
@@ -279,7 +260,7 @@ export function buildSdkTestFile({
     "const SERVER_IDS = SERVER_CONFIGS.map((server) => server.id);",
     "const LLM_API_KEY = process.env.LLM_API_KEY!;",
     "const MODEL = process.env.EVAL_MODEL!;",
-    "const MCPJAM_API_KEY = process.env.MCPJAM_API_KEY;",
+    `const SUITE_NAME = ${JSON.stringify(suite.name || "MCPJam export")};`,
   ];
 
   if (suite.description?.trim()) {
@@ -298,10 +279,9 @@ export function buildSdkTestFile({
 
   lines.push(
     "",
-    `describe(${JSON.stringify(suite.name || "MCPJam export")}, () => {`,
+    `describe(SUITE_NAME, () => {`,
     "  let manager: MCPClientManager;",
     "  let agent: TestAgent;",
-    "  let reporter: ReturnType<typeof createEvalRunReporter> | undefined;",
     "",
     "  beforeAll(async () => {",
     "    manager = new MCPClientManager();",
@@ -324,27 +304,9 @@ export function buildSdkTestFile({
     "      maxSteps: 8,",
     "      mcpClientManager: manager,",
     "    });",
-    "",
-    "    if (MCPJAM_API_KEY) {",
-    "      reporter = createEvalRunReporter({",
-    `        suiteName: ${JSON.stringify(suite.name || "MCPJam export")},`,
-    "        apiKey: MCPJAM_API_KEY,",
-    "        strict: true,",
-    "        mcpClientManager: manager,",
-    "        serverNames: SERVER_IDS,",
-    `        expectedIterations: ${cases.length},`,
-    "      });",
-    "    }",
     "  }, 120_000);",
     "",
     "  afterAll(async () => {",
-    "    if (reporter?.getAddedCount()) {",
-    "      try {",
-    "        await reporter.finalize();",
-    "      } catch (error) {",
-    '        console.warn("MCPJam reporter finalize failed (non-fatal):", error);',
-    "      }",
-    "    }",
     "    await manager.disconnectAllServers();",
     "  }, 120_000);",
   );
@@ -442,89 +404,136 @@ function buildCaseTestBlock(
   const caseTitle = testCase.title || `Exported case ${index + 1}`;
   const promptTurns = testCase.promptTurns;
   const firstTurn = promptTurns[0];
-  const advancedConfig = testCase.advancedConfig ?? undefined;
-  const recordAdvancedConfig =
-    promptTurns.length > 1
-      ? {
-          ...(advancedConfig ?? {}),
-          promptTurns,
-        }
-      : advancedConfig;
+
+  const allExpectedToolCalls = promptTurns.flatMap(
+    (turn) => turn.expectedToolCalls ?? [],
+  );
 
   const lines: string[] = [
     "  it(",
     `    ${JSON.stringify(caseTitle)},`,
     "    async () => {",
-    `      const isNegativeTest = ${testCase.isNegativeTest ? "true" : "false"};`,
-    `      const promptTurns =`,
-    `${indentBlock(JSON.stringify(promptTurns, null, 2), 8)} as const;`,
-    `      const advancedConfig =`,
-    `${indentBlock(serializeTsValue(recordAdvancedConfig), 8)};`,
   ];
 
   pushCaseComments(lines, testCase);
 
+  // Build EvalTest config
+  lines.push(
+    "      const evalTest = new EvalTest({",
+    `        name: ${JSON.stringify(caseTitle)},`,
+  );
+
+  if (allExpectedToolCalls.length > 0) {
+    lines.push(
+      `        expectedToolCalls: ${indentBlock(JSON.stringify(allExpectedToolCalls, null, 2), 8).trimStart()},`,
+    );
+  }
+
+  // Build test callback
   if (promptTurns.length === 1 && firstTurn) {
     lines.push(
-      "      const promptTurn = promptTurns[0]!;",
-      "      const result = await agent.prompt(promptTurn.prompt);",
-      "      const passed = evaluateExpectedToolCalls(",
-      "        result,",
-      "        promptTurn.expectedToolCalls,",
-      "        isNegativeTest,",
-      "      );",
-      "      expect(passed).toBe(true);",
-      "",
-      "      if (reporter) {",
-      "        await reporter.recordFromPrompt(result, {",
-      `          caseTitle: ${JSON.stringify(caseTitle)},`,
-      "          query: promptTurn.prompt,",
-      "          expectedToolCalls: promptTurn.expectedToolCalls,",
-      "          passed,",
+      "        test: async (agent) => {",
+      `          const result = await agent.prompt(${JSON.stringify(firstTurn.prompt)});`,
     );
-    if (testCase.id) {
-      lines.push(`          externalCaseId: ${JSON.stringify(testCase.id)},`);
-    }
-    if (testCase.isNegativeTest) {
-      lines.push("          isNegativeTest: true,");
-    }
-    lines.push("          advancedConfig,", "        });", "      }");
+    lines.push(`          return ${buildSingleTurnReturnExpression(firstTurn, testCase.isNegativeTest)};`);
+    lines.push(
+      "        },",
+    );
   } else {
     lines.push(
-      '      const promptResults: Array<Awaited<ReturnType<TestAgent["prompt"]>>> = [];',
+      "        test: async (agent) => {",
+      "          const turns =",
+      `${indentBlock(JSON.stringify(promptTurns, null, 2), 12)} as const;`,
+      "          const results: Awaited<ReturnType<typeof agent.prompt>>[] = [];",
       "",
-      "      for (const promptTurn of promptTurns) {",
-      "        const result = await agent.prompt(promptTurn.prompt, {",
-      "          context: promptResults.length > 0 ? promptResults : undefined,",
-      "        });",
-      "        promptResults.push(result);",
-      "      }",
+      "          for (const turn of turns) {",
+      "            const result = await agent.prompt(turn.prompt, {",
+      "              context: results.length > 0 ? results : undefined,",
+      "            });",
+      "            results.push(result);",
+      "          }",
       "",
-      "      const passed = promptResults.every((result, promptIndex) =>",
-      "        evaluateExpectedToolCalls(",
-      "          result,",
-      "          promptTurns[promptIndex]?.expectedToolCalls ?? [],",
-      "          isNegativeTest,",
-      "        ),",
-      "      );",
-      "      expect(passed).toBe(true);",
-      "",
-      "      if (reporter) {",
-      "        await reporter.recordFromPrompts(promptResults, {",
-      `          caseTitle: ${JSON.stringify(caseTitle)},`,
-      "          passed,",
     );
-    if (testCase.id) {
-      lines.push(`          externalCaseId: ${JSON.stringify(testCase.id)},`);
-    }
+
     if (testCase.isNegativeTest) {
-      lines.push("          isNegativeTest: true,");
+      lines.push(
+        "          return results.every((result) => result.toolsCalled().length === 0);",
+      );
+    } else {
+      lines.push(
+        "          return results.every((result, i) => {",
+        "            const expected = turns[i].expectedToolCalls;",
+        "            if (expected.length === 0) return true;",
+        "            return expected.every((tc) =>",
+        "              Object.keys(tc.arguments ?? {}).length > 0",
+        "                ? matchToolCallWithPartialArgs(tc.toolName, tc.arguments, result.getToolCalls())",
+        "                : result.hasToolCall(tc.toolName),",
+        "            );",
+        "          });",
+      );
     }
-    lines.push("          advancedConfig,", "        });", "      }");
+
+    lines.push(
+      "        },",
+    );
   }
+
+  lines.push(
+    "      });",
+    "",
+    `      await evalTest.run(agent, {`,
+    `        iterations: 1,`,
+    `        mcpjam: { suiteName: SUITE_NAME, serverNames: SERVER_IDS },`,
+    `      });`,
+    "      expect(evalTest.accuracy()).toBe(1);",
+  );
 
   lines.push("    },", "    90_000,", "  );");
   return lines.filter(Boolean).join("\n");
+}
+
+function buildSingleTurnReturnExpression(
+  turn: { expectedToolCalls: Array<{ toolName: string; arguments: Record<string, any> }> },
+  isNegativeTest: boolean,
+): string {
+  if (isNegativeTest) {
+    return "result.toolsCalled().length === 0";
+  }
+
+  const expectedToolCalls = turn.expectedToolCalls ?? [];
+  if (expectedToolCalls.length === 0) {
+    return "true";
+  }
+
+  const checks: string[] = [];
+  for (const tc of expectedToolCalls) {
+    const hasArgs = Object.keys(tc.arguments ?? {}).length > 0;
+    if (hasArgs) {
+      checks.push(
+        `matchToolCallWithPartialArgs(${JSON.stringify(tc.toolName)}, ${JSON.stringify(tc.arguments)}, result.getToolCalls())`,
+      );
+    } else {
+      checks.push(`result.hasToolCall(${JSON.stringify(tc.toolName)})`);
+    }
+  }
+
+  if (checks.length === 1) {
+    return checks[0]!;
+  }
+
+  return `(\n            ${checks.join(" &&\n            ")}\n          )`;
+}
+
+function anyTestCaseUsesPartialArgMatching(
+  cases: EvalExportCaseInput[],
+): boolean {
+  return cases.some((c) =>
+    c.promptTurns.some((turn) =>
+      (turn.expectedToolCalls ?? []).some(
+        (tc) => Object.keys(tc.arguments ?? {}).length > 0,
+      ),
+    ),
+  );
 }
 
 function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
@@ -635,9 +644,3 @@ function indentBlock(value: string, spaces: number): string {
     .join("\n");
 }
 
-function serializeTsValue(value: unknown): string {
-  if (value === undefined) {
-    return "undefined";
-  }
-  return JSON.stringify(value, null, 2);
-}

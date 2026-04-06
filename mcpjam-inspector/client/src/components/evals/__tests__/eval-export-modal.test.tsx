@@ -130,7 +130,7 @@ describe("EvalExportModal", () => {
       "demo-suite.eval.test.ts",
     );
     expect(mockDownloadTextFile.mock.calls[0]?.[1]).toContain(
-      'describe("Demo Suite"',
+      'SUITE_NAME = "Demo Suite"',
     );
   });
 

@@ -156,11 +156,10 @@ describe("eval-export", () => {
       }),
     });
 
-    expect(sdkFile).toContain("if (expectedToolCalls.length === 0) {");
-    expect(sdkFile).toContain("return true;");
-    expect(sdkFile).toContain(
-      "promptTurns[promptIndex]?.expectedToolCalls ?? [],",
-    );
+    expect(sdkFile).toContain("new EvalTest(");
+    expect(sdkFile).toContain("evalTest.run(agent");
+    expect(sdkFile).toContain("evalTest.accuracy()");
+    expect(sdkFile).toContain("expected.length === 0");
     expect(sdkFile).toContain('"prompt": "Just acknowledge"');
     expect(sdkFile).toMatch(/"expectedToolCalls":\s*\[\s*\]/);
     expect(sdkFile).toContain('"toolName": "fetch_item"');
@@ -246,10 +245,12 @@ describe("eval-export", () => {
       }),
     });
 
-    expect(sdkFile).toContain("recordFromPrompt(result");
-    expect(sdkFile).toContain("recordFromPrompts(promptResults");
-    expect(sdkFile).toContain("matchNoToolCalls(result.toolsCalled())");
+    expect(sdkFile).toContain("new EvalTest(");
+    expect(sdkFile).toContain("evalTest.run(agent");
+    expect(sdkFile).toContain("evalTest.accuracy()");
+    expect(sdkFile).toContain("result.toolsCalled().length === 0");
     expect(sdkFile).toContain("matchToolCallWithPartialArgs(");
+    expect(sdkFile).not.toContain("createEvalRunReporter");
     expect(sdkFile).toContain("Scenario: Small talk only");
     expect(sdkFile).toContain("Generated from MCPJam");
   });

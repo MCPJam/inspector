@@ -4,7 +4,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ChangeEvent,
   type KeyboardEvent,
 } from "react";
 import { useMutation, useQuery } from "convex/react";
@@ -12,10 +11,6 @@ import { useAuth } from "@workos-inc/authkit-react";
 import posthog from "posthog-js";
 import {
   ArrowLeft,
-  ArrowDown,
-  ArrowUp,
-  ChevronDown,
-  ChevronRight,
   Code2,
   Loader2,
   MoreHorizontal,
@@ -24,7 +19,6 @@ import {
   Plus,
   RotateCw,
   Save,
-  Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -32,8 +26,6 @@ import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { listEvalTools, runEvalTestCase } from "@/lib/apis/evals-api";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,7 +44,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ExpectedToolsEditor } from "./expected-tools-editor";
+import { TestCasePromptFlow } from "./test-case-prompt-flow";
 import { EvalTraceSurface } from "./eval-trace-surface";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
@@ -73,14 +65,12 @@ import {
 } from "@/shared/prompt-turns";
 import { normalizeToolChoice } from "@/shared/tool-choice";
 import { cn } from "@/lib/utils";
-import { formatRelativeTime } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import {
   buildHistoricalCompareRunRecords,
   buildCompareRunRecord,
   createCompareSessionId,
   mergeAdvancedConfigWithOverride,
-  resolveIterationModelValue,
   resolveInitialCompareModelValues,
   resolveModelOptionLabel,
 } from "./compare-playground-helpers";
@@ -274,14 +264,6 @@ function normalizeAdvancedConfig(
   }
 
   return Object.keys(next).length > 0 ? next : undefined;
-}
-
-function formatPromptPreview(prompt: string): string {
-  const trimmed = prompt.trim();
-  if (!trimmed) {
-    return "Empty prompt";
-  }
-  return trimmed.length > 88 ? `${trimmed.slice(0, 88)}…` : trimmed;
 }
 
 export function TestTemplateEditor({
@@ -582,7 +564,7 @@ export function TestTemplateEditor({
     setEditForm((current) => {
       if (!current) return current;
       const nextTurn = createEmptyPromptTurn(current.promptTurns.length);
-      setExpandedPromptTurnIds([nextTurn.id]);
+      setExpandedPromptTurnIds((previous) => [...previous, nextTurn.id]);
       return {
         ...current,
         promptTurns: [...current.promptTurns, nextTurn],
@@ -618,7 +600,9 @@ export function TestTemplateEditor({
 
   const togglePromptTurnExpanded = (turnId: string) => {
     setExpandedPromptTurnIds((current) =>
-      current.includes(turnId) ? [] : [turnId],
+      current.includes(turnId)
+        ? current.filter((id) => id !== turnId)
+        : [...current, turnId],
     );
   };
 
@@ -1259,17 +1243,6 @@ export function TestTemplateEditor({
         : latestAvailableResult === "cancelled"
           ? "text-amber-700 dark:text-amber-300"
           : "text-muted-foreground";
-  const latestAvailableTimestamp =
-    latestAvailableIteration?.updatedAt ??
-    latestAvailableIteration?.startedAt ??
-    latestAvailableIteration?.createdAt ??
-    null;
-  const latestAvailableModelValue = latestAvailableIteration
-    ? resolveIterationModelValue(latestAvailableIteration, currentTestCase)
-    : null;
-  const latestAvailableModelLabel = latestAvailableModelValue
-    ? resolveModelOptionLabel(latestAvailableModelValue, modelLabelByValue)
-    : null;
   const latestAvailableIsSaved =
     Boolean(latestAvailableIteration?._id) &&
     latestAvailableIteration?._id === currentTestCase.lastMessageRun;
@@ -1487,41 +1460,11 @@ export function TestTemplateEditor({
                 }
               >
                 <div className="flex min-h-10 items-center gap-2.5 px-3">
-                  {latestAvailableIteration ? (
-                    <div className="flex shrink-0 items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
-                      <span className="font-semibold tracking-normal text-foreground/75">
-                        Run
-                      </span>
-                      <span className="text-[9px] opacity-40">/</span>
-                      {latestAvailableTimestamp ? (
-                        <span className="tabular-nums tracking-normal text-foreground/55">
-                          {formatRelativeTime(latestAvailableTimestamp)}
-                        </span>
-                      ) : null}
-                      {latestAvailableTimestamp && latestAvailableModelLabel ? (
-                        <span className="text-[9px] opacity-40">/</span>
-                      ) : null}
-                      {latestAvailableModelLabel ? (
-                        <span className="max-w-[5.5rem] truncate tracking-normal text-foreground/45 normal-case">
-                          {latestAvailableModelLabel}
-                        </span>
-                      ) : null}
-                      <span
-                        className={cn(
-                          "ml-0.5 rounded-sm px-1 py-px text-[9px] font-semibold tracking-normal normal-case",
-                          latestAvailableIsSaved
-                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                            : "bg-amber-500/15 text-amber-800 dark:text-amber-300",
-                        )}
-                      >
-                        {latestAvailableIsSaved ? "Saved" : "Draft"}
-                      </span>
-                    </div>
-                  ) : (
+                  {!latestAvailableIteration ? (
                     <span className="shrink-0 text-[13px] font-normal text-[#777777] dark:text-muted-foreground">
                       Add model
                     </span>
-                  )}
+                  ) : null}
 
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-x-auto py-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
@@ -1723,249 +1666,21 @@ export function TestTemplateEditor({
             </div>
 
             <div className="space-y-4 border-t border-border/60 pt-4">
-              <div className="space-y-3">
-                {editForm && editForm.promptTurns.length === 1 ? (
-                  <>
-                    <div>
-                      <Label className="text-xs font-medium text-muted-foreground">
-                        User prompt
-                      </Label>
-                      <p className="text-xs text-muted-foreground">
-                        The exact prompt or interaction to begin the test.
-                      </p>
-                      <Textarea
-                        value={editForm.promptTurns[0]?.prompt ?? ""}
-                        onChange={(event: ChangeEvent<HTMLTextAreaElement>) =>
-                          updatePromptTurn(0, (currentTurn) => ({
-                            ...currentTurn,
-                            prompt: event.target.value,
-                          }))
-                        }
-                        rows={5}
-                        placeholder="Enter the user prompt…"
-                        aria-invalid={isStepPromptEmpty(editForm.promptTurns[0])}
-                        aria-describedby={
-                          isStepPromptEmpty(editForm.promptTurns[0])
-                            ? "prompt-turn-0-hint"
-                            : undefined
-                        }
-                        className={cn(
-                          "mt-1.5 resize-none bg-muted/30 font-mono text-sm",
-                          isStepPromptEmpty(editForm.promptTurns[0]) &&
-                            evalValidationBorderClass,
-                        )}
-                      />
-                      {isStepPromptEmpty(editForm.promptTurns[0]) ? (
-                        <p
-                          id="prompt-turn-0-hint"
-                          className="mt-1 text-xs text-muted-foreground"
-                        >
-                          Required before run or save.
-                        </p>
-                      ) : null}
-                    </div>
-                    <div>
-                      <Label className="text-xs font-medium text-muted-foreground">
-                        Tool triggered
-                      </Label>
-                      <p className="mb-1.5 text-xs text-muted-foreground">
-                        Which tools should be called for this step? Leave empty if the
-                        model should not call any tools.
-                      </p>
-                      <ExpectedToolsEditor
-                        toolCalls={
-                          editForm.promptTurns[0]?.expectedToolCalls ?? []
-                        }
-                        onChange={(toolCalls) =>
-                          updatePromptTurn(0, (currentTurn) => ({
-                            ...currentTurn,
-                            expectedToolCalls: toolCalls,
-                          }))
-                        }
-                        availableTools={availableTools}
-                      />
-                      {stepExpectedToolsNeedAttention(editForm.promptTurns[0]) ? (
-                        <p className="mt-1.5 text-xs text-muted-foreground">
-                          Finish tool names and arguments, or remove incomplete
-                          rows.
-                        </p>
-                      ) : null}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-0 text-xs text-muted-foreground"
-                      onClick={addPromptTurn}
-                    >
-                      <Plus className="mr-1.5 h-3.5 w-3.5" />
-                      Add another step
-                    </Button>
-                  </>
-                ) : editForm ? (
-                  <>
-                    <div className="flex items-center justify-between gap-2">
-                      <Label className="text-xs font-medium text-muted-foreground">
-                        Prompt steps
-                      </Label>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        onClick={addPromptTurn}
-                      >
-                        <Plus className="mr-1.5 h-3.5 w-3.5" />
-                        Add step
-                      </Button>
-                    </div>
-                    {editForm?.promptTurns.map((turn, index) => {
-                      const isExpanded = expandedPromptTurnIds.includes(turn.id);
-                      const promptEmpty = isStepPromptEmpty(turn);
-                      const toolsAttention = stepExpectedToolsNeedAttention(turn);
-                      const stepNeedsAttention = promptEmpty || toolsAttention;
-                      return (
-                        <div
-                          key={turn.id}
-                          className={cn(
-                            "rounded-lg border bg-background/40",
-                            stepNeedsAttention && !isExpanded
-                              ? "border-destructive/40 dark:border-destructive/50"
-                              : "border-border/50",
-                          )}
-                        >
-                          <div className="flex items-center gap-2 px-3 py-2">
-                            <span className="w-12 shrink-0 text-xs font-medium text-muted-foreground">
-                              Step {index + 1}
-                            </span>
-                            <button
-                              type="button"
-                              className={cn(
-                                "min-w-0 flex-1 truncate text-left text-xs text-muted-foreground",
-                                promptEmpty && "text-destructive",
-                              )}
-                              onClick={() => togglePromptTurnExpanded(turn.id)}
-                            >
-                              {formatPromptPreview(turn.prompt) || "Empty prompt"}
-                            </button>
-                            <div className="flex shrink-0 items-center gap-0.5">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 w-7 p-0"
-                                disabled={index === 0}
-                                onClick={() => movePromptTurn(index, -1)}
-                              >
-                                <ArrowUp className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 w-7 p-0"
-                                disabled={index === editForm.promptTurns.length - 1}
-                                onClick={() => movePromptTurn(index, 1)}
-                              >
-                                <ArrowDown className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 w-7 p-0"
-                                disabled={editForm.promptTurns.length <= 1}
-                                onClick={() => removePromptTurn(index)}
-                              >
-                                <Trash2 className="h-3 w-3" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                className="h-7 w-7 p-0"
-                                onClick={() => togglePromptTurnExpanded(turn.id)}
-                              >
-                                {isExpanded ? (
-                                  <ChevronDown className="h-3.5 w-3.5" />
-                                ) : (
-                                  <ChevronRight className="h-3.5 w-3.5" />
-                                )}
-                              </Button>
-                            </div>
-                          </div>
-                          {isExpanded ? (
-                            <div className="space-y-3 border-t border-border/50 px-3 py-3">
-                              <div>
-                                <Label className="text-xs font-medium text-muted-foreground">
-                                  User prompt
-                                </Label>
-                                <Textarea
-                                  value={turn.prompt}
-                                  onChange={(
-                                    event: ChangeEvent<HTMLTextAreaElement>,
-                                  ) =>
-                                    updatePromptTurn(index, (currentTurn) => ({
-                                      ...currentTurn,
-                                      prompt: event.target.value,
-                                    }))
-                                  }
-                                  rows={4}
-                                  placeholder={`Prompt for step ${index + 1}…`}
-                                  aria-invalid={promptEmpty}
-                                  aria-describedby={
-                                    promptEmpty
-                                      ? `prompt-turn-${index}-hint`
-                                      : undefined
-                                  }
-                                  className={cn(
-                                    "mt-1.5 resize-none bg-background font-mono text-sm",
-                                    promptEmpty && evalValidationBorderClass,
-                                  )}
-                                />
-                                {promptEmpty ? (
-                                  <p
-                                    id={`prompt-turn-${index}-hint`}
-                                    className="mt-1 text-xs text-muted-foreground"
-                                  >
-                                    Required before run or save.
-                                  </p>
-                                ) : null}
-                              </div>
-                              <div>
-                                <Label className="text-xs font-medium text-muted-foreground">
-                                  Tool triggered
-                                </Label>
-                                <p className="mb-1.5 text-[11px] text-muted-foreground">
-                                  Leave empty for an informational-only step, or leave
-                                  every step empty to expect no tools for the whole
-                                  case.
-                                </p>
-                                <ExpectedToolsEditor
-                                  toolCalls={turn.expectedToolCalls}
-                                  onChange={(toolCalls) =>
-                                    updatePromptTurn(index, (currentTurn) => ({
-                                      ...currentTurn,
-                                      expectedToolCalls: toolCalls,
-                                    }))
-                                  }
-                                  availableTools={availableTools}
-                                />
-                                {toolsAttention ? (
-                                  <p className="mt-1.5 text-xs text-muted-foreground">
-                                    Finish tool names and arguments, or remove
-                                    incomplete rows.
-                                  </p>
-                                ) : null}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })}
-                  </>
-                ) : null}
-              </div>
+              {editForm ? (
+                <TestCasePromptFlow
+                  promptTurns={editForm.promptTurns}
+                  expandedPromptTurnIds={expandedPromptTurnIds}
+                  availableTools={availableTools}
+                  evalValidationBorderClass={evalValidationBorderClass}
+                  isStepPromptEmpty={isStepPromptEmpty}
+                  stepExpectedToolsNeedAttention={stepExpectedToolsNeedAttention}
+                  updatePromptTurn={updatePromptTurn}
+                  addPromptTurn={addPromptTurn}
+                  removePromptTurn={removePromptTurn}
+                  movePromptTurn={movePromptTurn}
+                  togglePromptTurnExpanded={togglePromptTurnExpanded}
+                />
+              ) : null}
             </div>
 
             {currentTestCase.lastMessageRun ? (
