@@ -47,7 +47,11 @@ export interface SuiteNavigation {
     options?: { insightsFocus?: boolean; replace?: boolean },
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
-  toTestEdit: (suiteId: string, testId: string) => void;
+  toTestEdit: (
+    suiteId: string,
+    testId: string,
+    options?: { openCompare?: boolean; replace?: boolean },
+  ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
 
@@ -369,6 +373,13 @@ export function SuiteIterationsView({
     });
   }, []);
 
+  const handleClearOpenCompareRoute = useCallback(() => {
+    if (route.type !== "test-edit") {
+      return;
+    }
+    navigation.toTestEdit(suite._id, route.testId, { replace: true });
+  }, [navigation, route, suite._id]);
+
   const { hasToken } = useAiProviderKeys();
   const missingReplayProviderKeys = useMemo(() => {
     if (!cases || cases.length === 0) return [];
@@ -440,15 +451,16 @@ export function SuiteIterationsView({
             allIterations={allIterations}
             aggregate={aggregate}
             testCases={cases}
-            availableModels={availableModels}
-            onUpdateModels={handleUpdateTests}
-            onEditSuite={() => navigation.toSuiteEdit(suite._id)}
             onSetupCi={onSetupCi}
             onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
+            onCreateTestCase={onCreateTestCase}
+            onGenerateTestCases={onGenerateTestCases}
+            canGenerateTestCases={canGenerateTestCases}
+            isGeneratingTestCases={isGeneratingTestCases}
           />
         </div>
       ) : null}
@@ -475,6 +487,10 @@ export function SuiteIterationsView({
                   workspaceId={workspaceId}
                   availableModels={availableModels}
                   onExportDraft={handleOpenDraftExport}
+                  openCompareFromRoute={
+                    route.type === "test-edit" && Boolean(route.openCompare)
+                  }
+                  onClearOpenCompareRoute={handleClearOpenCompareRoute}
                   onBackToList={() =>
                     navigation.toSuiteOverview(suite._id, "test-cases")
                   }
@@ -643,18 +659,19 @@ export function SuiteIterationsView({
                       }
                       clickHint={
                         hideRunActions
-                          ? "Click a case to open its config and run compare."
+                          ? "Click a case row to open Edit config. Click the last-run summary to jump straight to compare results for that run."
                           : undefined
                       }
-                      onCreateTestCase={onCreateTestCase}
-                      onGenerateTestCases={onGenerateTestCases}
-                      canGenerateTestCases={canGenerateTestCases}
-                      isGeneratingTestCases={isGeneratingTestCases}
                       runTrendData={runTrendData}
                       modelStats={modelStats}
                       runsLoading={runsLoading}
                       onRunClick={handleRunClick}
                       hideViewModeSelect={hideRunActions}
+                      onOpenLastRun={(testCaseId) =>
+                        navigation.toTestEdit(suite._id, testCaseId, {
+                          openCompare: true,
+                        })
+                      }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                       onRunTestCase={onRunTestCase}
                       runningTestCaseId={runningTestCaseId}

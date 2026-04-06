@@ -153,4 +153,33 @@ describe("EvalExportModal", () => {
       screen.getByRole("button", { name: "Copy prompt for agent" }),
     ).toBeInTheDocument();
   });
+
+  it("downloads the agent prompt as markdown", async () => {
+    const user = userEvent.setup();
+
+    renderWithProviders(<EvalExportModal {...baseProps} />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("tab", { name: "Prompt for agent" }),
+      ).not.toBeDisabled(),
+    );
+
+    await user.click(screen.getByRole("tab", { name: "Prompt for agent" }));
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /download demo-suite\.agent-prompt\.md/i,
+      }),
+    );
+
+    expect(mockDownloadTextFile).toHaveBeenCalledWith(
+      "demo-suite.agent-prompt.md",
+      expect.stringContaining("MCP Server Brief: weather"),
+    );
+    expect(mockCapture).toHaveBeenCalledWith(
+      "eval_export_modal_downloaded",
+      expect.objectContaining({ tab: "prompt_for_agent" }),
+    );
+  });
 });

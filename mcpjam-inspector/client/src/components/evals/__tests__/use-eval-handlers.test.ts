@@ -460,6 +460,103 @@ describe("useEvalHandlers", () => {
     });
   });
 
+  describe("handleRunTestCase", () => {
+    it("runs every configured model when no explicit model is selected", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            description: "A test suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Multi-model case",
+            query: "Test query",
+            models: [
+              { provider: "openai", model: "gpt-4o" },
+              { provider: "anthropic", model: "claude-3-5-sonnet" },
+              { provider: "google", model: "gemini-2.5-pro" },
+            ],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledTimes(3);
+      const requestBodies = mockAuthFetch.mock.calls.map((call) =>
+        JSON.parse(call[1].body as string),
+      );
+
+      expect(requestBodies).toEqual([
+        expect.objectContaining({
+          testCaseId: "case-123",
+          provider: "openai",
+          model: "gpt-4o",
+          skipLastMessageRunUpdate: true,
+        }),
+        expect.objectContaining({
+          testCaseId: "case-123",
+          provider: "anthropic",
+          model: "claude-3-5-sonnet",
+          skipLastMessageRunUpdate: true,
+        }),
+        expect.objectContaining({
+          testCaseId: "case-123",
+          provider: "google",
+          model: "gemini-2.5-pro",
+          skipLastMessageRunUpdate: true,
+        }),
+      ]);
+      expect(toast.success).toHaveBeenCalledWith(
+        "Test completed across 3 models!",
+      );
+    });
+
+    it("keeps the single-model path when a model is explicitly selected", async () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            description: "A test suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Multi-model case",
+            query: "Test query",
+            models: [
+              { provider: "openai", model: "gpt-4o" },
+              { provider: "anthropic", model: "claude-3-5-sonnet" },
+              { provider: "google", model: "gemini-2.5-pro" },
+            ],
+            expectedToolCalls: [],
+          } as any,
+          {
+            selectedModel: "anthropic/claude-3-5-sonnet",
+          },
+        );
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+      const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
+
+      expect(requestBody).toMatchObject({
+        testCaseId: "case-123",
+        provider: "anthropic",
+        model: "claude-3-5-sonnet",
+      });
+      expect(requestBody.skipLastMessageRunUpdate).toBeUndefined();
+      expect(toast.success).toHaveBeenCalledWith("Test completed successfully!");
+    });
+  });
+
   describe("handleReplayRun", () => {
     it("does not send modelApiKeys for MCPJam-provided replay models", async () => {
       const { isMCPJamProvidedModel } = await import("@/shared/types");

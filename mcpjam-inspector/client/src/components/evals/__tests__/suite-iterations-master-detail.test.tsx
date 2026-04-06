@@ -211,7 +211,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
   });
 
-  it("opens test config from the cases list when run actions are hidden", async () => {
+  it("opens test edit with compare deep link from the cases list when run actions are hidden", async () => {
     const user = userEvent.setup();
     const navigation = {
       ...noopNav,
@@ -262,7 +262,10 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
     await user.click(screen.getByTestId("test-cases-overview"));
 
-    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
+    expect(navigation.toTestEdit).toHaveBeenCalledWith(
+      "suite-1",
+      "case-1",
+    );
   });
 
   it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {

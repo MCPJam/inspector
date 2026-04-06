@@ -51,8 +51,16 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
         iteration,
       });
     },
-    toTestEdit: (suiteId, testId) => {
-      applyPlaygroundEvalsHash({ type: "test-edit", suiteId, testId });
+    toTestEdit: (suiteId, testId, options) => {
+      applyPlaygroundEvalsHash(
+        {
+          type: "test-edit",
+          suiteId,
+          testId,
+          ...(options?.openCompare ? { openCompare: true } : {}),
+        },
+        { replace: options?.replace },
+      );
     },
     toSuiteEdit: (suiteId) => {
       applyPlaygroundEvalsHash({ type: "suite-edit", suiteId });
@@ -87,8 +95,16 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
         testId,
         iteration,
       }),
-    toTestEdit: (suiteId, testId) =>
-      navigateToCiEvalsRoute({ type: "test-edit", suiteId, testId }),
+    toTestEdit: (suiteId, testId, options) =>
+      navigateToCiEvalsRoute(
+        {
+          type: "test-edit",
+          suiteId,
+          testId,
+          ...(options?.openCompare ? { openCompare: true } : {}),
+        },
+        { replace: options?.replace },
+      ),
     toSuiteEdit: (suiteId) =>
       navigateToCiEvalsRoute({ type: "suite-edit", suiteId }),
   };

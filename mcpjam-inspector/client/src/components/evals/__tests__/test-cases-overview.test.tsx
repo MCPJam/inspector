@@ -103,9 +103,7 @@ describe("TestCasesOverview", () => {
       />,
     );
 
-    const row = await screen.findByRole("button", {
-      name: /Create a simple flowchart diagram/i,
-    });
+    const row = await screen.findByTestId("test-case-row-case-1");
 
     await waitFor(() => {
       expect(within(row).getByText("Passed")).toBeInTheDocument();
@@ -161,9 +159,7 @@ describe("TestCasesOverview", () => {
       />,
     );
 
-    const row = await screen.findByRole("button", {
-      name: /Create a simple flowchart diagram/i,
-    });
+    const row = await screen.findByTestId("test-case-row-case-1");
 
     await waitFor(() => {
       expect(within(row).getByText("Failed")).toBeInTheDocument();
@@ -215,9 +211,7 @@ describe("TestCasesOverview", () => {
       />,
     );
 
-    const row = await screen.findByRole("button", {
-      name: /Create a simple flowchart diagram/i,
-    });
+    const row = await screen.findByTestId("test-case-row-case-1");
 
     await waitFor(() => {
       expect(within(row).getByText("Passed")).toBeInTheDocument();
@@ -227,31 +221,85 @@ describe("TestCasesOverview", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows a loading state on Generate while tests are being generated", () => {
+  it("calls onOpenLastRun when the last run summary is clicked", async () => {
+    const onTestCaseClick = vi.fn();
+    const onOpenLastRun = vi.fn();
     useConvexMock.mockReturnValue({ query: vi.fn() });
     useQueryMock.mockReturnValue(undefined);
+    const user = userEvent.setup();
 
     renderWithProviders(
       <TestCasesOverview
         suite={suite}
-        cases={[]}
-        allIterations={[]}
+        cases={[baseCase]}
+        allIterations={[savedIteration]}
         runsViewMode="test-cases"
         onViewModeChange={vi.fn()}
-        onTestCaseClick={vi.fn()}
-        onGenerateTestCases={vi.fn()}
-        canGenerateTestCases
-        isGeneratingTestCases
+        onTestCaseClick={onTestCaseClick}
+        onOpenLastRun={onOpenLastRun}
         runTrendData={[]}
         modelStats={[]}
         runsLoading={false}
       />,
     );
 
-    const generateBtn = screen.getByRole("button", { name: /generate/i });
-    expect(generateBtn).toHaveAttribute("aria-busy", "true");
-    expect(generateBtn).toBeDisabled();
-    expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /View last run:/i }));
+
+    expect(onOpenLastRun).toHaveBeenCalledTimes(1);
+    expect(onOpenLastRun).toHaveBeenCalledWith("case-1", "iter-1");
+    expect(onTestCaseClick).not.toHaveBeenCalled();
+  });
+
+  it("calls onTestCaseClick when clicking last-run summary area without onOpenLastRun", async () => {
+    const onTestCaseClick = vi.fn();
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[baseCase]}
+        allIterations={[savedIteration]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={onTestCaseClick}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+
+    await user.click(screen.getByText("Passed"));
+
+    expect(onTestCaseClick).toHaveBeenCalledTimes(1);
+    expect(onTestCaseClick).toHaveBeenCalledWith("case-1");
+  });
+
+  it("calls onTestCaseClick when clicking Never run summary (full row target)", async () => {
+    const onTestCaseClick = vi.fn();
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[baseCase]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={onTestCaseClick}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+
+    await user.click(screen.getByText("Never run"));
+
+    expect(onTestCaseClick).toHaveBeenCalledTimes(1);
+    expect(onTestCaseClick).toHaveBeenCalledWith("case-1");
   });
 
   it("hides the Runs/Cases selector when hideViewModeSelect is set", () => {

@@ -187,4 +187,23 @@ describe("SuiteHeader", () => {
     expect(onOpenExportSuite).toHaveBeenCalledTimes(1);
   });
 
+  it("shows a loading state on Generate in test-cases overview while generating", () => {
+    renderWithProviders(
+      <SuiteHeader
+        {...baseProps}
+        viewMode="overview"
+        selectedRunDetails={null}
+        runsViewMode="test-cases"
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        isGeneratingTestCases
+      />,
+    );
+
+    const generateBtn = screen.getByRole("button", { name: /generate/i });
+    expect(generateBtn).toHaveAttribute("aria-busy", "true");
+    expect(generateBtn).toBeDisabled();
+    expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
+  });
+
 });

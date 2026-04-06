@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import posthog from "posthog-js";
-import {
-  CircleAlert,
-  Loader2,
-  Plus,
-  RotateCw,
-  Sparkles,
-  Trash2,
-} from "lucide-react";
+import { CircleAlert, Loader2, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -27,7 +20,6 @@ import {
 } from "@/components/ui/tooltip";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime } from "./helpers";
 import type { EvalCase, EvalIteration } from "./types";
@@ -48,10 +40,6 @@ interface TestCasesOverviewProps {
   onViewModeChange: (value: "runs" | "test-cases") => void;
   onTestCaseClick: (testCaseId: string) => void;
   clickHint?: string;
-  onCreateTestCase?: () => void;
-  onGenerateTestCases?: () => void;
-  canGenerateTestCases?: boolean;
-  isGeneratingTestCases?: boolean;
   runTrendData: Array<{
     runId: string;
     runIdDisplay: string;
@@ -77,6 +65,10 @@ interface TestCasesOverviewProps {
   /** Playground / contexts where switching to the runs table is not offered. */
   hideViewModeSelect?: boolean;
   /**
+   * When set, the Last run summary opens test detail focused on that iteration (one click).
+   */
+  onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
+  /**
    * When set (e.g. playground), show run-style selection + batch delete for test cases.
    */
   onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
@@ -90,11 +82,8 @@ export function TestCasesOverview({
   onViewModeChange,
   onTestCaseClick,
   clickHint = "Click on a case to view its run history and performance.",
-  onCreateTestCase,
-  onGenerateTestCases,
-  canGenerateTestCases = false,
-  isGeneratingTestCases = false,
   hideViewModeSelect = false,
+  onOpenLastRun,
   onDeleteTestCasesBatch,
   onRunTestCase,
   runningTestCaseId = null,
@@ -347,56 +336,6 @@ export function TestCasesOverview({
               <p className="text-xs text-muted-foreground">{clickHint}</p>
             </div>
             <div className="flex items-center gap-2">
-              {onGenerateTestCases ? (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex">
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8"
-                        onClick={onGenerateTestCases}
-                        disabled={
-                          !canGenerateTestCases || isGeneratingTestCases
-                        }
-                        aria-busy={isGeneratingTestCases}
-                      >
-                        {isGeneratingTestCases ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Sparkles className="h-3.5 w-3.5" />
-                        )}
-                        Generate
-                      </Button>
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent
-                    variant="muted"
-                    side="bottom"
-                    align="start"
-                    sideOffset={8}
-                    className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
-                  >
-                    {isGeneratingTestCases
-                      ? "Generating test cases…"
-                      : !canGenerateTestCases
-                        ? "Choose a connected MCP server in the playground header, then generate cases."
-                        : "Generate suggested cases from your server's tools."}
-                  </TooltipContent>
-                </Tooltip>
-              ) : null}
-              {onCreateTestCase ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  className="h-8"
-                  onClick={onCreateTestCase}
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                  New case
-                </Button>
-              ) : null}
               {!hideViewModeSelect ? (
                 <select
                   value={runsViewMode}
@@ -457,15 +396,10 @@ export function TestCasesOverview({
                   !hasModels ||
                   missingServers.length > 0 ||
                   isThisCaseRunning;
-                const runTooltip = !hasModels
-                  ? "Add a model to this case first"
-                  : missingServers.length > 0
+                const disconnectedRunTooltip =
+                  missingServers.length > 0
                     ? `Connect: ${missingServers.join(", ")}`
-                    : blockTestCaseRuns || isAnotherCaseRunning
-                      ? "Another run is in progress"
-                      : isThisCaseRunning
-                        ? "Running…"
-                        : "Run this case";
+                    : null;
 
                 const lastRunResult = lastRunIteration
                   ? computeIterationResult(lastRunIteration)
@@ -487,89 +421,144 @@ export function TestCasesOverview({
                     null)
                   : null;
                 const showLastRunFailed = lastRunResult === "failed";
+                const caseTitle = testCase.title || "Untitled test case";
+                const lastRunSummary =
+                  lastRunIteration ? (
+                    <>
+                      {lastRunLabel}
+                      {lastRunTimestamp ? (
+                        <span className="font-normal">
+                          {" "}
+                          · {formatRelativeTime(lastRunTimestamp)}
+                        </span>
+                      ) : null}
+                    </>
+                  ) : (
+                    "Never run"
+                  );
+                const lastRunOpenable = Boolean(
+                  onOpenLastRun && lastRunIteration?._id,
+                );
+                const lastRunAriaLabel =
+                  lastRunIteration && lastRunOpenable
+                    ? `View last run: ${lastRunLabel}${
+                        lastRunTimestamp
+                          ? ` · ${formatRelativeTime(lastRunTimestamp)}`
+                          : ""
+                      }`
+                    : undefined;
 
-                const rowBody = (
-                  <>
-                    <div className="min-w-0 flex-1 truncate text-xs font-medium">
-                      {testCase.title || "Untitled test case"}
-                    </div>
-                    <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
+                const lastPart = (
+                  <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
+                    {lastRunOpenable ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onOpenLastRun!(
+                            testCase._id,
+                            lastRunIteration!._id,
+                          );
+                        }}
+                        className="text-xs text-muted-foreground text-right tabular-nums rounded-sm hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                        aria-label={lastRunAriaLabel}
+                      >
+                        {lastRunSummary}
+                      </button>
+                    ) : (
                       <span className="text-xs text-muted-foreground text-right tabular-nums">
-                        {lastRunIteration ? (
-                          <>
-                            {lastRunLabel}
-                            {lastRunTimestamp ? (
-                              <>
-                                <span className="font-normal">
-                                  {" "}
-                                  · {formatRelativeTime(lastRunTimestamp)}
-                                </span>
-                              </>
-                            ) : null}
-                          </>
-                        ) : (
-                          "Never run"
-                        )}
+                        {lastRunSummary}
                       </span>
-                      <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
-                        {showLastRunFailed ? (
-                          <CircleAlert
-                            className="h-3.5 w-3.5 text-destructive"
-                            aria-label="Last run failed"
-                          />
-                        ) : null}
-                      </span>
-                    </div>
+                    )}
+                    <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
+                      {showLastRunFailed ? (
+                        <CircleAlert
+                          className="h-3.5 w-3.5 text-destructive"
+                          aria-label="Last run failed"
+                        />
+                      ) : null}
+                    </span>
+                  </div>
+                );
+
+                const caseAndLast = (
+                  <>
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-left">
+                      {caseTitle}
+                    </span>
+                    {lastPart}
                   </>
+                );
+
+                const caseRowClickTarget = (
+                  <div
+                    className="flex flex-1 min-w-0 items-center gap-3 cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    tabIndex={0}
+                    aria-label={`Open test case: ${caseTitle}`}
+                    onClick={() => onTestCaseClick(testCase._id)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        onTestCaseClick(testCase._id);
+                      }
+                    }}
+                  >
+                    {caseAndLast}
+                  </div>
+                );
+
+                const runButton = (
+                  <span className="inline-flex shrink-0">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 w-7 p-0"
+                      disabled={runDisabled}
+                      aria-label={`Run ${testCase.title || "test case"}`}
+                      aria-busy={isThisCaseRunning}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (runDisabled) return;
+                        posthog.capture(
+                          "run_selected_case_button_clicked",
+                          {
+                            location: "test_cases_overview",
+                            platform: detectPlatform(),
+                            environment: detectEnvironment(),
+                            test_case_id: testCase._id,
+                          },
+                        );
+                        onRunTestCase(testCase);
+                      }}
+                    >
+                      {isThisCaseRunning ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Play className="h-3.5 w-3.5" />
+                      )}
+                    </Button>
+                  </span>
                 );
 
                 const runControl =
                   showRunColumn && onRunTestCase ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="inline-flex shrink-0">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="h-7 w-7 p-0"
-                            disabled={runDisabled}
-                            aria-label={`Run ${testCase.title || "test case"}`}
-                            aria-busy={isThisCaseRunning}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (runDisabled) return;
-                              posthog.capture(
-                                "run_selected_case_button_clicked",
-                                {
-                                  location: "test_cases_overview",
-                                  platform: detectPlatform(),
-                                  environment: detectEnvironment(),
-                                  test_case_id: testCase._id,
-                                },
-                              );
-                              onRunTestCase(testCase);
-                            }}
-                          >
-                            <RotateCw
-                              className={cn(
-                                "h-3.5 w-3.5",
-                                isThisCaseRunning && "animate-spin",
-                              )}
-                            />
-                          </Button>
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent
-                        variant="muted"
-                        side="left"
-                        sideOffset={8}
-                        className="max-w-[16rem]"
-                      >
-                        {runTooltip}
-                      </TooltipContent>
-                    </Tooltip>
+                    disconnectedRunTooltip ? (
+                      <Tooltip>
+                        <TooltipTrigger asChild>{runButton}</TooltipTrigger>
+                        <TooltipContent
+                          variant="muted"
+                          side="left"
+                          sideOffset={8}
+                          className="max-w-[16rem]"
+                        >
+                          {disconnectedRunTooltip}
+                        </TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      runButton
+                    )
                   ) : null;
 
                 if (batchDelete) {
@@ -577,6 +566,7 @@ export function TestCasesOverview({
                   return (
                     <div
                       key={testCase._id}
+                      data-testid={`test-case-row-${testCase._id}`}
                       className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
                     >
                       <div className="flex justify-center w-7 shrink-0">
@@ -589,13 +579,7 @@ export function TestCasesOverview({
                           aria-label={`Select case ${testCase.title || "Untitled test case"}`}
                         />
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => onTestCaseClick(testCase._id)}
-                        className="flex flex-1 min-w-0 items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded-sm"
-                      >
-                        {rowBody}
-                      </button>
+                      {caseRowClickTarget}
                       {runControl}
                     </div>
                   );
@@ -604,15 +588,10 @@ export function TestCasesOverview({
                 return (
                   <div
                     key={testCase._id}
+                    data-testid={`test-case-row-${testCase._id}`}
                     className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
                   >
-                    <button
-                      type="button"
-                      onClick={() => onTestCaseClick(testCase._id)}
-                      className="flex flex-1 min-w-0 items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded-sm"
-                    >
-                      {rowBody}
-                    </button>
+                    {caseRowClickTarget}
                     {runControl}
                   </div>
                 );

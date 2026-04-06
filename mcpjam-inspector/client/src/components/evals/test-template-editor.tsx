@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -110,6 +111,10 @@ interface TestTemplateEditorProps {
   onBackToList?: () => void;
   onOpenLastRun?: (iteration: EvalIteration) => void;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
+  /** Deep link: open compare run surface once iteration data is ready (same as View results). */
+  openCompareFromRoute?: boolean;
+  /** Remove `compare=1` from the hash after handling {@link openCompareFromRoute}. */
+  onClearOpenCompareRoute?: () => void;
 }
 
 type RunArtifactMode = "output" | "raw";
@@ -255,6 +260,8 @@ export function TestTemplateEditor({
   onBackToList,
   onOpenLastRun,
   onExportDraft,
+  openCompareFromRoute = false,
+  onClearOpenCompareRoute,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -716,23 +723,73 @@ export function TestTemplateEditor({
       Boolean(record.error),
   );
 
-  const openRunView = (source: "run_compare" | "config_toggle") => {
-    setEditorMode("run");
-    setMobileVisibleModelValue((current) =>
-      current && selectedModelValues.includes(current)
-        ? current
-        : selectedModelValues[0] ?? null,
-    );
-    posthog.capture("compare_run_view_opened", {
-      location: "test_template_editor",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-      suite_id: suiteId,
-      test_case_id: currentTestCase?._id ?? null,
-      source,
-      models: selectedModelValues,
-    });
-  };
+  const openRunView = useCallback(
+    (source: "run_compare" | "config_toggle") => {
+      setEditorMode("run");
+      setMobileVisibleModelValue((current) =>
+        current && selectedModelValues.includes(current)
+          ? current
+          : selectedModelValues[0] ?? null,
+      );
+      posthog.capture("compare_run_view_opened", {
+        location: "test_template_editor",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: suiteId,
+        test_case_id: currentTestCase?._id ?? null,
+        source,
+        models: selectedModelValues,
+      });
+    },
+    [currentTestCase?._id, selectedModelValues, suiteId],
+  );
+
+  const openCompareRouteHandledRef = useRef(false);
+  useEffect(() => {
+    if (!openCompareFromRoute) {
+      openCompareRouteHandledRef.current = false;
+      return;
+    }
+    if (!onClearOpenCompareRoute || openCompareRouteHandledRef.current) {
+      return;
+    }
+    if (!currentTestCase?._id || recentIterations === undefined) {
+      return;
+    }
+    if (initializedSelectionCaseRef.current !== currentTestCase._id) {
+      return;
+    }
+    if (selectedModelValues.length === 0) {
+      const caseListsModels =
+        (currentTestCase.models?.filter((m) => m.provider && m.model).length ??
+          0) > 0;
+      if (caseListsModels || modelOptions.length > 0) {
+        return;
+      }
+      openCompareRouteHandledRef.current = true;
+      onClearOpenCompareRoute();
+      return;
+    }
+    if (!hasRunViewContent) {
+      if (recentIterations.length === 0) {
+        openCompareRouteHandledRef.current = true;
+        onClearOpenCompareRoute();
+      }
+      return;
+    }
+    openCompareRouteHandledRef.current = true;
+    openRunView("config_toggle");
+    onClearOpenCompareRoute();
+  }, [
+    openCompareFromRoute,
+    hasRunViewContent,
+    recentIterations,
+    onClearOpenCompareRoute,
+    openRunView,
+    currentTestCase?._id,
+    selectedModelValues.length,
+    modelOptions.length,
+  ]);
 
   const handleAddModel = (modelValue: string) => {
     setSelectedModelValues((previous) => {

@@ -15,6 +15,7 @@ import type { EvalSuite } from "./types";
 import { CopyableCodeBlock } from "./copyable-code-block";
 import type { EvalExportCaseInput } from "@/lib/evals/eval-export";
 import {
+  buildAgentPromptExportFileName,
   buildSdkEnvSnippet,
   buildSdkInstallSnippet,
   buildSdkTestFile,
@@ -115,6 +116,10 @@ export function EvalExportModal({
   const downloadFileName = useMemo(
     () => buildSuiteExportFileName(exportLabel, scope),
     [exportLabel, scope],
+  );
+  const agentPromptDownloadFileName = useMemo(
+    () => buildAgentPromptExportFileName(exportLabel),
+    [exportLabel],
   );
   const singleServerId = serverIds.length === 1 ? serverIds[0]! : null;
   const isPromptReady = agentPromptState.status === "ready";
@@ -233,6 +238,21 @@ export function EvalExportModal({
     });
   };
 
+  const handleDownloadAgentPrompt = () => {
+    if (agentPromptState.status !== "ready") {
+      return;
+    }
+    downloadTextFile(agentPromptDownloadFileName, agentPromptState.prompt);
+    posthog.capture("eval_export_modal_downloaded", {
+      scope,
+      tab: "prompt_for_agent",
+      suite_source: suite.source ?? "ui",
+      used_placeholder_fallback: sdkEnvResult.usedPlaceholderFallback,
+      platform: detectPlatform(),
+      environment: detectEnvironment(),
+    });
+  };
+
   const trackCopy = (tab: "sdk_code" | "prompt_for_agent", section: string) => {
     posthog.capture("eval_export_modal_copied", {
       scope,
@@ -247,8 +267,8 @@ export function EvalExportModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[min(92vh,960px)] overflow-hidden p-0 sm:max-w-4xl">
-        <DialogHeader className="border-b border-border/60 px-6 py-5">
+      <DialogContent className="flex h-[min(92vh,960px)] max-h-[min(92vh,960px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+        <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-5">
           <DialogTitle>
             {scope === "suite" ? "Export suite as SDK eval" : "Export test case"}
           </DialogTitle>
@@ -259,7 +279,7 @@ export function EvalExportModal({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="flex max-h-[calc(min(92vh,960px)-88px)] flex-col overflow-hidden px-6 py-5">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-6 py-5">
           <Tabs
             value={activeTab}
             onValueChange={(value) => setActiveTab(value as "sdk" | "prompt")}
@@ -344,14 +364,27 @@ export function EvalExportModal({
 
             <TabsContent
               value="prompt"
-              className="min-h-0 flex-1 overflow-y-auto pr-1"
+              className="flex min-h-0 flex-1 flex-col overflow-hidden pr-1"
             >
               {agentPromptState.status === "ready" ? (
                 <CopyableCodeBlock
                   code={agentPromptState.prompt}
                   copyLabel="Copy prompt for agent"
                   toolbarLabel="Agent prompt.md"
-                  className="min-h-[420px]"
+                  fillHeight
+                  className="min-h-0 flex-1"
+                  actions={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={handleDownloadAgentPrompt}
+                      aria-label={`Download ${agentPromptDownloadFileName}`}
+                    >
+                      <Download className="h-4 w-4" />
+                    </Button>
+                  }
                   onCopySuccess={() =>
                     trackCopy("prompt_for_agent", "agent_prompt")
                   }

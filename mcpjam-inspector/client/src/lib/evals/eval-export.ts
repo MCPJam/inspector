@@ -375,6 +375,11 @@ export function buildSuiteExportFileName(
     : `${safeName}.test.ts`;
 }
 
+export function buildAgentPromptExportFileName(suiteName: string): string {
+  const safeName = sanitizeFilename(suiteName || "mcpjam-export");
+  return `${safeName}.agent-prompt.md`;
+}
+
 export function buildServerConnections(
   serverIds: string[],
   serverEntries: Record<string, ServerWithName | undefined>,

@@ -280,7 +280,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           aggregate={suiteAggregate}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
-            playgroundNavigation.toTestEdit(exploreSuite._id, testCaseId)
+            playgroundNavigation.toTestEdit(exploreSuite._id, testCaseId, {
+              openCompare: true,
+            })
           }
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(exploreSuite._id)
@@ -318,15 +320,10 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
                         location: "test_cases_overview",
                       },
                     );
-                    const iterationId = data?.iteration?._id as
-                      | string
-                      | undefined;
-                    if (iterationId) {
-                      playgroundNavigation.toTestDetail(
-                        exploreSuite._id,
-                        tc._id,
-                        iterationId,
-                      );
+                    if (data?.iteration?._id) {
+                      playgroundNavigation.toTestEdit(exploreSuite._id, tc._id, {
+                        openCompare: true,
+                      });
                     }
                   })();
                 }

@@ -37,6 +37,22 @@ import {
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
 
+function getConfiguredTestCaseModelValues(
+  testCase: Pick<EvalCase, "models">,
+): string[] {
+  const modelValues = new Set<string>();
+
+  for (const modelConfig of testCase.models ?? []) {
+    if (!modelConfig?.provider || !modelConfig.model) {
+      continue;
+    }
+
+    modelValues.add(`${modelConfig.provider}/${modelConfig.model}`);
+  }
+
+  return Array.from(modelValues);
+}
+
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
@@ -431,57 +447,141 @@ export function useEvalHandlers({
         return null;
       }
 
-      const modelValue = getDefaultTestCaseModelValue(testCase);
-      if (!modelValue) {
+      const modelValuesToRun = options?.selectedModel
+        ? [options.selectedModel]
+        : getConfiguredTestCaseModelValues(testCase);
+      if (
+        modelValuesToRun.length === 0 ||
+        !getDefaultTestCaseModelValue(testCase)
+      ) {
         toast.error("Add a model first");
         return null;
       }
 
+      const isMultiModelRun =
+        !options?.selectedModel && modelValuesToRun.length > 1;
+
       setRunningTestCaseId(testCase._id);
 
       try {
-        const preparedRun = await prepareSingleTestCaseRun({
-          workspaceId,
-          suite,
-          testCase,
-          getAccessToken,
-          getToken,
-          hasToken,
-          selectedModel: options?.selectedModel,
-        });
+        const preparedRuns = await Promise.all(
+          modelValuesToRun.map((selectedModel) =>
+            prepareSingleTestCaseRun({
+              workspaceId,
+              suite,
+              testCase,
+              getAccessToken,
+              getToken,
+              hasToken,
+              selectedModel,
+            }),
+          ),
+        );
 
-        posthog.capture("eval_test_case_run_started", {
-          location: options?.location ?? "test_case_list_sidebar",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          suite_id: suite._id,
-          test_case_id: testCase._id,
-          model: preparedRun.modelValue,
-        });
+        const runResults = await Promise.all(
+          preparedRuns.map(async (preparedRun) => {
+            posthog.capture("eval_test_case_run_started", {
+              location: options?.location ?? "test_case_list_sidebar",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+              suite_id: suite._id,
+              test_case_id: testCase._id,
+              model: preparedRun.modelValue,
+            });
 
-        const data = await runEvalTestCase(preparedRun.request);
-        const iteration = data?.iteration;
+            try {
+              const data = await runEvalTestCase({
+                ...preparedRun.request,
+                skipLastMessageRunUpdate: isMultiModelRun || undefined,
+              });
+              const iteration = data?.iteration;
 
-        if (iteration) {
-          const startedAt = iteration.startedAt ?? iteration.createdAt;
-          const completedAt = iteration.updatedAt ?? iteration.createdAt;
-          const durationMs =
-            startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
+              if (iteration) {
+                const startedAt = iteration.startedAt ?? iteration.createdAt;
+                const completedAt = iteration.updatedAt ?? iteration.createdAt;
+                const durationMs =
+                  startedAt && completedAt
+                    ? Math.max(completedAt - startedAt, 0)
+                    : 0;
 
-          posthog.capture("eval_test_case_run_completed", {
-            location: options?.location ?? "test_case_list_sidebar",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
-            suite_id: suite._id,
-            test_case_id: testCase._id,
-            model: preparedRun.modelValue,
-            result: iteration.result || "unknown",
-            duration_ms: durationMs,
-          });
+                posthog.capture("eval_test_case_run_completed", {
+                  location: options?.location ?? "test_case_list_sidebar",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                  suite_id: suite._id,
+                  test_case_id: testCase._id,
+                  model: preparedRun.modelValue,
+                  result: iteration.result || "unknown",
+                  duration_ms: durationMs,
+                });
+              }
+
+              return {
+                ok: true as const,
+                modelValue: preparedRun.modelValue,
+                data,
+              };
+            } catch (error) {
+              console.error(
+                `Failed to run test case for model ${preparedRun.modelValue}:`,
+                error,
+              );
+              return {
+                ok: false as const,
+                modelValue: preparedRun.modelValue,
+                error,
+              };
+            }
+          }),
+        );
+
+        const successfulRuns = runResults.filter(
+          (
+            result,
+          ): result is {
+            ok: true;
+            modelValue: string;
+            data: any;
+          } => result.ok,
+        );
+        const failedRuns = runResults.filter(
+          (
+            result,
+          ): result is {
+            ok: false;
+            modelValue: string;
+            error: unknown;
+          } => !result.ok,
+        );
+
+        if (successfulRuns.length === preparedRuns.length) {
+          toast.success(
+            isMultiModelRun
+              ? `Test completed across ${preparedRuns.length} models!`
+              : "Test completed successfully!",
+          );
+        } else if (successfulRuns.length > 0) {
+          toast.error(
+            `${successfulRuns.length}/${preparedRuns.length} model${
+              preparedRuns.length === 1 ? "" : "s"
+            } completed successfully.`,
+          );
+        } else {
+          toast.error(
+            getBillingErrorMessage(
+              failedRuns[0]?.error,
+              "Failed to run test case",
+            ),
+          );
         }
 
-        toast.success("Test completed successfully!");
-        return data;
+        if (isMultiModelRun) {
+          return {
+            runs: successfulRuns.map((result) => result.data),
+          };
+        }
+
+        return successfulRuns[0]?.data ?? null;
       } catch (error) {
         console.error("Failed to run test case:", error);
         toast.error(getBillingErrorMessage(error, "Failed to run test case"));
