@@ -179,8 +179,7 @@ vi.mock("@/hooks/use-json-rpc-panel", () => ({
 }));
 
 vi.mock("@/hooks/useWorkspaces", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@/hooks/useWorkspaces")>();
+  const actual = await importOriginal<typeof import("@/hooks/useWorkspaces")>();
   return {
     ...actual,
     useWorkspaceServers: () => ({

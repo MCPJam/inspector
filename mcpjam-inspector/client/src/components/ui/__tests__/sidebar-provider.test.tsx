@@ -24,9 +24,7 @@ describe("SidebarProvider (uncontrolled)", () => {
 
     expect(screen.getByTestId("sidebar-open-probe")).toHaveTextContent("open");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: /toggle sidebar/i }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: /toggle sidebar/i }));
 
     expect(screen.getByTestId("sidebar-open-probe")).toHaveTextContent(
       "closed",

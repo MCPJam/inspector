@@ -1397,9 +1397,7 @@ export default function App() {
                     "free"
                   }
                   upgradePlan={upgradePlanForActiveTab}
-                  canManageBilling={
-                    shellBillingStatus?.canManageBilling ?? false
-                  }
+                  canManageBilling={shellBillingStatus?.canManageBilling ?? false}
                   onNavigateToBilling={() => {
                     if (billingOrganizationId) {
                       applyNavigation(
