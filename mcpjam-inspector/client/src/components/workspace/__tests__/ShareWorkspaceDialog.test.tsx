@@ -17,12 +17,16 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockCapture,
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({
     isAuthenticated: true,
   }),
+  useQuery: () => undefined,
+  useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@/hooks/useProfilePicture", () => ({

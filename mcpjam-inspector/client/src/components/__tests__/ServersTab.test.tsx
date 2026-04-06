@@ -138,6 +138,7 @@ vi.mock("convex/react", () => ({
   }),
   useQuery: () => undefined,
   useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
