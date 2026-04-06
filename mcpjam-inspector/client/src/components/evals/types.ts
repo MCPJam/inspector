@@ -150,6 +150,13 @@ export type CompareRunRecord = {
     argumentMismatchCount: number | null;
     mismatchCount: number | null;
   };
+  /** Progressive messages populated during streaming. */
+  streamingMessages?: import("./trace-viewer-adapter").TraceMessage[];
+  /** Live metrics from stream events. */
+  streamingMetrics?: {
+    tokensUsed: number;
+    toolCallCount: number;
+  };
 };
 
 export type EvalSuiteRunSummary = {

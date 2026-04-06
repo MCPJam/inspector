@@ -11,7 +11,8 @@ import {
   captureToolSnapshotForEvalAuthoring,
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
-import { runEvalSuiteWithAiSdk } from "../../services/evals-runner";
+import { runEvalSuiteWithAiSdk, streamTestCase } from "../../services/evals-runner";
+import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
@@ -676,4 +677,145 @@ export async function generateNegativeEvalTestsWithManager(
     tests,
     evalTests: convertToEvalTestCases(tests),
   };
+}
+
+export async function streamEvalTestCaseWithManager(
+  clientManager: MCPClientManager,
+  request: RunTestCaseRequest,
+  options?: {
+    skipLastMessageRunUpdate?: boolean;
+    onStreamComplete?: () => void;
+  },
+): Promise<ReadableStream<Uint8Array>> {
+  const {
+    testCaseId,
+    model,
+    provider,
+    serverIds,
+    skipLastMessageRunUpdate,
+    modelApiKeys,
+    convexAuthToken,
+    testCaseOverrides,
+  } = request;
+
+  const resolvedServerIds = resolveServerIdsOrThrow(serverIds, clientManager);
+  const { convexClient, convexHttpUrl } = createConvexClients(convexAuthToken);
+
+  const testCase = await convexClient.query("testSuites:getTestCase" as any, {
+    testCaseId,
+  });
+
+  if (!testCase) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Test case not found");
+  }
+
+  const test = {
+    title: testCase.title,
+    query: testCaseOverrides?.query ?? testCase.query,
+    runs: testCaseOverrides?.runs ?? 1,
+    model,
+    provider,
+    expectedToolCalls:
+      testCaseOverrides?.expectedToolCalls ?? testCase.expectedToolCalls ?? [],
+    isNegativeTest:
+      testCaseOverrides?.isNegativeTest ?? testCase.isNegativeTest,
+    expectedOutput:
+      testCaseOverrides?.expectedOutput ?? testCase.expectedOutput,
+    promptTurns:
+      (testCaseOverrides?.promptTurns as PromptTurn[] | undefined) ??
+      testCase.promptTurns,
+    advancedConfig:
+      testCaseOverrides?.advancedConfig ?? testCase.advancedConfig,
+    testCaseId: testCase._id,
+  };
+
+  const tools = (await clientManager.getToolsForAiSdk(resolvedServerIds)) as Record<string, any>;
+  const encoder = new TextEncoder();
+
+  const sseEncode = (event: EvalStreamEvent): Uint8Array =>
+    encoder.encode(`data: ${JSON.stringify(event)}\n\n`);
+
+  return new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        const outcomes = await streamTestCase({
+          test,
+          tools,
+          recorder: null,
+          modelApiKeys: modelApiKeys ?? undefined,
+          convexHttpUrl,
+          convexAuthToken,
+          convexClient,
+          testCaseId,
+          suiteId: testCase.evalTestSuiteId,
+          runId: null,
+          emit: (event: EvalStreamEvent) => {
+            try {
+              controller.enqueue(sseEncode(event));
+            } catch {
+              // controller may be closed
+            }
+          },
+        });
+
+        // Retrieve the iteration
+        const expectedIterationId = outcomes[0]?.iterationId;
+        let latestIteration: unknown = null;
+        if (expectedIterationId) {
+          latestIteration = await convexClient.query(
+            "testSuites:getTestIteration" as any,
+            { iterationId: expectedIterationId },
+          );
+        }
+        if (!latestIteration) {
+          const recentIterations = await convexClient.query(
+            "testSuites:listTestIterations" as any,
+            { testCaseId },
+          );
+          latestIteration = recentIterations?.[0] || null;
+        }
+
+        // Update lastMessageRun
+        if (
+          !options?.skipLastMessageRunUpdate &&
+          !skipLastMessageRunUpdate &&
+          (latestIteration as any)?._id
+        ) {
+          await convexClient.mutation("testSuites:updateTestCase" as any, {
+            testCaseId,
+            lastMessageRun: (latestIteration as any)._id,
+          });
+        }
+
+        // Emit complete event
+        controller.enqueue(
+          sseEncode({
+            type: "complete",
+            iterationId: expectedIterationId,
+            iteration: latestIteration,
+          }),
+        );
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : String(error);
+        controller.enqueue(
+          sseEncode({
+            type: "error",
+            message,
+            details:
+              error instanceof WebRouteError && error.details
+                ? JSON.stringify(error.details)
+                : undefined,
+          }),
+        );
+      } finally {
+        try {
+          controller.close();
+        } catch {
+          // already closed
+        }
+        options?.onStreamComplete?.();
+      }
+    },
+  });
 }
