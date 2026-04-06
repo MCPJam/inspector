@@ -15,15 +15,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  GitBranch,
-  Loader2,
-  PanelLeft,
-  RotateCw,
-  Settings2,
-  Trash2,
-  X,
-} from "lucide-react";
+import { GitBranch, PanelLeft, RotateCw, Settings2, X } from "lucide-react";
 import { formatRunId } from "./helpers";
 import {
   EvalSuite,
@@ -62,17 +54,12 @@ interface SuiteHeaderProps {
   isEditMode: boolean;
   onRerun: (suite: EvalSuite) => void;
   onReplayRun?: (suite: EvalSuite, run: EvalSuiteRun) => void;
-  onDelete: (suite: EvalSuite) => void;
   onCancelRun: (runId: string) => void;
-  onDeleteRun: (runId: string) => void;
   onViewModeChange: (mode: "overview") => void;
   connectedServerNames: Set<string>;
-  canDeleteSuite: boolean;
   rerunningSuiteId: string | null;
   replayingRunId?: string | null;
   cancellingRunId: string | null;
-  deletingSuiteId: string | null;
-  deletingRunId: string | null;
   runsViewMode?: "runs" | "test-cases";
   runs?: EvalSuiteRun[];
   allIterations?: EvalIteration[];
@@ -97,15 +84,12 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     isEditMode,
     onRerun,
     onReplayRun,
-    onDelete,
     onCancelRun,
     onViewModeChange,
     connectedServerNames,
-    canDeleteSuite,
     rerunningSuiteId,
     replayingRunId = null,
     cancellingRunId,
-    deletingSuiteId,
     runs = [],
     testCases = [],
     availableModels = [],
@@ -654,29 +638,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   : !canRerun
                     ? `Connect the following servers: ${missingServers.join(", ")}`
                     : "Run all cases"}
-            </TooltipContent>
-          </Tooltip>
-        )}
-        {canDeleteSuite && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onDelete(suite)}
-                disabled={deletingSuiteId === suite._id}
-                className="gap-2 text-destructive border-destructive/40 hover:bg-destructive/10"
-              >
-                {deletingSuiteId === suite._id ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="h-4 w-4" />
-                )}
-                Delete suite
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              Remove this suite and its evaluation history
             </TooltipContent>
           </Tooltip>
         )}

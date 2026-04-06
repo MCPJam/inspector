@@ -227,6 +227,26 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     await handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
   }, [exploreSuite, handlers, selectedServer]);
 
+  const handleDeleteTestCasesBatch = useCallback(
+    async (testCaseIds: string[]) => {
+      await Promise.all(
+        testCaseIds.map((id) => handlers.directDeleteTestCase(id)),
+      );
+      if (
+        exploreSuite &&
+        selectedTestId &&
+        testCaseIds.includes(selectedTestId)
+      ) {
+        navigatePlaygroundEvalsRoute({
+          type: "suite-overview",
+          suiteId: exploreSuite._id,
+          view: "test-cases",
+        });
+      }
+    },
+    [exploreSuite, handlers, selectedTestId],
+  );
+
   const showExploreLoading =
     isPreparingExplore ||
     (selectedServer &&
@@ -267,6 +287,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           }
           onGenerateTestCases={() => void handleGenerateMore()}
           canGenerateTestCases={Boolean(selectedServer && isServerConnected)}
+          isGeneratingTestCases={handlers.isGeneratingTests}
           onRerun={handlers.handleRerun}
           onCancelRun={handlers.handleCancelRun}
           onDelete={handlers.handleDelete}
@@ -285,6 +306,33 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           navigation={playgroundNavigation}
           canDeleteRuns={canDeleteRuns}
           hideRunActions
+          onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
+          onRunTestCase={
+            exploreSuite
+              ? (tc) => {
+                  void (async () => {
+                    const data = await handlers.handleRunTestCase(
+                      exploreSuite,
+                      tc,
+                      {
+                        location: "test_cases_overview",
+                      },
+                    );
+                    const iterationId = data?.iteration?._id as
+                      | string
+                      | undefined;
+                    if (iterationId) {
+                      playgroundNavigation.toTestDetail(
+                        exploreSuite._id,
+                        tc._id,
+                        iterationId,
+                      );
+                    }
+                  })();
+                }
+              : undefined
+          }
+          runningTestCaseId={handlers.runningTestCaseId}
         />
       </div>
     );

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   useMutation: vi.fn(() => vi.fn()),
   useQuery: vi.fn(),
   suiteHeader: vi.fn(),
+  runOverview: vi.fn(),
 }));
 
 vi.mock("convex/react", () => ({
@@ -34,7 +35,10 @@ vi.mock("../suite-header", () => ({
 }));
 
 vi.mock("../run-overview", () => ({
-  RunOverview: () => <div data-testid="run-overview" />,
+  RunOverview: (props: unknown) => {
+    mocks.runOverview(props);
+    return <div data-testid="run-overview" />;
+  },
 }));
 
 vi.mock("../suite-hero-stats", () => ({
@@ -253,7 +257,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
   });
 
-  it("passes canDeleteSuite through to the header in read-only overview", () => {
+  it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {
     render(
       <SuiteIterationsView
         suite={baseSuite}
@@ -285,10 +289,9 @@ describe("SuiteIterationsView caseListInSidebar", () => {
       />,
     );
 
-    expect(mocks.suiteHeader).toHaveBeenCalledWith(
+    expect(mocks.runOverview).toHaveBeenCalledWith(
       expect.objectContaining({
         canDeleteSuite: true,
-        readOnlyConfig: true,
       }),
     );
   });

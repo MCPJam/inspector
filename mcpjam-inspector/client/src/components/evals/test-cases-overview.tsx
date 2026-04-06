@@ -1,14 +1,47 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
-import { Plus, Sparkles } from "lucide-react";
+import posthog from "posthog-js";
+import {
+  CircleAlert,
+  Loader2,
+  Plus,
+  RotateCw,
+  Sparkles,
+  Trash2,
+} from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime } from "./helpers";
-import { cn } from "@/lib/utils";
 import type { EvalCase, EvalIteration } from "./types";
 
+function iterationRecencyTs(iter: EvalIteration): number {
+  return iter.updatedAt ?? iter.startedAt ?? iter.createdAt ?? 0;
+}
+
 interface TestCasesOverviewProps {
-  suite: { _id: string; name: string; source?: "ui" | "sdk" };
+  suite: {
+    _id: string;
+    name: string;
+    environment?: { servers?: string[] };
+  };
   cases: EvalCase[];
   allIterations: EvalIteration[];
   runsViewMode: "runs" | "test-cases";
@@ -18,6 +51,7 @@ interface TestCasesOverviewProps {
   onCreateTestCase?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
+  isGeneratingTestCases?: boolean;
   runTrendData: Array<{
     runId: string;
     runIdDisplay: string;
@@ -33,6 +67,19 @@ interface TestCasesOverviewProps {
   }>;
   runsLoading: boolean;
   onRunClick?: (runId: string) => void;
+  /** When set, each row shows a Run control (e.g. Explore / CI suite overview). */
+  onRunTestCase?: (testCase: EvalCase) => void;
+  runningTestCaseId?: string | null;
+  /** True while a suite rerun or run replay is in progress (disables per-case Run). */
+  blockTestCaseRuns?: boolean;
+  /** Required for server connection gating when set; when omitted, server gating is skipped. */
+  connectedServerNames?: Set<string>;
+  /** Playground / contexts where switching to the runs table is not offered. */
+  hideViewModeSelect?: boolean;
+  /**
+   * When set (e.g. playground), show run-style selection + batch delete for test cases.
+   */
+  onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
 }
 
 export function TestCasesOverview({
@@ -46,6 +93,13 @@ export function TestCasesOverview({
   onCreateTestCase,
   onGenerateTestCases,
   canGenerateTestCases = false,
+  isGeneratingTestCases = false,
+  hideViewModeSelect = false,
+  onDeleteTestCasesBatch,
+  onRunTestCase,
+  runningTestCaseId = null,
+  blockTestCaseRuns = false,
+  connectedServerNames,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
   const liveCases = useQuery(
@@ -55,6 +109,28 @@ export function TestCasesOverview({
   const [hydratedIterations, setHydratedIterations] = useState<EvalIteration[]>(
     [],
   );
+  const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(new Set());
+  const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+
+  useEffect(() => {
+    if (!onDeleteTestCasesBatch) {
+      setSelectedCaseIds(new Set());
+      setShowBatchDeleteModal(false);
+    }
+  }, [onDeleteTestCasesBatch]);
+
+  const toggleCaseSelection = useCallback((testCaseId: string) => {
+    setSelectedCaseIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(testCaseId)) {
+        next.delete(testCaseId);
+      } else {
+        next.add(testCaseId);
+      }
+      return next;
+    });
+  }, []);
 
   const effectiveCases = useMemo(() => {
     if (!liveCases) {
@@ -77,6 +153,38 @@ export function TestCasesOverview({
 
     return mergedCases;
   }, [cases, liveCases]);
+
+  const toggleAllCases = useCallback(() => {
+    setSelectedCaseIds((prev) => {
+      if (prev.size === effectiveCases.length) {
+        return new Set();
+      }
+      return new Set(effectiveCases.map((c) => c._id));
+    });
+  }, [effectiveCases]);
+
+  const confirmBatchDeleteTestCases = useCallback(async () => {
+    if (!onDeleteTestCasesBatch) return;
+    const ids = Array.from(selectedCaseIds);
+    if (ids.length === 0) return;
+
+    setIsBatchDeleting(true);
+    try {
+      await onDeleteTestCasesBatch(ids);
+      setSelectedCaseIds(new Set());
+      setShowBatchDeleteModal(false);
+      toast.success(
+        `Deleted ${ids.length} test case${ids.length === 1 ? "" : "s"}`,
+      );
+    } catch (error) {
+      console.error("Failed to delete test cases:", error);
+      toast.error(
+        getBillingErrorMessage(error, "Failed to delete test cases"),
+      );
+    } finally {
+      setIsBatchDeleting(false);
+    }
+  }, [onDeleteTestCasesBatch, selectedCaseIds]);
 
   useEffect(() => {
     const localIterationIds = new Set(
@@ -171,102 +279,154 @@ export function TestCasesOverview({
     return Array.from(deduped.values());
   }, [allIterations, hydratedIterations]);
 
-  const savedIterationById = useMemo(
-    () =>
-      new Map(
-        effectiveIterations.map(
-          (iteration) => [iteration._id, iteration] as const,
-        ),
-      ),
-    [effectiveIterations],
-  );
-
-  // Calculate stats for each test case
+  // Per-case latest iteration by wall time (for “Last run”)
   const testCaseStats = useMemo(() => {
     return effectiveCases.map((testCase) => {
       const caseIterations = effectiveIterations.filter(
         (iter) => iter.testCaseId === testCase._id,
       );
-
-      // Only count completed iterations - exclude pending/cancelled
-      const iterationResults = caseIterations.map((iter) =>
-        computeIterationResult(iter),
-      );
-      const passed = iterationResults.filter((r) => r === "passed").length;
-      const total = iterationResults.filter(
-        (r) => r === "passed" || r === "failed",
-      ).length;
-      const avgAccuracy = total > 0 ? Math.round((passed / total) * 100) : 0;
-
+      let lastRunIteration: EvalIteration | null = null;
+      for (const iter of caseIterations) {
+        if (
+          !lastRunIteration ||
+          iterationRecencyTs(iter) >= iterationRecencyTs(lastRunIteration)
+        ) {
+          lastRunIteration = iter;
+        }
+      }
       return {
         testCase,
-        iterations: total,
-        avgAccuracy,
-        savedIteration:
-          testCase.lastMessageRun != null
-            ? (savedIterationById.get(testCase.lastMessageRun) ?? null)
-            : null,
+        lastRunIteration,
       };
     });
-  }, [effectiveCases, effectiveIterations, savedIterationById]);
+  }, [effectiveCases, effectiveIterations]);
+
+  const batchDelete = Boolean(onDeleteTestCasesBatch);
+  const showRunColumn = Boolean(onRunTestCase);
 
   return (
     <>
       {/* Cases List */}
       <div className="rounded-xl border bg-card text-card-foreground flex flex-col max-h-[600px]">
-        <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
-          <div>
-            <p className="text-xs text-muted-foreground">{clickHint}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {onGenerateTestCases ? (
+        {batchDelete && selectedCaseIds.size > 0 ? (
+          <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between">
+            <div className="flex items-center gap-3 min-w-0">
+              <Checkbox
+                checked={selectedCaseIds.size === testCaseStats.length}
+                onCheckedChange={toggleAllCases}
+                aria-label="Select all cases"
+                disabled={testCaseStats.length === 0}
+              />
+              <span className="text-xs font-medium truncate">
+                {selectedCaseIds.size}{" "}
+                {selectedCaseIds.size === 1 ? "case" : "cases"} selected
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
               <Button
-                type="button"
                 variant="outline"
                 size="sm"
-                className="h-8"
-                onClick={onGenerateTestCases}
-                disabled={!canGenerateTestCases}
+                onClick={() => setSelectedCaseIds(new Set())}
+                disabled={isBatchDeleting}
               >
-                <Sparkles className="h-3.5 w-3.5" />
-                Generate
+                Cancel
               </Button>
-            ) : null}
-            {onCreateTestCase ? (
               <Button
-                type="button"
+                variant="destructive"
                 size="sm"
-                className="h-8"
-                onClick={onCreateTestCase}
+                onClick={() => setShowBatchDeleteModal(true)}
+                disabled={isBatchDeleting}
               >
-                <Plus className="h-3.5 w-3.5" />
-                New case
+                Delete
               </Button>
-            ) : null}
-            <select
-              value={runsViewMode}
-              onChange={(e) =>
-                onViewModeChange(e.target.value as "runs" | "test-cases")
-              }
-              className="text-xs border rounded px-2 py-1 bg-background"
-            >
-              <option value="runs">Runs</option>
-              <option value="test-cases">Cases</option>
-            </select>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
+            <div>
+              <p className="text-xs text-muted-foreground">{clickHint}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              {onGenerateTestCases ? (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="inline-flex">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        onClick={onGenerateTestCases}
+                        disabled={
+                          !canGenerateTestCases || isGeneratingTestCases
+                        }
+                        aria-busy={isGeneratingTestCases}
+                      >
+                        {isGeneratingTestCases ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-3.5 w-3.5" />
+                        )}
+                        Generate
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent
+                    variant="muted"
+                    side="bottom"
+                    align="start"
+                    sideOffset={8}
+                    className="max-w-[min(17rem,calc(100vw-1.5rem))] px-3 py-2 text-left font-normal leading-relaxed"
+                  >
+                    {isGeneratingTestCases
+                      ? "Generating test cases…"
+                      : !canGenerateTestCases
+                        ? "Choose a connected MCP server in the playground header, then generate cases."
+                        : "Generate suggested cases from your server's tools."}
+                  </TooltipContent>
+                </Tooltip>
+              ) : null}
+              {onCreateTestCase ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-8"
+                  onClick={onCreateTestCase}
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  New case
+                </Button>
+              ) : null}
+              {!hideViewModeSelect ? (
+                <select
+                  value={runsViewMode}
+                  onChange={(e) =>
+                    onViewModeChange(e.target.value as "runs" | "test-cases")
+                  }
+                  className="text-xs border rounded px-2 py-1 bg-background"
+                >
+                  <option value="runs">Runs</option>
+                  <option value="test-cases">Cases</option>
+                </select>
+              ) : null}
+            </div>
+          </div>
+        )}
 
         {/* Column Headers */}
         {testCaseStats.length > 0 && (
-          <div className="flex items-center gap-6 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            <div className="flex-1 min-w-[200px]">Case Name</div>
-            <div className="min-w-[100px] text-right">Iterations</div>
-            <div className="min-w-[100px] text-right">
-              {suite.source === "sdk" ? "Avg Pass Rate" : "Avg Accuracy"}
+          <div className="flex items-center gap-3 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
+            {batchDelete ? (
+              <div className="w-7 shrink-0" aria-hidden />
+            ) : null}
+            <div className="flex-1 min-w-[120px]">Case name</div>
+            <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
+              <span className="text-right">Last run</span>
+              <span className="w-3.5 shrink-0" aria-hidden />
             </div>
-            <div className="hidden min-w-[168px] text-left md:block">
-              Last saved
-            </div>
+            {showRunColumn ? (
+              <div className="w-7 shrink-0" aria-hidden />
+            ) : null}
           </div>
         )}
 
@@ -276,105 +436,227 @@ export function TestCasesOverview({
               No cases found.
             </div>
           ) : (
-            testCaseStats.map(
-              ({ testCase, iterations, avgAccuracy, savedIteration }) => {
-                const savedResult = savedIteration
-                  ? computeIterationResult(savedIteration)
+            testCaseStats.map(({ testCase, lastRunIteration }) => {
+                const suiteServers = suite.environment?.servers ?? [];
+                const missingServers =
+                  connectedServerNames == null
+                    ? []
+                    : suiteServers.filter(
+                        (serverName) =>
+                          !connectedServerNames.has(serverName),
+                      );
+                const hasModels = Boolean(testCase.models?.length);
+                const isThisCaseRunning = runningTestCaseId === testCase._id;
+                const isAnotherCaseRunning =
+                  runningTestCaseId != null &&
+                  runningTestCaseId !== testCase._id;
+                const runDisabled =
+                  !onRunTestCase ||
+                  blockTestCaseRuns ||
+                  isAnotherCaseRunning ||
+                  !hasModels ||
+                  missingServers.length > 0 ||
+                  isThisCaseRunning;
+                const runTooltip = !hasModels
+                  ? "Add a model to this case first"
+                  : missingServers.length > 0
+                    ? `Connect: ${missingServers.join(", ")}`
+                    : blockTestCaseRuns || isAnotherCaseRunning
+                      ? "Another run is in progress"
+                      : isThisCaseRunning
+                        ? "Running…"
+                        : "Run this case";
+
+                const lastRunResult = lastRunIteration
+                  ? computeIterationResult(lastRunIteration)
                   : null;
-                const savedToneClass =
-                  savedResult === "passed"
-                    ? "text-emerald-600 dark:text-emerald-400"
-                    : savedResult === "failed"
-                      ? "text-rose-600 dark:text-rose-400"
-                      : savedResult === "cancelled"
-                        ? "text-amber-600 dark:text-amber-400"
-                        : "text-muted-foreground";
-                const savedLabel =
-                  savedResult === "passed"
+                const lastRunLabel =
+                  lastRunResult === "passed"
                     ? "Passed"
-                    : savedResult === "failed"
+                    : lastRunResult === "failed"
                       ? "Failed"
-                      : savedResult === "cancelled"
+                      : lastRunResult === "cancelled"
                         ? "Cancelled"
-                        : savedResult === "pending"
+                        : lastRunResult === "pending"
                           ? "Running"
-                          : "Not saved";
-                const savedModelLabel =
-                  savedIteration?.testCaseSnapshot?.model ??
-                  testCase.models[0]?.model ??
-                  null;
-                const savedTimestamp =
-                  savedIteration?.updatedAt ??
-                  savedIteration?.startedAt ??
-                  savedIteration?.createdAt ??
-                  null;
+                          : "Never run";
+                const lastRunTimestamp = lastRunIteration
+                  ? (lastRunIteration.updatedAt ??
+                    lastRunIteration.startedAt ??
+                    lastRunIteration.createdAt ??
+                    null)
+                  : null;
+                const showLastRunFailed = lastRunResult === "failed";
+
+                const rowBody = (
+                  <>
+                    <div className="min-w-0 flex-1 truncate text-xs font-medium">
+                      {testCase.title || "Untitled test case"}
+                    </div>
+                    <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
+                      <span className="text-xs text-muted-foreground text-right tabular-nums">
+                        {lastRunIteration ? (
+                          <>
+                            {lastRunLabel}
+                            {lastRunTimestamp ? (
+                              <>
+                                <span className="font-normal">
+                                  {" "}
+                                  · {formatRelativeTime(lastRunTimestamp)}
+                                </span>
+                              </>
+                            ) : null}
+                          </>
+                        ) : (
+                          "Never run"
+                        )}
+                      </span>
+                      <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
+                        {showLastRunFailed ? (
+                          <CircleAlert
+                            className="h-3.5 w-3.5 text-destructive"
+                            aria-label="Last run failed"
+                          />
+                        ) : null}
+                      </span>
+                    </div>
+                  </>
+                );
+
+                const runControl =
+                  showRunColumn && onRunTestCase ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="inline-flex shrink-0">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-7 w-7 p-0"
+                            disabled={runDisabled}
+                            aria-label={`Run ${testCase.title || "test case"}`}
+                            aria-busy={isThisCaseRunning}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              if (runDisabled) return;
+                              posthog.capture(
+                                "run_selected_case_button_clicked",
+                                {
+                                  location: "test_cases_overview",
+                                  platform: detectPlatform(),
+                                  environment: detectEnvironment(),
+                                  test_case_id: testCase._id,
+                                },
+                              );
+                              onRunTestCase(testCase);
+                            }}
+                          >
+                            <RotateCw
+                              className={cn(
+                                "h-3.5 w-3.5",
+                                isThisCaseRunning && "animate-spin",
+                              )}
+                            />
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        variant="muted"
+                        side="left"
+                        sideOffset={8}
+                        className="max-w-[16rem]"
+                      >
+                        {runTooltip}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : null;
+
+                if (batchDelete) {
+                  const isSelected = selectedCaseIds.has(testCase._id);
+                  return (
+                    <div
+                      key={testCase._id}
+                      className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
+                    >
+                      <div className="flex justify-center w-7 shrink-0">
+                        <Checkbox
+                          checked={isSelected}
+                          onCheckedChange={() =>
+                            toggleCaseSelection(testCase._id)
+                          }
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label={`Select case ${testCase.title || "Untitled test case"}`}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onTestCaseClick(testCase._id)}
+                        className="flex flex-1 min-w-0 items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded-sm"
+                      >
+                        {rowBody}
+                      </button>
+                      {runControl}
+                    </div>
+                  );
+                }
 
                 return (
-                  <button
+                  <div
                     key={testCase._id}
-                    onClick={() => onTestCaseClick(testCase._id)}
-                    className="flex items-center gap-6 w-full px-4 py-2.5 text-left transition-colors hover:bg-muted/50 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                    className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
                   >
-                    <div className="min-w-[200px] flex-1">
-                      <div className="truncate text-xs font-medium">
-                        {testCase.title || "Untitled test case"}
-                      </div>
-                      <div className="mt-1 flex items-center gap-2 text-[11px] text-muted-foreground md:hidden">
-                        <span
-                          className={cn(
-                            "inline-flex items-center gap-1",
-                            savedToneClass,
-                          )}
-                        >
-                          <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                          {savedLabel}
-                        </span>
-                        {savedTimestamp ? (
-                          <span>{formatRelativeTime(savedTimestamp)}</span>
-                        ) : null}
-                      </div>
-                    </div>
-                    <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
-                      {iterations}
-                    </span>
-                    <span className="min-w-[100px] text-right text-xs font-mono text-muted-foreground">
-                      {iterations > 0 ? `${avgAccuracy}%` : "—"}
-                    </span>
-                    <div className="hidden min-w-[168px] md:block">
-                      {savedIteration ? (
-                        <div className="min-w-0">
-                          <div
-                            className={cn(
-                              "inline-flex items-center gap-1.5 text-xs font-medium",
-                              savedToneClass,
-                            )}
-                          >
-                            <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                            {savedLabel}
-                            <span className="font-normal text-muted-foreground">
-                              ·{" "}
-                              {formatRelativeTime(savedTimestamp ?? undefined)}
-                            </span>
-                          </div>
-                          {savedModelLabel ? (
-                            <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                              {savedModelLabel}
-                            </div>
-                          ) : null}
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground">
-                          Not saved
-                        </span>
-                      )}
-                    </div>
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => onTestCaseClick(testCase._id)}
+                      className="flex flex-1 min-w-0 items-center gap-3 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 rounded-sm"
+                    >
+                      {rowBody}
+                    </button>
+                    {runControl}
+                  </div>
                 );
-              },
-            )
+              })
           )}
         </div>
       </div>
+
+      <Dialog
+        open={batchDelete && showBatchDeleteModal}
+        onOpenChange={(open) => {
+          if (batchDelete) setShowBatchDeleteModal(open);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="h-5 w-5 text-destructive" />
+              Delete {selectedCaseIds.size} test case
+              {selectedCaseIds.size !== 1 ? "s" : ""}
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete {selectedCaseIds.size} test case
+              {selectedCaseIds.size !== 1 ? "s" : ""}? This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowBatchDeleteModal(false)}
+              disabled={isBatchDeleting}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => void confirmBatchDeleteTestCases()}
+              disabled={isBatchDeleting}
+            >
+              {isBatchDeleting ? "Deleting..." : "Delete"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

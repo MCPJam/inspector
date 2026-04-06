@@ -71,6 +71,7 @@ export function SuiteIterationsView({
   onCreateTestCase,
   onGenerateTestCases,
   canGenerateTestCases = false,
+  isGeneratingTestCases = false,
   caseListInSidebar = false,
   runDetailSortByOverride,
   onRunDetailSortByChange,
@@ -84,6 +85,9 @@ export function SuiteIterationsView({
   omitSuiteHeader = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
+  onDeleteTestCasesBatch,
+  onRunTestCase,
+  runningTestCaseId = null,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -113,6 +117,7 @@ export function SuiteIterationsView({
   onCreateTestCase?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
+  isGeneratingTestCases?: boolean;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
   /** When set with onRunDetailSortByChange, controls iteration sort (e.g. CI Runs parent sidebar). */
@@ -136,6 +141,11 @@ export function SuiteIterationsView({
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
   onEditTestCase?: (testCaseId: string) => void;
+  /** Playground: batch delete test cases from the cases table (no runs UI). */
+  onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
+  /** Per-case run from the cases overview table (Explore / CI). */
+  onRunTestCase?: (testCase: EvalCase) => void;
+  runningTestCaseId?: string | null;
 }) {
   // Derive view state from route
   const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
@@ -384,17 +394,12 @@ export function SuiteIterationsView({
             isEditMode={isEditMode}
             onRerun={onRerun}
             onReplayRun={onReplayRun}
-            onDelete={onDelete}
             onCancelRun={onCancelRun}
-            onDeleteRun={onDeleteRun}
             onViewModeChange={handleBackToOverview}
             connectedServerNames={connectedServerNames}
-            canDeleteSuite={canDeleteSuite}
             rerunningSuiteId={rerunningSuiteId}
             replayingRunId={replayingRunId}
             cancellingRunId={cancellingRunId}
-            deletingSuiteId={deletingSuiteId}
-            deletingRunId={deletingRunId}
             runsViewMode={runsViewMode}
             runs={runs}
             allIterations={allIterations}
@@ -519,7 +524,11 @@ export function SuiteIterationsView({
                       navigation.toSuiteOverview(suite._id, value)
                     }
                     userMap={userMap}
-                    canDeleteRuns={canDeleteRuns}
+                    canDeleteRuns={canDeleteRuns && !hideRunActions}
+                    canDeleteSuite={canDeleteSuite && !hideRunActions}
+                    onDeleteSuite={() => onDelete(suite)}
+                    deletingSuiteId={deletingSuiteId}
+                    hideViewModeSelect={hideRunActions}
                   />
                 </motion.div>
               ) : (
@@ -600,10 +609,19 @@ export function SuiteIterationsView({
                       onCreateTestCase={onCreateTestCase}
                       onGenerateTestCases={onGenerateTestCases}
                       canGenerateTestCases={canGenerateTestCases}
+                      isGeneratingTestCases={isGeneratingTestCases}
                       runTrendData={runTrendData}
                       modelStats={modelStats}
                       runsLoading={runsLoading}
                       onRunClick={handleRunClick}
+                      hideViewModeSelect={hideRunActions}
+                      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                      onRunTestCase={onRunTestCase}
+                      runningTestCaseId={runningTestCaseId}
+                      blockTestCaseRuns={Boolean(
+                        rerunningSuiteId || replayingRunId,
+                      )}
+                      connectedServerNames={connectedServerNames}
                     />
                   )}
                 </motion.div>

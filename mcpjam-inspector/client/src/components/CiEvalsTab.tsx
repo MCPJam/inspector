@@ -711,6 +711,32 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                     canDeleteRuns={canDeleteRuns}
                     readOnlyConfig
                     omitSuiteHeader
+                    onRunTestCase={
+                      selectedSuite
+                        ? (tc) => {
+                            void (async () => {
+                              const data = await handlers.handleRunTestCase(
+                                selectedSuite,
+                                tc,
+                                {
+                                  location: "test_cases_overview",
+                                },
+                              );
+                              const iterationId = data?.iteration?._id as
+                                | string
+                                | undefined;
+                              if (iterationId) {
+                                ciNavigation.toTestDetail(
+                                  selectedSuite._id,
+                                  tc._id,
+                                  iterationId,
+                                );
+                              }
+                            })();
+                          }
+                        : undefined
+                    }
+                    runningTestCaseId={handlers.runningTestCaseId}
                   />
                 </div>
               )}

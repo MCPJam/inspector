@@ -712,6 +712,14 @@ export function useEvalHandlers({
     [deletingTestCaseId],
   );
 
+  /** Perform deletion only (no modal). Used for playground batch delete. */
+  const directDeleteTestCase = useCallback(
+    async (testCaseId: string) => {
+      await mutations.deleteTestCaseMutation({ testCaseId });
+    },
+    [mutations.deleteTestCaseMutation],
+  );
+
   // Confirm test case deletion
   const confirmDeleteTestCase = useCallback(async () => {
     if (!testCaseToDelete || deletingTestCaseId) return;
@@ -877,6 +885,7 @@ export function useEvalHandlers({
     confirmDeleteRun,
     handleCreateTestCase,
     handleDeleteTestCase,
+    directDeleteTestCase,
     confirmDeleteTestCase,
     handleDuplicateTestCase,
     handleGenerateTests,
