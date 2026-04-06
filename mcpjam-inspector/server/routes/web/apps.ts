@@ -129,7 +129,7 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       }
 
       const resolvedResourceUri = body.template || body.resourceUri;
-      const effectiveCspMode = body.cspMode ?? "widget-declared";
+      const effectiveCspMode = body.cspMode ?? "permissive";
 
       const resourceResult = await manager.readResource(body.serverId, {
         uri: resolvedResourceUri,
@@ -232,7 +232,7 @@ apps.post("/chatgpt-apps/widget-content", async (c) =>
       const widgetCspRaw = resourceMeta?.["openai/widgetCSP"] as
         | WidgetCspMeta
         | undefined;
-      const effectiveCspMode = body.cspMode ?? "widget-declared";
+      const effectiveCspMode = body.cspMode ?? "permissive";
       const cspConfig = buildCspHeader(effectiveCspMode, widgetCspRaw, {
         frameAncestors: buildFrameAncestors(),
       });

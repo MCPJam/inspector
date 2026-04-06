@@ -50,8 +50,8 @@ export interface MCPInspectorPluginOptions {
 
   /**
    * Content Security Policy mode for the App Builder sandbox.
-   * - "widget-declared": enforces CSP directives declared by the widget (default)
-   * - "permissive": disables CSP enforcement for easier development
+   * - "permissive": disables CSP enforcement for easier development (default)
+   * - "widget-declared": enforces CSP directives declared by the widget
    */
   cspMode?: "permissive" | "widget-declared";
 }
