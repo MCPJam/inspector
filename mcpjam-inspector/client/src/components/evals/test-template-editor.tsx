@@ -1241,15 +1241,15 @@ export function TestTemplateEditor({
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-4xl flex-col gap-2 px-4 py-3 sm:px-6">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
-              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 pt-6 pb-3 sm:px-6">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+              <div className="flex min-w-0 flex-1 flex-col gap-2">
                 {onBackToList ? (
                   <Button
                     type="button"
                     variant="ghost"
                     size="sm"
-                    className="-ml-2 h-7 shrink-0 px-2 text-xs text-muted-foreground"
+                    className="-ml-2 h-7 self-start px-2 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
                     onClick={onBackToList}
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
@@ -1257,7 +1257,7 @@ export function TestTemplateEditor({
                   </Button>
                 ) : null}
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-3">
                   {isEditingTitle ? (
                     <input
                       type="text"
@@ -1269,7 +1269,7 @@ export function TestTemplateEditor({
                       onBlur={handleTitleBlur}
                       onKeyDown={handleTitleKeyDown}
                       autoFocus
-                      className="min-w-0 flex-1 bg-transparent px-0 py-0 text-lg font-semibold focus:outline-none sm:text-xl"
+                      className="min-w-0 flex-1 bg-transparent px-0 py-0 text-xl font-semibold tracking-tight focus:outline-none sm:text-2xl"
                     />
                   ) : (
                     <button
@@ -1277,7 +1277,7 @@ export function TestTemplateEditor({
                       className="min-w-0 flex-1 text-left"
                       onClick={handleTitleClick}
                     >
-                      <h2 className="truncate text-lg font-semibold transition-opacity hover:opacity-80 sm:text-xl">
+                      <h2 className="truncate text-xl font-semibold tracking-tight transition-opacity hover:opacity-80 sm:text-2xl">
                         {editForm?.title || currentTestCase.title}
                       </h2>
                     </button>
@@ -1285,7 +1285,7 @@ export function TestTemplateEditor({
                   {latestAvailableIteration ? (
                     <span
                       className={cn(
-                        "inline-flex items-center gap-1.5 text-sm font-medium",
+                        "inline-flex items-center gap-1.5 rounded-full border border-current/15 bg-current/[0.07] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide",
                         latestAvailableToneClass,
                       )}
                     >
@@ -1304,7 +1304,7 @@ export function TestTemplateEditor({
                   </div>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
+              <div className="flex shrink-0 items-center gap-2">
                 {onExportDraft ? (
                   <Button
                     type="button"
@@ -1437,7 +1437,7 @@ export function TestTemplateEditor({
 
             <div>
               <div
-                className="bg-[#fcfbf9] py-1.5 dark:bg-muted/15"
+                className="rounded-xl bg-[#f8f5f1] py-2.5 dark:bg-muted/10"
                 title={
                   !latestAvailableIsSaved &&
                   currentTestCase.lastMessageRun &&
@@ -1446,7 +1446,7 @@ export function TestTemplateEditor({
                     : undefined
                 }
               >
-                <div className="flex min-h-9 items-center gap-2 px-3">
+                <div className="flex min-h-9 items-center gap-2 px-4">
                   {!latestAvailableIteration ? (
                     <span className="shrink-0 text-[13px] font-normal text-[#777777] dark:text-muted-foreground">
                       Add model
@@ -1652,7 +1652,7 @@ export function TestTemplateEditor({
               </div>
             </div>
 
-            <div className="space-y-4 border-t border-border/60 pt-3">
+            <div className="space-y-4 pt-1">
               {editForm ? (
                 <TestCasePromptFlow
                   promptTurns={editForm.promptTurns}
