@@ -129,6 +129,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("convex/react", () => ({
@@ -137,6 +138,7 @@ vi.mock("convex/react", () => ({
   }),
   useQuery: () => undefined,
   useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
@@ -179,6 +181,14 @@ vi.mock("@/hooks/use-json-rpc-panel", () => ({
 vi.mock("@/hooks/useWorkspaces", () => ({
   useWorkspaceServers: () => ({
     serversRecord: {},
+  }),
+  useWorkspaceQueries: () => ({
+    allWorkspaces: undefined,
+    workspaces: [],
+    sortedWorkspaces: [],
+    isLoading: false,
+    hasWorkspaces: false,
+    hasAnyWorkspaces: false,
   }),
 }));
 

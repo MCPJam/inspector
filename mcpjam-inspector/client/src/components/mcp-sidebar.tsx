@@ -355,22 +355,59 @@ function navigateToEvalsRunsList() {
   navigateToCiEvalsRoute({ type: "list" });
 }
 
-function SidebarEvalsNavGroup({
+type EvalsSubnavItem = {
+  title: "Playground" | "Runs";
+  href: string;
+  icon: typeof Puzzle | typeof GitBranch;
+  isActive: (activeTab?: string) => boolean;
+  onClick: () => void;
+};
+
+export function getEvalsSubnavItems(options: {
+  evaluateRunsEnabled: boolean;
+}): EvalsSubnavItem[] {
+  const items: EvalsSubnavItem[] = [
+    {
+      title: "Playground",
+      href: withTestingSurface(buildEvalsHash({ type: "list" })),
+      icon: Puzzle,
+      isActive: (activeTab) => activeTab === "evals",
+      onClick: navigateToEvalsExploreList,
+    },
+  ];
+
+  if (options.evaluateRunsEnabled) {
+    items.push({
+      title: "Runs",
+      href: "#/ci-evals",
+      icon: GitBranch,
+      isActive: (activeTab) => activeTab === "ci-evals",
+      onClick: navigateToEvalsRunsList,
+    });
+  }
+
+  return items;
+}
+
+export function SidebarEvalsNavGroup({
   title,
   Icon,
   disabled,
   disabledTooltip,
   activeTab,
+  showRuns = true,
 }: {
   title: string;
   Icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
   activeTab?: string;
+  showRuns?: boolean;
 }) {
   const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
-  const exploreHash = withTestingSurface(buildEvalsHash({ type: "list" }));
-  const runsHash = "#/ci-evals";
+  const subnavItems = getEvalsSubnavItems({
+    evaluateRunsEnabled: showRuns,
+  });
 
   const parentButton = (
     <SidebarMenuButton
@@ -420,42 +457,30 @@ function SidebarEvalsNavGroup({
               parentButton
             )}
             <SidebarMenuSub>
-              <SidebarMenuSubItem>
-                <SidebarMenuSubButton
-                  isActive={activeTab === "evals"}
-                  href={exploreHash}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (disabled) return;
-                    navigateToEvalsExploreList();
-                  }}
-                  aria-disabled={disabled || undefined}
-                  className={
-                    disabled ? "pointer-events-none opacity-50" : undefined
-                  }
-                >
-                  <Puzzle className="h-4 w-4" />
-                  <span>Playground</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-              <SidebarMenuSubItem>
-                <SidebarMenuSubButton
-                  isActive={activeTab === "ci-evals"}
-                  href={runsHash}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (disabled) return;
-                    navigateToEvalsRunsList();
-                  }}
-                  aria-disabled={disabled || undefined}
-                  className={
-                    disabled ? "pointer-events-none opacity-50" : undefined
-                  }
-                >
-                  <GitBranch className="h-4 w-4" />
-                  <span>Runs</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
+              {subnavItems.map((item) => {
+                const ItemIcon = item.icon;
+
+                return (
+                  <SidebarMenuSubItem key={item.title}>
+                    <SidebarMenuSubButton
+                      isActive={item.isActive(activeTab)}
+                      href={item.href}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (disabled) return;
+                        item.onClick();
+                      }}
+                      aria-disabled={disabled || undefined}
+                      className={
+                        disabled ? "pointer-events-none opacity-50" : undefined
+                      }
+                    >
+                      <ItemIcon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                );
+              })}
             </SidebarMenuSub>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -487,6 +512,7 @@ export function MCPSidebar({
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -681,6 +707,7 @@ export function MCPSidebar({
                     disabled={evalsEntry.disabled}
                     disabledTooltip={evalsEntry.disabledTooltip}
                     activeTab={activeTab}
+                    showRuns={evaluateRunsEnabled === true}
                   />
                 ) : null}
                 {/* Add subtle divider between sections (except after the last section) */}
