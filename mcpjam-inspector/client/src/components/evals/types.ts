@@ -114,6 +114,38 @@ export type EvalIteration = {
   _creationTime?: number; // Convex auto field
 };
 
+export type CompareModelOverride = {
+  systemPrompt?: string;
+  temperature?: string;
+  providerFlagsJson?: string;
+};
+
+export type EditorMode = "config" | "run";
+
+export type RunColumnTab = "chat" | "trace" | "tools";
+
+export type CompareRunRecord = {
+  modelValue: string;
+  modelLabel: string;
+  provider: string;
+  model: string;
+  status: "idle" | "running" | "completed" | "failed";
+  iteration: EvalIteration | null;
+  error?: string | null;
+  startedAt: number | null;
+  completedAt: number | null;
+  result: "pending" | "passed" | "failed" | "cancelled" | null;
+  metrics: {
+    durationMs: number | null;
+    toolCallCount: number;
+    tokensUsed: number;
+    missingCount: number;
+    unexpectedCount: number;
+    argumentMismatchCount: number;
+    mismatchCount: number;
+  };
+};
+
 export type EvalSuiteRunSummary = {
   total: number;
   passed: number;

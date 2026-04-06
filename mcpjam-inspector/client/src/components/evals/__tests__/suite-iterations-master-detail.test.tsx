@@ -1,5 +1,6 @@
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
 
@@ -10,8 +11,8 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("convex/react", () => ({
-  useMutation: (...args: unknown[]) => mocks.useMutation(...args),
-  useQuery: (...args: unknown[]) => mocks.useQuery(...args),
+  useMutation: (name: any) => (mocks.useMutation as any)(name),
+  useQuery: (name: any, args: any) => (mocks.useQuery as any)(name, args),
 }));
 
 vi.mock("../use-suite-data", () => ({
@@ -41,10 +42,18 @@ vi.mock("../suite-hero-stats", () => ({
 }));
 
 vi.mock("../test-cases-overview", () => ({
-  TestCasesOverview: () => (
-    <div data-testid="test-cases-overview">
+  TestCasesOverview: ({
+    onTestCaseClick,
+  }: {
+    onTestCaseClick: (testCaseId: string) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="test-cases-overview"
+      onClick={() => onTestCaseClick("case-1")}
+    >
       Click on a case to view its run history and performance.
-    </div>
+    </button>
   ),
 }));
 
@@ -188,6 +197,60 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     );
 
     expect(screen.getByTestId("test-cases-overview")).toBeInTheDocument();
+  });
+
+  it("opens test config from the cases list when run actions are hidden", async () => {
+    const user = userEvent.setup();
+    const navigation = {
+      ...noopNav,
+      toTestEdit: vi.fn(),
+    };
+
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[
+          {
+            _id: "case-1",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Case 1",
+            query: "Prompt",
+            models: [],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
+        navigation={navigation}
+        hideRunActions
+      />,
+    );
+
+    await user.click(screen.getByTestId("test-cases-overview"));
+
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
   });
 
   it("passes canDeleteSuite through to the header in read-only overview", () => {

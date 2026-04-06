@@ -66,6 +66,7 @@ interface TestCaseListSidebarProps {
   onToggleSelection?: (testCaseId: string, selected: boolean) => void;
   selectedCaseIds?: string[];
   showSelection?: boolean;
+  hideRunAction?: boolean;
   /** Playground: hide suite-level Run Insights row (replaced by breadcrumbs + run-detail sidebar). */
   hideRunInsightsRow?: boolean;
   /** Overrides nav row label below the header (playground uses e.g. "Runs"). */
@@ -100,6 +101,7 @@ export function TestCaseListSidebar({
   onToggleSelection,
   selectedCaseIds = [],
   showSelection = false,
+  hideRunAction = false,
   hideRunInsightsRow = false,
   insightsNavLabel = RUN_INSIGHTS_SIDEBAR_LABEL,
 }: TestCaseListSidebarProps) {
@@ -162,54 +164,56 @@ export function TestCaseListSidebar({
           )}
         </h2>
         <div className="flex items-center gap-1">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  aria-label="Run selected case"
-                  onClick={() => {
-                    if (selectedTestCase && onRunTestCase) {
-                      posthog.capture("run_selected_case_button_clicked", {
-                        location: "test_case_list_sidebar",
-                        platform: detectPlatform(),
-                        environment: detectEnvironment(),
-                        test_case_id: selectedTestCase._id,
-                      });
-                      onRunTestCase(selectedTestCase);
+          {!hideRunAction ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label="Run selected case"
+                    onClick={() => {
+                      if (selectedTestCase && onRunTestCase) {
+                        posthog.capture("run_selected_case_button_clicked", {
+                          location: "test_case_list_sidebar",
+                          platform: detectPlatform(),
+                          environment: detectEnvironment(),
+                          test_case_id: selectedTestCase._id,
+                        });
+                        onRunTestCase(selectedTestCase);
+                      }
+                    }}
+                    disabled={
+                      !canRunSelectedCase ||
+                      isRunningSelectedCase ||
+                      testCases.length === 0
                     }
-                  }}
-                  disabled={
-                    !canRunSelectedCase ||
-                    isRunningSelectedCase ||
-                    testCases.length === 0
-                  }
-                  className="h-7 w-7 p-0"
-                >
-                  <RotateCw
-                    className={cn(
-                      "h-4 w-4",
-                      isRunningSelectedCase && "animate-spin",
-                    )}
-                  />
-                </Button>
-              </span>
-            </TooltipTrigger>
-            <TooltipContent>
-              {testCases.length === 0
-                ? "Add cases first"
-                : !selectedTestCase
-                  ? "Select a case first"
-                  : !selectedTestCase.models?.length
-                    ? "Add a model first"
-                    : missingServers.length > 0
-                      ? `Connect the following servers: ${missingServers.join(", ")}`
-                      : isRunningSelectedCase
-                        ? "Running..."
-                        : "Run selected case"}
-            </TooltipContent>
-          </Tooltip>
+                    className="h-7 w-7 p-0"
+                  >
+                    <RotateCw
+                      className={cn(
+                        "h-4 w-4",
+                        isRunningSelectedCase && "animate-spin",
+                      )}
+                    />
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {testCases.length === 0
+                  ? "Add cases first"
+                  : !selectedTestCase
+                    ? "Select a case first"
+                    : !selectedTestCase.models?.length
+                      ? "Add a model first"
+                      : missingServers.length > 0
+                        ? `Connect the following servers: ${missingServers.join(", ")}`
+                        : isRunningSelectedCase
+                          ? "Running..."
+                          : "Run selected case"}
+              </TooltipContent>
+            </Tooltip>
+          ) : null}
           <Tooltip>
             <TooltipTrigger asChild>
               <span>

@@ -63,6 +63,7 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   testCaseId: string;
   model: string;
   provider: string;
+  skipLastMessageRunUpdate?: boolean;
   modelApiKeys?: Record<string, string>;
   convexAuthToken?: string | null;
   testCaseOverrides?: {
@@ -118,6 +119,7 @@ function mergeHostedServerBatch<
   const hostedBatch = buildHostedServerBatchRequest(request.serverIds);
   const {
     convexAuthToken: _convexAuthToken,
+    serverIds: _serverIds,
     ...requestWithoutConvexAuthToken
   } = request;
 

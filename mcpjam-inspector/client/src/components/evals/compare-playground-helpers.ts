@@ -1,0 +1,344 @@
+import { getModelById, type ModelDefinition, type ModelProvider } from "@/shared/types";
+import { matchToolCalls } from "@/shared/eval-matching";
+import { computeIterationResult } from "./pass-criteria";
+import type {
+  CompareModelOverride,
+  CompareRunRecord,
+  EvalCase,
+  EvalIteration,
+} from "./types";
+
+const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
+  "anthropic",
+  "azure",
+  "openai",
+  "ollama",
+  "deepseek",
+  "google",
+  "meta",
+  "xai",
+  "mistral",
+  "moonshotai",
+  "openrouter",
+  "z-ai",
+  "minimax",
+  "custom",
+];
+
+function normalizeModelProvider(provider?: string): ModelProvider {
+  return KNOWN_MODEL_PROVIDERS.includes(provider as ModelProvider)
+    ? (provider as ModelProvider)
+    : "custom";
+}
+
+export function createCompareSessionId() {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return `cmp_${crypto.randomUUID()}`;
+  }
+
+  return `cmp_${Date.now().toString(36)}_${Math.random()
+    .toString(36)
+    .slice(2, 10)}`;
+}
+
+export function parseModelValue(modelValue: string) {
+  const [provider, ...modelParts] = modelValue.split("/");
+  return {
+    provider,
+    model: modelParts.join("/"),
+  };
+}
+
+export function resolveModelOptionLabel(
+  modelValue: string,
+  modelLabelByValue: Record<string, string>,
+) {
+  return modelLabelByValue[modelValue] ?? modelValue;
+}
+
+export function resolveInitialCompareModelValues(params: {
+  testCase: Pick<EvalCase, "models"> | null | undefined;
+  modelOptions: Array<{ value: string }>;
+  preferredModelValue?: string | null;
+  maxModels?: number;
+}) {
+  const { testCase, modelOptions, preferredModelValue, maxModels = 3 } = params;
+  const optionValues = new Set(modelOptions.map((option) => option.value));
+  const values: string[] = [];
+
+  const pushValue = (candidate: string | null | undefined) => {
+    if (!candidate || values.includes(candidate)) return;
+    if (!optionValues.has(candidate)) return;
+    values.push(candidate);
+  };
+
+  for (const model of testCase?.models ?? []) {
+    pushValue(`${model.provider}/${model.model}`);
+  }
+
+  pushValue(preferredModelValue);
+
+  for (const option of modelOptions) {
+    pushValue(option.value);
+  }
+
+  return values.slice(0, maxModels);
+}
+
+export function resolveIterationModelValue(
+  iteration: Pick<EvalIteration, "testCaseSnapshot">,
+  testCase?: Pick<EvalCase, "models"> | null,
+) {
+  const provider =
+    iteration.testCaseSnapshot?.provider ?? testCase?.models?.[0]?.provider;
+  const model =
+    iteration.testCaseSnapshot?.model ?? testCase?.models?.[0]?.model;
+
+  if (!provider || !model) {
+    return null;
+  }
+
+  return `${provider}/${model}`;
+}
+
+export function buildHistoricalCompareRunRecords(params: {
+  selectedModelValues: string[];
+  modelLabelByValue: Record<string, string>;
+  iterations: EvalIteration[];
+  testCase?: Pick<EvalCase, "models"> | null;
+  existingRecords?: Record<string, CompareRunRecord>;
+}) {
+  const {
+    selectedModelValues,
+    modelLabelByValue,
+    iterations,
+    testCase,
+    existingRecords = {},
+  } = params;
+
+  if (selectedModelValues.length === 0 || iterations.length === 0) {
+    return existingRecords;
+  }
+
+  const latestIterationByModel = new Map<string, EvalIteration>();
+  const sortedIterations = [...iterations].sort((a, b) => {
+    const aTime = a.startedAt ?? a.updatedAt ?? a.createdAt ?? 0;
+    const bTime = b.startedAt ?? b.updatedAt ?? b.createdAt ?? 0;
+    return bTime - aTime;
+  });
+
+  for (const iteration of sortedIterations) {
+    const modelValue = resolveIterationModelValue(iteration, testCase);
+    if (!modelValue || latestIterationByModel.has(modelValue)) {
+      continue;
+    }
+    latestIterationByModel.set(modelValue, iteration);
+  }
+
+  let changed = false;
+  const nextRecords = { ...existingRecords };
+
+  for (const modelValue of selectedModelValues) {
+    if (nextRecords[modelValue]?.iteration) {
+      continue;
+    }
+
+    const iteration = latestIterationByModel.get(modelValue);
+    if (!iteration) {
+      continue;
+    }
+
+    nextRecords[modelValue] = buildCompareRunRecord({
+      modelValue,
+      modelLabel: resolveModelOptionLabel(modelValue, modelLabelByValue),
+      iteration,
+    });
+    changed = true;
+  }
+
+  return changed ? nextRecords : existingRecords;
+}
+
+export function mergeAdvancedConfigWithOverride(params: {
+  baseAdvancedConfig?: Record<string, unknown>;
+  override?: CompareModelOverride;
+}) {
+  const { baseAdvancedConfig, override } = params;
+  const next = {
+    ...(baseAdvancedConfig ?? {}),
+  };
+
+  if (override?.systemPrompt !== undefined) {
+    const trimmedSystem = override.systemPrompt.trim();
+    if (trimmedSystem) {
+      next.system = trimmedSystem;
+    } else {
+      delete next.system;
+    }
+  }
+
+  if (override?.temperature !== undefined) {
+    const trimmedTemperature = override.temperature.trim();
+    if (!trimmedTemperature) {
+      delete next.temperature;
+    } else {
+      const parsedTemperature = Number(trimmedTemperature);
+      if (!Number.isFinite(parsedTemperature)) {
+        throw new Error("Temperature override must be a valid number");
+      }
+      next.temperature = parsedTemperature;
+    }
+  }
+
+  if (override?.providerFlagsJson !== undefined) {
+    const trimmedFlags = override.providerFlagsJson.trim();
+    if (!trimmedFlags) {
+      return Object.keys(next).length > 0 ? next : undefined;
+    }
+
+    let parsedFlags: unknown;
+    try {
+      parsedFlags = JSON.parse(trimmedFlags);
+    } catch {
+      throw new Error("Provider flags override must be valid JSON");
+    }
+
+    if (!parsedFlags || typeof parsedFlags !== "object" || Array.isArray(parsedFlags)) {
+      throw new Error("Provider flags override must be a JSON object");
+    }
+
+    Object.assign(next, parsedFlags);
+  }
+
+  return Object.keys(next).length > 0 ? next : undefined;
+}
+
+export function buildCompareRunRecord(params: {
+  modelValue: string;
+  modelLabel: string;
+  iteration: EvalIteration | null;
+  error?: string | null;
+  startedAt?: number | null;
+  completedAt?: number | null;
+}): CompareRunRecord {
+  const { modelValue, modelLabel, iteration, error = null, startedAt, completedAt } =
+    params;
+  const { provider, model } = parseModelValue(modelValue);
+
+  if (!iteration) {
+    return {
+      modelValue,
+      modelLabel,
+      provider,
+      model,
+      status: error ? "failed" : "idle",
+      iteration: null,
+      error,
+      startedAt: startedAt ?? null,
+      completedAt: completedAt ?? null,
+      result: error ? "failed" : null,
+      metrics: {
+        durationMs: null,
+        toolCallCount: 0,
+        tokensUsed: 0,
+        missingCount: 0,
+        unexpectedCount: 0,
+        argumentMismatchCount: 0,
+        mismatchCount: 0,
+      },
+    };
+  }
+
+  const expectedToolCalls = iteration.testCaseSnapshot?.expectedToolCalls ?? [];
+  const actualToolCalls = iteration.actualToolCalls ?? [];
+  const match = matchToolCalls(
+    expectedToolCalls,
+    actualToolCalls,
+    iteration.testCaseSnapshot?.isNegativeTest,
+  );
+  const durationMs =
+    iteration.startedAt && iteration.updatedAt
+      ? Math.max(iteration.updatedAt - iteration.startedAt, 0)
+      : null;
+  const result = computeIterationResult(iteration);
+  const mismatchCount =
+    match.missing.length +
+    match.unexpected.length +
+    match.argumentMismatches.length;
+
+  return {
+    modelValue,
+    modelLabel,
+    provider,
+    model,
+    status: result === "pending" ? "running" : "completed",
+    iteration,
+    error,
+    startedAt: startedAt ?? iteration.startedAt ?? iteration.createdAt,
+    completedAt: completedAt ?? iteration.updatedAt ?? null,
+    result,
+    metrics: {
+      durationMs,
+      toolCallCount: actualToolCalls.length,
+      tokensUsed: iteration.tokensUsed ?? 0,
+      missingCount: match.missing.length,
+      unexpectedCount: match.unexpected.length,
+      argumentMismatchCount: match.argumentMismatches.length,
+      mismatchCount,
+    },
+  };
+}
+
+export function resolveTraceModel(
+  iteration: EvalIteration,
+  testCase: EvalCase | null,
+): ModelDefinition {
+  const snapshotProvider = iteration.testCaseSnapshot?.provider;
+  const snapshotModel = iteration.testCaseSnapshot?.model;
+  const fallbackProvider = testCase?.models[0]?.provider;
+  const fallbackModel = testCase?.models[0]?.model;
+
+  const provider = snapshotProvider || fallbackProvider || "openai";
+  const model = snapshotModel || fallbackModel || "unknown-model";
+  const providerModelId =
+    model.startsWith(`${provider}/`) || !provider
+      ? model
+      : `${provider}/${model}`;
+
+  return (
+    getModelById(providerModelId) ??
+    getModelById(model) ?? {
+      id: providerModelId,
+      name: model.includes("/") ? model.split("/").slice(1).join("/") : model,
+      provider: normalizeModelProvider(provider),
+    }
+  );
+}
+
+export function extractFinalAssistantOutput(adaptedMessages: Array<{ role: string; parts?: any[] }>) {
+  const assistantMessage = [...adaptedMessages]
+    .reverse()
+    .find((message) => message.role === "assistant");
+
+  if (!assistantMessage?.parts?.length) {
+    return { text: null, json: null as unknown };
+  }
+
+  const textParts = assistantMessage.parts
+    .filter((part) => part?.type === "text" && typeof part.text === "string")
+    .map((part) => part.text.trim())
+    .filter(Boolean);
+
+  if (textParts.length > 0) {
+    return {
+      text: textParts.join("\n\n"),
+      json: null,
+    };
+  }
+
+  const jsonPart = assistantMessage.parts.find((part) => part?.type === "data");
+  return {
+    text: null,
+    json: jsonPart ?? assistantMessage.parts,
+  };
+}

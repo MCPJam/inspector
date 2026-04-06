@@ -68,6 +68,9 @@ export function SuiteIterationsView({
   workspaceId = null,
   navigation,
   onSetupCi,
+  onCreateTestCase,
+  onGenerateTestCases,
+  canGenerateTestCases = false,
   caseListInSidebar = false,
   runDetailSortByOverride,
   onRunDetailSortByChange,
@@ -107,6 +110,9 @@ export function SuiteIterationsView({
   workspaceId?: string | null;
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
+  onCreateTestCase?: () => void;
+  onGenerateTestCases?: () => void;
+  canGenerateTestCases?: boolean;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
   /** When set with onRunDetailSortByChange, controls iteration sort (e.g. CI Runs parent sidebar). */
@@ -427,6 +433,19 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   workspaceId={workspaceId}
                   availableModels={availableModels}
+                  onBackToList={() =>
+                    navigation.toSuiteOverview(suite._id, "test-cases")
+                  }
+                  onOpenLastRun={(iteration) => {
+                    if (!iteration.suiteRunId) {
+                      return;
+                    }
+                    navigation.toRunDetail(
+                      suite._id,
+                      iteration.suiteRunId,
+                      iteration._id,
+                    );
+                  }}
                 />
               </motion.div>
             ) : viewMode === "test-detail" && selectedTestId ? (
@@ -569,8 +588,18 @@ export function SuiteIterationsView({
                         navigation.toSuiteOverview(suite._id, value)
                       }
                       onTestCaseClick={(testCaseId) =>
-                        navigation.toTestDetail(suite._id, testCaseId)
+                        hideRunActions
+                          ? navigation.toTestEdit(suite._id, testCaseId)
+                          : navigation.toTestDetail(suite._id, testCaseId)
                       }
+                      clickHint={
+                        hideRunActions
+                          ? "Click a case to open its config and run compare."
+                          : undefined
+                      }
+                      onCreateTestCase={onCreateTestCase}
+                      onGenerateTestCases={onGenerateTestCases}
+                      canGenerateTestCases={canGenerateTestCases}
                       runTrendData={runTrendData}
                       modelStats={modelStats}
                       runsLoading={runsLoading}

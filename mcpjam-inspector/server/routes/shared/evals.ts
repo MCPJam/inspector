@@ -90,6 +90,7 @@ export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
   provider: z.string(),
+  skipLastMessageRunUpdate: z.boolean().optional(),
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
@@ -503,6 +504,7 @@ export async function runEvalTestCaseWithManager(
     model,
     provider,
     serverIds,
+    skipLastMessageRunUpdate,
     modelApiKeys,
     convexAuthToken,
     testCaseOverrides,
@@ -573,7 +575,11 @@ export async function runEvalTestCaseWithManager(
     latestIteration = recentIterations?.[0] || null;
   }
 
-  if (!options?.skipLastMessageRunUpdate && (latestIteration as any)?._id) {
+  if (
+    !options?.skipLastMessageRunUpdate &&
+    !skipLastMessageRunUpdate &&
+    (latestIteration as any)?._id
+  ) {
     await convexClient.mutation("testSuites:updateTestCase" as any, {
       testCaseId,
       lastMessageRun: (latestIteration as any)._id,

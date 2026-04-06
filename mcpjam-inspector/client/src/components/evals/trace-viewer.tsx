@@ -68,6 +68,12 @@ interface TraceViewerProps {
   expectedToolCalls?: TraceViewerEvalToolCall[];
   /** Tool calls observed for this iteration; enables the Tools tab. */
   actualToolCalls?: TraceViewerEvalToolCall[];
+  /** Force a single mode (used when TraceViewer is embedded into a larger shell). */
+  forcedViewMode?: "timeline" | "chat" | "raw" | "tools";
+  /** Hide the internal toolbar when the parent shell provides its own tabs. */
+  hideToolbar?: boolean;
+  /** Let the active panel fill the available height instead of clamping to a max height. */
+  fillContent?: boolean;
 }
 
 function getTraceMessages(
@@ -124,6 +130,9 @@ export function TraceViewer({
   chromeDensity = "default",
   expectedToolCalls = [],
   actualToolCalls = [],
+  forcedViewMode,
+  hideToolbar = false,
+  fillContent = false,
 }: TraceViewerProps) {
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
@@ -153,6 +162,7 @@ export function TraceViewer({
   const traceMessages = getTraceMessages(trace);
   const hasEvalToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
+  const effectiveViewMode = forcedViewMode ?? viewMode;
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
@@ -228,7 +238,7 @@ export function TraceViewer({
   }, [hasEvalToolCalls]);
 
   useEffect(() => {
-    if (viewMode !== "raw" && viewMode !== "chat") return;
+    if (effectiveViewMode !== "raw" && effectiveViewMode !== "chat") return;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
       e.preventDefault();
@@ -236,7 +246,7 @@ export function TraceViewer({
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [viewMode]);
+  }, [effectiveViewMode]);
 
   function handleRevealInTranscript(selection: TraceRevealSelection) {
     const highlightedIds = new Set<string>();
@@ -284,11 +294,12 @@ export function TraceViewer({
   }
 
   const hasRecordedSpans = Boolean(recordedSpans?.length);
-  const showRecordedChrome = viewMode === "timeline" && hasRecordedSpans;
+  const showRecordedChrome =
+    effectiveViewMode === "timeline" && hasRecordedSpans;
   const timelineZoomMinMs = Math.max(1, Math.round(maxEndMsForToolbar / 50));
   const compactChrome = chromeDensity === "compact";
-
-  const flexFillChrome = viewMode === "tools" && hasEvalToolCalls;
+  const flexFillChrome =
+    fillContent || (effectiveViewMode === "tools" && hasEvalToolCalls);
 
   return (
     <div
@@ -301,149 +312,153 @@ export function TraceViewer({
           flexFillChrome && "flex min-h-0 flex-1 flex-col",
         )}
       >
-        <div
-          className={cn(
-            "sticky top-0 z-20 rounded-lg border border-border/50 bg-muted/95 shadow-sm backdrop-blur-sm",
-            flexFillChrome && "shrink-0",
-            compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
-          )}
-        >
+        {!hideToolbar ? (
           <div
             className={cn(
-              "flex min-w-0 flex-row items-center justify-between gap-2",
-              compactChrome ? "min-h-8" : "min-h-9",
+              "sticky top-0 z-20 rounded-lg border border-border/50 bg-muted/95 shadow-sm backdrop-blur-sm",
+              flexFillChrome && "shrink-0",
+              compactChrome ? "px-2 py-1.5 sm:px-2.5" : "px-2 py-2 sm:px-3",
             )}
           >
-            <div className="flex min-w-0 min-h-0 flex-1 items-center gap-2">
-            {showRecordedChrome ? (
-              <RecordedTraceToolbar
-                filter={timelineFilter}
-                onFilterChange={setTimelineFilter}
-                isFullyExpanded={isTimelineFullyExpanded}
-                expandDisabled={promptGroups.length === 0}
-                showBottomBorder={false}
-                zoomControls={
-                  <>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7 border-border/50"
-                      title="Zoom in timeline"
-                      aria-label="Zoom in timeline"
-                      disabled={timelineViewportMaxMs <= timelineZoomMinMs}
-                      onClick={() =>
-                        setTimelineViewportMaxMs((v) =>
-                          Math.max(timelineZoomMinMs, Math.round(v * 0.8)),
-                        )
-                      }
-                    >
-                      <Plus className="size-3.5" aria-hidden />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="icon"
-                      className="h-7 w-7 border-border/50"
-                      title="Zoom out timeline"
-                      aria-label="Zoom out timeline"
-                      disabled={timelineViewportMaxMs >= maxEndMsForToolbar * 4}
-                      onClick={() =>
-                        setTimelineViewportMaxMs((v) =>
-                          Math.min(
-                            maxEndMsForToolbar * 4,
-                            Math.round(v * 1.25),
-                          ),
-                        )
-                      }
-                    >
-                      <Minus className="size-3.5" aria-hidden />
-                    </Button>
-                  </>
-                }
-                onToggleExpandAll={() => {
-                  if (isTimelineFullyExpanded) {
-                    setExpandedPromptIds(new Set());
-                    setExpandedStepIds(new Set());
-                  } else {
-                    setExpandedPromptIds(
-                      new Set(promptGroups.map((group) => group.key)),
-                    );
-                    setExpandedStepIds(new Set(fullyExpandedStepIds));
+            <div
+              className={cn(
+                "flex min-w-0 flex-row items-center justify-between gap-2",
+                compactChrome ? "min-h-8" : "min-h-9",
+              )}
+            >
+              <div className="flex min-w-0 min-h-0 flex-1 items-center gap-2">
+              {showRecordedChrome ? (
+                <RecordedTraceToolbar
+                  filter={timelineFilter}
+                  onFilterChange={setTimelineFilter}
+                  isFullyExpanded={isTimelineFullyExpanded}
+                  expandDisabled={promptGroups.length === 0}
+                  showBottomBorder={false}
+                  zoomControls={
+                    <>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7 border-border/50"
+                        title="Zoom in timeline"
+                        aria-label="Zoom in timeline"
+                        disabled={timelineViewportMaxMs <= timelineZoomMinMs}
+                        onClick={() =>
+                          setTimelineViewportMaxMs((v) =>
+                            Math.max(timelineZoomMinMs, Math.round(v * 0.8)),
+                          )
+                        }
+                      >
+                        <Plus className="size-3.5" aria-hidden />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="icon"
+                        className="h-7 w-7 border-border/50"
+                        title="Zoom out timeline"
+                        aria-label="Zoom out timeline"
+                        disabled={timelineViewportMaxMs >= maxEndMsForToolbar * 4}
+                        onClick={() =>
+                          setTimelineViewportMaxMs((v) =>
+                            Math.min(
+                              maxEndMsForToolbar * 4,
+                              Math.round(v * 1.25),
+                            ),
+                          )
+                        }
+                      >
+                        <Minus className="size-3.5" aria-hidden />
+                      </Button>
+                    </>
                   }
-                }}
-              />
-            ) : (
-              <div className="text-xs font-medium text-muted-foreground">
-                {viewMode === "raw"
-                  ? "Trace JSON"
-                  : viewMode === "tools"
-                    ? "Expected vs actual tools"
-                    : traceMessages.length > 0
-                      ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
-                      : "Trace"}
+                  onToggleExpandAll={() => {
+                    if (isTimelineFullyExpanded) {
+                      setExpandedPromptIds(new Set());
+                      setExpandedStepIds(new Set());
+                    } else {
+                      setExpandedPromptIds(
+                        new Set(promptGroups.map((group) => group.key)),
+                      );
+                      setExpandedStepIds(new Set(fullyExpandedStepIds));
+                    }
+                  }}
+                />
+              ) : (
+                <div className="text-xs font-medium text-muted-foreground">
+                  {effectiveViewMode === "raw"
+                    ? "Trace JSON"
+                    : effectiveViewMode === "tools"
+                      ? "Expected vs actual tools"
+                      : traceMessages.length > 0
+                        ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
+                        : "Trace"}
+                </div>
+              )}
               </div>
-            )}
-            </div>
-            <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
-            <button
-              type="button"
-              onClick={() => setViewMode("timeline")}
-              className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                viewMode === "timeline"
-                  ? "bg-primary/10 text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              title="Timeline"
-            >
-              <AlignLeft className="h-3 w-3" />
-              Timeline
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("chat")}
-              className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                viewMode === "chat"
-                  ? "bg-primary/10 text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              title="Chat view"
-            >
-              <MessageSquare className="h-3 w-3" />
-              Chat
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("raw")}
-              className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                viewMode === "raw"
-                  ? "bg-primary/10 text-foreground font-medium"
-                  : "text-muted-foreground hover:text-foreground"
-              }`}
-              title="Raw JSON"
-            >
-              <Code2 className="h-3 w-3" />
-              Raw
-            </button>
-            {hasEvalToolCalls ? (
-              <button
-                type="button"
-                onClick={() => setViewMode("tools")}
-                className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                  viewMode === "tools"
-                    ? "bg-primary/10 text-foreground font-medium"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-                title="Expected vs actual tool calls"
-                data-testid="trace-viewer-tools-tab"
-              >
-                <GitCompare className="h-3 w-3" />
-                Tools
-              </button>
-            ) : null}
+              {!forcedViewMode ? (
+                <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("timeline")}
+                  className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                    effectiveViewMode === "timeline"
+                      ? "bg-primary/10 text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title="Timeline"
+                >
+                  <AlignLeft className="h-3 w-3" />
+                  Timeline
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("chat")}
+                  className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                    effectiveViewMode === "chat"
+                      ? "bg-primary/10 text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title="Chat view"
+                >
+                  <MessageSquare className="h-3 w-3" />
+                  Chat
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("raw")}
+                  className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                    effectiveViewMode === "raw"
+                      ? "bg-primary/10 text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title="Raw JSON"
+                >
+                  <Code2 className="h-3 w-3" />
+                  Raw
+                </button>
+                {hasEvalToolCalls ? (
+                  <button
+                    type="button"
+                    onClick={() => setViewMode("tools")}
+                    className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
+                      effectiveViewMode === "tools"
+                        ? "bg-primary/10 text-foreground font-medium"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    title="Expected vs actual tool calls"
+                    data-testid="trace-viewer-tools-tab"
+                  >
+                    <GitCompare className="h-3 w-3" />
+                    Tools
+                  </button>
+                ) : null}
+                </div>
+              ) : null}
             </div>
           </div>
-        </div>
+        ) : null}
 
         {traceInsight ? (
           <div
@@ -458,9 +473,14 @@ export function TraceViewer({
           </div>
         ) : null}
 
-        {viewMode === "raw" && (
+        {effectiveViewMode === "raw" && (
         <div
-          className="min-h-0 min-w-0 max-h-[min(70vh,36rem)] overflow-y-auto rounded-md border border-border/30 bg-background/50"
+          className={cn(
+            "min-w-0 rounded-md border border-border/30 bg-background/50",
+            fillContent
+              ? "min-h-0 flex-1 overflow-y-auto"
+              : "min-h-0 max-h-[min(70vh,36rem)] overflow-y-auto",
+          )}
           data-testid="trace-viewer-raw-json"
         >
           <JsonEditor
@@ -472,7 +492,7 @@ export function TraceViewer({
         </div>
         )}
 
-        {viewMode === "timeline" && (
+        {effectiveViewMode === "timeline" && (
         <Suspense
           fallback={
             <div className="flex justify-center py-8">
@@ -510,14 +530,19 @@ export function TraceViewer({
         </Suspense>
         )}
 
-        {viewMode === "chat" &&
+        {effectiveViewMode === "chat" &&
         (traceMessages.length === 0 ? (
           <div className="text-xs text-muted-foreground">
             No messages in trace
           </div>
         ) : (
           <div
-            className="min-h-0 min-w-0 max-h-[min(70vh,36rem)] overflow-y-auto rounded-md border border-border/30 bg-background/50"
+            className={cn(
+              "min-w-0 rounded-md border border-border/30 bg-background/50",
+              fillContent
+                ? "min-h-0 flex-1 overflow-y-auto"
+                : "min-h-0 max-h-[min(70vh,36rem)] overflow-y-auto",
+            )}
             data-testid="trace-viewer-chat"
           >
             <TranscriptThread
@@ -548,7 +573,7 @@ export function TraceViewer({
           </div>
         ))}
 
-        {viewMode === "tools" && hasEvalToolCalls ? (
+        {effectiveViewMode === "tools" && hasEvalToolCalls ? (
         <div
           className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row"
           data-testid="trace-viewer-tools-compare"
