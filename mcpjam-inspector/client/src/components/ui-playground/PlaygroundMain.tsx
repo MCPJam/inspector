@@ -599,7 +599,7 @@ export function PlaygroundMain({
   );
 
   // Placeholder text
-  let placeholder = "Ask something to render UI...";
+  let placeholder = "Try a prompt that could call your tools...";
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
@@ -940,12 +940,11 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput that persists - hidden when widget takes over.
-          During guided onboarding it moves inline while the thread is empty,
-          then returns to the footer after the first message. */}
+      {/* Footer ChatInput: with messages, or empty when center has no composer
+          (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
       {!isWidgetFullTakeover &&
         !showFullscreenChatOverlay &&
-        ((!showPostConnectGuide && !sendNuxCtaVisible) || !isThreadEmpty) && (
+        (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
           <div
             className={cn(
               "flex-shrink-0 max-w-3xl mx-auto w-full",

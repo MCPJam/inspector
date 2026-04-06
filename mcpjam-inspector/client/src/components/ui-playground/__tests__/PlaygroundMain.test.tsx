@@ -646,7 +646,7 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.getByPlaceholderText("Ask something to test your integration..."),
+        screen.getByPlaceholderText("Try a prompt that could call your tools..."),
       ).toBeInTheDocument();
     });
 
