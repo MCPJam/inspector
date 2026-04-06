@@ -1,5 +1,11 @@
 import { type ReactNode, useLayoutEffect } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "../App";
 import {
@@ -27,6 +33,7 @@ const {
   mockMCPSidebar,
   mockOrganizationsTab,
   mockPosthogCapture,
+  mockPosthogState,
   mockUseAuth,
   mockUseAppState,
   mockUseConvexAuth,
@@ -34,6 +41,7 @@ const {
   mockUseQuery,
   mockWorkOsAuthState,
 } = vi.hoisted(() => {
+  const featureFlagListeners = new Set<() => void>();
   const createAppStateMock = () => ({
     appState: {
       servers: {},
@@ -89,6 +97,23 @@ const {
     mockMCPSidebar: vi.fn(() => <div />),
     mockOrganizationsTab: vi.fn(() => <div />),
     mockPosthogCapture: vi.fn(),
+    mockPosthogState: {
+      featureFlags: {
+        hasLoadedFlags: true,
+      },
+      onFeatureFlags: vi.fn((callback: () => void) => {
+        featureFlagListeners.add(callback);
+        return () => featureFlagListeners.delete(callback);
+      }),
+      emitFeatureFlags: () => {
+        for (const callback of Array.from(featureFlagListeners)) {
+          callback();
+        }
+      },
+      reset: () => {
+        featureFlagListeners.clear();
+      },
+    },
     mockUseAuth: vi.fn(),
     mockUseAppState: vi.fn(createAppStateMock),
     mockUseConvexAuth: vi.fn(),
@@ -117,6 +142,8 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: mockPosthogCapture,
+    featureFlags: mockPosthogState.featureFlags,
+    onFeatureFlags: mockPosthogState.onFeatureFlags,
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
@@ -322,6 +349,9 @@ describe("App hosted OAuth callback handling", () => {
     mockUseAppState.mockImplementation(createAppStateMock);
     mockUseConvexAuth.mockReset();
     mockUseConvexAuth.mockReturnValue(mockConvexAuthState);
+    mockPosthogState.featureFlags.hasLoadedFlags = true;
+    mockPosthogState.onFeatureFlags.mockClear();
+    mockPosthogState.reset();
     mockUseFeatureFlagEnabled.mockReset();
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
@@ -1298,13 +1328,59 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
+  it("waits on ci-evals while the evaluate-runs flag is still loading", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#/ci-evals");
+    mockHandleOAuthCallback.mockReset();
+
+    const evaluateRunsState: { value: boolean | undefined } = {
+      value: undefined,
+    };
+    mockPosthogState.featureFlags.hasLoadedFlags = false;
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "evaluate-runs" ? evaluateRunsState.value : false,
+    );
+
+    render(<App />);
+
+    expect(window.location.hash).toBe("#/ci-evals");
+    expect(screen.getByText("Loading Runs...")).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
+
+    act(() => {
+      mockPosthogState.featureFlags.hasLoadedFlags = true;
+      evaluateRunsState.value = true;
+      mockPosthogState.emitFeatureFlags();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#/ci-evals");
+    expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
+  });
+
   it("redirects ci-evals to Playground when evaluate-runs is disabled", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
     window.history.replaceState({}, "", "/#/ci-evals");
     mockHandleOAuthCallback.mockReset();
 
+    mockPosthogState.featureFlags.hasLoadedFlags = false;
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "evaluate-runs" ? undefined : false,
+    );
+
     render(<App />);
+
+    expect(screen.getByText("Loading Runs...")).toBeInTheDocument();
+
+    act(() => {
+      mockPosthogState.featureFlags.hasLoadedFlags = true;
+      mockPosthogState.emitFeatureFlags();
+    });
 
     await waitFor(() => {
       expect(screen.getByTestId("evals-tab")).toBeInTheDocument();
@@ -1319,6 +1395,10 @@ describe("App hosted OAuth callback handling", () => {
     clearSandboxSession();
     window.history.replaceState({}, "", "/#/ci-evals/suite/s_123?view=runs");
     mockHandleOAuthCallback.mockReset();
+
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "evaluate-runs" ? undefined : false,
+    );
 
     render(<App />);
 

@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { Eye, GitBranch, Loader2, Play } from "lucide-react";
-import { motion } from "framer-motion";
+import { GitBranch, Loader2, Play } from "lucide-react";
 import { toast } from "sonner";
 import {
   Breadcrumb,
@@ -51,6 +50,7 @@ import { SuiteIterationsView } from "./evals/suite-iterations-view";
 import type { EvalSuite } from "./evals/types";
 import {
   SAMPLE_TRACE,
+  SAMPLE_TRACE_PREVIEW_IMAGE_URL,
   SAMPLE_TRACE_STARTED_AT_MS,
   SAMPLE_TRACE_VIEWER_MODEL,
 } from "./evals/sample-trace-data";
@@ -590,61 +590,63 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 <div className="flex flex-1 items-center justify-center">
                   <Loader2 className="h-8 w-8 animate-spin text-primary" />
                 </div>
+              ) : queries.isOverviewLoading ? (
+                <div className="flex h-full items-center justify-center">
+                  <div className="text-center">
+                    <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                    <p className="mt-4 text-muted-foreground">
+                      Loading runs...
+                    </p>
+                  </div>
+                </div>
+              ) : !hasVisibleSuites ? (
+                <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+                  <div className="mx-auto w-full max-w-4xl px-6 py-8 pb-12">
+                    <div className="mb-6 flex gap-6 items-center rounded-xl border border-border bg-muted/60 px-6 py-5">
+                      <div className="w-2/5 shrink-0 space-y-2">
+                        <h2 className="text-3xl font-bold tracking-tight text-foreground">
+                          <GitBranch className="inline-block h-7 w-7 text-primary mr-2 mb-1" />
+                          Run your first eval
+                        </h2>
+                        <p className="text-base text-muted-foreground leading-relaxed">
+                          Follow the steps below to connect to an MCP server,
+                          run an eval, and see your first run appear in MCPJam.
+                        </p>
+                      </div>
+                      <div
+                        className="flex-1 relative aspect-[16/9] overflow-hidden rounded-xl group cursor-pointer"
+                        onClick={() => setShowSampleTrace(true)}
+                      >
+                        <img
+                          src={SAMPLE_TRACE_PREVIEW_IMAGE_URL}
+                          alt="Sample eval trace preview"
+                          className="w-full h-full object-cover object-top"
+                        />
+                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/60 via-black/30 to-black/20 group-hover:from-black/65 group-hover:via-black/35 group-hover:to-black/25 transition-colors" />
+                        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                          <div className="rounded-full bg-white/90 group-hover:bg-white p-4 shadow-lg transition-colors">
+                            <Play className="h-6 w-6 text-black fill-black" />
+                          </div>
+                        </div>
+                        <div className="pointer-events-none absolute bottom-3 left-4">
+                          <p className="text-white text-sm font-semibold drop-shadow-md">
+                            View sample trace
+                          </p>
+                          <p className="text-white/70 text-xs">
+                            See what a completed eval looks like before you
+                            start.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                    <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
+                  </div>
+                </div>
               ) : route.type === "commit-detail" && selectedCommitGroup ? (
                 <CommitDetailView
                   commitGroup={selectedCommitGroup}
                   route={route}
                 />
-              ) : !hasVisibleSuites ? (
-                <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-                  <div className="mx-auto w-full max-w-3xl px-6 py-8 pb-12">
-                    <div className="mb-6 text-center">
-                      <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 ring-1 ring-primary/20">
-                        <GitBranch className="h-6 w-6 text-primary" />
-                      </div>
-                      <h2 className="mb-1 text-lg font-semibold tracking-tight text-foreground">
-                        Run your first eval from code
-                      </h2>
-                      <p className="mb-4 text-sm text-muted-foreground">
-                        See what a completed eval looks like before you start.
-                      </p>
-                      <motion.button
-                        type="button"
-                        onClick={() => setShowSampleTrace(true)}
-                        className="group relative mx-auto inline-flex items-center gap-2.5 rounded-xl border border-primary/20 bg-primary/5 px-5 py-3 text-sm font-medium text-foreground shadow-sm transition-colors hover:border-primary/40 hover:bg-primary/10"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{
-                          delay: 0.2,
-                          duration: 0.4,
-                          ease: "easeOut",
-                        }}
-                        whileHover={{ scale: 1.02 }}
-                        whileTap={{ scale: 0.98 }}
-                      >
-                        <motion.span
-                          className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary"
-                          animate={{ scale: [1, 1.08, 1] }}
-                          transition={{
-                            duration: 2.4,
-                            repeat: Infinity,
-                            ease: "easeInOut",
-                          }}
-                        >
-                          <Play className="size-4 fill-current" />
-                        </motion.span>
-                        <span className="flex flex-col items-start">
-                          <span>View sample trace</span>
-                          <span className="text-xs font-normal text-muted-foreground">
-                            Timeline, chat &amp; raw data
-                          </span>
-                        </span>
-                        <Eye className="size-4 text-muted-foreground transition-colors group-hover:text-primary" />
-                      </motion.button>
-                    </div>
-                    <SdkEvalQuickstart workspaceId={convexWorkspaceId} />
-                  </div>
-                </div>
               ) : route.type === "list" || !selectedSuite ? (
                 <div className="flex flex-1 items-center justify-center">
                   <div className="mx-auto max-w-md p-6 text-center">

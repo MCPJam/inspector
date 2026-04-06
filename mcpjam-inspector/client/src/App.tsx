@@ -258,6 +258,9 @@ export default function App() {
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
+  const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
+    () => posthog.featureFlags?.hasLoadedFlags === true,
+  );
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
@@ -328,6 +331,14 @@ export default function App() {
     HOSTED_MODE && !exitedSharedChat && hostedRouteKind === "shared";
   const isSandboxChatRoute =
     HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
+
+  useEffect(() => {
+    setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
+
+    return posthog.onFeatureFlags(() => {
+      setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
+    });
+  }, [posthog]);
   const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
@@ -1038,9 +1049,18 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (activeTab === "ci-evals" && evaluateRunsEnabled !== true) {
-      replaceHash(withTestingSurface(buildEvalsHash({ type: "list" })));
-    } else if (activeTabBillingLocked && activeTabBillingFeature) {
+    if (activeTab === "ci-evals") {
+      if (!evaluateRunsFlagsLoaded) {
+        return;
+      }
+
+      if (evaluateRunsEnabled !== true) {
+        replaceHash(withTestingSurface(buildEvalsHash({ type: "list" })));
+        return;
+      }
+    }
+
+    if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
           shellBillingStatus?.plan,
@@ -1064,6 +1084,7 @@ export default function App() {
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,
+    evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
     isAuthenticated,
     activeTab,
@@ -1354,31 +1375,44 @@ export default function App() {
                 workspaceId={convexWorkspaceId}
               />
             ))}
-          {activeTab === "ci-evals" && evaluateRunsEnabled === true &&
-            (billingUiEnabled &&
-            activeTabBillingLocked &&
-            activeTabBillingFeature ? (
-              <BillingUpsellGate
-                feature={activeTabBillingFeature}
-                currentPlan={
-                  shellBillingStatus?.effectivePlan ??
-                  shellBillingStatus?.plan ??
-                  "free"
-                }
-                upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onNavigateToBilling={() => {
-                  if (billingOrganizationId) {
-                    applyNavigation(
-                      `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true },
-                    );
+          {activeTab === "ci-evals" &&
+            (!evaluateRunsFlagsLoaded ? (
+              <div className="flex h-full min-h-[320px] items-center justify-center">
+                <div className="text-center">
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Loading Runs...
+                  </p>
+                </div>
+              </div>
+            ) : evaluateRunsEnabled === true ? (
+              billingUiEnabled &&
+              activeTabBillingLocked &&
+              activeTabBillingFeature ? (
+                <BillingUpsellGate
+                  feature={activeTabBillingFeature}
+                  currentPlan={
+                    shellBillingStatus?.effectivePlan ??
+                    shellBillingStatus?.plan ??
+                    "free"
                   }
-                }}
-              />
-            ) : (
-              <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
-            ))}
+                  upgradePlan={upgradePlanForActiveTab}
+                  canManageBilling={
+                    shellBillingStatus?.canManageBilling ?? false
+                  }
+                  onNavigateToBilling={() => {
+                    if (billingOrganizationId) {
+                      applyNavigation(
+                        `organizations/${billingOrganizationId}/billing`,
+                        { updateHash: true },
+                      );
+                    }
+                  }}
+                />
+              ) : (
+                <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+              )
+            ) : null)}
           {activeTab === "views" && (
             <ViewsTab selectedServer={appState.selectedServer} />
           )}
