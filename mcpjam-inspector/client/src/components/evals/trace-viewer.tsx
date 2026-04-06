@@ -6,13 +6,16 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
+import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { JsonEditor } from "@/components/ui/json-editor";
-import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
+import { Thread } from "@/components/chat-v2/thread";
+import type { DisplayMode } from "@/stores/ui-playground-store";
+import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
@@ -72,6 +75,23 @@ interface TraceViewerProps {
    * "Reveal in Chat" is ignored — call this so the shell can switch to its chat tab.
    */
   onRevealNavigateToChat?: () => void;
+  sendFollowUpMessage?: (text: string) => void;
+  onWidgetStateChange?: (toolCallId: string, state: any) => void;
+  onModelContextUpdate?: (
+    toolCallId: string,
+    context: {
+      content?: ContentBlock[];
+      structuredContent?: Record<string, unknown>;
+    },
+  ) => void;
+  displayMode?: DisplayMode;
+  onDisplayModeChange?: (mode: DisplayMode) => void;
+  selectedProtocolOverrideIfBothExists?: UIType;
+  onToolApprovalResponse?: (options: { id: string; approved: boolean }) => void;
+  interactive?: boolean;
+  enableFullscreenChatOverlay?: boolean;
+  fullscreenChatPlaceholder?: string;
+  fullscreenChatDisabled?: boolean;
 }
 
 function getTraceMessages(
@@ -132,6 +152,17 @@ export function TraceViewer({
   hideToolbar = false,
   fillContent = false,
   onRevealNavigateToChat,
+  sendFollowUpMessage = NOOP,
+  onWidgetStateChange,
+  onModelContextUpdate,
+  displayMode,
+  onDisplayModeChange,
+  selectedProtocolOverrideIfBothExists,
+  onToolApprovalResponse,
+  interactive = false,
+  enableFullscreenChatOverlay = false,
+  fullscreenChatPlaceholder = "Message…",
+  fullscreenChatDisabled = false,
 }: TraceViewerProps) {
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
@@ -308,13 +339,15 @@ export function TraceViewer({
 
   return (
     <div
-      className={cn(flexFillChrome && "flex min-h-0 flex-1 flex-col")}
+      className={cn(
+        flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col",
+      )}
       data-testid="trace-viewer-root"
     >
       <div
         className={cn(
           compactChrome ? "space-y-2" : "space-y-3",
-          flexFillChrome && "flex min-h-0 flex-1 flex-col",
+          flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col",
         )}
       >
         {!hideToolbar ? (
@@ -431,8 +464,8 @@ export function TraceViewer({
           className={cn(
             "min-w-0 rounded-md border border-border/30 bg-background/50",
             fillContent
-              ? "min-h-0 flex-1 overflow-y-auto"
-              : "min-h-0 max-h-[min(70vh,36rem)] overflow-y-auto",
+              ? "min-h-0 flex-1 overflow-auto"
+              : "min-h-0 max-h-[min(70vh,36rem)] overflow-auto",
           )}
           data-testid="trace-viewer-raw-json"
         >
@@ -456,7 +489,7 @@ export function TraceViewer({
           <div
             className={cn(
               flexFillChrome &&
-                "flex min-h-0 flex-1 flex-col overflow-hidden",
+                "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
             )}
           >
             <TraceTimelineLazy
@@ -501,26 +534,38 @@ export function TraceViewer({
             className={cn(
               "min-w-0 rounded-md border border-border/30 bg-background/50",
               fillContent
-                ? "min-h-0 flex-1 overflow-y-auto"
-                : "min-h-0 max-h-[min(70vh,36rem)] overflow-y-auto",
+                ? "min-h-0 flex-1 overflow-auto"
+                : "min-h-0 max-h-[min(70vh,36rem)] overflow-auto",
             )}
             data-testid="trace-viewer-chat"
           >
-            <TranscriptThread
+            <Thread
               messages={adaptedTrace.messages}
+              sendFollowUpMessage={sendFollowUpMessage}
               model={resolvedModel}
-              sendFollowUpMessage={NOOP}
+              isLoading={false}
               toolsMetadata={toolsMetadata}
               toolServerMap={toolServerMap}
+              onWidgetStateChange={onWidgetStateChange}
+              onModelContextUpdate={onModelContextUpdate}
+              displayMode={displayMode}
+              onDisplayModeChange={onDisplayModeChange}
+              enableFullscreenChatOverlay={enableFullscreenChatOverlay}
+              fullscreenChatPlaceholder={fullscreenChatPlaceholder}
+              fullscreenChatDisabled={fullscreenChatDisabled}
+              selectedProtocolOverrideIfBothExists={
+                selectedProtocolOverrideIfBothExists
+              }
+              onToolApprovalResponse={onToolApprovalResponse}
               toolRenderOverrides={adaptedTrace.toolRenderOverrides}
               showSaveViewButton={false}
               minimalMode={true}
-              interactive={false}
+              interactive={interactive}
               reasoningDisplayMode="collapsed"
               focusMessageId={transcriptNavigation.focusMessageId}
               highlightedMessageIds={transcriptNavigation.highlightedMessageIds}
               navigationKey={transcriptNavigation.navigationKey}
-              contentClassName="max-w-4xl space-y-8 px-4 pt-2"
+              contentClassName="min-w-0 w-full max-w-4xl space-y-8 px-4 pt-2"
               getMessageWrapperProps={({ message }) => {
                 const sourceRange =
                   adaptedTrace.uiMessageSourceRanges[message.id];
@@ -536,7 +581,7 @@ export function TraceViewer({
 
         {effectiveViewMode === "tools" && hasEvalToolCalls ? (
         <div
-          className="flex min-h-0 flex-1 flex-col gap-3 md:flex-row"
+          className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row"
           data-testid="trace-viewer-tools-compare"
         >
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
@@ -548,7 +593,7 @@ export function TraceViewer({
                 No expected tool calls
               </div>
             ) : (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
                 <JsonEditor
                   value={expectedToolCalls}
                   viewOnly
@@ -570,7 +615,7 @@ export function TraceViewer({
                 No tool calls made
               </div>
             ) : (
-              <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
                 <JsonEditor
                   value={actualToolCalls}
                   viewOnly

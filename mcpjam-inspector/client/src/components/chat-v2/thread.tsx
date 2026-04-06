@@ -1,6 +1,7 @@
 import { useEffect, useState, type RefObject } from "react";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { TranscriptThreadProps } from "./thread/transcript-thread";
 
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -44,6 +45,8 @@ interface ThreadProps {
   highlightedMessageIds?: string[];
   navigationKey?: string | number | null;
   viewportRef?: RefObject<HTMLElement | null>;
+  contentClassName?: string;
+  getMessageWrapperProps?: TranscriptThreadProps["getMessageWrapperProps"];
 }
 
 export function Thread({
@@ -72,6 +75,8 @@ export function Thread({
   highlightedMessageIds = [],
   navigationKey = null,
   viewportRef,
+  contentClassName,
+  getMessageWrapperProps,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -116,7 +121,7 @@ export function Thread({
     !fullscreenChatDisabled && fullscreenChatInput.trim().length > 0;
 
   return (
-    <div className="flex-1 min-h-0 pb-4">
+    <div className="min-h-0 min-w-0 flex-1 pb-4">
       {/* Fixed spacer to reserve space for PIP widget */}
       {pipWidgetId && (
         <div className="h-[480px] flex-shrink-0 pointer-events-none" />
@@ -150,10 +155,14 @@ export function Thread({
         highlightedMessageIds={highlightedMessageIds}
         navigationKey={navigationKey}
         viewportRef={viewportRef}
-        contentClassName="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+        contentClassName={
+          contentClassName ??
+          "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+        }
+        getMessageWrapperProps={getMessageWrapperProps}
       />
       {isLoading && (
-        <div className="max-w-4xl mx-auto px-4">
+        <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
           <ThinkingIndicator model={model} />
         </div>
       )}

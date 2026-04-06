@@ -331,31 +331,30 @@ function shouldAttemptWidgetReplay(params: {
   connectedServerIds: Set<string>;
   widgetSnapshotMap: Map<string, TraceWidgetSnapshot>;
 }) {
-  const liveToolMetadata = params.toolsMetadata[params.toolName];
-  const liveUiType = detectUIType(liveToolMetadata, params.rawToolOutput);
-  const liveServerId = getToolServerId(params.toolName, params.toolServerMap);
   const snapshot = params.widgetSnapshotMap.get(params.toolCallId);
-  const historicalServerId =
-    snapshot?.serverId ?? readToolResultServerId(params.rawToolOutput);
+  const streamedToolMetadata = readToolResultMeta(params.rawToolOutput);
+  const effectiveToolMetadata =
+    snapshot?.toolMetadata ??
+    params.toolsMetadata[params.toolName] ??
+    streamedToolMetadata;
+  const effectiveUiType = detectUIType(
+    effectiveToolMetadata,
+    params.rawToolOutput,
+  );
+  const effectiveServerId =
+    snapshot?.serverId ??
+    getToolServerId(params.toolName, params.toolServerMap) ??
+    readToolResultServerId(params.rawToolOutput);
+  const effectiveResourceUri =
+    snapshot?.resourceUri ??
+    getUIResourceUri(effectiveUiType, effectiveToolMetadata);
 
-  const hasCurrentWidgetResolution =
-    !!liveToolMetadata &&
-    !!liveServerId &&
-    isWidgetUiType(liveUiType) &&
-    !!getUIResourceUri(liveUiType, liveToolMetadata);
-
-  if (!hasCurrentWidgetResolution || !liveServerId) {
-    return false;
-  }
-
-  if (historicalServerId) {
-    return (
-      liveServerId === historicalServerId &&
-      params.connectedServerIds.has(historicalServerId)
-    );
-  }
-
-  return params.connectedServerIds.has(liveServerId);
+  return Boolean(
+    effectiveServerId &&
+      effectiveResourceUri &&
+      isWidgetUiType(effectiveUiType) &&
+      params.connectedServerIds.has(effectiveServerId),
+  );
 }
 
 function createReplayOverride(
@@ -380,6 +379,18 @@ function createReplayOverride(
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
   }).renderOverride;
+}
+
+function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
+  return {
+    serverId: snapshot.serverId,
+    resourceUri: snapshot.resourceUri,
+    toolMetadata: snapshot.toolMetadata,
+    widgetCsp: snapshot.widgetCsp as any,
+    widgetPermissions: snapshot.widgetPermissions as any,
+    widgetPermissive: snapshot.widgetPermissive,
+    prefersBorder: snapshot.prefersBorder,
+  } satisfies ToolRenderOverride;
 }
 
 function getTraceDisplayAttachment(params: {
@@ -462,7 +473,12 @@ function buildToolParts(params: {
       rawToolOutput,
     );
   } else if (canReplayWidget) {
-    // Live replay — no override needed, PartSwitch resolves from live metadata
+    if (snapshot) {
+      params.toolRenderOverrides[toolCallId] = {
+        ...createLiveSnapshotOverride(snapshot),
+        ...(params.toolRenderOverrides[toolCallId] ?? {}),
+      };
+    }
   } else if (!isError && isWidgetUiType(widgetUiType)) {
     // No replay possible — scrub widget metadata to prevent broken iframe
     adaptedOutput = scrubUiResourceContent(rawToolOutput);

@@ -1,12 +1,7 @@
-import { useAction } from "convex/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
-import {
-  type ListToolsResultWithMetadata,
-  ToolServerMap,
-  listTools,
-} from "@/lib/apis/mcp-tools-api";
+import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import {
   TraceViewer,
   type TraceViewerEvalToolCall,
@@ -16,12 +11,12 @@ import {
   type TraceEnvelope,
 } from "./trace-viewer-adapter";
 import { extractFinalAssistantOutput, resolveTraceModel } from "./compare-playground-helpers";
+import { useEvalTraceBlob } from "./use-eval-trace-blob";
 import type { EvalCase, EvalIteration } from "./types";
 
 interface EvalTraceSurfaceProps {
   iteration: EvalIteration | null;
   testCase: EvalCase | null;
-  serverNames?: string[];
   mode: "timeline" | "chat" | "raw" | "tools" | "output";
   emptyMessage?: string;
   /** When mode is controlled by tabs, Reveal in Chat needs this to switch to the chat tab. */
@@ -32,9 +27,10 @@ interface EvalTraceSurfaceProps {
   fallbackActualToolCalls?: TraceViewerEvalToolCall[];
   /** Called after the persisted blob has loaded successfully. */
   onTraceLoaded?: () => void;
+  toolsMetadata: Record<string, Record<string, unknown>>;
+  toolServerMap: ToolServerMap;
+  connectedServerIds: string[];
 }
-
-const EMPTY_SERVER_NAMES: string[] = [];
 
 function SimpleEmptyState({ message }: { message: string }) {
   return (
@@ -69,131 +65,20 @@ function SimpleErrorState({ message }: { message: string }) {
 export function EvalTraceSurface({
   iteration,
   testCase,
-  serverNames = EMPTY_SERVER_NAMES,
   mode,
   emptyMessage = "Run this test to inspect trace details.",
   onNavigateToChat,
   fallbackTrace = null,
   fallbackActualToolCalls = [],
   onTraceLoaded,
+  toolsMetadata,
+  toolServerMap,
+  connectedServerIds,
 }: EvalTraceSurfaceProps) {
-  const getBlob = useAction(
-    "testSuites:getTestIterationBlob" as any,
-  ) as unknown as (args: { blobId: string }) => Promise<any>;
-
-  const [blob, setBlob] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [toolsMetadata, setToolsMetadata] = useState<
-    Record<string, Record<string, any>>
-  >({});
-  const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
-  const [connectedServerIds, setConnectedServerIds] = useState<string[]>([]);
-  const onTraceLoadedRef = useRef(onTraceLoaded);
-
-  useEffect(() => {
-    onTraceLoadedRef.current = onTraceLoaded;
-  }, [onTraceLoaded]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function run() {
-      if (!iteration?.blob) {
-        setBlob(null);
-        setLoading(false);
-        setError(null);
-        return;
-      }
-
-      setLoading(true);
-      setError(null);
-
-      try {
-        const data = await getBlob({ blobId: iteration.blob });
-        if (!cancelled) {
-          setBlob(data);
-          onTraceLoadedRef.current?.();
-        }
-      } catch (loadError: any) {
-        if (!cancelled) {
-          setError(loadError?.message || "Failed to load trace");
-          setBlob(null);
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [getBlob, iteration?.blob]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    if (serverNames.length === 0) {
-      setToolsMetadata({});
-      setToolServerMap({});
-      setConnectedServerIds([]);
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    setToolsMetadata({});
-    setToolServerMap({});
-    setConnectedServerIds([]);
-
-    serverNames.forEach((serverId) => {
-      void listTools({ serverId })
-        .then((result: ListToolsResultWithMetadata) => {
-            if (cancelled) return;
-
-            setConnectedServerIds((prev) =>
-              prev.includes(serverId) ? prev : [...prev, serverId],
-            );
-
-            if (result.tools?.length) {
-              setToolServerMap((prev) => {
-                const next = { ...prev };
-                for (const tool of result.tools ?? []) {
-                  next[tool.name] = serverId;
-                }
-                return next;
-              });
-            }
-
-            if (result.toolsMetadata) {
-              setToolsMetadata((prev) => ({
-                ...prev,
-                ...Object.fromEntries(
-                  Object.entries(result.toolsMetadata ?? {}).map(
-                    ([toolName, meta]) => [
-                      toolName,
-                      meta as Record<string, unknown>,
-                    ],
-                  ),
-                ),
-              }));
-            }
-          },
-        )
-        .catch((loadError: unknown) => {
-          if (cancelled) return;
-          console.warn(`Failed to fetch tools for server ${serverId}:`, loadError);
-        });
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [serverNames]);
+  const { blob, loading, error } = useEvalTraceBlob({
+    iteration,
+    onTraceLoaded,
+  });
 
   const traceModel = useMemo(() => {
     if (!iteration) return null;
@@ -204,7 +89,7 @@ export function EvalTraceSurface({
     if (!blob) return null;
     return adaptTraceToUiMessages({
       trace: blob,
-      toolsMetadata,
+      toolsMetadata: toolsMetadata as Record<string, Record<string, any>>,
       toolServerMap,
       connectedServerIds,
     });
@@ -274,8 +159,8 @@ export function EvalTraceSurface({
       : fallbackActualToolCalls;
 
   return (
-    <div className="flex h-full min-h-0 flex-col rounded-xl border border-border/50 bg-background">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+    <div className="flex h-full min-h-0 min-w-0 flex-col rounded-xl border border-border/50 bg-background">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
         <TraceViewer
           trace={activeTrace}
           model={traceModel}

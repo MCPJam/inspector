@@ -18,15 +18,57 @@ const useQueryMock = vi.hoisted(() => vi.fn());
 const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
+const useConvexAuthMock = vi.hoisted(() => ({
+  isAuthenticated: false,
+  isLoading: false,
+}));
+const workspaceServersMock = vi.hoisted(() => ({
+  serversByName: new Map<string, string>(),
+  isLoading: false,
+}));
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => useAuthMock,
+}));
+
+vi.mock("@/state/app-state-context", () => ({
+  useSharedAppState: () => ({
+    activeWorkspaceId: "workspace-1",
+    workspaces: {
+      "workspace-1": {
+        id: "workspace-1",
+        name: "Workspace",
+        sharedWorkspaceId: null,
+        servers: {},
+      },
+    },
+    servers: {},
+  }),
+}));
+
+vi.mock("@/hooks/useViews", () => ({
+  useWorkspaceServers: () => workspaceServersMock,
+}));
+
+vi.mock("@/stores/client-config-store", () => ({
+  useClientConfigStore: (selector: (state: any) => unknown) =>
+    selector({
+      isAwaitingRemoteEcho: false,
+      pendingWorkspaceId: null,
+    }),
+}));
+
+vi.mock("../compare-run-chat-surface", () => ({
+  CompareRunChatSurface: () => <div data-testid="compare-run-chat-surface" />,
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
   useAiProviderKeys: () => ({
     getToken: vi.fn().mockResolvedValue("key"),
     hasToken: vi.fn().mockReturnValue(true),
+    getOpenRouterSelectedModels: vi.fn(() => []),
+    getOllamaBaseUrl: vi.fn(() => "http://127.0.0.1:11434"),
+    getAzureBaseUrl: vi.fn(() => ""),
   }),
 }));
 
@@ -49,6 +91,7 @@ vi.mock("convex/react", () => ({
   useMutation: (_name: unknown) => useMutationMock(),
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
+  useConvexAuth: () => useConvexAuthMock,
 }));
 
 describe("TestTemplateEditor openCompareFromRoute", () => {

@@ -42,6 +42,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { TestCasePromptFlow } from "./test-case-prompt-flow";
+import { CompareRunChatSurface } from "./compare-run-chat-surface";
 import { EvalTraceSurface } from "./eval-trace-surface";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
@@ -86,6 +87,7 @@ import {
   mergeStreamingTrace,
 } from "./eval-stream-reducer";
 import { TraceViewer } from "./trace-viewer";
+import { useEvalTraceToolContext } from "./use-eval-trace-tool-context";
 
 interface TestTemplate {
   title: string;
@@ -1366,7 +1368,7 @@ export function TestTemplateEditor({
     Boolean(lastSavedIteration?._id);
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 pt-6 pb-3 sm:px-6">
@@ -1814,7 +1816,7 @@ export function TestTemplateEditor({
           </div>
         </div>
       ) : (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <div className="border-b px-4 py-3 sm:px-6">
             <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
               {onBackToList ? (
@@ -1910,7 +1912,7 @@ export function TestTemplateEditor({
             ) : null}
           </div>
 
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6">
             {selectedCompareRecords.length === 0 ? (
               <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
                 <div>
@@ -1924,7 +1926,7 @@ export function TestTemplateEditor({
             ) : (
               <div
                 className={cn(
-                  "grid min-h-0 flex-1 auto-rows-[minmax(0,1fr)] gap-4",
+                  "grid min-h-0 min-w-0 flex-1 auto-rows-[minmax(0,1fr)] gap-4",
                   runGridClassName,
                 )}
               >
@@ -1938,7 +1940,7 @@ export function TestTemplateEditor({
                       key={record.modelValue}
                       className={cn(
                         showOnMobile ? "block" : "hidden",
-                        "min-h-0 flex flex-col lg:block",
+                        "min-h-0 min-w-0 flex flex-col lg:block",
                       )}
                     >
                       <RunColumn
@@ -1946,6 +1948,7 @@ export function TestTemplateEditor({
                         allRecords={selectedCompareRecords}
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
+                        workspaceId={workspaceId}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
@@ -1974,6 +1977,7 @@ function RunColumn({
   allRecords,
   testCase,
   serverNames,
+  workspaceId,
   onStreamingTraceLoaded,
   activeTab,
   onTabChange,
@@ -1983,11 +1987,27 @@ function RunColumn({
   allRecords: CompareRunRecord[];
   testCase: any;
   serverNames: string[];
+  workspaceId: string | null;
   onStreamingTraceLoaded: () => void;
   activeTab: RunColumnTab;
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
 }) {
+  const {
+    toolsMetadata,
+    toolServerMap,
+    connectedServerIds,
+    hostedSelectedServerIds,
+    hostedOAuthTokens,
+  } = useEvalTraceToolContext({
+    serverNames,
+    workspaceId,
+    retryKey:
+      record.iteration?._id ??
+      record.startedAt ??
+      record.completedAt ??
+      record.modelValue,
+  });
   const expectedToolCalls =
     record.iteration?.testCaseSnapshot?.expectedToolCalls ??
     testCase?.expectedToolCalls ??
@@ -2234,20 +2254,44 @@ function RunColumn({
         ) : null}
       </div>
 
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
         {record.iteration ? (
-          <div className="min-h-0 flex-1">
-            <EvalTraceSurface
-              iteration={record.iteration}
-              testCase={testCase}
-              serverNames={serverNames}
-              mode={traceMode}
-              emptyMessage={`No ${activeTab} data is available for this run.`}
-              fallbackTrace={streamingTraceEnvelope}
-              fallbackActualToolCalls={actualToolCalls}
-              onTraceLoaded={onStreamingTraceLoaded}
-              onNavigateToChat={() => onTabChange("chat")}
-            />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            {traceMode === "chat" ? (
+              <CompareRunChatSurface
+                iteration={record.iteration}
+                traceModel={{
+                  id: record.model,
+                  name: record.modelLabel,
+                  provider: record.provider as any,
+                }}
+                serverNames={serverNames}
+                workspaceId={workspaceId}
+                emptyMessage={`No ${activeTab} data is available for this run.`}
+                fallbackTrace={streamingTraceEnvelope}
+                onTraceLoaded={onStreamingTraceLoaded}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                connectedServerIds={connectedServerIds}
+                hostedSelectedServerIds={hostedSelectedServerIds}
+                hostedOAuthTokens={hostedOAuthTokens}
+                generationKey={`${record.modelValue}:${record.startedAt ?? record.iteration?._id ?? "idle"}`}
+              />
+            ) : (
+              <EvalTraceSurface
+                iteration={record.iteration}
+                testCase={testCase}
+                mode={traceMode}
+                emptyMessage={`No ${activeTab} data is available for this run.`}
+                fallbackTrace={streamingTraceEnvelope}
+                fallbackActualToolCalls={actualToolCalls}
+                onTraceLoaded={onStreamingTraceLoaded}
+                onNavigateToChat={() => onTabChange("chat")}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                connectedServerIds={connectedServerIds}
+              />
+            )}
           </div>
         ) : hasStreamingTrace ? (
           isWaitingForFirstTimelineSnapshot ? (
@@ -2272,12 +2316,15 @@ function RunColumn({
               </div>
             </div>
           ) : (
-            <div className="min-h-0 flex-1">
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
               <TraceViewer
                 trace={streamingTraceEnvelope}
                 forcedViewMode={traceMode}
                 expectedToolCalls={expectedToolCalls}
                 actualToolCalls={actualToolCalls}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                connectedServerIds={connectedServerIds}
                 hideToolbar
                 fillContent
               />

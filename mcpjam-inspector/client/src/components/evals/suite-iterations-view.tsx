@@ -467,7 +467,7 @@ export function SuiteIterationsView({
 
       {/* Content */}
       {!isEditMode && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
             {viewMode === "test-edit" && selectedTestId ? (
               <motion.div
@@ -478,7 +478,7 @@ export function SuiteIterationsView({
                 transition={
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                 }
-                className="h-full min-h-0 overflow-hidden"
+                className="h-full min-h-0 min-w-0 overflow-hidden"
               >
                 <TestTemplateEditor
                   suiteId={suite._id}
@@ -564,7 +564,7 @@ export function SuiteIterationsView({
                   transition={
                     shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                   }
-                  className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+                  className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0.5"
                 >
                   <RunOverview
                     suite={suite}
