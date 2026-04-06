@@ -69,9 +69,10 @@ export default defineConfig(({ mode }) => {
       // Listen on all interfaces so both localhost and 127.0.0.1 work
       // Required for SEP-1865 different-origin sandbox proxy
       host: true,
+      port: env.CLIENT_PORT ? parseInt(env.CLIENT_PORT, 10) : 5173,
       proxy: {
         "/api": {
-          target: "http://localhost:6274",
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
           changeOrigin: true,
           secure: false,
           ws: true,
