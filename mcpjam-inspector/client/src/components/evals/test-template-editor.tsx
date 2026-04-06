@@ -1026,7 +1026,7 @@ export function TestTemplateEditor({
       ...Object.fromEntries(
         runModelValues.map((modelValue) => [
           modelValue,
-          "timeline" as RunColumnTab,
+          "chat" as RunColumnTab,
         ]),
       ),
     }));
@@ -1866,6 +1866,7 @@ export function TestTemplateEditor({
                     >
                       <RunColumn
                         record={record}
+                        allRecords={selectedCompareRecords}
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         activeTab={
@@ -1890,6 +1891,7 @@ export function TestTemplateEditor({
 
 function RunColumn({
   record,
+  allRecords,
   testCase,
   serverNames,
   activeTab,
@@ -1897,6 +1899,7 @@ function RunColumn({
   onRetry,
 }: {
   record: CompareRunRecord;
+  allRecords: CompareRunRecord[];
   testCase: any;
   serverNames: string[];
   activeTab: RunColumnTab;
@@ -1950,6 +1953,9 @@ function RunColumn({
         : activeTab === "raw"
           ? "raw"
           : "tools";
+  const showStreamingTimelineHint =
+    traceMode === "timeline" &&
+    Boolean(record.streamingMessages && record.streamingMessages.length > 0);
 
   const displayTokens =
     record.status === "running" && record.streamingMetrics
@@ -1961,6 +1967,44 @@ function RunColumn({
       : record.metrics.toolCallCount;
   const toolCallLabel =
     toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
+
+  // Compute relative metrics across all completed records for comparison bars
+  const completedRecords = allRecords.filter(
+    (r) =>
+      r.metrics.durationMs != null &&
+      r.metrics.durationMs > 0 &&
+      (r.status === "completed" || r.iteration != null),
+  );
+  const allDurations = completedRecords
+    .map((r) => r.metrics.durationMs!)
+    .filter(Boolean);
+  const allTokens = completedRecords
+    .map((r) => r.metrics.tokensUsed)
+    .filter((t) => t > 0);
+  const allToolCounts = completedRecords
+    .map((r) => r.metrics.toolCallCount)
+    .filter((t) => t > 0);
+
+  const maxDuration = allDurations.length > 0 ? Math.max(...allDurations) : 0;
+  const minDuration = allDurations.length > 0 ? Math.min(...allDurations) : 0;
+  const maxTokens = allTokens.length > 0 ? Math.max(...allTokens) : 0;
+  const minTokens = allTokens.length > 0 ? Math.min(...allTokens) : 0;
+  const minToolCount =
+    allToolCounts.length > 0 ? Math.min(...allToolCounts) : 0;
+
+  const currentDuration = record.metrics.durationMs ?? 0;
+  const hasComparison = completedRecords.length > 1;
+
+  const isFastest = hasComparison && currentDuration === minDuration && currentDuration > 0;
+  const isFewestTokens = hasComparison && displayTokens === minTokens && displayTokens > 0;
+  const isFewestTools = hasComparison && toolCount === minToolCount && toolCount > 0;
+
+  const durationBarPct =
+    maxDuration > 0 ? Math.max(4, (currentDuration / maxDuration) * 100) : 0;
+  const tokensBarPct =
+    maxTokens > 0
+      ? Math.max(4, (displayTokens / maxTokens) * 100)
+      : 0;
 
   return (
     <div className="flex min-h-0 h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40">
@@ -1976,26 +2020,88 @@ function RunColumn({
           </span>
         </div>
 
-        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
-          <span className="tabular-nums">
-            <span className="font-medium text-foreground">{durationLabel}</span>{" "}
-            latency
-          </span>
-          <span className="text-border" aria-hidden>
-            ·
-          </span>
-          <span className="tabular-nums">
-            <span className="font-medium text-foreground">{toolCallLabel}</span>
-          </span>
-          <span className="text-border" aria-hidden>
-            ·
-          </span>
-          <span className="tabular-nums">
-            <span className="font-medium text-foreground">
-              {displayTokens.toLocaleString()}
-            </span>{" "}
-            tokens
-          </span>
+        {/* Metric comparison bars */}
+        <div className="mt-2 space-y-1.5">
+          {/* Latency */}
+          <div className="flex items-center gap-2">
+            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
+              Latency
+            </span>
+            <div className="relative flex min-w-0 flex-1 items-center">
+              <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
+                {currentDuration > 0 && (
+                  <div
+                    className={cn(
+                      "h-full rounded-sm transition-all duration-300",
+                      isFastest
+                        ? "bg-emerald-500/25 dark:bg-emerald-400/20"
+                        : "bg-primary/10",
+                    )}
+                    style={{ width: `${hasComparison ? durationBarPct : 100}%` }}
+                  />
+                )}
+              </div>
+              <span
+                className={cn(
+                  "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
+                  isFastest
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-foreground",
+                )}
+              >
+                {durationLabel}
+              </span>
+            </div>
+          </div>
+
+          {/* Tokens */}
+          <div className="flex items-center gap-2">
+            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
+              Tokens
+            </span>
+            <div className="relative flex min-w-0 flex-1 items-center">
+              <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
+                {displayTokens > 0 && (
+                  <div
+                    className={cn(
+                      "h-full rounded-sm transition-all duration-300",
+                      isFewestTokens
+                        ? "bg-emerald-500/25 dark:bg-emerald-400/20"
+                        : "bg-primary/10",
+                    )}
+                    style={{ width: `${hasComparison ? tokensBarPct : 100}%` }}
+                  />
+                )}
+              </div>
+              <span
+                className={cn(
+                  "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
+                  isFewestTokens
+                    ? "text-emerald-700 dark:text-emerald-400"
+                    : "text-foreground",
+                )}
+              >
+                {displayTokens.toLocaleString()}
+              </span>
+            </div>
+          </div>
+
+          {/* Tool Calls */}
+          <div className="flex items-center gap-2">
+            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
+              Tools
+            </span>
+            <span
+              className={cn(
+                "text-[10px] font-medium tabular-nums px-1.5",
+                isFewestTools
+                  ? "text-emerald-700 dark:text-emerald-400"
+                  : "text-foreground",
+              )}
+            >
+              {toolCallLabel}
+            </span>
+          </div>
         </div>
 
         <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
@@ -2040,14 +2146,37 @@ function RunColumn({
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
         {record.streamingMessages && record.streamingMessages.length > 0 ? (
-          <div className="min-h-0 flex-1">
-            <TraceViewer
-              trace={record.streamingMessages}
-              forcedViewMode={traceMode}
-              hideToolbar
-              fillContent
-            />
-          </div>
+          showStreamingTimelineHint ? (
+            <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10 px-6 py-10 text-center">
+              <div className="max-w-sm">
+                <div className="text-sm font-medium">
+                  Live output is streaming in Chat
+                </div>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  Timeline data appears after the run completes and the persisted
+                  trace finishes loading.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
+                  onClick={() => onTabChange("chat")}
+                >
+                  Switch to Chat
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1">
+              <TraceViewer
+                trace={record.streamingMessages}
+                forcedViewMode={traceMode}
+                hideToolbar
+                fillContent
+              />
+            </div>
+          )
         ) : record.status === "running" && !record.iteration ? (
           <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10">
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
