@@ -696,6 +696,22 @@ describe("TraceViewer", () => {
     );
   });
 
+  it("calls onRevealNavigateToChat when forced view mode blocks switching to chat", async () => {
+    const onRevealNavigateToChat = vi.fn();
+    render(
+      <TraceViewer
+        trace={waterfallTrace}
+        forcedViewMode="timeline"
+        onRevealNavigateToChat={onRevealNavigateToChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+
+    expect(onRevealNavigateToChat).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("trace-viewer-chat")).not.toBeInTheDocument();
+  });
+
   it("reveals a selected timeline row in chat view", async () => {
     const { scrollTo } = renderInScrollHost(
       <TraceViewer trace={waterfallTrace} />,

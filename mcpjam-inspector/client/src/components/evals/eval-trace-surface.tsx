@@ -18,6 +18,8 @@ interface EvalTraceSurfaceProps {
   serverNames?: string[];
   mode: "timeline" | "chat" | "raw" | "tools" | "output";
   emptyMessage?: string;
+  /** When mode is controlled by tabs, Reveal in Chat needs this to switch to the chat tab. */
+  onNavigateToChat?: () => void;
 }
 
 const EMPTY_SERVER_NAMES: string[] = [];
@@ -58,6 +60,7 @@ export function EvalTraceSurface({
   serverNames = EMPTY_SERVER_NAMES,
   mode,
   emptyMessage = "Run this test to inspect trace details.",
+  onNavigateToChat,
 }: EvalTraceSurfaceProps) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -260,6 +263,7 @@ export function EvalTraceSurface({
           forcedViewMode={mode}
           hideToolbar
           fillContent
+          onRevealNavigateToChat={onNavigateToChat}
         />
       </div>
     </div>

@@ -183,7 +183,7 @@ describe("TestTemplateEditor prompt validation UI", () => {
     const promptInput = screen.getByPlaceholderText("Enter the user prompt…");
     expect(promptInput).toHaveAttribute("aria-invalid", "true");
 
-    const runButton = screen.getByRole("button", { name: /Run compare/i });
+    const runButton = screen.getByRole("button", { name: /^Run$/ });
     expect(runButton).toBeDisabled();
   });
 });

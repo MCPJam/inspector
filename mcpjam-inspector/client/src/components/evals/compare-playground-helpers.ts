@@ -146,8 +146,13 @@ export function resolveInitialCompareModelValues(params: {
 
   pushValue(preferredModelValue);
 
-  for (const option of modelOptions) {
-    pushValue(option.value);
+  // Only auto-pick extra compare slots when the case does not already list models.
+  // Otherwise we would pad to `maxModels` from the catalog and fight the user's
+  // single-model (or N-model) configuration — e.g. Results showing prior compare columns.
+  if (values.length === 0) {
+    for (const option of modelOptions) {
+      pushValue(option.value);
+    }
   }
 
   return values.slice(0, maxModels);
@@ -184,8 +189,26 @@ export function buildHistoricalCompareRunRecords(params: {
     existingRecords = {},
   } = params;
 
-  if (selectedModelValues.length === 0 || iterations.length === 0) {
+  if (selectedModelValues.length === 0) {
     return existingRecords;
+  }
+
+  const selectedSet = new Set(selectedModelValues);
+  const hadKeysNotInSelection = Object.keys(existingRecords).some(
+    (key) => !selectedSet.has(key),
+  );
+
+  // Keep only rows for the current compare selection; drop stale model keys.
+  const nextRecords: Record<string, CompareRunRecord> = {};
+  for (const modelValue of selectedModelValues) {
+    const existing = existingRecords[modelValue];
+    if (existing) {
+      nextRecords[modelValue] = existing;
+    }
+  }
+
+  if (iterations.length === 0) {
+    return hadKeysNotInSelection ? nextRecords : existingRecords;
   }
 
   const latestIterationByModel = new Map<string, EvalIteration>();
@@ -204,10 +227,15 @@ export function buildHistoricalCompareRunRecords(params: {
   }
 
   let changed = false;
-  const nextRecords = { ...existingRecords };
 
   for (const modelValue of selectedModelValues) {
     if (nextRecords[modelValue]?.iteration) {
+      continue;
+    }
+
+    // In-flight compare runs clear `iteration` until the API returns; do not
+    // backfill from `recentIterations` or we show the previous run's trace/latency.
+    if (nextRecords[modelValue]?.status === "running") {
       continue;
     }
 
@@ -224,7 +252,7 @@ export function buildHistoricalCompareRunRecords(params: {
     changed = true;
   }
 
-  return changed ? nextRecords : existingRecords;
+  return changed || hadKeysNotInSelection ? nextRecords : existingRecords;
 }
 
 export function mergeAdvancedConfigWithOverride(params: {

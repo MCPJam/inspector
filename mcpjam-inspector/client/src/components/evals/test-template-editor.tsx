@@ -25,7 +25,6 @@ import { toast } from "sonner";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { listEvalTools, runEvalTestCase } from "@/lib/apis/evals-api";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -34,18 +33,13 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { TestCasePromptFlow } from "./test-case-prompt-flow";
 import { EvalTraceSurface } from "./eval-trace-surface";
+import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { ModelDefinition } from "@/shared/types";
@@ -105,8 +99,6 @@ interface TestTemplateEditorProps {
   /** Remove `compare=1` from the hash after handling {@link openCompareFromRoute}. */
   onClearOpenCompareRoute?: () => void;
 }
-
-type RunArtifactMode = "output" | "raw";
 
 const createEmptyPromptTurn = (index: number): PromptTurn => ({
   id: `turn-${Date.now()}-${index + 1}`,
@@ -306,11 +298,14 @@ export function TestTemplateEditor({
     [],
   );
   const [isRunningCompare, setIsRunningCompare] = useState(false);
-  const [artifactDialog, setArtifactDialog] = useState<{
-    modelValue: string;
-    mode: RunArtifactMode;
-  } | null>(null);
-  const activeCompareRequestRef = useRef(0);
+  /** Concurrent compare `handleRunCompare` calls; used only for global `isRunningCompare`. */
+  const compareHandlesInFlightRef = useRef(0);
+  /**
+   * Per-model generation counter so completions from an older run for the same model
+   * do not overwrite state after a newer retry was started (allows parallel runs on
+   * different models).
+   */
+  const compareRequestGenByModelRef = useRef<Record<string, number>>({});
   const initializedSelectionCaseRef = useRef<string | null>(null);
 
   const testCases = useQuery("testSuites:listTestCases" as any, {
@@ -348,7 +343,6 @@ export function TestTemplateEditor({
     setRunColumnTabByModel({});
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
-    setArtifactDialog(null);
     initializedSelectionCaseRef.current = null;
     setAddModelMenuOpen(false);
   }, [selectedTestCaseId]);
@@ -958,9 +952,7 @@ export function TestTemplateEditor({
     }
 
     const savePayload = buildSavePayload(editForm);
-    const requestId = activeCompareRequestRef.current + 1;
     const compareRunId = createCompareSessionId();
-    activeCompareRequestRef.current = requestId;
 
     let preparedRuns: Array<{
       modelValue: string;
@@ -1008,17 +1000,39 @@ export function TestTemplateEditor({
       return;
     }
 
+    const modelRequestGen: Record<string, number> = {};
+    for (const { modelValue } of preparedRuns) {
+      const nextGen =
+        (compareRequestGenByModelRef.current[modelValue] ?? 0) + 1;
+      compareRequestGenByModelRef.current[modelValue] = nextGen;
+      modelRequestGen[modelValue] = nextGen;
+    }
+
+    compareHandlesInFlightRef.current += 1;
     setIsRunningCompare(true);
     setRunColumnTabByModel((previous) => ({
       ...previous,
       ...Object.fromEntries(
-        runModelValues.map((modelValue) => [modelValue, "chat" as RunColumnTab]),
+        runModelValues.map((modelValue) => [
+          modelValue,
+          "timeline" as RunColumnTab,
+        ]),
       ),
     }));
     setCompareRunRecords((previous) => {
-      const next = { ...previous };
+      const allowed = new Set(selectedModelValues);
+      const next: Record<string, CompareRunRecord> = {};
+      for (const key of Object.keys(previous)) {
+        if (allowed.has(key)) {
+          next[key] = previous[key];
+        }
+      }
       const startedAt = Date.now();
       for (const { modelValue, modelLabel } of preparedRuns) {
+        const prior = previous[modelValue];
+        const isRetrying =
+          prior != null &&
+          (prior.iteration != null || prior.status === "failed");
         next[modelValue] = {
           ...buildCompareRunRecord({
             modelValue,
@@ -1027,6 +1041,7 @@ export function TestTemplateEditor({
             startedAt,
           }),
           status: "running",
+          isRetrying,
           startedAt,
           completedAt: null,
           error: null,
@@ -1047,131 +1062,105 @@ export function TestTemplateEditor({
       models: preparedRuns.map((run) => run.modelValue),
     });
 
-    const completedRecords = await Promise.all(
-      preparedRuns.map(async ({ modelValue, modelLabel, request }) => {
-        try {
-          const data = await runEvalTestCase({
-            ...request.request,
-            skipLastMessageRunUpdate: true,
-          });
-          const record = buildCompareRunRecord({
-            modelValue,
-            modelLabel,
-            iteration: data.iteration ?? null,
-            completedAt: Date.now(),
-          });
-
-          if (activeCompareRequestRef.current === requestId) {
-            setCompareRunRecords((previous) => ({
-              ...previous,
-              [modelValue]: record,
-            }));
-          }
-
-          posthog.capture("compare_model_completed", {
-            location: "test_template_editor",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
-            suite_id: suiteId,
-            test_case_id: currentTestCase._id,
-            compare_run_id: compareRunId,
-            model: modelValue,
-            result: record.result ?? "unknown",
-            duration_ms: record.metrics.durationMs ?? null,
-            tool_call_count: record.metrics.toolCallCount,
-            mismatch_count: record.metrics.mismatchCount,
-          });
-
-          return record;
-        } catch (error) {
-          const message = getBillingErrorMessage(error, "Failed to run model");
-          const failedRecord: CompareRunRecord = {
-            ...buildCompareRunRecord({
+    try {
+      const completedRecords = await Promise.all(
+        preparedRuns.map(async ({ modelValue, modelLabel, request }) => {
+          const myGen = modelRequestGen[modelValue];
+          try {
+            const data = await runEvalTestCase({
+              ...request.request,
+              skipLastMessageRunUpdate: true,
+            });
+            const record = buildCompareRunRecord({
               modelValue,
               modelLabel,
-              iteration: null,
-              error: message,
+              iteration: data.iteration ?? null,
               completedAt: Date.now(),
-            }),
-            status: "failed",
-            error: message,
-          };
+            });
 
-          if (activeCompareRequestRef.current === requestId) {
-            setCompareRunRecords((previous) => ({
-              ...previous,
-              [modelValue]: failedRecord,
-            }));
+            if (compareRequestGenByModelRef.current[modelValue] === myGen) {
+              setCompareRunRecords((previous) => ({
+                ...previous,
+                [modelValue]: record,
+              }));
+            }
+
+            posthog.capture("compare_model_completed", {
+              location: "test_template_editor",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+              suite_id: suiteId,
+              test_case_id: currentTestCase._id,
+              compare_run_id: compareRunId,
+              model: modelValue,
+              result: record.result ?? "unknown",
+              duration_ms: record.metrics.durationMs ?? null,
+              tool_call_count: record.metrics.toolCallCount,
+              mismatch_count: record.metrics.mismatchCount,
+            });
+
+            return record;
+          } catch (error) {
+            const message = getBillingErrorMessage(error, "Failed to run model");
+            const failedRecord: CompareRunRecord = {
+              ...buildCompareRunRecord({
+                modelValue,
+                modelLabel,
+                iteration: null,
+                error: message,
+                completedAt: Date.now(),
+              }),
+              status: "failed",
+              error: message,
+            };
+
+            if (compareRequestGenByModelRef.current[modelValue] === myGen) {
+              setCompareRunRecords((previous) => ({
+                ...previous,
+                [modelValue]: failedRecord,
+              }));
+            }
+
+            posthog.capture("compare_model_completed", {
+              location: "test_template_editor",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+              suite_id: suiteId,
+              test_case_id: currentTestCase._id,
+              compare_run_id: compareRunId,
+              model: modelValue,
+              result: "failed",
+              error: message,
+            });
+
+            return failedRecord;
           }
-
-          posthog.capture("compare_model_completed", {
-            location: "test_template_editor",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
-            suite_id: suiteId,
-            test_case_id: currentTestCase._id,
-            compare_run_id: compareRunId,
-            model: modelValue,
-            result: "failed",
-            error: message,
-          });
-
-          return failedRecord;
-        }
-      }),
-    );
-
-    if (activeCompareRequestRef.current !== requestId) {
-      return;
-    }
-
-    setIsRunningCompare(false);
-
-    const successfulCount = completedRecords.filter(
-      (record) => record.iteration != null,
-    ).length;
-    if (successfulCount === completedRecords.length) {
-      toast.success(
-        `Compare run finished across ${completedRecords.length} model${
-          completedRecords.length === 1 ? "" : "s"
-        }.`,
+        }),
       );
-    } else if (successfulCount > 0) {
-      toast.error(
-        `${successfulCount}/${completedRecords.length} model${
-          completedRecords.length === 1 ? "" : "s"
-        } completed successfully.`,
-      );
-    } else {
-      toast.error("Compare run failed for all selected models.");
-    }
-  };
 
-  const handleSaveRun = async (
-    record: CompareRunRecord | null | undefined,
-  ) => {
-    if (!currentTestCase || !record?.iteration) {
-      return;
-    }
-
-    try {
-      await updateTestCaseMutation({
-        testCaseId: currentTestCase._id,
-        lastMessageRun: record.iteration._id,
-      });
-      posthog.capture("compare_run_saved", {
-        location: "test_template_editor",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        suite_id: suiteId,
-        test_case_id: currentTestCase._id,
-        selected_run_id: record.iteration._id,
-        model: record.modelValue,
-      });
-      toast.success("Saved this run as the latest test result.");
-    } catch (error) {
-      console.error("Failed to save run:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to save test result"));
+      const successfulCount = completedRecords.filter(
+        (record) => record.iteration != null,
+      ).length;
+      if (successfulCount === completedRecords.length) {
+        toast.success(
+          `Compare run finished across ${completedRecords.length} model${
+            completedRecords.length === 1 ? "" : "s"
+          }.`,
+        );
+      } else if (successfulCount > 0) {
+        toast.error(
+          `${successfulCount}/${completedRecords.length} model${
+            completedRecords.length === 1 ? "" : "s"
+          } completed successfully.`,
+        );
+      } else {
+        toast.error("Compare run failed for all selected models.");
+      }
+    } finally {
+      compareHandlesInFlightRef.current -= 1;
+      if (compareHandlesInFlightRef.current === 0) {
+        setIsRunningCompare(false);
+      }
     }
   };
 
@@ -1228,9 +1217,6 @@ export function TestTemplateEditor({
       : selectedCompareRecords.length === 2
         ? "lg:grid-cols-2"
         : "lg:grid-cols-3";
-  const artifactRecord = artifactDialog
-    ? compareRunRecords[artifactDialog.modelValue] ?? null
-    : null;
   const latestAvailableIteration = recentIterations?.[0] ?? lastSavedIteration ?? null;
   const latestAvailableResult = latestAvailableIteration
     ? computeIterationResult(latestAvailableIteration)
@@ -1255,23 +1241,23 @@ export function TestTemplateEditor({
     <div className="flex h-full min-h-0 flex-col overflow-hidden bg-background">
       {editorMode === "config" ? (
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto flex w-full max-w-4xl flex-col gap-4 px-4 py-4 sm:px-6 lg:py-5">
-            {onBackToList ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                className="-ml-2 h-8 w-fit px-2 text-xs text-muted-foreground"
-                onClick={onBackToList}
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                Back to cases
-              </Button>
-            ) : null}
-
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
-              <div className="min-w-0 flex-1 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
+          <div className="mx-auto flex w-full max-w-4xl flex-col gap-2 px-4 py-3 sm:px-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+                {onBackToList ? (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-ml-2 h-7 shrink-0 px-2 text-xs text-muted-foreground"
+                    onClick={onBackToList}
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    Back to cases
+                  </Button>
+                ) : null}
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
                   {isEditingTitle ? (
                     <input
                       type="text"
@@ -1315,6 +1301,7 @@ export function TestTemplateEditor({
                               : "Loading…"}
                     </span>
                   ) : null}
+                  </div>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
@@ -1450,7 +1437,7 @@ export function TestTemplateEditor({
 
             <div>
               <div
-                className="bg-[#fcfbf9] py-2 dark:bg-muted/15"
+                className="bg-[#fcfbf9] py-1.5 dark:bg-muted/15"
                 title={
                   !latestAvailableIsSaved &&
                   currentTestCase.lastMessageRun &&
@@ -1459,7 +1446,7 @@ export function TestTemplateEditor({
                     : undefined
                 }
               >
-                <div className="flex min-h-10 items-center gap-2.5 px-3">
+                <div className="flex min-h-9 items-center gap-2 px-3">
                   {!latestAvailableIteration ? (
                     <span className="shrink-0 text-[13px] font-normal text-[#777777] dark:text-muted-foreground">
                       Add model
@@ -1481,7 +1468,7 @@ export function TestTemplateEditor({
                             <DropdownMenuTrigger asChild>
                               <button
                                 type="button"
-                                className="inline-flex h-9 min-w-[12.5rem] max-w-full items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-foreground shadow-none hover:bg-[#fafafa] dark:border-border dark:bg-background dark:hover:bg-muted/40"
+                                className="inline-flex h-8 min-w-[12.5rem] max-w-full items-center gap-2 rounded-lg border border-[#E5E7EB] bg-white px-3 text-left text-[13px] font-medium text-foreground shadow-none hover:bg-[#fafafa] dark:border-border dark:bg-background dark:hover:bg-muted/40"
                               >
                                 <Plus className="h-3.5 w-3.5 shrink-0" />
                                 <span>Add Model</span>
@@ -1665,7 +1652,7 @@ export function TestTemplateEditor({
               </div>
             </div>
 
-            <div className="space-y-4 border-t border-border/60 pt-4">
+            <div className="space-y-4 border-t border-border/60 pt-3">
               {editForm ? (
                 <TestCasePromptFlow
                   promptTurns={editForm.promptTurns}
@@ -1700,37 +1687,22 @@ export function TestTemplateEditor({
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          <div className="border-b px-4 py-4 sm:px-6">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                {onBackToList ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="mb-3 -ml-2 h-8 px-2 text-xs text-muted-foreground"
-                    onClick={onBackToList}
-                  >
-                    <ArrowLeft className="h-3.5 w-3.5" />
-                    Back to cases
-                  </Button>
-                ) : null}
-                <div className="truncate text-xl font-semibold">
-                  {editForm?.title || currentTestCase.title}
-                </div>
-                <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-                  Each selected model gets its own run column with independent Chat,
-                  Trace, and Tools tabs.
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
+          <div className="border-b px-4 py-3 sm:px-6">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+              {onBackToList ? (
                 <Button
                   type="button"
-                  variant="outline"
-                  onClick={() => setEditorMode("config")}
+                  variant="ghost"
+                  size="sm"
+                  className="-ml-2 h-7 shrink-0 px-2 text-xs text-muted-foreground"
+                  onClick={onBackToList}
                 >
-                  Edit config
+                  <ArrowLeft className="h-3.5 w-3.5" />
+                  Back to cases
                 </Button>
+              ) : null}
+              <div className="min-w-0 flex-1 truncate text-lg font-semibold sm:text-xl">
+                {editForm?.title || currentTestCase.title}
               </div>
             </div>
 
@@ -1756,18 +1728,24 @@ export function TestTemplateEditor({
             ) : null}
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-4 sm:px-6">
             {selectedCompareRecords.length === 0 ? (
               <div className="flex h-full min-h-[320px] items-center justify-center rounded-2xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
                 <div>
                   <div className="text-sm font-medium">No compare run yet</div>
                   <p className="mt-2 text-sm text-muted-foreground">
-                    Go back to config, choose at least one model, and run compare.
+                    Choose at least one model and run compare from the prompt
+                    editor.
                   </p>
                 </div>
               </div>
             ) : (
-              <div className={cn("grid gap-4", runGridClassName)}>
+              <div
+                className={cn(
+                  "grid min-h-0 flex-1 auto-rows-[minmax(0,1fr)] gap-4",
+                  runGridClassName,
+                )}
+              >
                 {selectedCompareRecords.map((record) => {
                   const showOnMobile =
                     selectedCompareRecords.length <= 1 ||
@@ -1776,25 +1754,22 @@ export function TestTemplateEditor({
                   return (
                     <div
                       key={record.modelValue}
-                      className={cn(showOnMobile ? "block" : "hidden", "lg:block")}
+                      className={cn(
+                        showOnMobile ? "block" : "hidden",
+                        "min-h-0 flex flex-col lg:block",
+                      )}
                     >
                       <RunColumn
                         record={record}
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
-                        activeTab={runColumnTabByModel[record.modelValue] ?? "chat"}
-                        isBusy={isRunningCompare}
+                        activeTab={
+                          runColumnTabByModel[record.modelValue] ?? "timeline"
+                        }
                         onTabChange={(tab) =>
                           handleRunColumnTabChange(record.modelValue, tab)
                         }
                         onRetry={() => void handleRunCompare([record.modelValue])}
-                        onSave={() => void handleSaveRun(record)}
-                        onOpenArtifact={(mode) =>
-                          setArtifactDialog({
-                            modelValue: record.modelValue,
-                            mode,
-                          })
-                        }
                       />
                     </div>
                   );
@@ -1804,33 +1779,6 @@ export function TestTemplateEditor({
           </div>
         </div>
       )}
-
-      <Dialog
-        open={artifactDialog != null}
-        onOpenChange={(open) => {
-          if (!open) {
-            setArtifactDialog(null);
-          }
-        }}
-      >
-        <DialogContent className="flex h-[85vh] max-w-5xl flex-col">
-          <DialogHeader>
-            <DialogTitle>
-              {artifactRecord?.modelLabel ?? "Run artifact"} ·{" "}
-              {artifactDialog?.mode === "raw" ? "Raw payload" : "Output"}
-            </DialogTitle>
-          </DialogHeader>
-          <div className="min-h-0 flex-1">
-            <EvalTraceSurface
-              iteration={artifactRecord?.iteration ?? null}
-              testCase={currentTestCase}
-              serverNames={connectedServerList}
-              mode={artifactDialog?.mode ?? "output"}
-              emptyMessage="No artifact is available for this run."
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
@@ -1840,33 +1788,44 @@ function RunColumn({
   testCase,
   serverNames,
   activeTab,
-  isBusy,
   onTabChange,
   onRetry,
-  onSave,
-  onOpenArtifact,
 }: {
   record: CompareRunRecord;
   testCase: any;
   serverNames: string[];
   activeTab: RunColumnTab;
-  isBusy: boolean;
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
-  onSave: () => void;
-  onOpenArtifact: (mode: RunArtifactMode) => void;
 }) {
+  const showToolsTab = useMemo(() => {
+    const expected =
+      record.iteration?.testCaseSnapshot?.expectedToolCalls ?? [];
+    const actual = record.iteration?.actualToolCalls ?? [];
+    return expected.length > 0 || actual.length > 0;
+  }, [record.iteration]);
+
+  useEffect(() => {
+    if (!showToolsTab && activeTab === "tools") {
+      onTabChange("timeline");
+    }
+  }, [showToolsTab, activeTab, onTabChange]);
+
   const statusTone =
     record.status === "running"
-      ? "border-sky-500/30 bg-sky-500/5 text-sky-700 dark:text-sky-300"
+      ? record.isRetrying
+        ? "text-amber-800 dark:text-amber-200"
+        : "text-sky-700 dark:text-sky-300"
       : record.status === "failed" || record.result === "failed"
-        ? "border-rose-500/30 bg-rose-500/5 text-rose-700 dark:text-rose-300"
+        ? "text-rose-700 dark:text-rose-300"
         : record.result === "passed"
-          ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
-          : "border-border/60 bg-background text-muted-foreground";
+          ? "text-emerald-700 dark:text-emerald-300"
+          : "text-muted-foreground";
   const statusLabel =
     record.status === "running"
-      ? "Running"
+      ? record.isRetrying
+        ? "Retrying"
+        : "Running"
       : record.status === "failed"
         ? "Failed"
         : record.result === "passed"
@@ -1879,111 +1838,86 @@ function RunColumn({
       ? `${Math.round(record.metrics.durationMs / 100) / 10}s`
       : "—";
   const traceMode =
-    activeTab === "chat" ? "chat" : activeTab === "trace" ? "timeline" : "tools";
+    activeTab === "chat"
+      ? "chat"
+      : activeTab === "timeline"
+        ? "timeline"
+        : activeTab === "raw"
+          ? "raw"
+          : "tools";
+
+  const toolCount = record.metrics.toolCallCount;
+  const toolCallLabel =
+    toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
 
   return (
-    <div className="flex min-h-[620px] flex-col rounded-2xl border border-border/60 bg-card/40">
-      <div className="border-b px-4 py-4">
-        <div className="flex items-start justify-between gap-3">
+    <div className="flex min-h-0 h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40">
+      <div className="shrink-0 border-b px-3 py-2">
+        <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate text-base font-semibold">{record.modelLabel}</div>
-            <div className="mt-1 truncate text-[11px] text-muted-foreground">
-              {record.modelValue}
+            <div className="truncate text-sm font-semibold leading-tight">
+              {record.modelLabel}
             </div>
           </div>
-          <Badge variant="outline" className={cn("shrink-0", statusTone)}>
+          <span className={cn("shrink-0 text-[10px] font-medium", statusTone)}>
             {statusLabel}
-          </Badge>
+          </span>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-3 text-[11px] text-muted-foreground">
-          <div>
-            <div className="text-sm font-semibold text-foreground">
-              {durationLabel}
-            </div>
-            <div>Latency</div>
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-foreground">
-              {record.metrics.toolCallCount}
-            </div>
-            <div>Tool calls</div>
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-foreground">
+        <div className="mt-1.5 flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-muted-foreground">
+          <span className="tabular-nums">
+            <span className="font-medium text-foreground">{durationLabel}</span>{" "}
+            latency
+          </span>
+          <span className="text-border" aria-hidden>
+            ·
+          </span>
+          <span className="tabular-nums">
+            <span className="font-medium text-foreground">{toolCallLabel}</span>
+          </span>
+          <span className="text-border" aria-hidden>
+            ·
+          </span>
+          <span className="tabular-nums">
+            <span className="font-medium text-foreground">
               {record.metrics.tokensUsed.toLocaleString()}
-            </div>
-            <div>Tokens</div>
-          </div>
+            </span>{" "}
+            tokens
+          </span>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            {(["chat", "trace", "tools"] as RunColumnTab[]).map((tab) => (
-              <Button
-                key={`${record.modelValue}-${tab}`}
-                type="button"
-                size="sm"
-                variant={activeTab === tab ? "secondary" : "outline"}
-                className="h-8 px-3 text-xs capitalize"
-                onClick={() => onTabChange(tab)}
-              >
-                {tab}
-              </Button>
-            ))}
+        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            <TraceViewModeTabs
+              mode={activeTab}
+              onModeChange={onTabChange}
+              showToolsTab={showToolsTab}
+              className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
+            />
           </div>
-          <div className="flex items-center gap-1">
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              className="h-8 px-2 text-xs"
-              onClick={onRetry}
-              disabled={isBusy || record.status === "running"}
-            >
-              <RotateCw className="mr-1.5 h-3.5 w-3.5" />
-              Retry
-            </Button>
-            {record.iteration ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                className="h-8 px-3 text-xs"
-                onClick={onSave}
-                disabled={isBusy}
-              >
-                Save run
-              </Button>
-            ) : null}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  size="icon"
-                  variant="ghost"
-                  className="h-8 w-8"
-                  disabled={!record.iteration}
-                  aria-label="Open additional run artifacts"
-                >
-                  <MoreHorizontal className="h-4 w-4" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => onOpenArtifact("output")}>
-                  Open output
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => onOpenArtifact("raw")}>
-                  Open raw payload
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            className="h-7 shrink-0 px-2 text-[11px]"
+            onClick={onRetry}
+            disabled={record.status === "running" && record.iteration == null}
+          >
+            <RotateCw
+              className={cn(
+                "mr-1 h-3 w-3",
+                record.status === "running" &&
+                  record.iteration == null &&
+                  "animate-spin",
+              )}
+            />
+            Retry
+          </Button>
         </div>
 
         {record.metrics.mismatchCount != null &&
         record.metrics.mismatchCount > 0 ? (
-          <div className="mt-3 text-[11px] text-muted-foreground">
+          <div className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
             {record.metrics.mismatchCount} mismatch
             {record.metrics.mismatchCount === 1 ? "" : "es"} across expected tool
             calls.
@@ -1991,16 +1925,19 @@ function RunColumn({
         ) : null}
       </div>
 
-      <div className="min-h-0 flex-1 p-4">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
         {record.status === "running" && !record.iteration ? (
-          <div className="flex h-full min-h-[320px] items-center justify-center rounded-xl border border-border/50 bg-muted/10">
+          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-border/50 bg-muted/10">
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              <span>Running {record.modelLabel}…</span>
+              <span>
+                {record.isRetrying ? "Retrying" : "Running"}{" "}
+                {record.modelLabel}…
+              </span>
             </div>
           </div>
         ) : record.status === "failed" && !record.iteration ? (
-          <div className="flex h-full min-h-[320px] items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-10">
+          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/5 px-6 py-10">
             <div className="max-w-sm text-center">
               <div className="text-sm font-medium text-destructive">
                 {record.modelLabel} failed
@@ -2011,15 +1948,18 @@ function RunColumn({
             </div>
           </div>
         ) : record.iteration ? (
-          <EvalTraceSurface
-            iteration={record.iteration}
-            testCase={testCase}
-            serverNames={serverNames}
-            mode={traceMode}
-            emptyMessage={`No ${activeTab} data is available for this run.`}
-          />
+          <div className="min-h-0 flex-1">
+            <EvalTraceSurface
+              iteration={record.iteration}
+              testCase={testCase}
+              serverNames={serverNames}
+              mode={traceMode}
+              emptyMessage={`No ${activeTab} data is available for this run.`}
+              onNavigateToChat={() => onTabChange("chat")}
+            />
+          </div>
         ) : (
-          <div className="flex h-full min-h-[320px] items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
+          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-dashed border-border/60 bg-muted/10 px-6 py-10 text-center">
             <div>
               <div className="text-sm font-medium">No run yet</div>
               <p className="mt-2 text-sm text-muted-foreground">

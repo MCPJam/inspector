@@ -6,6 +6,7 @@ import {
   resolveIterationModelValue,
   resolveInitialCompareModelValues,
 } from "../compare-playground-helpers";
+import type { CompareRunRecord } from "../types";
 
 describe("compare-playground-helpers", () => {
   it("prefers case models and dedupes the initial compare selection", () => {
@@ -30,6 +31,22 @@ describe("compare-playground-helpers", () => {
       "anthropic/claude-4.5-sonnet",
       "google/gemini-2.5-pro",
     ]);
+  });
+
+  it("does not pad the compare selection from the catalog when the case already lists models", () => {
+    const selection = resolveInitialCompareModelValues({
+      testCase: {
+        models: [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }],
+      } as any,
+      modelOptions: [
+        { value: "anthropic/anthropic/claude-haiku-4.5" },
+        { value: "openai/gpt-oss-120b" },
+        { value: "openai/gpt-5-nano" },
+      ],
+      preferredModelValue: null,
+    });
+
+    expect(selection).toEqual(["anthropic/anthropic/claude-haiku-4.5"]);
   });
 
   it("merges shared config with per-model overrides", () => {
@@ -94,6 +111,38 @@ describe("compare-playground-helpers", () => {
     expect(record.metrics.unexpectedCount).toBe(1);
     expect(record.metrics.argumentMismatchCount).toBe(0);
     expect(record.metrics.mismatchCount).toBe(2);
+  });
+
+  it("keeps compare status running when the returned iteration is still server-marked running", () => {
+    const record = buildCompareRunRecord({
+      modelValue: "openai/gpt-oss-120b",
+      modelLabel: "GPT-OSS 120B",
+      iteration: {
+        _id: "iter-running",
+        testCaseId: "case-1",
+        createdBy: "u1",
+        createdAt: 100,
+        updatedAt: 200,
+        iterationNumber: 1,
+        status: "running",
+        result: "pending",
+        resultSource: "derived",
+        actualToolCalls: [],
+        tokensUsed: 0,
+        startedAt: 100,
+        testCaseSnapshot: {
+          title: "T",
+          query: "Q",
+          provider: "openai",
+          model: "gpt-oss-120b",
+          expectedToolCalls: [{ toolName: "example", arguments: {} }],
+        },
+        suiteRunId: "run-1",
+      } as any,
+    });
+
+    expect(record.status).toBe("running");
+    expect(record.iteration).not.toBeNull();
   });
 
   it("uses persisted prompt-aware mismatch totals for multi-turn iterations", () => {
@@ -264,5 +313,91 @@ describe("compare-playground-helpers", () => {
     expect(records["anthropic/anthropic/claude-haiku-4.5"]?.iteration?._id).toBe(
       "iter-claude",
     );
+  });
+
+  it("does not replace an in-flight compare run with historical iterations", () => {
+    const running = buildCompareRunRecord({
+      modelValue: "openai/gpt-5-nano",
+      modelLabel: "GPT-5 Nano",
+      iteration: null,
+      startedAt: Date.now(),
+    });
+    const inFlight: CompareRunRecord = {
+      ...running,
+      status: "running",
+    };
+
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: ["openai/gpt-5-nano"],
+      modelLabelByValue: { "openai/gpt-5-nano": "GPT-5 Nano" },
+      iterations: [
+        {
+          _id: "iter-stale",
+          createdBy: "user",
+          createdAt: 100,
+          updatedAt: 30_000,
+          startedAt: 100,
+          iterationNumber: 1,
+          status: "completed",
+          result: "passed",
+          resultSource: "reported",
+          actualToolCalls: [],
+          tokensUsed: 999,
+          testCaseSnapshot: {
+            title: "T",
+            query: "Q",
+            provider: "openai",
+            model: "gpt-5-nano",
+            expectedToolCalls: [],
+          },
+        },
+      ] as any,
+      existingRecords: { "openai/gpt-5-nano": inFlight },
+    });
+
+    expect(records["openai/gpt-5-nano"]?.status).toBe("running");
+    expect(records["openai/gpt-5-nano"]?.iteration).toBeNull();
+    expect(records["openai/gpt-5-nano"]?.metrics.durationMs).toBeNull();
+  });
+
+  it("drops compare rows that are no longer selected", () => {
+    const prior = buildCompareRunRecord({
+      modelValue: "openai/gpt-5-nano",
+      modelLabel: "GPT-5 Nano",
+      iteration: {
+        _id: "iter-nano",
+        createdBy: "user",
+        createdAt: 100,
+        updatedAt: 200,
+        startedAt: 100,
+        iterationNumber: 1,
+        status: "completed",
+        result: "passed",
+        resultSource: "reported",
+        actualToolCalls: [],
+        tokensUsed: 10,
+        testCaseSnapshot: {
+          title: "T",
+          query: "Q",
+          provider: "openai",
+          model: "gpt-5-nano",
+          expectedToolCalls: [],
+        },
+      } as any,
+    });
+
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: ["anthropic/anthropic/claude-haiku-4.5"],
+      modelLabelByValue: {
+        "anthropic/anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+      },
+      iterations: [],
+      testCase: { models: [] } as any,
+      existingRecords: {
+        "openai/gpt-5-nano": prior,
+      },
+    });
+
+    expect(records["openai/gpt-5-nano"]).toBeUndefined();
   });
 });

@@ -83,11 +83,7 @@ export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
 
 export const SDK_EVAL_QUICKSTART_RUN = `import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  MCPClientManager,
-  TestAgent,
-  createEvalRunReporter,
-} from "@mcpjam/sdk";
+import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
 
 // MCPJam hosted learning server (tools: greet, display-mcp-app — see Learn in the app)
 const SERVER_ID = "learn";
@@ -97,24 +93,10 @@ const MCP_SERVER_URL =
 const LLM_API_KEY = process.env.LLM_API_KEY!;
 // provider/model-id — must match an allowed TestAgent provider (see Configure environment in the app or SDK README).
 const MODEL = process.env.EVAL_MODEL!;
-const MCPJAM_API_KEY = process.env.MCPJAM_API_KEY!;
-const promptTurns = [
-  {
-    id: "turn-1",
-    prompt: "Use the greet tool to say hello to Ada.",
-    expectedToolCalls: [{ toolName: "greet" }],
-  },
-  {
-    id: "turn-2",
-    prompt: "Now greet Grace too.",
-    expectedToolCalls: [{ toolName: "greet" }],
-  },
-];
 
 describe("MCP eval quickstart", () => {
   let manager: MCPClientManager;
   let agent: TestAgent;
-  let reporter: ReturnType<typeof createEvalRunReporter> | undefined;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -128,46 +110,29 @@ describe("MCP eval quickstart", () => {
       maxSteps: 8,
       mcpClientManager: manager,
     });
-    reporter = createEvalRunReporter({
-      suiteName: "Quickstart suite",
-      apiKey: MCPJAM_API_KEY,
-      strict: true,
-      mcpClientManager: manager,
-      serverNames: [SERVER_ID],
-      expectedIterations: 1,
-    });
   }, 120_000);
 
   afterAll(async () => {
-    if (reporter?.getAddedCount()) {
-      try {
-        await reporter.finalize();
-      } catch (e) {
-        console.warn("MCPJam reporter finalize failed (non-fatal):", e);
-      }
-    }
     await manager.disconnectAllServers();
   }, 120_000);
 
   it(
     "agent calls greet across a two-turn case",
     async () => {
-      const promptResults = [];
-      for (let promptIndex = 0; promptIndex < promptTurns.length; promptIndex++) {
-        const promptTurn = promptTurns[promptIndex]!;
-        const result = await agent.prompt(promptTurn.prompt, {
-          context: promptResults.length > 0 ? promptResults : undefined,
-        });
-        promptResults.push(result);
-      }
-      const passed = promptResults.every((result) => result.hasToolCall("greet"));
-      expect(passed).toBe(true);
-      await reporter!.recordFromPrompts(promptResults, {
-        caseTitle: "learning-server-greet-multi-turn",
-        passed,
-        externalCaseId: "learning-server-greet-multi-turn",
-        advancedConfig: { promptTurns },
+      const evalTest = new EvalTest({
+        name: "learning-server-greet-multi-turn",
+        expectedToolCalls: [{ toolName: "greet" }],
+        test: async (agent) => {
+          const r1 = await agent.prompt("Use the greet tool to say hello to Ada.");
+          const r2 = await agent.prompt("Now greet Grace too.", { context: [r1] });
+          return r1.hasToolCall("greet") && r2.hasToolCall("greet");
+        },
       });
+      await evalTest.run(agent, {
+        iterations: 1,
+        mcpjam: { suiteName: "Quickstart suite", serverNames: [SERVER_ID] },
+      });
+      expect(evalTest.accuracy()).toBe(1);
     },
     90_000,
   );

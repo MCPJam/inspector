@@ -137,10 +137,9 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByRole("button", { name: /Edit config/i })).toBeInTheDocument();
+      expect(onClearOpenCompareRoute).toHaveBeenCalled();
+      expect(screen.queryByText("No compare run yet")).not.toBeInTheDocument();
     });
-
-    expect(onClearOpenCompareRoute).toHaveBeenCalled();
   });
 
   it("renders flat User prompt / Tool triggered for a single-turn case", async () => {

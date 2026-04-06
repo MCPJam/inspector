@@ -478,7 +478,7 @@ export function SuiteIterationsView({
                 transition={
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                 }
-                className="h-full min-h-0 overflow-y-auto"
+                className="h-full min-h-0 overflow-hidden"
               >
                 <TestTemplateEditor
                   suiteId={suite._id}
@@ -659,7 +659,7 @@ export function SuiteIterationsView({
                       }
                       clickHint={
                         hideRunActions
-                          ? "Click a case row to open Edit config. Click the last-run summary to jump straight to compare results for that run."
+                          ? "Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
                           : undefined
                       }
                       runTrendData={runTrendData}

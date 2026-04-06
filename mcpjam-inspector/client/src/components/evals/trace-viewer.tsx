@@ -6,15 +6,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import {
-  AlignLeft,
-  Code2,
-  GitCompare,
-  Loader2,
-  MessageSquare,
-  Minus,
-  Plus,
-} from "lucide-react";
+import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -36,6 +28,7 @@ import {
   type TimelineFilter,
 } from "./recorded-trace-toolbar";
 import { cn } from "@/lib/utils";
+import { TraceViewModeTabs } from "./trace-view-mode-tabs";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
@@ -74,6 +67,11 @@ interface TraceViewerProps {
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
   fillContent?: boolean;
+  /**
+   * When `forcedViewMode` is set (e.g. parent tabs), internal `setViewMode("chat")` from
+   * "Reveal in Chat" is ignored — call this so the shell can switch to its chat tab.
+   */
+  onRevealNavigateToChat?: () => void;
 }
 
 function getTraceMessages(
@@ -133,6 +131,7 @@ export function TraceViewer({
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
+  onRevealNavigateToChat,
 }: TraceViewerProps) {
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
@@ -282,7 +281,13 @@ export function TraceViewer({
       highlightedMessageIds: orderedIds,
       navigationKey: current.navigationKey + 1,
     }));
-    setViewMode("chat");
+    if (forcedViewMode != null) {
+      if (forcedViewMode !== "chat") {
+        onRevealNavigateToChat?.();
+      }
+    } else {
+      setViewMode("chat");
+    }
   }
 
   if (!trace) {
@@ -398,63 +403,11 @@ export function TraceViewer({
               )}
               </div>
               {!forcedViewMode ? (
-                <div className="flex shrink-0 items-center gap-1 rounded-md border border-border/40 bg-background p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("timeline")}
-                  className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                    effectiveViewMode === "timeline"
-                      ? "bg-primary/10 text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  title="Timeline"
-                >
-                  <AlignLeft className="h-3 w-3" />
-                  Timeline
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("chat")}
-                  className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                    effectiveViewMode === "chat"
-                      ? "bg-primary/10 text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  title="Chat view"
-                >
-                  <MessageSquare className="h-3 w-3" />
-                  Chat
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("raw")}
-                  className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                    effectiveViewMode === "raw"
-                      ? "bg-primary/10 text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                  title="Raw JSON"
-                >
-                  <Code2 className="h-3 w-3" />
-                  Raw
-                </button>
-                {hasEvalToolCalls ? (
-                  <button
-                    type="button"
-                    onClick={() => setViewMode("tools")}
-                    className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${
-                      effectiveViewMode === "tools"
-                        ? "bg-primary/10 text-foreground font-medium"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                    title="Expected vs actual tool calls"
-                    data-testid="trace-viewer-tools-tab"
-                  >
-                    <GitCompare className="h-3 w-3" />
-                    Tools
-                  </button>
-                ) : null}
-                </div>
+                <TraceViewModeTabs
+                  mode={effectiveViewMode}
+                  onModeChange={setViewMode}
+                  showToolsTab={hasEvalToolCalls}
+                />
               ) : null}
             </div>
           </div>
@@ -500,33 +453,41 @@ export function TraceViewer({
             </div>
           }
         >
-          <TraceTimelineLazy
-            recordedSpans={recordedSpans}
-            estimatedDurationMs={
-              recordedSpans?.length ? undefined : estimatedDurationMs
-            }
-            transcriptMessageCount={
-              recordedSpans?.length ? 0 : traceMessages.length
-            }
-            transcriptMessages={traceMessages}
-            traceStartedAtMs={traceStartedAtMs}
-            traceEndedAtMs={traceEndedAtMs}
-            onRevealInTranscript={handleRevealInTranscript}
-            hideToolbar={hasRecordedSpans}
-            timelineFilter={hasRecordedSpans ? timelineFilter : undefined}
-            onTimelineFilterChange={
-              hasRecordedSpans ? setTimelineFilter : undefined
-            }
-            expandedPromptIds={hasRecordedSpans ? expandedPromptIds : undefined}
-            onExpandedPromptIdsChange={
-              hasRecordedSpans ? setExpandedPromptIds : undefined
-            }
-            expandedStepIds={hasRecordedSpans ? expandedStepIds : undefined}
-            onExpandedStepIdsChange={
-              hasRecordedSpans ? setExpandedStepIds : undefined
-            }
-            viewportMaxMs={hasRecordedSpans ? timelineViewportMaxMs : undefined}
-          />
+          <div
+            className={cn(
+              flexFillChrome &&
+                "flex min-h-0 flex-1 flex-col overflow-hidden",
+            )}
+          >
+            <TraceTimelineLazy
+              recordedSpans={recordedSpans}
+              estimatedDurationMs={
+                recordedSpans?.length ? undefined : estimatedDurationMs
+              }
+              transcriptMessageCount={
+                recordedSpans?.length ? 0 : traceMessages.length
+              }
+              transcriptMessages={traceMessages}
+              traceStartedAtMs={traceStartedAtMs}
+              traceEndedAtMs={traceEndedAtMs}
+              onRevealInTranscript={handleRevealInTranscript}
+              hideToolbar={hasRecordedSpans}
+              timelineFilter={hasRecordedSpans ? timelineFilter : undefined}
+              onTimelineFilterChange={
+                hasRecordedSpans ? setTimelineFilter : undefined
+              }
+              expandedPromptIds={hasRecordedSpans ? expandedPromptIds : undefined}
+              onExpandedPromptIdsChange={
+                hasRecordedSpans ? setExpandedPromptIds : undefined
+              }
+              expandedStepIds={hasRecordedSpans ? expandedStepIds : undefined}
+              onExpandedStepIdsChange={
+                hasRecordedSpans ? setExpandedStepIds : undefined
+              }
+              viewportMaxMs={hasRecordedSpans ? timelineViewportMaxMs : undefined}
+              fillContent={fillContent}
+            />
+          </div>
         </Suspense>
         )}
 

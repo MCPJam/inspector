@@ -122,7 +122,8 @@ export type CompareModelOverride = {
 
 export type EditorMode = "config" | "run";
 
-export type RunColumnTab = "chat" | "trace" | "tools";
+/** Compare run column trace mode — same values as TraceViewer view modes. */
+export type RunColumnTab = "timeline" | "chat" | "raw" | "tools";
 
 export type CompareRunRecord = {
   modelValue: string;
@@ -130,6 +131,11 @@ export type CompareRunRecord = {
   provider: string;
   model: string;
   status: "idle" | "running" | "completed" | "failed";
+  /**
+   * When `status === "running"` and there is no iteration yet, true if this run
+   * replaces a prior completed/failed attempt (user hit Retry or re-ran compare).
+   */
+  isRetrying?: boolean;
   iteration: EvalIteration | null;
   error?: string | null;
   startedAt: number | null;
