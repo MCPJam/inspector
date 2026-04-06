@@ -19,7 +19,8 @@ import {
   useMemo,
   useRef,
 } from "react";
-import { ArrowDown, ArrowUp, Braces, Loader2, Trash2 } from "lucide-react";
+import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
+import { useReducedMotion } from "framer-motion";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
@@ -76,17 +77,14 @@ import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
-import { useReducedMotion } from "framer-motion";
 import { useTypewriterString } from "@/hooks/use-typewriter-string";
+import { HandDrawnSendHint } from "./HandDrawnSendHint";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
   icon: Settings2,
 };
-
-const SEND_ACTION_NUX_HINT_LABEL =
-  "Try this prompt with a demo MCP server";
 
 type ThreadThemeMode = "light" | "dark";
 
@@ -227,7 +225,7 @@ export function PlaygroundMain({
     showPostConnectGuide && !!initialInput,
   );
 
-  /** When true, the next useChatSession reset should clear the composer (user cleared chat / reset). */
+  /** When true, the next useChatSession reset should clear the composer. */
   const skipNextComposerClearFromSessionResetRef = useRef(false);
 
   const { text: typewriterText, isComplete: typewriterComplete } =
@@ -265,7 +263,6 @@ export function PlaygroundMain({
     typewriterSupersededByUser,
   ]);
 
-  // Prefill composer when initialInput is provided without the guided post-connect shell (e.g. App Builder no-NUX).
   useEffect(() => {
     if (showPostConnectGuide || !initialInput || initialInputTypewriter) return;
     setInput((prev) => (prev === "" ? initialInput : prev));
@@ -361,37 +358,6 @@ export function PlaygroundMain({
     [selectedServers, serversByName, appState.servers],
   );
 
-  const handleComposerResetFromChatSession = useCallback(() => {
-    if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
-      setInput((currentInput) => currentInput || initialInput);
-      setGuidedInputCursorTrigger((current) => current + 1);
-      return;
-    }
-    if (skipNextComposerClearFromSessionResetRef.current) {
-      skipNextComposerClearFromSessionResetRef.current = false;
-      setInput("");
-      return;
-    }
-    if (initialInput && !showPostConnectGuide) {
-      setInput((currentInput) => {
-        if (currentInput === "" || currentInput === initialInput) {
-          return initialInput;
-        }
-        return currentInput;
-      });
-      if (initialInputTypewriter) {
-        setTypewriterSupersededByUser(false);
-      }
-      return;
-    }
-    setInput("");
-  }, [
-    initialInput,
-    showPostConnectGuide,
-    isGuidedInputPristine,
-    initialInputTypewriter,
-  ]);
-
   // Use shared chat session hook
   const {
     messages,
@@ -423,7 +389,31 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: handleComposerResetFromChatSession,
+    onReset: () => {
+      if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
+        setInput((currentInput) => currentInput || initialInput);
+        setGuidedInputCursorTrigger((current) => current + 1);
+        return;
+      }
+      if (skipNextComposerClearFromSessionResetRef.current) {
+        skipNextComposerClearFromSessionResetRef.current = false;
+        setInput("");
+        return;
+      }
+      if (initialInput && !showPostConnectGuide) {
+        setInput((currentInput) => {
+          if (currentInput === "" || currentInput === initialInput) {
+            return initialInput;
+          }
+          return currentInput;
+        });
+        if (initialInputTypewriter) {
+          setTypewriterSupersededByUser(false);
+        }
+        return;
+      }
+      setInput("");
+    },
   });
 
   // Set playground active flag for widget renderers to read
@@ -609,7 +599,7 @@ export function PlaygroundMain({
   );
 
   // Placeholder text
-  let placeholder = "Ask something to test your integration...";
+  let placeholder = "Ask something to render UI...";
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
@@ -721,7 +711,7 @@ export function PlaygroundMain({
     ],
   );
 
-  /** Outside ChatInput: show until first message, not tied to server connect (avoids flicker). */
+  /** Show hand-drawn NUX hint until first message, not tied to server connect. */
   const sendNuxCtaVisible =
     initialInputTypewriter && !showPostConnectGuide && isThreadEmpty;
 
@@ -740,14 +730,14 @@ export function PlaygroundMain({
       setSelectedModel(model);
       resetChat();
     },
-    onResetChat: () => {
-      skipNextComposerClearFromSessionResetRef.current = true;
-      resetChat();
-    },
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
+    onResetChat: () => {
+      skipNextComposerClearFromSessionResetRef.current = true;
+      resetChat();
+    },
     submitDisabled: submitBlocked || submitGatedByServer,
     tokenUsage,
     selectedServers,
@@ -897,68 +887,12 @@ export function PlaygroundMain({
                       {...sharedChatInputProps}
                       hasMessages={false}
                     />
-                    {sendNuxCtaVisible ? (
-                      <div
-                        className="relative mt-2 flex w-full flex-col px-2"
-                        role="note"
-                        aria-live="polite"
-                        data-testid="app-builder-send-nux-hint"
-                      >
-                        {/* Match ChatInput: composer px-2 + toolbar row px-2, justify-between + right cluster gap-2 (Context + Send size-[34px]) */}
-                        <div className="flex w-full min-w-0 items-center justify-between gap-2 px-2">
-                          <div className="min-w-0 flex-1" aria-hidden />
-                          <div className="flex flex-shrink-0 items-center gap-2">
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              tabIndex={-1}
-                              aria-hidden
-                              className="pointer-events-none invisible h-9 shrink-0 px-3 has-[>svg]:px-3"
-                            >
-                              <svg
-                                width="20"
-                                height="20"
-                                viewBox="0 0 24 24"
-                                aria-hidden
-                              />
-                            </Button>
-                            <div className="flex size-[34px] shrink-0 items-center justify-center">
-                              <ArrowUp
-                                className={cn(
-                                  "h-9 w-9 shrink-0 drop-shadow-sm motion-reduce:animate-none",
-                                  "animate-app-builder-send-hint-nudge",
-                                  hostStyle === "chatgpt"
-                                    ? effectiveThreadTheme === "dark"
-                                      ? "text-neutral-100"
-                                      : "text-neutral-900"
-                                    : effectiveThreadTheme === "dark"
-                                      ? "text-[#e8a077]"
-                                      : "text-primary",
-                                )}
-                                strokeWidth={2.25}
-                              />
-                            </div>
-                          </div>
-                        </div>
-                        <p
-                          className={cn(
-                            "mt-1.5 ml-auto max-w-[min(100%,22rem)] text-right text-xs leading-snug",
-                            "rounded-md border border-orange-500/65 px-3 py-2",
-                            "shadow-[0_0_10px_rgba(249,115,22,0.1)]",
-                            "animate-in fade-in slide-in-from-bottom-2 duration-300 motion-reduce:animate-none",
-                            hostStyle === "chatgpt"
-                              ? effectiveThreadTheme === "dark"
-                                ? "bg-neutral-900/50 text-neutral-200"
-                                : "bg-white text-neutral-700"
-                              : effectiveThreadTheme === "dark"
-                                ? "bg-[rgba(38,38,36,0.65)] text-[#F1F0ED]/90"
-                                : "bg-[rgba(250,249,245,0.98)] text-[rgba(61,57,41,0.82)]",
-                          )}
-                        >
-                          {SEND_ACTION_NUX_HINT_LABEL}
-                        </p>
-                      </div>
-                    ) : null}
+                    {sendNuxCtaVisible && (
+                      <HandDrawnSendHint
+                        hostStyle={hostStyle}
+                        theme={effectiveThreadTheme}
+                      />
+                    )}
                   </div>
                 )}
               </div>
@@ -1006,16 +940,16 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput: centered with welcome when thread is empty; footer when
-          there are messages. Empty + auth upsell keeps a footer composer (disabled).
-          Hidden when widget takes over. Post-connect guide uses inline composer. */}
+      {/* Single ChatInput that persists - hidden when widget takes over.
+          During guided onboarding it moves inline while the thread is empty,
+          then returns to the footer after the first message. */}
       {!isWidgetFullTakeover &&
         !showFullscreenChatOverlay &&
-        (!isThreadEmpty || shouldShowUpsell) && (
+        ((!showPostConnectGuide && !sendNuxCtaVisible) || !isThreadEmpty) && (
           <div
             className={cn(
-              "flex-shrink-0 max-w-4xl mx-auto w-full",
-              isThreadEmpty ? "px-4 pb-4" : "px-4 pb-3 pt-3",
+              "flex-shrink-0 max-w-3xl mx-auto w-full",
+              isThreadEmpty ? "px-4 pb-4" : "p-3",
             )}
           >
             {errorMessage && (
@@ -1073,7 +1007,7 @@ export function PlaygroundMain({
       {/* Device frame header — hidden during onboarding */}
       {!showPostConnectGuide && (
         <div
-          className="relative flex h-11 min-w-0 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
+          className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
           data-testid="playground-main-header"
         >
           {/* All controls centered */}

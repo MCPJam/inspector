@@ -797,27 +797,57 @@
   }
 }
 
-/* App Builder: arrow nudge toward Send (below composer) */
-@keyframes app-builder-send-hint-nudge {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-    opacity: 0.75;
+/* Hand-drawn NUX arrow: stroke draw-on animation */
+@keyframes hand-draw-stroke {
+  from {
+    stroke-dashoffset: 1;
   }
-  50% {
-    transform: translateY(-10px) scale(1.08);
-    opacity: 1;
+  to {
+    stroke-dashoffset: 0;
   }
 }
 
-.animate-app-builder-send-hint-nudge {
-  animation: app-builder-send-hint-nudge 1.35s ease-in-out infinite;
+.hand-draw-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+.hand-draw-path-body {
+  animation: hand-draw-stroke 0.8s cubic-bezier(0.33, 1, 0.68, 1) forwards;
+}
+
+.hand-draw-path-head {
+  animation: hand-draw-stroke 0.25s cubic-bezier(0.33, 1, 0.68, 1) 0.7s
+    forwards;
+}
+
+/* Hand-drawn NUX arrow: text fade-in */
+@keyframes hand-draw-text-appear {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hand-draw-text-appear {
+  opacity: 0;
+  animation: hand-draw-text-appear 0.4s cubic-bezier(0.33, 1, 0.68, 1) 0.85s
+    forwards;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-app-builder-send-hint-nudge {
+  .hand-draw-path {
+    stroke-dashoffset: 0;
     animation: none;
+  }
+  .hand-draw-text-appear {
     opacity: 1;
+    transform: none;
+    animation: none;
   }
 }
 
