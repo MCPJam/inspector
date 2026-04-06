@@ -265,8 +265,7 @@ export default function App() {
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
-  const evaluateRunsFlagsLoaded =
-    posthog.featureFlags?.hasLoadedFlags === true;
+  const evaluateRunsFlagsLoaded = posthog.featureFlags?.hasLoadedFlags === true;
   const {
     getAccessToken,
     signIn,
