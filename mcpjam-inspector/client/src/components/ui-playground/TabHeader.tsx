@@ -65,8 +65,9 @@ export function TabHeader({
     "scrollbar-hidden hidden min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden @min-[320px]/tab-header:flex";
 
   // Must be `flex` by default — a bare `hidden` would hide Tools/More for all narrow widths.
+  // scrollbar-hidden: overflow can still pan on touch; no visible scrollbar eating vertical space.
   const narrowToolsRowClass =
-    "flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto overflow-y-hidden @min-[320px]/tab-header:hidden";
+    "scrollbar-hidden flex min-h-0 min-w-0 flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden @min-[320px]/tab-header:hidden";
 
   const wideActionsClass =
     "hidden items-center gap-0.5 @min-[320px]/tab-header:flex";
@@ -141,14 +142,13 @@ export function TabHeader({
                   variant="ghost"
                   size="sm"
                   className={cn(
-                    "h-8 shrink-0 gap-1 px-2 text-xs text-muted-foreground hover:text-foreground",
+                    "h-7 w-7 shrink-0 p-0 text-muted-foreground hover:text-foreground",
                     activeTab === "saved" && "text-primary",
                   )}
                   aria-label="More: saved requests and tools actions"
                   title="More"
                 >
                   <MoreHorizontal className="h-4 w-4" />
-                  <span className="text-xs">More</span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="start" className="w-56">
