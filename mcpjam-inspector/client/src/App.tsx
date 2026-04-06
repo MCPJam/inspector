@@ -265,6 +265,8 @@ export default function App() {
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const evaluateRunsFlagsLoaded =
+    posthog.featureFlags?.hasLoadedFlags === true;
   const {
     getAccessToken,
     signIn,
@@ -1039,7 +1041,7 @@ export default function App() {
 
   useEffect(() => {
     if (activeTab === "ci-evals") {
-      if (evaluateRunsEnabled === undefined) {
+      if (!evaluateRunsFlagsLoaded) {
         return;
       }
 
@@ -1073,6 +1075,7 @@ export default function App() {
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,
+    evaluateRunsFlagsLoaded,
     evaluateRunsEnabled,
     isAuthenticated,
     activeTab,
@@ -1364,7 +1367,7 @@ export default function App() {
               />
             ))}
           {activeTab === "ci-evals" &&
-            (evaluateRunsEnabled === undefined ? (
+            (!evaluateRunsFlagsLoaded ? (
               <div className="flex h-full min-h-[320px] items-center justify-center">
                 <div className="text-center">
                   <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
