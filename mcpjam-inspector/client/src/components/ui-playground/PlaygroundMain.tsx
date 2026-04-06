@@ -20,7 +20,6 @@ import {
   useRef,
 } from "react";
 import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
-import { useReducedMotion } from "framer-motion";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
@@ -77,7 +76,7 @@ import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
-import { useTypewriterString } from "@/hooks/use-typewriter-string";
+import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 
 /** Custom device config - dimensions come from store */
@@ -212,73 +211,7 @@ export function PlaygroundMain({
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const prefersReducedMotion = useReducedMotion();
-  const [typewriterSupersededByUser, setTypewriterSupersededByUser] =
-    useState(false);
-  const [input, setInput] = useState(() =>
-    initialInputTypewriter && initialInput && !showPostConnectGuide
-      ? ""
-      : (initialInput ?? ""),
-  );
-  const [guidedInputCursorTrigger, setGuidedInputCursorTrigger] = useState(0);
-  const [isGuidedInputPristine, setIsGuidedInputPristine] = useState(
-    showPostConnectGuide && !!initialInput,
-  );
 
-  /** When true, the next useChatSession reset should clear the composer. */
-  const skipNextComposerClearFromSessionResetRef = useRef(false);
-
-  const { text: typewriterText, isComplete: typewriterComplete } =
-    useTypewriterString(initialInput ?? "", {
-      active: Boolean(
-        initialInput &&
-        initialInputTypewriter &&
-        !showPostConnectGuide &&
-        !typewriterSupersededByUser,
-      ),
-      msPerChar: 20,
-      reducedMotion: !!prefersReducedMotion,
-    });
-
-  useEffect(() => {
-    if (!initialInput || !initialInputTypewriter) {
-      setTypewriterSupersededByUser(false);
-    }
-  }, [initialInput, initialInputTypewriter]);
-
-  useEffect(() => {
-    if (!initialInputTypewriter || showPostConnectGuide) return;
-    if (!typewriterComplete) return;
-    setGuidedInputCursorTrigger((current) => current + 1);
-  }, [initialInputTypewriter, showPostConnectGuide, typewriterComplete]);
-
-  useEffect(() => {
-    if (!initialInputTypewriter || showPostConnectGuide) return;
-    if (typewriterSupersededByUser) return;
-    setInput(typewriterText);
-  }, [
-    typewriterText,
-    initialInputTypewriter,
-    showPostConnectGuide,
-    typewriterSupersededByUser,
-  ]);
-
-  useEffect(() => {
-    if (showPostConnectGuide || !initialInput || initialInputTypewriter) return;
-    setInput((prev) => (prev === "" ? initialInput : prev));
-  }, [initialInput, showPostConnectGuide, initialInputTypewriter]);
-
-  // Seed the guided prompt when the post-connect flow becomes active.
-  useEffect(() => {
-    if (showPostConnectGuide && initialInput) {
-      setInput(initialInput);
-      setIsGuidedInputPristine(true);
-      setGuidedInputCursorTrigger((current) => current + 1);
-      return;
-    }
-
-    setIsGuidedInputPristine(false);
-  }, [initialInput, showPostConnectGuide]);
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
@@ -331,8 +264,6 @@ export function PlaygroundMain({
   const serverConnected = Boolean(
     serverName && servers[serverName]?.connectionStatus === "connected",
   );
-  const submitGatedByServer =
-    blockSubmitUntilServerConnected && !serverConnected;
 
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
@@ -359,6 +290,7 @@ export function PlaygroundMain({
   );
 
   // Use shared chat session hook
+  const composerOnResetRef = useRef<() => void>(() => {});
   const {
     messages,
     setMessages,
@@ -389,31 +321,7 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => {
-      if (showPostConnectGuide && isGuidedInputPristine && initialInput) {
-        setInput((currentInput) => currentInput || initialInput);
-        setGuidedInputCursorTrigger((current) => current + 1);
-        return;
-      }
-      if (skipNextComposerClearFromSessionResetRef.current) {
-        skipNextComposerClearFromSessionResetRef.current = false;
-        setInput("");
-        return;
-      }
-      if (initialInput && !showPostConnectGuide) {
-        setInput((currentInput) => {
-          if (currentInput === "" || currentInput === initialInput) {
-            return initialInput;
-          }
-          return currentInput;
-        });
-        if (initialInputTypewriter) {
-          setTypewriterSupersededByUser(false);
-        }
-        return;
-      }
-      setInput("");
-    },
+    onReset: () => composerOnResetRef.current(),
   });
 
   // Set playground active flag for widget renderers to read
@@ -471,6 +379,18 @@ export function PlaygroundMain({
   const isThreadEmpty = !messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
+
+  // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
+  const composer = useComposerOnboarding({
+    initialInput,
+    initialInputTypewriter,
+    blockSubmitUntilServerConnected,
+    pulseSubmit,
+    showPostConnectGuide,
+    serverConnected,
+    isThreadEmpty,
+  });
+  composerOnResetRef.current = composer.onSessionReset;
 
   // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
   useEffect(() => {
@@ -583,7 +503,7 @@ export function PlaygroundMain({
 
   // Handle clear chat
   const handleClearChat = useCallback(() => {
-    skipNextComposerClearFromSessionResetRef.current = true;
+    composer.prepareForClearChat();
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
@@ -623,16 +543,13 @@ export function PlaygroundMain({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasContent =
-      input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
+      composer.input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
     if (
       hasContent &&
       status === "ready" &&
       !submitBlocked &&
-      !submitGatedByServer
+      !composer.submitGatedByServer
     ) {
-      if (showPostConnectGuide && isGuidedInputPristine) {
-        setIsGuidedInputPristine(false);
-      }
       if (displayMode === "fullscreen" && isWidgetFullscreen) {
         setIsFullscreenChatOpen(true);
       }
@@ -674,8 +591,8 @@ export function PlaygroundMain({
           ? await attachmentsToFileUIParts(fileAttachments)
           : undefined;
 
-      sendMessage({ text: input, files });
-      setInput("");
+      sendMessage({ text: composer.input, files });
+      composer.setInput("");
       setMcpPromptResults([]);
       // Revoke object URLs and clear file attachments
       revokeFileAttachmentUrls(fileAttachments);
@@ -689,45 +606,11 @@ export function PlaygroundMain({
 
   const errorMessage = formatErrorMessage(error);
   const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
-  const handleInputChange = useCallback(
-    (nextInput: string) => {
-      if (initialInputTypewriter && !showPostConnectGuide) {
-        setTypewriterSupersededByUser(true);
-      }
-      setInput(nextInput);
-      if (
-        showPostConnectGuide &&
-        isGuidedInputPristine &&
-        nextInput !== initialInput
-      ) {
-        setIsGuidedInputPristine(false);
-      }
-    },
-    [
-      initialInput,
-      isGuidedInputPristine,
-      showPostConnectGuide,
-      initialInputTypewriter,
-    ],
-  );
-
-  /** Show hand-drawn NUX hint until first message, not tied to server connect. */
-  const sendNuxCtaVisible =
-    initialInputTypewriter && !showPostConnectGuide && isThreadEmpty;
-
-  /** Post-connect: pulse until guided text is edited. First-run typewriter: pulse until user edits or sends. */
-  const sendButtonOnboardingPulse =
-    pulseSubmit &&
-    (isGuidedInputPristine ||
-      (initialInputTypewriter &&
-        !showPostConnectGuide &&
-        isThreadEmpty &&
-        !typewriterSupersededByUser));
 
   // Shared chat input props
   const sharedChatInputProps = {
-    value: input,
-    onChange: handleInputChange,
+    value: composer.input,
+    onChange: composer.handleInputChange,
     onSubmit,
     stop,
     disabled: inputDisabled,
@@ -744,10 +627,10 @@ export function PlaygroundMain({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: () => {
-      skipNextComposerClearFromSessionResetRef.current = true;
+      composer.prepareForClearChat();
       resetChat();
     },
-    submitDisabled: submitBlocked || submitGatedByServer,
+    submitDisabled: submitBlocked || composer.submitGatedByServer,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -765,12 +648,9 @@ export function PlaygroundMain({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
-    pulseSubmit: sendButtonOnboardingPulse,
+    pulseSubmit: composer.sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
-    moveCaretToEndTrigger:
-      (showPostConnectGuide || initialInputTypewriter) && isThreadEmpty
-        ? guidedInputCursorTrigger
-        : undefined,
+    moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
   };
 
   // Check if widget should take over the full container
@@ -814,7 +694,7 @@ export function PlaygroundMain({
         >
           <div
             className={cn(
-              "mx-auto w-full max-w-3xl text-center",
+              "mx-auto w-full max-w-4xl text-center",
               !showPostConnectGuide && "py-8",
             )}
           >
@@ -893,7 +773,7 @@ export function PlaygroundMain({
                       </div>
                     )}
                     <ChatInput {...sharedChatInputProps} hasMessages={false} />
-                    {sendNuxCtaVisible && (
+                    {composer.sendNuxCtaVisible && (
                       <HandDrawnSendHint
                         hostStyle={hostStyle}
                         theme={effectiveThreadTheme}
@@ -953,7 +833,7 @@ export function PlaygroundMain({
         (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
           <div
             className={cn(
-              "flex-shrink-0 max-w-3xl mx-auto w-full",
+              "mx-auto w-full max-w-4xl shrink-0",
               isThreadEmpty ? "px-4 pb-4" : "p-3",
             )}
           >
@@ -980,20 +860,20 @@ export function PlaygroundMain({
           messages={messages}
           open={isFullscreenChatOpen}
           onOpenChange={setIsFullscreenChatOpen}
-          input={input}
-          onInputChange={setInput}
+          input={composer.input}
+          onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={inputDisabled}
           canSend={
             !disableChatInput &&
             status === "ready" &&
             !submitBlocked &&
-            input.trim().length > 0
+            composer.input.trim().length > 0
           }
           isThinking={status === "submitted"}
           onSend={() => {
-            sendMessage({ text: input });
-            setInput("");
+            sendMessage({ text: composer.input });
+            composer.setInput("");
             setMcpPromptResults([]);
           }}
         />

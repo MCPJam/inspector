@@ -78,7 +78,7 @@ describe("useOnboarding", () => {
     );
 
     expect(result.current.phase).toBe("connecting_excalidraw");
-    expect(result.current.isOverlayVisible).toBe(false);
+
     expect(result.current.isBootstrappingFirstRunConnection).toBe(true);
     await waitFor(() => {
       expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
@@ -96,7 +96,7 @@ describe("useOnboarding", () => {
     );
 
     expect(result.current.isResolvingRemoteCompletion).toBe(true);
-    expect(result.current.isOverlayVisible).toBe(false);
+
   });
 
   it("re-derives the guest first-run phase once auth settles", async () => {
@@ -117,14 +117,14 @@ describe("useOnboarding", () => {
     );
 
     expect(result.current.phase).toBe("dismissed");
-    expect(result.current.isOverlayVisible).toBe(false);
+
 
     rerender({ isAuthLoading: false });
 
     await waitFor(() => {
       expect(result.current.phase).toBe("connecting_excalidraw");
     });
-    expect(result.current.isOverlayVisible).toBe(false);
+
     await waitFor(() => {
       expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
     });
@@ -144,7 +144,7 @@ describe("useOnboarding", () => {
       expect(result.current.phase).toBe("completed");
     });
 
-    expect(result.current.isOverlayVisible).toBe(false);
+
     expect(result.current.isResolvingRemoteCompletion).toBe(false);
     expect(readOnboardingState()).toBeNull();
   });
@@ -195,7 +195,7 @@ describe("useOnboarding", () => {
     rerender({ servers: connectedServers });
 
     expect(result.current.isGuidedPostConnect).toBe(true);
-    expect(result.current.isOverlayVisible).toBe(false);
+
 
     await waitFor(() => {
       expect(result.current.phase).toBe("connected_guided");

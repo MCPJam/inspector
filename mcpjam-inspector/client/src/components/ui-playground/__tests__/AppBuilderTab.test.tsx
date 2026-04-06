@@ -235,7 +235,6 @@ vi.mock("../../tools/SaveRequestDialog", () => ({
 // Mock onboarding hook
 const mockOnboarding = {
   phase: "dismissed" as string,
-  isOverlayVisible: false,
   isGuidedPostConnect: false,
   isResolvingRemoteCompletion: false,
   isBootstrappingFirstRunConnection: false,
@@ -301,7 +300,6 @@ describe("AppBuilderTab", () => {
     // Reset onboarding state (default: dismissed, no overlay)
     Object.assign(mockOnboarding, {
       phase: "dismissed",
-      isOverlayVisible: false,
       isGuidedPostConnect: false,
       isResolvingRemoteCompletion: false,
       isBootstrappingFirstRunConnection: false,
@@ -586,7 +584,6 @@ describe("AppBuilderTab", () => {
     it("shows App Builder while Excalidraw is connecting when not bootstrapping", () => {
       const serverConfig = createServerConfig();
       mockOnboarding.phase = "connecting_excalidraw";
-      mockOnboarding.isOverlayVisible = false;
       mockOnboarding.isBootstrappingFirstRunConnection = false;
 
       render(
@@ -722,8 +719,6 @@ describe("AppBuilderTab", () => {
 
     it("shows empty state when onboarding is dismissed and no server", () => {
       mockOnboarding.phase = "dismissed";
-      mockOnboarding.isOverlayVisible = false;
-
       render(<AppBuilderTab />);
 
       expect(screen.getByText("No Server Selected")).toBeInTheDocument();

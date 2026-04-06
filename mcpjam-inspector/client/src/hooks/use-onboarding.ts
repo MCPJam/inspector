@@ -24,7 +24,6 @@ interface UseOnboardingOptions {
 
 interface UseOnboardingReturn {
   phase: OnboardingPhase;
-  isOverlayVisible: boolean;
   isGuidedPostConnect: boolean;
   isResolvingRemoteCompletion: boolean;
   /** True before the Excalidraw server row exists (auto-connect not yet dispatched). */
@@ -198,8 +197,6 @@ export function useOnboarding({
   const isTransitioningToGuided =
     phase === "connecting_excalidraw" && hasConnectedExcalidraw;
 
-  const isOverlayVisible = false;
-
   const isGuidedPostConnect =
     phase === "connected_guided" || isTransitioningToGuided;
 
@@ -208,7 +205,6 @@ export function useOnboarding({
 
   return {
     phase,
-    isOverlayVisible,
     isGuidedPostConnect,
     isResolvingRemoteCompletion,
     isBootstrappingFirstRunConnection,
