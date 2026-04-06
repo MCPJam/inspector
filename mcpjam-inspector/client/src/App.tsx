@@ -152,6 +152,8 @@ import {
 } from "./lib/hosted-oauth-resume";
 import { handleOAuthCallback } from "./lib/oauth/mcp-oauth";
 import { getEffectiveWorkspaceClientCapabilities } from "./lib/client-config";
+import { buildEvalsHash } from "./lib/evals-router";
+import { withTestingSurface } from "./lib/testing-surface";
 import { useClientConfigStore } from "./stores/client-config-store";
 
 function getHostedOAuthCallbackErrorMessage(): string {
@@ -167,6 +169,11 @@ function getHostedOAuthCallbackErrorMessage(): string {
     description || error,
     "Authorization could not be completed. Try again.",
   );
+}
+
+function replaceHash(hash: string) {
+  window.history.replaceState({}, "", `/${hash}`);
+  window.dispatchEvent(new HashChangeEvent("hashchange"));
 }
 
 function BillingHandoffLoading({ overlay = false }: { overlay?: boolean }) {
@@ -257,6 +264,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const {
     getAccessToken,
     signIn,
@@ -1030,7 +1038,9 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (activeTabBillingLocked && activeTabBillingFeature) {
+    if (activeTab === "ci-evals" && evaluateRunsEnabled !== true) {
+      replaceHash(withTestingSurface(buildEvalsHash({ type: "list" })));
+    } else if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
           shellBillingStatus?.plan,
@@ -1054,6 +1064,7 @@ export default function App() {
     clientConfigEnabled,
     registryEnabled,
     learningEnabled,
+    evaluateRunsEnabled,
     isAuthenticated,
     activeTab,
     applyNavigation,
@@ -1343,7 +1354,7 @@ export default function App() {
                 workspaceId={convexWorkspaceId}
               />
             ))}
-          {activeTab === "ci-evals" &&
+          {activeTab === "ci-evals" && evaluateRunsEnabled === true &&
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (

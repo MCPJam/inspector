@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   applyBillingGateNavState,
   filterByFeatureFlags,
+  getEvalsSubnavItems,
   getHostedNavigationSections,
   shouldPrefetchSidebarTools,
 } from "../mcp-sidebar";
@@ -90,6 +91,45 @@ describe("filterByFeatureFlags", () => {
     const result = filterByFeatureFlags(sections, {});
     expect(result[0].items).toHaveLength(1);
     expect(result[0].items[0].title).toBe("Plain");
+  });
+
+  it("keeps Evaluate item visible when evaluate-runs is off", () => {
+    const result = filterByFeatureFlags(
+      [
+        {
+          id: "mcp-apps",
+          items: [
+            { title: "App Builder", url: "#app-builder", icon: FakeIcon },
+            {
+              title: "Evaluate",
+              url: "#evals",
+              icon: FakeIcon,
+              billingFeature: "evals" as const,
+              evalsSubnav: true,
+            },
+          ],
+        },
+      ],
+      { "evaluate-runs": false },
+    );
+    const titles = result[0].items.map((i) => i.title);
+    expect(titles).toEqual(["App Builder", "Evaluate"]);
+  });
+
+  it("keeps Playground visible when evaluate-runs is off", () => {
+    expect(
+      getEvalsSubnavItems({ evaluateRunsEnabled: false }).map(
+        (item) => item.title,
+      ),
+    ).toEqual(["Playground"]);
+  });
+
+  it("shows Runs when evaluate-runs is on", () => {
+    expect(
+      getEvalsSubnavItems({ evaluateRunsEnabled: true }).map(
+        (item) => item.title,
+      ),
+    ).toEqual(["Playground", "Runs"]);
   });
 });
 

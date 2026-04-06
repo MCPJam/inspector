@@ -188,6 +188,7 @@ vi.mock("@/hooks/useWorkspaces", () => ({
     sortedWorkspaces: [],
     isLoading: false,
     hasWorkspaces: false,
+    hasAnyWorkspaces: false,
   }),
 }));
 
