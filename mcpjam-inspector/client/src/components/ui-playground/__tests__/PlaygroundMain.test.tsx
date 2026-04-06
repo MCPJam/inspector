@@ -693,6 +693,33 @@ describe("PlaygroundMain", () => {
       vi.useRealTimers();
     });
 
+    it("pulses submit during first-run typewriter NUX when pulseSubmit is true", () => {
+      const full = "Hello world";
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={false}
+          initialInput={full}
+          initialInputTypewriter={true}
+          pulseSubmit={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
+        "data-pulsing",
+        "true",
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "User edit" },
+      });
+
+      expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
+        "data-pulsing",
+        "false",
+      );
+    });
+
     it("disables submit when blockSubmitUntilServerConnected and server is not connected", () => {
       mockSharedAppState.servers["test-server"] = {
         connectionStatus: "connecting",

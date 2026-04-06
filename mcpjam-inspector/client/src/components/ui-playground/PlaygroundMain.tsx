@@ -715,6 +715,15 @@ export function PlaygroundMain({
   const sendNuxCtaVisible =
     initialInputTypewriter && !showPostConnectGuide && isThreadEmpty;
 
+  /** Post-connect: pulse until guided text is edited. First-run typewriter: pulse until user edits or sends. */
+  const sendButtonOnboardingPulse =
+    pulseSubmit &&
+    (isGuidedInputPristine ||
+      (initialInputTypewriter &&
+        !showPostConnectGuide &&
+        isThreadEmpty &&
+        !typewriterSupersededByUser));
+
   // Shared chat input props
   const sharedChatInputProps = {
     value: input,
@@ -756,7 +765,7 @@ export function PlaygroundMain({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
-    pulseSubmit: pulseSubmit && isGuidedInputPristine,
+    pulseSubmit: sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
     moveCaretToEndTrigger:
       (showPostConnectGuide || initialInputTypewriter) && isThreadEmpty

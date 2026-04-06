@@ -378,7 +378,7 @@ export function AppBuilderTab({
             }
             initialInputTypewriter={firstRunComposerSeed}
             blockSubmitUntilServerConnected={firstRunComposerSeed}
-            pulseSubmit={false}
+            pulseSubmit={firstRunComposerSeed}
             showPostConnectGuide={false}
             onFirstMessageSent={
               onboarding.isGuidedPostConnect

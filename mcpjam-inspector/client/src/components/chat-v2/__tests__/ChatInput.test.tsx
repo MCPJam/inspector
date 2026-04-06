@@ -303,6 +303,33 @@ describe("ChatInput", () => {
     });
   });
 
+  describe("onboarding send button", () => {
+    it("applies glow animation only when pulseSubmit is true", () => {
+      const { rerender } = render(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={false} />,
+      );
+      let submit = screen.getAllByRole("button").find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      expect(submit).toBeDefined();
+      expect(submit?.className).not.toContain("animate-onboarding-pulse");
+
+      rerender(<ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />);
+      submit = screen.getAllByRole("button").find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      expect(submit?.className).toContain("animate-onboarding-pulse");
+    });
+
+    it("uses shadow-none so default button shadow does not read as a constant glow", () => {
+      render(<ChatInput {...defaultProps} value="Hello" />);
+      const submit = screen.getAllByRole("button").find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      expect(submit?.className).toContain("shadow-none");
+    });
+  });
+
   describe("disabled state", () => {
     it("disables textarea when disabled prop is true", () => {
       render(<ChatInput {...defaultProps} disabled={true} />);

@@ -728,7 +728,7 @@ export function ChatInput({
                     size="icon"
                     aria-label="Send message"
                     className={cn(
-                      "size-[34px] rounded-full transition-colors",
+                      "size-[34px] rounded-full transition-colors shadow-none",
                       (value.trim() || hasResults) &&
                         !disabled &&
                         !submitDisabled
