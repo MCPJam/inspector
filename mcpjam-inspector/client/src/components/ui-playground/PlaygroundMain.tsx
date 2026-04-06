@@ -543,7 +543,9 @@ export function PlaygroundMain({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasContent =
-      composer.input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
+      composer.input.trim() ||
+      mcpPromptResults.length > 0 ||
+      fileAttachments.length > 0;
     if (
       hasContent &&
       status === "ready" &&

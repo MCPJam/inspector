@@ -351,9 +351,7 @@ describe("useComposerOnboarding", () => {
       vi.advanceTimersByTime(20 * full.length);
     });
 
-    expect(result.current.moveCaretToEndTrigger).toBeGreaterThan(
-      initial ?? -1,
-    );
+    expect(result.current.moveCaretToEndTrigger).toBeGreaterThan(initial ?? -1);
   });
 
   it("returns undefined moveCaretToEndTrigger when thread has messages", () => {

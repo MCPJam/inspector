@@ -96,7 +96,6 @@ describe("useOnboarding", () => {
     );
 
     expect(result.current.isResolvingRemoteCompletion).toBe(true);
-
   });
 
   it("re-derives the guest first-run phase once auth settles", async () => {
@@ -117,7 +116,6 @@ describe("useOnboarding", () => {
     );
 
     expect(result.current.phase).toBe("dismissed");
-
 
     rerender({ isAuthLoading: false });
 
@@ -143,7 +141,6 @@ describe("useOnboarding", () => {
     await waitFor(() => {
       expect(result.current.phase).toBe("completed");
     });
-
 
     expect(result.current.isResolvingRemoteCompletion).toBe(false);
     expect(readOnboardingState()).toBeNull();
@@ -195,7 +192,6 @@ describe("useOnboarding", () => {
     rerender({ servers: connectedServers });
 
     expect(result.current.isGuidedPostConnect).toBe(true);
-
 
     await waitFor(() => {
       expect(result.current.phase).toBe("connected_guided");

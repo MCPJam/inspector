@@ -61,9 +61,9 @@ export function useComposerOnboarding({
     useTypewriterString(initialInput ?? "", {
       active: Boolean(
         initialInput &&
-          initialInputTypewriter &&
-          !showPostConnectGuide &&
-          !typewriterSupersededByUser,
+        initialInputTypewriter &&
+        !showPostConnectGuide &&
+        !typewriterSupersededByUser,
       ),
       msPerChar: 20,
       reducedMotion: !!prefersReducedMotion,
