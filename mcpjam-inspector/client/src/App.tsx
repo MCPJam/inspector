@@ -258,6 +258,9 @@ export default function App() {
     useState<CheckoutIntent | null>(() => getInitialPendingCheckoutIntent());
   const [billingPathSync, setBillingPathSync] = useState(0);
   const posthog = usePostHog();
+  const [evaluateRunsFlagsLoaded, setEvaluateRunsFlagsLoaded] = useState(
+    () => posthog.featureFlags?.hasLoadedFlags === true,
+  );
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
     "billing-entitlements-ui",
   );
@@ -265,7 +268,6 @@ export default function App() {
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
-  const evaluateRunsFlagsLoaded = posthog.featureFlags?.hasLoadedFlags === true;
   const {
     getAccessToken,
     signIn,
@@ -329,6 +331,14 @@ export default function App() {
     HOSTED_MODE && !exitedSharedChat && hostedRouteKind === "shared";
   const isSandboxChatRoute =
     HOSTED_MODE && !exitedSandboxChat && hostedRouteKind === "sandbox";
+
+  useEffect(() => {
+    setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
+
+    return posthog.onFeatureFlags(() => {
+      setEvaluateRunsFlagsLoaded(posthog.featureFlags?.hasLoadedFlags === true);
+    });
+  }, [posthog]);
   const isHostedChatRoute = isSharedChatRoute || isSandboxChatRoute;
   const currentHash = window.location.hash || "#servers";
   const currentHashRoute = useMemo(
