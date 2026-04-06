@@ -76,6 +76,8 @@ import {
   SandboxHostStyleProvider,
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
+import { useReducedMotion } from "framer-motion";
+import { useTypewriterString } from "@/hooks/use-typewriter-string";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
@@ -123,6 +125,10 @@ interface PlaygroundMainProps {
   disabledInputPlaceholder?: string;
   // Onboarding
   initialInput?: string;
+  /** When true with `initialInput`, reveals the string with a typewriter effect (App Builder NUX). */
+  initialInputTypewriter?: boolean;
+  /** When true, Send / Enter are blocked until the playground server is connected. */
+  blockSubmitUntilServerConnected?: boolean;
   pulseSubmit?: boolean;
   showPostConnectGuide?: boolean;
   onFirstMessageSent?: () => void;
@@ -196,6 +202,8 @@ export function PlaygroundMain({
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
   initialInput,
+  initialInputTypewriter = false,
+  blockSubmitUntilServerConnected = false,
   pulseSubmit = false,
   showPostConnectGuide = false,
   onFirstMessageSent,
@@ -203,7 +211,14 @@ export function PlaygroundMain({
   const { signUp } = useAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const [input, setInput] = useState(initialInput ?? "");
+  const prefersReducedMotion = useReducedMotion();
+  const [typewriterSupersededByUser, setTypewriterSupersededByUser] =
+    useState(false);
+  const [input, setInput] = useState(() =>
+    initialInputTypewriter && initialInput && !showPostConnectGuide
+      ? ""
+      : (initialInput ?? ""),
+  );
   const [guidedInputCursorTrigger, setGuidedInputCursorTrigger] = useState(0);
   const [isGuidedInputPristine, setIsGuidedInputPristine] = useState(
     showPostConnectGuide && !!initialInput,
@@ -212,11 +227,46 @@ export function PlaygroundMain({
   /** When true, the next useChatSession reset should clear the composer (user cleared chat / reset). */
   const skipNextComposerClearFromSessionResetRef = useRef(false);
 
+  const { text: typewriterText, isComplete: typewriterComplete } =
+    useTypewriterString(initialInput ?? "", {
+      active: Boolean(
+        initialInput &&
+          initialInputTypewriter &&
+          !showPostConnectGuide &&
+          !typewriterSupersededByUser,
+      ),
+      msPerChar: 20,
+      reducedMotion: !!prefersReducedMotion,
+    });
+
+  useEffect(() => {
+    if (!initialInput || !initialInputTypewriter) {
+      setTypewriterSupersededByUser(false);
+    }
+  }, [initialInput, initialInputTypewriter]);
+
+  useEffect(() => {
+    if (!initialInputTypewriter || showPostConnectGuide) return;
+    if (!typewriterComplete) return;
+    setGuidedInputCursorTrigger((current) => current + 1);
+  }, [initialInputTypewriter, showPostConnectGuide, typewriterComplete]);
+
+  useEffect(() => {
+    if (!initialInputTypewriter || showPostConnectGuide) return;
+    if (typewriterSupersededByUser) return;
+    setInput(typewriterText);
+  }, [
+    typewriterText,
+    initialInputTypewriter,
+    showPostConnectGuide,
+    typewriterSupersededByUser,
+  ]);
+
   // Prefill composer when initialInput is provided without the guided post-connect shell (e.g. App Builder no-NUX).
   useEffect(() => {
-    if (showPostConnectGuide || !initialInput) return;
+    if (showPostConnectGuide || !initialInput || initialInputTypewriter) return;
     setInput((prev) => (prev === "" ? initialInput : prev));
-  }, [initialInput, showPostConnectGuide]);
+  }, [initialInput, showPostConnectGuide, initialInputTypewriter]);
 
   // Seed the guided prompt when the post-connect flow becomes active.
   useEffect(() => {
@@ -278,6 +328,12 @@ export function PlaygroundMain({
     [serverName, servers],
   );
 
+  const serverConnected = Boolean(
+    serverName && servers[serverName]?.connectionStatus === "connected",
+  );
+  const submitGatedByServer =
+    blockSubmitUntilServerConnected && !serverConnected;
+
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
@@ -320,10 +376,18 @@ export function PlaygroundMain({
         }
         return currentInput;
       });
+      if (initialInputTypewriter) {
+        setTypewriterSupersededByUser(false);
+      }
       return;
     }
     setInput("");
-  }, [initialInput, showPostConnectGuide, isGuidedInputPristine]);
+  }, [
+    initialInput,
+    showPostConnectGuide,
+    isGuidedInputPristine,
+    initialInputTypewriter,
+  ]);
 
   // Use shared chat session hook
   const {
@@ -567,7 +631,12 @@ export function PlaygroundMain({
     event.preventDefault();
     const hasContent =
       input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
-    if (hasContent && status === "ready" && !submitBlocked) {
+    if (
+      hasContent &&
+      status === "ready" &&
+      !submitBlocked &&
+      !submitGatedByServer
+    ) {
       if (showPostConnectGuide && isGuidedInputPristine) {
         setIsGuidedInputPristine(false);
       }
@@ -629,6 +698,9 @@ export function PlaygroundMain({
   const inputDisabled = disableChatInput || status !== "ready" || submitBlocked;
   const handleInputChange = useCallback(
     (nextInput: string) => {
+      if (initialInputTypewriter && !showPostConnectGuide) {
+        setTypewriterSupersededByUser(true);
+      }
       setInput(nextInput);
       if (
         showPostConnectGuide &&
@@ -638,7 +710,12 @@ export function PlaygroundMain({
         setIsGuidedInputPristine(false);
       }
     },
-    [initialInput, isGuidedInputPristine, showPostConnectGuide],
+    [
+      initialInput,
+      isGuidedInputPristine,
+      showPostConnectGuide,
+      initialInputTypewriter,
+    ],
   );
 
   // Shared chat input props
@@ -664,7 +741,7 @@ export function PlaygroundMain({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
-    submitDisabled: submitBlocked,
+    submitDisabled: submitBlocked || submitGatedByServer,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -685,7 +762,7 @@ export function PlaygroundMain({
     pulseSubmit: pulseSubmit && isGuidedInputPristine,
     minimalMode: showPostConnectGuide,
     moveCaretToEndTrigger:
-      showPostConnectGuide && isThreadEmpty
+      (showPostConnectGuide || initialInputTypewriter) && isThreadEmpty
         ? guidedInputCursorTrigger
         : undefined,
   };

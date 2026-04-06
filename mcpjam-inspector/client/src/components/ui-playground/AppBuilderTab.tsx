@@ -83,6 +83,10 @@ export function AppBuilderTab({
     isAuthLoading,
   });
 
+  const firstRunComposerSeed =
+    onboarding.phase === "connecting_excalidraw" ||
+    onboarding.phase === "connected_guided";
+
   // Get store state and actions
   const {
     selectedTool,
@@ -370,10 +374,10 @@ export function AppBuilderTab({
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}
             initialInput={
-              onboarding.isGuidedPostConnect
-                ? APP_BUILDER_FIRST_RUN_PROMPT
-                : undefined
+              firstRunComposerSeed ? APP_BUILDER_FIRST_RUN_PROMPT : undefined
             }
+            initialInputTypewriter={firstRunComposerSeed}
+            blockSubmitUntilServerConnected={firstRunComposerSeed}
             pulseSubmit={false}
             showPostConnectGuide={false}
             onFirstMessageSent={

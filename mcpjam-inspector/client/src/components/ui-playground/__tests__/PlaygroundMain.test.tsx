@@ -8,6 +8,14 @@ import {
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 
+vi.mock("framer-motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("framer-motion")>();
+  return {
+    ...actual,
+    useReducedMotion: () => false,
+  };
+});
+
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
   ArrowDown: () => <span data-testid="icon-arrow-down" />,
@@ -222,6 +230,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onChange,
     onSubmit,
     disabled,
+    submitDisabled,
     placeholder,
     pulseSubmit,
   }: {
@@ -229,6 +238,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onChange: (v: string) => void;
     onSubmit: (e: any) => void;
     disabled: boolean;
+    submitDisabled?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
   }) => (
@@ -248,7 +258,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
       />
       <button
         type="submit"
-        disabled={disabled}
+        disabled={disabled || !!submitDisabled}
         data-testid="chat-submit-button"
         data-pulsing={pulseSubmit ? "true" : "false"}
       >
@@ -399,15 +409,17 @@ vi.mock("@/stores/traffic-log-store", () => ({
   },
 }));
 
-// Mock shared app state
+// Mock shared app state (mutate `connectionStatus` in tests when needed)
+const mockSharedAppState = {
+  servers: {
+    "test-server": { connectionStatus: "connected" },
+  } as Record<string, { connectionStatus: string }>,
+  workspaces: {},
+  activeWorkspaceId: "default",
+};
+
 vi.mock("@/state/app-state-context", () => ({
-  useSharedAppState: () => ({
-    servers: {
-      "test-server": { connectionStatus: "connected" },
-    },
-    workspaces: {},
-    activeWorkspaceId: "default",
-  }),
+  useSharedAppState: () => mockSharedAppState,
 }));
 
 // Mock chat-helpers
@@ -433,6 +445,7 @@ describe("PlaygroundMain", () => {
     capturedChatSessionOptions = null;
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
+    mockSharedAppState.servers["test-server"] = { connectionStatus: "connected" };
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -648,6 +661,83 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("chat-input-field")).toHaveValue(
         "Draw me an MCP architecture diagram",
       );
+    });
+
+    it("types initialInput with a typewriter when initialInputTypewriter is true", () => {
+      vi.useFakeTimers();
+      const full = "Draw me an MCP architecture diagram";
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={false}
+          initialInput={full}
+          initialInputTypewriter={true}
+        />,
+      );
+
+      const field = screen.getByTestId("chat-input-field");
+      expect(field).toHaveValue("");
+
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      expect(field).toHaveValue("D");
+
+      act(() => {
+        vi.advanceTimersByTime(20 * full.length);
+      });
+      expect(field).toHaveValue(full);
+
+      vi.useRealTimers();
+    });
+
+    it("disables submit when blockSubmitUntilServerConnected and server is not connected", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connecting",
+      };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Draw me an MCP architecture diagram"
+          initialInputTypewriter={false}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
+    });
+
+    it("enables submit after server connects when blockSubmitUntilServerConnected is true", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connecting",
+      };
+
+      const { rerender } = render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Hello"
+          initialInputTypewriter={false}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
+
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connected",
+      };
+      rerender(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Hello"
+          initialInputTypewriter={false}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
     });
 
     it("restores the footer composer after the first guided message even without an onboarding callback", () => {

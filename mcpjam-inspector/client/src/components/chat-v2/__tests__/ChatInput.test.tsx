@@ -262,6 +262,45 @@ describe("ChatInput", () => {
         expect(submitButton).not.toBeDisabled();
       }
     });
+
+    it("disables submit when submitDisabled is true even if value has content", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+        />,
+      );
+
+      const buttons = screen.getAllByRole("button");
+      const submitButton = buttons.find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      expect(submitButton).toBeDefined();
+      expect(submitButton).toBeDisabled();
+    });
+
+    it("does not request form submit on Enter when submitDisabled is true", () => {
+      const requestSubmitSpy = vi
+        .spyOn(HTMLFormElement.prototype, "requestSubmit")
+        .mockImplementation(() => {});
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+          onSubmit={vi.fn((e) => e.preventDefault())}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText("Type your message...");
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+      expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      requestSubmitSpy.mockRestore();
+    });
   });
 
   describe("disabled state", () => {

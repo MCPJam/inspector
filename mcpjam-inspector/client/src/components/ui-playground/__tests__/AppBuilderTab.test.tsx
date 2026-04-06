@@ -190,12 +190,16 @@ vi.mock("../PlaygroundMain", () => ({
     isExecuting,
     showPostConnectGuide,
     initialInput,
+    initialInputTypewriter,
+    blockSubmitUntilServerConnected,
     onFirstMessageSent,
   }: {
     serverName: string;
     isExecuting: boolean;
     showPostConnectGuide?: boolean;
     initialInput?: string;
+    initialInputTypewriter?: boolean;
+    blockSubmitUntilServerConnected?: boolean;
     onFirstMessageSent?: () => void;
   }) => (
     <div data-testid="playground-main">
@@ -204,6 +208,12 @@ vi.mock("../PlaygroundMain", () => ({
       {initialInput && (
         <span data-testid="guided-initial-input">{initialInput}</span>
       )}
+      <span data-testid="initial-input-typewriter">
+        {initialInputTypewriter ? "true" : "false"}
+      </span>
+      <span data-testid="block-submit-until-connected">
+        {blockSubmitUntilServerConnected ? "true" : "false"}
+      </span>
       {showPostConnectGuide && (
         <div data-testid="post-connect-guide">Post Connect Guide</div>
       )}
@@ -616,6 +626,30 @@ describe("AppBuilderTab", () => {
 
       expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
         false,
+      );
+    });
+
+    it("passes the seeded prompt and typewriter flags while Excalidraw is still connecting", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isGuidedPostConnect = false;
+      mockOnboarding.isBootstrappingFirstRunConnection = false;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("guided-initial-input")).toHaveTextContent(
+          "Draw me an MCP architecture diagram",
+        );
+      });
+
+      expect(screen.getByTestId("initial-input-typewriter")).toHaveTextContent(
+        "true",
+      );
+      expect(screen.getByTestId("block-submit-until-connected")).toHaveTextContent(
+        "true",
       );
     });
 
