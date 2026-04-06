@@ -35,7 +35,10 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 import { useConvexAuth } from "convex/react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
@@ -525,6 +528,7 @@ export function MCPSidebar({
     return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
   });
   const learnMore = useLearnMore();
+  const { state, isMobile } = useSidebar();
 
   // Get list of connected server names
   const connectedServerNames = useMemo(() => {
@@ -636,20 +640,71 @@ export function MCPSidebar({
     <>
       <Sidebar collapsible="icon" {...props}>
         <SidebarHeader>
-          <button
-            onClick={() => handleNavClick("#servers")}
-            className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
+          <div
+            className={cn(
+              "no-drag",
+              state === "collapsed" && !isMobile && "flex justify-center px-0",
+            )}
           >
-            <img
-              src={
-                themeMode === "dark"
-                  ? "/mcp_jam_dark.png"
-                  : "/mcp_jam_light.png"
-              }
-              alt="MCP Jam"
-              className="h-4 w-auto"
-            />
-          </button>
+            {isMobile ? (
+              <button
+                type="button"
+                onClick={() => handleNavClick("#servers")}
+                className="flex w-full cursor-pointer items-center justify-center px-4 py-4 transition-opacity hover:opacity-80"
+              >
+                <img
+                  src={
+                    themeMode === "dark"
+                      ? "/mcp_jam_dark.png"
+                      : "/mcp_jam_light.png"
+                  }
+                  alt="MCP Jam"
+                  className="h-4 w-auto"
+                />
+              </button>
+            ) : state === "expanded" ? (
+              <div className="relative isolate w-full">
+                <button
+                  type="button"
+                  onClick={() => handleNavClick("#servers")}
+                  className={cn(
+                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-3 transition-opacity duration-200",
+                    /* Reserve space for the collapse control so the logo stays visually centered and
+                       clicks on the logo never compete with the invisible hit target. */
+                    "px-2 pr-10 hover:opacity-80",
+                  )}
+                >
+                  <img
+                    src={
+                      themeMode === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCP Jam"
+                    className="h-4 w-auto"
+                  />
+                </button>
+                <SidebarTrigger
+                  className={cn(
+                    "absolute top-1/2 right-0 z-20 size-7 -translate-y-1/2 shrink-0",
+                    /* pointer-events must stay enabled: if we use pointer-events-none until hover,
+                       a click can lose :hover before mouseup/click (Electron / fast moves) and the
+                       event never reaches this button. Touch has no hover — use coarse-pointer rule. */
+                    "pointer-events-auto opacity-0 transition-opacity duration-200",
+                    /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
+                    "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
+                    "[@media(hover:none)]:opacity-100",
+                  )}
+                  aria-label="Collapse sidebar"
+                />
+              </div>
+            ) : (
+              <SidebarTrigger
+                className="size-7 shrink-0"
+                aria-label="Expand sidebar"
+              />
+            )}
+          </div>
           {updateReady && (
             <div className="px-2 pb-2">
               <Button

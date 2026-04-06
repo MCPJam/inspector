@@ -178,19 +178,24 @@ vi.mock("@/hooks/use-json-rpc-panel", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useWorkspaces", () => ({
-  useWorkspaceServers: () => ({
-    serversRecord: {},
-  }),
-  useWorkspaceQueries: () => ({
-    allWorkspaces: undefined,
-    workspaces: [],
-    sortedWorkspaces: [],
-    isLoading: false,
-    hasWorkspaces: false,
-    hasAnyWorkspaces: false,
-  }),
-}));
+vi.mock("@/hooks/useWorkspaces", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/useWorkspaces")>();
+  return {
+    ...actual,
+    useWorkspaceServers: () => ({
+      serversRecord: {},
+    }),
+    useWorkspaceQueries: () => ({
+      allWorkspaces: undefined,
+      workspaces: [],
+      sortedWorkspaces: [],
+      isLoading: false,
+      hasWorkspaces: false,
+      hasAnyWorkspaces: false,
+    }),
+  };
+});
 
 vi.mock("../connection/ServerConnectionCard", () => ({
   ServerConnectionCard: ({
