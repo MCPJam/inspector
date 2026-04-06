@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 
 const mockMessageView = vi.fn();
+const mockThinkingIndicator = vi.fn();
+const mockFullscreenChatOverlay = vi.fn();
 
 // Mock child components
 vi.mock("../thread/message-view", () => ({
@@ -25,15 +27,23 @@ vi.mock("../thread/message-view", () => ({
 }));
 
 vi.mock("../shared/thinking-indicator", () => ({
-  ThinkingIndicator: ({ model }: { model: ModelDefinition }) => (
-    <div data-testid="thinking-indicator">Thinking... ({model.name})</div>
-  ),
+  ThinkingIndicator: ({
+    model,
+    variant,
+  }: {
+    model: ModelDefinition;
+    variant?: string;
+  }) => {
+    mockThinkingIndicator({ model, variant });
+    return <div data-testid="thinking-indicator">Thinking... ({model.name})</div>;
+  },
 }));
 
 vi.mock("../fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: () => (
-    <div data-testid="fullscreen-chat-overlay">Fullscreen Overlay</div>
-  ),
+  FullscreenChatOverlay: (props: { loadingIndicatorVariant?: string }) => {
+    mockFullscreenChatOverlay(props);
+    return <div data-testid="fullscreen-chat-overlay">Fullscreen Overlay</div>;
+  },
 }));
 
 describe("Thread", () => {
@@ -242,6 +252,22 @@ describe("Thread", () => {
         "GPT-4",
       );
     });
+
+    it("passes the selected loading indicator variant to the inline indicator", () => {
+      render(
+        <Thread
+          {...defaultProps}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "claude-mark",
+        }),
+      );
+    });
   });
 
   describe("PiP functionality", () => {
@@ -265,6 +291,31 @@ describe("Thread", () => {
       expect(
         screen.queryByTestId("fullscreen-chat-overlay"),
       ).not.toBeInTheDocument();
+    });
+
+    it("passes the selected loading indicator variant to the fullscreen overlay", () => {
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          enableFullscreenChatOverlay={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      act(() => {
+        const firstMessageProps = mockMessageView.mock.calls[0]?.[0];
+        firstMessageProps?.onRequestFullscreen("tool-1");
+      });
+
+      expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
+      expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          loadingIndicatorVariant: "claude-mark",
+        }),
+      );
     });
   });
 

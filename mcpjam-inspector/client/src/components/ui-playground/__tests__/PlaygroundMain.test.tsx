@@ -16,6 +16,9 @@ vi.mock("framer-motion", async (importOriginal) => {
   };
 });
 
+const mockThread = vi.fn();
+const mockFullscreenChatOverlay = vi.fn();
+
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
   ArrowDown: () => <span data-testid="icon-arrow-down" />,
@@ -213,14 +216,21 @@ vi.mock("@/components/chat-v2/thread", () => ({
   Thread: ({
     messages,
     isLoading,
+    loadingIndicatorVariant,
   }: {
     messages: any[];
     isLoading: boolean;
+    loadingIndicatorVariant?: string;
   }) => (
-    <div data-testid="thread">
-      <span data-testid="message-count">{messages.length}</span>
-      {isLoading && <span data-testid="thread-loading">Loading...</span>}
-    </div>
+    (() => {
+      mockThread({ messages, isLoading, loadingIndicatorVariant });
+      return (
+        <div data-testid="thread">
+          <span data-testid="message-count">{messages.length}</span>
+          {isLoading && <span data-testid="thread-loading">Loading...</span>}
+        </div>
+      );
+    })()
   ),
 }));
 
@@ -300,9 +310,10 @@ vi.mock(
 
 // Mock FullscreenChatOverlay
 vi.mock("@/components/chat-v2/fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: () => (
-    <div data-testid="fullscreen-overlay">Fullscreen Overlay</div>
-  ),
+  FullscreenChatOverlay: (props: { loadingIndicatorVariant?: string }) => {
+    mockFullscreenChatOverlay(props);
+    return <div data-testid="fullscreen-overlay">Fullscreen Overlay</div>;
+  },
 }));
 
 // Mock MCPJamFreeModelsPrompt
@@ -458,6 +469,8 @@ describe("PlaygroundMain", () => {
       submitBlocked: false,
       isStreaming: false,
     });
+    mockThread.mockClear();
+    mockFullscreenChatOverlay.mockClear();
   });
 
   describe("rendering", () => {
@@ -480,6 +493,23 @@ describe("PlaygroundMain", () => {
       expect(
         screen.getByTestId("display-context-theme-toggle"),
       ).toBeInTheDocument();
+    });
+
+    it("passes the requested loading indicator variant to Thread", () => {
+      mockUseChatSession.messages = [{ id: "m1", role: "assistant", parts: [] }];
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          loadingIndicatorVariant="chatgpt-dot"
+        />,
+      );
+
+      expect(mockThread).toHaveBeenCalledWith(
+        expect.objectContaining({
+          loadingIndicatorVariant: "chatgpt-dot",
+        }),
+      );
     });
   });
 

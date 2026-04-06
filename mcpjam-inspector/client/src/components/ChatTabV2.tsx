@@ -15,6 +15,7 @@ import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
 import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { usePostHog } from "posthog-js/react";
@@ -61,6 +62,7 @@ interface ChatTabProps {
   initialTemperature?: number;
   initialRequireToolApproval?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
   /** When true, blocks sending until sandbox onboarding/OAuth completes. */
   sandboxComposerBlocked?: boolean;
@@ -108,6 +110,7 @@ export function ChatTabV2({
   initialTemperature,
   initialRequireToolApproval,
   reasoningDisplayMode = "inline",
+  loadingIndicatorVariant = "default",
   onOAuthRequired,
   sandboxComposerBlocked = false,
   sandboxComposerBlockedReason,
@@ -734,6 +737,7 @@ export function ChatTabV2({
                       fullscreenChatDisabled={inputDisabled}
                       onToolApprovalResponse={addToolApprovalResponse}
                       minimalMode={minimalMode}
+                      loadingIndicatorVariant={loadingIndicatorVariant}
                       reasoningDisplayMode={reasoningDisplayMode}
                     />
                   </StickToBottom.Content>

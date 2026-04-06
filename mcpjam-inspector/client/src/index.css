@@ -598,6 +598,26 @@
   }
 }
 
+@keyframes thinking-dot-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.25);
+  }
+}
+
+.animate-thinking-dot-pulse {
+  animation: thinking-dot-pulse 1.25s ease-in-out infinite;
+  backface-visibility: hidden;
+  transform: translateZ(0);
+  transform-origin: 50% center;
+  -webkit-font-smoothing: subpixel-antialiased;
+  will-change: transform;
+}
+
 @keyframes progress-indeterminate {
   0% {
     transform: translateX(-100%);

@@ -1,64 +1,24 @@
-import { MessageCircle } from "lucide-react";
-
 import { ModelDefinition } from "@/shared/types";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
-import { getAssistantAvatarDescriptor } from "./assistant-avatar";
+  LoadingIndicatorContent,
+  type LoadingIndicatorVariant,
+} from "./loading-indicator-content";
 
-export function ThinkingIndicator({ model }: { model: ModelDefinition }) {
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
-  const assistantAvatar = getAssistantAvatarDescriptor({
-    model,
-    themeMode: sandboxHostTheme ?? themeMode,
-    sandboxHostStyle,
-  });
-
+export function ThinkingIndicator({
+  model,
+  variant = "default",
+}: {
+  model: ModelDefinition;
+  variant?: LoadingIndicatorVariant;
+}) {
   return (
     <article
-      className="flex w-full gap-4 text-sm leading-6 text-muted-foreground"
+      className="w-full text-sm leading-6 text-muted-foreground"
       aria-live="polite"
       aria-busy="true"
     >
-      <div
-        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
-        aria-label={assistantAvatar.ariaLabel}
-      >
-        {assistantAvatar.logoSrc ? (
-          <img
-            src={assistantAvatar.logoSrc}
-            alt={assistantAvatar.logoAlt ?? ""}
-            className="h-4 w-4 object-contain"
-          />
-        ) : (
-          <MessageCircle
-            className="h-4 w-4 text-muted-foreground"
-            aria-hidden
-          />
-        )}
-      </div>
-
-      <div className="flex-1 min-w-0">
-        <div className="inline-flex items-center gap-2 text-muted-foreground/80">
-          <span className="text-sm italic">
-            Thinking
-            <span className="inline-flex">
-              <span className="animate-[blink_1.4s_ease-in-out_infinite]">
-                .
-              </span>
-              <span className="animate-[blink_1.4s_ease-in-out_0.2s_infinite]">
-                .
-              </span>
-              <span className="animate-[blink_1.4s_ease-in-out_0.4s_infinite]">
-                .
-              </span>
-            </span>
-          </span>
-        </div>
+      <div className="inline-flex items-center gap-2 text-muted-foreground/80">
+        <LoadingIndicatorContent variant={variant} />
       </div>
     </article>
   );

@@ -6,6 +6,10 @@ import { ArrowUp, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
+import {
+  LoadingIndicatorContent,
+  type LoadingIndicatorVariant,
+} from "@/components/chat-v2/shared/loading-indicator-content";
 
 function getMessagePreviewText(message: UIMessage): string {
   const parts = Array.isArray(message?.parts) ? message.parts : [];
@@ -44,22 +48,15 @@ function MessageBubble({ text, isUser }: { text: string; isUser: boolean }) {
   );
 }
 
-function ThinkingRow() {
+function ThinkingRow({
+  variant = "default",
+}: {
+  variant?: LoadingIndicatorVariant;
+}) {
   return (
     <div className="flex w-full justify-start">
       <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
-        <span className="italic">
-          Thinking
-          <span className="inline-flex">
-            <span className="animate-[blink_1.4s_ease-in-out_infinite]">.</span>
-            <span className="animate-[blink_1.4s_ease-in-out_0.2s_infinite]">
-              .
-            </span>
-            <span className="animate-[blink_1.4s_ease-in-out_0.4s_infinite]">
-              .
-            </span>
-          </span>
-        </span>
+        <LoadingIndicatorContent variant={variant} />
       </div>
     </div>
   );
@@ -98,10 +95,12 @@ function MessageList({
   messages,
   isThinking,
   open,
+  loadingIndicatorVariant = "default",
 }: {
   messages: UIMessage[];
   isThinking: boolean;
   open: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -134,7 +133,7 @@ function MessageList({
             />
           );
         })}
-        {isThinking && <ThinkingRow />}
+        {isThinking && <ThinkingRow variant={loadingIndicatorVariant} />}
         <div ref={bottomRef} />
       </div>
     </div>
@@ -224,6 +223,7 @@ export function FullscreenChatOverlay({
   disabled,
   canSend,
   isThinking,
+  loadingIndicatorVariant = "default",
   onSend,
 }: {
   messages: UIMessage[];
@@ -235,6 +235,7 @@ export function FullscreenChatOverlay({
   disabled: boolean;
   canSend: boolean;
   isThinking: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   onSend: () => void;
 }) {
   return (
@@ -249,6 +250,7 @@ export function FullscreenChatOverlay({
             messages={messages}
             isThinking={isThinking}
             open={open}
+            loadingIndicatorVariant={loadingIndicatorVariant}
           />
           <Composer
             value={input}

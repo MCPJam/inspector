@@ -3,7 +3,6 @@ import { render, screen } from "@testing-library/react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
 
 // Mock PartSwitch
 vi.mock("../thread/part-switch", () => ({
@@ -24,16 +23,6 @@ vi.mock("../thread/user-message-bubble", () => ({
 // Mock thread-helpers
 vi.mock("../thread/thread-helpers", () => ({
   groupAssistantPartsIntoSteps: (parts: any[]) => [parts],
-}));
-
-// Mock preferences store
-vi.mock("@/stores/preferences/preferences-provider", () => ({
-  usePreferencesStore: () => "light",
-}));
-
-// Mock chat-helpers
-vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
-  getProviderLogoFromModel: () => "/provider-logo.png",
 }));
 
 describe("MessageView", () => {
@@ -145,20 +134,16 @@ describe("MessageView", () => {
       );
     });
 
-    it("renders the sandbox host logo for assistant avatars (not the model provider)", () => {
+    it("does not render a leading assistant avatar", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hello" }],
       });
 
-      render(
-        <SandboxHostStyleProvider value="claude">
-          <MessageView {...defaultProps} message={message} />
-        </SandboxHostStyleProvider>,
-      );
+      render(<MessageView {...defaultProps} message={message} />);
 
-      expect(screen.getByLabelText("Claude assistant")).toBeInTheDocument();
-      expect(screen.getByRole("img")).toHaveAttribute("alt", "Claude logo");
+      expect(screen.queryByRole("img")).not.toBeInTheDocument();
+      expect(screen.queryByLabelText("Assistant response")).not.toBeInTheDocument();
     });
   });
 

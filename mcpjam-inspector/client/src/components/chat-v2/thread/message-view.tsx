@@ -1,22 +1,15 @@
 import { UIMessage } from "@ai-sdk/react";
-import { MessageCircle } from "lucide-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import {
-  useSandboxHostStyle,
-  useSandboxHostTheme,
-} from "@/contexts/sandbox-host-style-context";
 import { groupAssistantPartsIntoSteps } from "./thread-helpers";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
-import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
 
 export function MessageView({
   message,
@@ -71,14 +64,6 @@ export function MessageView({
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
 }) {
-  const themeMode = usePreferencesStore((s) => s.themeMode);
-  const sandboxHostStyle = useSandboxHostStyle();
-  const sandboxHostTheme = useSandboxHostTheme();
-  const assistantAvatar = getAssistantAvatarDescriptor({
-    model,
-    themeMode: sandboxHostTheme ?? themeMode,
-    sandboxHostStyle,
-  });
   // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
   // Hide model context messages (these are internal and sent to the model)
@@ -167,25 +152,7 @@ export function MessageView({
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
   return (
-    <article className="flex gap-4 w-full">
-      <div
-        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
-        aria-label={assistantAvatar.ariaLabel}
-      >
-        {assistantAvatar.logoSrc ? (
-          <img
-            src={assistantAvatar.logoSrc}
-            alt={assistantAvatar.logoAlt ?? ""}
-            className="h-4 w-4 object-contain"
-          />
-        ) : (
-          <MessageCircle
-            className="h-4 w-4 text-muted-foreground"
-            aria-hidden
-          />
-        )}
-      </div>
-
+    <article className="w-full">
       <div className="flex-1 min-w-0 space-y-6 text-sm leading-6">
         {steps.map((stepParts, sIdx) => (
           <div key={sIdx} className="space-y-3">

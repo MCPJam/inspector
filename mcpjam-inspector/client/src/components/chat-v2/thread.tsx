@@ -14,6 +14,7 @@ import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicato
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 
@@ -44,6 +45,7 @@ interface ThreadProps {
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   reasoningDisplayMode?: ReasoningDisplayMode;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
@@ -72,6 +74,7 @@ export function Thread({
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
+  loadingIndicatorVariant = "default",
   reasoningDisplayMode = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
@@ -169,7 +172,7 @@ export function Thread({
       />
       {isLoading && (
         <div className="max-w-4xl mx-auto px-4">
-          <ThinkingIndicator model={model} />
+          <ThinkingIndicator model={model} variant={loadingIndicatorVariant} />
         </div>
       )}
 
@@ -184,6 +187,7 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
+          loadingIndicatorVariant={loadingIndicatorVariant}
           onSend={() => {
             if (!canSendFullscreenChat) return;
             const text = fullscreenChatInput;
