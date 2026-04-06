@@ -1298,6 +1298,36 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("ci-evals-tab")).not.toBeInTheDocument();
   });
 
+  it("waits on ci-evals while the evaluate-runs flag is still loading", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#/ci-evals");
+    mockHandleOAuthCallback.mockReset();
+
+    const evaluateRunsState: { value: boolean | undefined } = {
+      value: undefined,
+    };
+    mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
+      flag === "evaluate-runs" ? evaluateRunsState.value : false,
+    );
+
+    const { rerender } = render(<App />);
+
+    expect(window.location.hash).toBe("#/ci-evals");
+    expect(screen.getByText("Loading Runs...")).toBeInTheDocument();
+    expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
+
+    evaluateRunsState.value = true;
+    rerender(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ci-evals-tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#/ci-evals");
+    expect(screen.queryByText("Loading Runs...")).not.toBeInTheDocument();
+  });
+
   it("redirects ci-evals to Playground when evaluate-runs is disabled", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();

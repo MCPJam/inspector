@@ -1038,9 +1038,18 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (activeTab === "ci-evals" && evaluateRunsEnabled !== true) {
-      replaceHash(withTestingSurface(buildEvalsHash({ type: "list" })));
-    } else if (activeTabBillingLocked && activeTabBillingFeature) {
+    if (activeTab === "ci-evals") {
+      if (evaluateRunsEnabled === undefined) {
+        return;
+      }
+
+      if (evaluateRunsEnabled !== true) {
+        replaceHash(withTestingSurface(buildEvalsHash({ type: "list" })));
+        return;
+      }
+    }
+
+    if (activeTabBillingLocked && activeTabBillingFeature) {
       toast.error(
         `${formatBillingFeatureName(activeTabBillingFeature)} is not included in the ${formatPlanName(
           shellBillingStatus?.plan,
@@ -1355,31 +1364,41 @@ export default function App() {
               />
             ))}
           {activeTab === "ci-evals" &&
-            evaluateRunsEnabled === true &&
-            (billingUiEnabled &&
-            activeTabBillingLocked &&
-            activeTabBillingFeature ? (
-              <BillingUpsellGate
-                feature={activeTabBillingFeature}
-                currentPlan={
-                  shellBillingStatus?.effectivePlan ??
-                  shellBillingStatus?.plan ??
-                  "free"
-                }
-                upgradePlan={upgradePlanForActiveTab}
-                canManageBilling={shellBillingStatus?.canManageBilling ?? false}
-                onNavigateToBilling={() => {
-                  if (billingOrganizationId) {
-                    applyNavigation(
-                      `organizations/${billingOrganizationId}/billing`,
-                      { updateHash: true },
-                    );
+            (evaluateRunsEnabled === undefined ? (
+              <div className="flex h-full min-h-[320px] items-center justify-center">
+                <div className="text-center">
+                  <Loader2 className="mx-auto h-8 w-8 animate-spin text-primary" />
+                  <p className="mt-4 text-sm text-muted-foreground">
+                    Loading Runs...
+                  </p>
+                </div>
+              </div>
+            ) : evaluateRunsEnabled === true ? (
+              billingUiEnabled &&
+              activeTabBillingLocked &&
+              activeTabBillingFeature ? (
+                <BillingUpsellGate
+                  feature={activeTabBillingFeature}
+                  currentPlan={
+                    shellBillingStatus?.effectivePlan ??
+                    shellBillingStatus?.plan ??
+                    "free"
                   }
-                }}
-              />
-            ) : (
-              <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
-            ))}
+                  upgradePlan={upgradePlanForActiveTab}
+                  canManageBilling={shellBillingStatus?.canManageBilling ?? false}
+                  onNavigateToBilling={() => {
+                    if (billingOrganizationId) {
+                      applyNavigation(
+                        `organizations/${billingOrganizationId}/billing`,
+                        { updateHash: true },
+                      );
+                    }
+                  }}
+                />
+              ) : (
+                <CiEvalsTab convexWorkspaceId={convexWorkspaceId} />
+              )
+            ) : null)}
           {activeTab === "views" && (
             <ViewsTab selectedServer={appState.selectedServer} />
           )}
