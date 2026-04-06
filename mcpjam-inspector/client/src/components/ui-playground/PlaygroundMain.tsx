@@ -944,7 +944,7 @@ export function PlaygroundMain({
                           className={cn(
                             "mt-1.5 ml-auto max-w-[min(100%,22rem)] text-right text-xs leading-snug",
                             "rounded-md border border-orange-500/65 px-3 py-2",
-                            "shadow-[0_0_16px_rgba(249,115,22,0.2)]",
+                            "shadow-[0_0_10px_rgba(249,115,22,0.1)]",
                             "animate-in fade-in slide-in-from-bottom-2 duration-300 motion-reduce:animate-none",
                             hostStyle === "chatgpt"
                               ? effectiveThreadTheme === "dark"
