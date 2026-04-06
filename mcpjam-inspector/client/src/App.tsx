@@ -1354,7 +1354,8 @@ export default function App() {
                 workspaceId={convexWorkspaceId}
               />
             ))}
-          {activeTab === "ci-evals" && evaluateRunsEnabled === true &&
+          {activeTab === "ci-evals" &&
+            evaluateRunsEnabled === true &&
             (billingUiEnabled &&
             activeTabBillingLocked &&
             activeTabBillingFeature ? (

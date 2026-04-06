@@ -594,7 +594,9 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                 <div className="flex h-full items-center justify-center">
                   <div className="text-center">
                     <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
-                    <p className="mt-4 text-muted-foreground">Loading runs...</p>
+                    <p className="mt-4 text-muted-foreground">
+                      Loading runs...
+                    </p>
                   </div>
                 </div>
               ) : !hasVisibleSuites ? (
