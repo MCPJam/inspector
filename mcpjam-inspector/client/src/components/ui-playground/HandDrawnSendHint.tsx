@@ -1,7 +1,26 @@
-import { useReducedMotion } from "framer-motion";
+import { useMemo } from "react";
 import { cn } from "@/lib/utils";
+import arrow8Svg from "./arrow-8.svg?raw";
 
 const HINT_LABEL = "Try this prompt with a demo MCP server";
+
+const hintFontStyle = {
+  fontFamily: "'Caveat', cursive",
+  fontWeight: 600 as const,
+};
+
+function arrow8Markup(inkColor: string): { __html: string } {
+  const svgClass = cn(
+    "mr-0 -mb-1 block h-auto w-[5.25rem] max-w-full -translate-x-6 translate-y-1.5 overflow-visible",
+    inkColor,
+  );
+  let html = arrow8Svg.trim();
+  html = html.replace(
+    /^<svg\s+/,
+    `<svg class="${svgClass}" aria-hidden="true" `,
+  );
+  return { __html: html };
+}
 
 interface HandDrawnSendHintProps {
   hostStyle?: string;
@@ -9,19 +28,13 @@ interface HandDrawnSendHintProps {
 }
 
 /**
- * Whimsical hand-drawn arrow + handwriting annotation that nudges
- * first-time users toward the Send button. Replaces the old orange
- * modal + bouncing ArrowUp icon.
- *
- * The SVG arrow draws itself on via stroke-dashoffset animation,
- * then the text fades in with a slight upward slide.
+ * Whimsical arrow + handwriting annotation that nudges first-time users
+ * toward the Send button. Arrow graphic is `arrow-8.svg`.
  */
 export function HandDrawnSendHint({
   hostStyle,
   theme = "light",
 }: HandDrawnSendHintProps) {
-  const prefersReducedMotion = useReducedMotion();
-
   const inkColor =
     hostStyle === "chatgpt"
       ? theme === "dark"
@@ -40,68 +53,30 @@ export function HandDrawnSendHint({
         ? "text-[#d4c4a8]"
         : "text-[#5a4f42]";
 
+  const arrowHtml = useMemo(() => arrow8Markup(inkColor), [inkColor]);
+
   return (
     <div
       className="relative mt-1 flex w-full justify-end px-4"
       role="note"
       aria-live="polite"
-      data-testid="app-builder-send-nux-hint"
     >
-      <div className="flex flex-col items-end gap-0">
-        {/* Hand-drawn arrow SVG — curves upward toward the Send button */}
-        <svg
-          width="120"
-          height="72"
-          viewBox="0 0 120 72"
-          fill="none"
-          className={cn("mr-3 -mb-1", inkColor)}
+      <div
+        className="flex flex-col items-end gap-0"
+        data-testid="app-builder-send-nux-hint"
+      >
+        <span
+          className="inline-block"
           aria-hidden
-        >
-          {/* Wobbly arrow body with a playful loop in the middle */}
-          <path
-            d="M10 66 C 18 56, 26 44, 36 38 C 42 34, 48 28, 46 34 C 44 40, 36 40, 38 34 C 40 28, 52 20, 64 16 C 78 10, 90 8, 102 6"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            fill="none"
-            className={cn(
-              !prefersReducedMotion && "hand-draw-path hand-draw-path-body",
-            )}
-            pathLength="1"
-          />
-          {/* Arrowhead — two short hand-drawn strokes */}
-          <path
-            d="M95 1 Q 99 3, 102 6"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            fill="none"
-            className={cn(
-              !prefersReducedMotion && "hand-draw-path hand-draw-path-head",
-            )}
-            pathLength="1"
-          />
-          <path
-            d="M96 13 Q 99 10, 102 6"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            fill="none"
-            className={cn(
-              !prefersReducedMotion && "hand-draw-path hand-draw-path-head",
-            )}
-            pathLength="1"
-          />
-        </svg>
+          dangerouslySetInnerHTML={arrowHtml}
+        />
 
-        {/* Handwriting label */}
         <p
           className={cn(
-            "mr-6 max-w-[14rem] text-right text-[15px] leading-snug select-none",
+            "mr-6 mt-2 max-w-none -translate-x-6 whitespace-nowrap text-right text-[19px] leading-snug select-none",
             textColor,
-            !prefersReducedMotion && "hand-draw-text-appear",
           )}
-          style={{ fontFamily: "'Caveat', cursive", fontWeight: 600 }}
+          style={hintFontStyle}
         >
           {HINT_LABEL}
         </p>

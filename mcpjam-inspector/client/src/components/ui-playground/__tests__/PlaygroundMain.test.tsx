@@ -764,7 +764,7 @@ describe("PlaygroundMain", () => {
       expect(
         chatInput.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
-      expect(screen.getByTestId("icon-arrow-up")).toBeInTheDocument();
+      expect(hint.querySelector("svg")).toBeTruthy();
     });
 
     it("keeps App Builder send NUX hint visible after server connects", () => {

@@ -813,12 +813,23 @@
 }
 
 .hand-draw-path-body {
-  animation: hand-draw-stroke 0.8s cubic-bezier(0.33, 1, 0.68, 1) forwards;
+  animation: hand-draw-stroke 1s cubic-bezier(0.33, 1, 0.68, 1) forwards;
 }
 
-.hand-draw-path-head {
-  animation: hand-draw-stroke 0.25s cubic-bezier(0.33, 1, 0.68, 1) 0.7s
+/* Filled arrowhead pops in after the stroke finishes drawing */
+.hand-draw-arrowhead-fill {
+  opacity: 0;
+  animation: hand-draw-arrowhead-fade 0.26s cubic-bezier(0.33, 1, 0.68, 1) 0.72s
     forwards;
+}
+
+@keyframes hand-draw-arrowhead-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* Hand-drawn NUX arrow: text fade-in */
@@ -842,6 +853,10 @@
 @media (prefers-reduced-motion: reduce) {
   .hand-draw-path {
     stroke-dashoffset: 0;
+    animation: none;
+  }
+  .hand-draw-arrowhead-fill {
+    opacity: 1;
     animation: none;
   }
   .hand-draw-text-appear {
