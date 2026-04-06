@@ -320,7 +320,10 @@ export function LoggerView({
                     <DropdownMenuRadioItem value="all" className="text-xs">
                       All
                     </DropdownMenuRadioItem>
-                    <DropdownMenuRadioItem value="mcp-server" className="text-xs">
+                    <DropdownMenuRadioItem
+                      value="mcp-server"
+                      className="text-xs"
+                    >
                       Server
                     </DropdownMenuRadioItem>
                     <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
@@ -383,7 +386,9 @@ export function LoggerView({
                                           res?.error || "Failed to update",
                                         );
                                     })
-                                    .catch(() => toast.error("Failed to update"));
+                                    .catch(() =>
+                                      toast.error("Failed to update"),
+                                    );
                                 }}
                               >
                                 <SelectTrigger className="h-6 w-[100px] text-[10px]">

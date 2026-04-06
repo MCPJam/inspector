@@ -56,8 +56,7 @@ interface AppBuilderTabProps {
   onOnboardingChange?: (isOnboarding: boolean) => void;
 }
 
-const APP_BUILDER_FIRST_RUN_PROMPT =
-  "Draw me an MCP architecture diagram";
+const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
 
 const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
 
@@ -315,10 +314,7 @@ export function AppBuilderTab({
               collapsedSize={0}
               onCollapse={() => setSidebarVisible(false)}
             >
-              <motion.div
-                className="h-full min-w-0"
-                {...sidebarMotionProps}
-              >
+              <motion.div className="h-full min-w-0" {...sidebarMotionProps}>
                 <PlaygroundLeft
                   tools={tools}
                   selectedToolName={selectedTool}

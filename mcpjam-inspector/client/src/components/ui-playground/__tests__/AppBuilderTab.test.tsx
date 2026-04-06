@@ -516,12 +516,16 @@ describe("AppBuilderTab", () => {
       );
 
       await waitFor(() => {
-        expect(screen.getByTestId("simulate-panel-collapse")).toBeInTheDocument();
+        expect(
+          screen.getByTestId("simulate-panel-collapse"),
+        ).toBeInTheDocument();
       });
 
       fireEvent.click(screen.getByTestId("simulate-panel-collapse"));
 
-      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(false);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        false,
+      );
     });
   });
 
@@ -590,7 +594,9 @@ describe("AppBuilderTab", () => {
       );
 
       expect(screen.getByTestId("playground-main")).toBeInTheDocument();
-      expect(screen.queryByTestId("app-builder-skeleton")).not.toBeInTheDocument();
+      expect(
+        screen.queryByTestId("app-builder-skeleton"),
+      ).not.toBeInTheDocument();
     });
 
     it("does not render the post-connect guide shell (NUX uses prefilled prompt only)", async () => {
@@ -648,9 +654,9 @@ describe("AppBuilderTab", () => {
       expect(screen.getByTestId("initial-input-typewriter")).toHaveTextContent(
         "true",
       );
-      expect(screen.getByTestId("block-submit-until-connected")).toHaveTextContent(
-        "true",
-      );
+      expect(
+        screen.getByTestId("block-submit-until-connected"),
+      ).toHaveTextContent("true");
     });
 
     it("collapses tools sidebar during connect before isGuidedPostConnect is true", async () => {
@@ -686,7 +692,9 @@ describe("AppBuilderTab", () => {
 
       fireEvent.click(screen.getByTestId("first-message-sent"));
 
-      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(true);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        true,
+      );
       expect(mockOnboarding.completeOnboarding).toHaveBeenCalledTimes(1);
     });
 
@@ -698,7 +706,9 @@ describe("AppBuilderTab", () => {
       );
 
       expect(onOnboardingChange).toHaveBeenCalledWith(false);
-      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(true);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        true,
+      );
       expect(mockSetMcpSidebarOpen).toHaveBeenCalledWith(true);
 
       unmount();

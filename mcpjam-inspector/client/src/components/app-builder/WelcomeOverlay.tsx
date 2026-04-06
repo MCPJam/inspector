@@ -83,7 +83,7 @@ export function WelcomeOverlay({
                   This is your playground for MCP.
                 </p>
                 <p className="text-sm leading-6 text-muted-foreground">
-                Test prompts, inspect tools, and debug AI-powered apps.
+                  Test prompts, inspect tools, and debug AI-powered apps.
                 </p>
               </div>
             </div>

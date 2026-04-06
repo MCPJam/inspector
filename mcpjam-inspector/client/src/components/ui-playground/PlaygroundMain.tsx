@@ -232,9 +232,9 @@ export function PlaygroundMain({
     useTypewriterString(initialInput ?? "", {
       active: Boolean(
         initialInput &&
-          initialInputTypewriter &&
-          !showPostConnectGuide &&
-          !typewriterSupersededByUser,
+        initialInputTypewriter &&
+        !showPostConnectGuide &&
+        !typewriterSupersededByUser,
       ),
       msPerChar: 20,
       reducedMotion: !!prefersReducedMotion,
@@ -892,10 +892,7 @@ export function PlaygroundMain({
                         />
                       </div>
                     )}
-                    <ChatInput
-                      {...sharedChatInputProps}
-                      hasMessages={false}
-                    />
+                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
                     {sendNuxCtaVisible && (
                       <HandDrawnSendHint
                         hostStyle={hostStyle}

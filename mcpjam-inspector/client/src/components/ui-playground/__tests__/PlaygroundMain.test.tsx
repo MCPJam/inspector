@@ -446,7 +446,9 @@ describe("PlaygroundMain", () => {
     capturedChatSessionOptions = null;
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
-    mockSharedAppState.servers["test-server"] = { connectionStatus: "connected" };
+    mockSharedAppState.servers["test-server"] = {
+      connectionStatus: "connected",
+    };
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -646,7 +648,9 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.getByPlaceholderText("Try a prompt that could call your tools..."),
+        screen.getByPlaceholderText(
+          "Try a prompt that could call your tools...",
+        ),
       ).toBeInTheDocument();
     });
 
@@ -784,12 +788,11 @@ describe("PlaygroundMain", () => {
 
       const hint = screen.getByTestId("app-builder-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
-      expect(hint).toHaveTextContent(
-        "Try this prompt with a demo MCP server",
-      );
+      expect(hint).toHaveTextContent("Try this prompt with a demo MCP server");
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
-        chatInput.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING,
+        chatInput.compareDocumentPosition(hint) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
       expect(hint.querySelector("svg")).toBeTruthy();
     });

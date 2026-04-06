@@ -946,7 +946,9 @@ export function useServerState({
             );
           }
           logger.info("Connection successful", { serverName: formData.name });
-          if (!shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)) {
+          if (
+            !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
+          ) {
             toast.success("Connected successfully!");
           }
           storeInitInfo(formData.name, result.initInfo).catch((err) =>

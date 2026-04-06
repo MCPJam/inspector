@@ -265,11 +265,7 @@ describe("ChatInput", () => {
 
     it("disables submit when submitDisabled is true even if value has content", () => {
       render(
-        <ChatInput
-          {...defaultProps}
-          value="Hello"
-          submitDisabled={true}
-        />,
+        <ChatInput {...defaultProps} value="Hello" submitDisabled={true} />,
       );
 
       const buttons = screen.getAllByRole("button");
@@ -308,24 +304,26 @@ describe("ChatInput", () => {
       const { rerender } = render(
         <ChatInput {...defaultProps} value="Hello" pulseSubmit={false} />,
       );
-      let submit = screen.getAllByRole("button").find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
-      );
+      let submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
       expect(submit).toBeDefined();
       expect(submit?.className).not.toContain("animate-onboarding-pulse");
 
-      rerender(<ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />);
-      submit = screen.getAllByRole("button").find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      rerender(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />,
       );
+      submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
       expect(submit?.className).toContain("animate-onboarding-pulse");
     });
 
     it("uses shadow-none so default button shadow does not read as a constant glow", () => {
       render(<ChatInput {...defaultProps} value="Hello" />);
-      const submit = screen.getAllByRole("button").find(
-        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
-      );
+      const submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
       expect(submit?.className).toContain("shadow-none");
     });
   });

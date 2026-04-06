@@ -120,7 +120,10 @@ export function useOnboarding({
     if (didAutoConnectRef.current) return;
 
     const persisted = readOnboardingState();
-    if (persisted?.status === "completed" || persisted?.status === "dismissed") {
+    if (
+      persisted?.status === "completed" ||
+      persisted?.status === "dismissed"
+    ) {
       return;
     }
     if (Object.keys(servers).length > 0) return;

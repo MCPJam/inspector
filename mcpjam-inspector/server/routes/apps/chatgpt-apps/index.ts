@@ -281,10 +281,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       | undefined;
 
     // Build CSP configuration based on mode
-    const cspConfig = buildCspHeader(
-      cspMode ?? "permissive",
-      widgetCspRaw,
-    );
+    const cspConfig = buildCspHeader(cspMode ?? "permissive", widgetCspRaw);
 
     const baseUrl = extractBaseUrl(htmlContent);
     const runtimeConfig: RuntimeConfig = {
