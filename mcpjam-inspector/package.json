@@ -189,7 +189,7 @@
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.0",
     "cross-env": "^10.1.0",
-    "electron": "^37.2.5",
+    "electron": "^39.8.5",
     "eslint": "^9",
     "jsdom": "^27.4.0",
     "png-to-ico": "^2.1.8",
