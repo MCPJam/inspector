@@ -613,15 +613,9 @@ export default function App() {
             "true",
           );
         } catch {
-          // Ignore localStorage failures and still navigate.
+          // Ignore localStorage failures and still select the server.
         }
         setSelectedServer(firstVisitServer);
-        if (
-          window.location.hash !== "#ci-evals" &&
-          window.location.hash !== "#/ci-evals"
-        ) {
-          window.location.hash = "#/ci-evals";
-        }
       }
     }
 
