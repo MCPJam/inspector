@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import type { UIMessage } from "@ai-sdk/react";
+
+import {
+  SandboxHostStyleProvider,
+  SandboxHostThemeProvider,
+} from "@/contexts/sandbox-host-style-context";
 import { FullscreenChatOverlay } from "../fullscreen-chat-overlay";
 
 vi.mock("../shared/loading-indicator-content", () => ({
@@ -35,6 +41,19 @@ describe("FullscreenChatOverlay", () => {
     isThinking: false,
     onSend: vi.fn(),
   };
+
+  const renderWithHostStyle = (
+    hostStyle: "chatgpt" | "claude",
+    theme: "light" | "dark",
+    ui: ReactElement,
+  ) =>
+    render(
+      <SandboxHostStyleProvider value={hostStyle}>
+        <SandboxHostThemeProvider value={theme}>
+          {ui}
+        </SandboxHostThemeProvider>
+      </SandboxHostStyleProvider>,
+    );
 
   it("shows a standalone Claude placeholder row before the first assistant token appears", () => {
     render(
@@ -111,5 +130,101 @@ describe("FullscreenChatOverlay", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByTestId(/fullscreen-claude-footer-/)).toHaveLength(1);
     expect(screen.getByTestId("claude-indicator-static")).toBeInTheDocument();
+  });
+
+  it("uses Claude host shell colors in the fullscreen overlay", () => {
+    renderWithHostStyle(
+      "claude",
+      "light",
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[createMessage({ id: "msg-1", role: "user" })]}
+        input="Follow up"
+        canSend={true}
+      />,
+    );
+
+    expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
+      "sandbox-host-composer",
+    );
+    expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
+      "background-color: rgba(249, 247, 243, 1)",
+    );
+  });
+
+  it("uses Claude dark host thread colors on the fullscreen composer", () => {
+    renderWithHostStyle(
+      "claude",
+      "dark",
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[createMessage({ id: "msg-1", role: "user" })]}
+        input="Follow up"
+        canSend={true}
+      />,
+    );
+
+    expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
+      "sandbox-host-composer",
+    );
+    expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
+      "background-color: rgba(38, 38, 36, 1)",
+    );
+  });
+
+  it("uses ChatGPT light host thread colors on the fullscreen composer", () => {
+    renderWithHostStyle(
+      "chatgpt",
+      "light",
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[createMessage({ id: "msg-1", role: "user" })]}
+        input="Follow up"
+        canSend={true}
+      />,
+    );
+
+    expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
+      "sandbox-host-composer",
+    );
+    expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
+      "background-color: rgba(255, 255, 255, 1)",
+    );
+  });
+
+  it("uses ChatGPT dark host thread colors on the fullscreen composer", () => {
+    renderWithHostStyle(
+      "chatgpt",
+      "dark",
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[createMessage({ id: "msg-1", role: "user" })]}
+        input="Follow up"
+        canSend={true}
+      />,
+    );
+
+    expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
+      "sandbox-host-composer",
+    );
+    expect(screen.getByTestId("fullscreen-composer")).toHaveStyle(
+      "background-color: rgba(33, 33, 33, 1)",
+    );
+  });
+
+  it("keeps the default fullscreen composer styling when no host style is active", () => {
+    render(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[createMessage({ id: "msg-1", role: "user" })]}
+        input="Follow up"
+        canSend={true}
+      />,
+    );
+
+    expect(screen.getByTestId("fullscreen-composer")).toHaveClass(
+      "rounded-full",
+      "bg-background/95",
+    );
   });
 });
