@@ -83,7 +83,9 @@ describe("FullscreenChatOverlay", () => {
     );
 
     expect(screen.getByTestId("fullscreen-thinking-row")).toBeInTheDocument();
-    expect(screen.getByTestId("loading-indicator-chatgpt-dot")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("loading-indicator-chatgpt-dot"),
+    ).toBeInTheDocument();
   });
 
   it("hides the GPT pulse once assistant preview text is visible while streaming", () => {
