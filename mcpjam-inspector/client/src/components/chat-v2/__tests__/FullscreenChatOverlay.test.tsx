@@ -49,9 +49,7 @@ describe("FullscreenChatOverlay", () => {
   ) =>
     render(
       <SandboxHostStyleProvider value={hostStyle}>
-        <SandboxHostThemeProvider value={theme}>
-          {ui}
-        </SandboxHostThemeProvider>
+        <SandboxHostThemeProvider value={theme}>{ui}</SandboxHostThemeProvider>
       </SandboxHostStyleProvider>,
     );
 
