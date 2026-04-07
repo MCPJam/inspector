@@ -271,6 +271,51 @@ describe("Thread", () => {
       );
     });
 
+    it("keeps the GPT pulse visible before the first assistant message streams", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="chatgpt-dot"
+        />,
+      );
+
+      expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "chatgpt-dot",
+        }),
+      );
+    });
+
+    it("hides the GPT pulse once assistant content is visible while loading", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Streaming..." }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="chatgpt-dot"
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("thinking-indicator"),
+      ).not.toBeInTheDocument();
+      expect(mockThinkingIndicator).not.toHaveBeenCalled();
+    });
+
     it("keeps the Claude placeholder row visible before the first assistant message streams", () => {
       const messages = [createMessage({ id: "msg-1", role: "user" })];
 
@@ -392,6 +437,30 @@ describe("Thread", () => {
           claudeFooterMode: "static",
         }),
       );
+    });
+
+    it("keeps the GPT pulse hidden after the response finishes", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Done." }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={false}
+          loadingIndicatorVariant="chatgpt-dot"
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("thinking-indicator"),
+      ).not.toBeInTheDocument();
     });
   });
 

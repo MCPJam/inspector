@@ -135,15 +135,16 @@ export function Thread({
     () => getLastRenderableConversationMessage(messages),
     [messages],
   );
-  const canAttachClaudeMascot =
+  const hasVisibleAssistantResponse =
     lastRenderableMessage?.role === "assistant" &&
     hasRenderableConversationContent(lastRenderableMessage);
-  const lastRenderableMessageId = canAttachClaudeMascot
+  const lastRenderableMessageId = hasVisibleAssistantResponse
     ? lastRenderableMessage.id
     : null;
   const shouldShowStandaloneThinkingIndicator =
-    loadingIndicatorVariant === "claude-mark"
-      ? isLoading && !canAttachClaudeMascot
+    loadingIndicatorVariant === "claude-mark" ||
+    loadingIndicatorVariant === "chatgpt-dot"
+      ? isLoading && !hasVisibleAssistantResponse
       : isLoading;
 
   return (

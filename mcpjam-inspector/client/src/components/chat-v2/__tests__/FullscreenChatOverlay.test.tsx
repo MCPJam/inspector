@@ -72,6 +72,70 @@ describe("FullscreenChatOverlay", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("shows a standalone GPT pulse before the first assistant token appears", () => {
+    render(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[createMessage({ id: "msg-1", role: "user" })]}
+        isThinking={true}
+        loadingIndicatorVariant="chatgpt-dot"
+      />,
+    );
+
+    expect(screen.getByTestId("fullscreen-thinking-row")).toBeInTheDocument();
+    expect(screen.getByTestId("loading-indicator-chatgpt-dot")).toBeInTheDocument();
+  });
+
+  it("hides the GPT pulse once assistant preview text is visible while streaming", () => {
+    render(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[
+          createMessage({ id: "msg-1", role: "user" }),
+          createMessage({
+            id: "msg-2",
+            role: "assistant",
+            parts: [{ type: "text", text: "Streaming..." }],
+          }),
+        ]}
+        isThinking={true}
+        loadingIndicatorVariant="chatgpt-dot"
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("fullscreen-thinking-row"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-chatgpt-dot"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the GPT pulse hidden after the response finishes", () => {
+    render(
+      <FullscreenChatOverlay
+        {...defaultProps}
+        messages={[
+          createMessage({ id: "msg-1", role: "user" }),
+          createMessage({
+            id: "msg-2",
+            role: "assistant",
+            parts: [{ type: "text", text: "Done." }],
+          }),
+        ]}
+        isThinking={false}
+        loadingIndicatorVariant="chatgpt-dot"
+      />,
+    );
+
+    expect(
+      screen.queryByTestId("fullscreen-thinking-row"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("loading-indicator-chatgpt-dot"),
+    ).not.toBeInTheDocument();
+  });
+
   it("moves the Claude mascot onto the latest assistant bubble while streaming", () => {
     render(
       <FullscreenChatOverlay

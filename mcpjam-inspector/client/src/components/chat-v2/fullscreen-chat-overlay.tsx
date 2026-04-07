@@ -214,9 +214,11 @@ function MessageList({
     [messages],
   );
   const lastVisibleMessage = visibleMessages.at(-1)?.message ?? null;
+  const hasVisibleAssistantResponse = lastVisibleMessage?.role === "assistant";
   const shouldShowStandaloneThinkingRow =
-    loadingIndicatorVariant === "claude-mark"
-      ? isThinking && lastVisibleMessage?.role !== "assistant"
+    loadingIndicatorVariant === "claude-mark" ||
+    loadingIndicatorVariant === "chatgpt-dot"
+      ? isThinking && !hasVisibleAssistantResponse
       : isThinking;
 
   useEffect(() => {
