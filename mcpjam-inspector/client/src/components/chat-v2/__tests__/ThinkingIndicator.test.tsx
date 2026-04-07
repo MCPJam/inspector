@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { ThinkingIndicator } from "../shared/thinking-indicator";
 import type { ModelDefinition } from "@/shared/types";
+import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
 const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
 
@@ -29,15 +32,33 @@ describe("ThinkingIndicator", () => {
     mockUseReducedMotion.mockReturnValue(false);
   });
 
-  it("does not render a leading assistant avatar", () => {
-    render(<ThinkingIndicator model={defaultModel} />);
+  const renderThinkingIndicator = (ui: ReactElement) =>
+    render(
+      <PreferencesStoreProvider themeMode="light" themePreset="default">
+        {ui}
+      </PreferencesStoreProvider>,
+    );
+
+  it("renders a leading assistant avatar outside host-style contexts", () => {
+    renderThinkingIndicator(<ThinkingIndicator model={defaultModel} />);
+
+    expect(screen.getByRole("img")).toBeInTheDocument();
+    expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
+  });
+
+  it("hides the leading assistant avatar in sandbox host-style contexts", () => {
+    renderThinkingIndicator(
+      <SandboxHostStyleProvider value="claude">
+        <ThinkingIndicator model={defaultModel} />
+      </SandboxHostStyleProvider>,
+    );
 
     expect(screen.queryByRole("img")).not.toBeInTheDocument();
-    expect(screen.queryByLabelText("GPT-4 response")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("GPT-4 assistant")).not.toBeInTheDocument();
   });
 
   it("keeps the default visible thinking label", () => {
-    render(<ThinkingIndicator model={defaultModel} />);
+    renderThinkingIndicator(<ThinkingIndicator model={defaultModel} />);
 
     expect(screen.getByText(/Thinking/)).toBeInTheDocument();
     expect(
@@ -46,7 +67,9 @@ describe("ThinkingIndicator", () => {
   });
 
   it("renders the pulsing dot variant with hidden accessible text", () => {
-    render(<ThinkingIndicator model={defaultModel} variant="chatgpt-dot" />);
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} variant="chatgpt-dot" />,
+    );
 
     expect(screen.getByTestId("loading-indicator-dot")).toBeInTheDocument();
     expect(
@@ -55,7 +78,9 @@ describe("ThinkingIndicator", () => {
   });
 
   it("renders the animated Claude mark variant with hidden accessible text", () => {
-    render(<ThinkingIndicator model={defaultModel} variant="claude-mark" />);
+    renderThinkingIndicator(
+      <ThinkingIndicator model={defaultModel} variant="claude-mark" />,
+    );
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
     expect(
