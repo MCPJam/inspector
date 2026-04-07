@@ -80,6 +80,7 @@ import type {
   RunColumnTab,
 } from "./types";
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
+import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { ProviderLogo } from "@/components/chat-v2/chat-input/model/provider-logo";
 import {
   reduceEvalStreamEvent,
@@ -88,6 +89,8 @@ import {
 } from "./eval-stream-reducer";
 import { TraceViewer } from "./trace-viewer";
 import { useEvalTraceToolContext } from "./use-eval-trace-tool-context";
+import { useEvalTraceBlob } from "./use-eval-trace-blob";
+import { adaptTraceToUiMessages } from "./trace-viewer-adapter";
 
 interface TestTemplate {
   title: string;
@@ -106,6 +109,7 @@ interface TestTemplateEditorProps {
   onBackToList?: () => void;
   onOpenLastRun?: (iteration: EvalIteration) => void;
   onExportDraft?: (draft: EvalExportDraftInput) => void;
+  onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   /** Deep link: open compare run surface once iteration data is ready (same as View results). */
   openCompareFromRoute?: boolean;
   /** Remove `compare=1` from the hash after handling {@link openCompareFromRoute}. */
@@ -279,6 +283,7 @@ export function TestTemplateEditor({
   onBackToList,
   onOpenLastRun,
   onExportDraft,
+  onContinueInChat,
   openCompareFromRoute = false,
   onClearOpenCompareRoute,
 }: TestTemplateEditorProps) {
@@ -1949,6 +1954,7 @@ export function TestTemplateEditor({
                         testCase={currentTestCase}
                         serverNames={connectedServerList}
                         workspaceId={workspaceId}
+                        onContinueInChat={onContinueInChat}
                         onStreamingTraceLoaded={() =>
                           clearCompareStreamingState(record.modelValue)
                         }
@@ -1978,6 +1984,7 @@ function RunColumn({
   testCase,
   serverNames,
   workspaceId,
+  onContinueInChat,
   onStreamingTraceLoaded,
   activeTab,
   onTabChange,
@@ -1988,6 +1995,7 @@ function RunColumn({
   testCase: any;
   serverNames: string[];
   workspaceId: string | null;
+  onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   onStreamingTraceLoaded: () => void;
   activeTab: RunColumnTab;
   onTabChange: (tab: RunColumnTab) => void;
@@ -1997,8 +2005,6 @@ function RunColumn({
     toolsMetadata,
     toolServerMap,
     connectedServerIds,
-    hostedSelectedServerIds,
-    hostedOAuthTokens,
   } = useEvalTraceToolContext({
     serverNames,
     workspaceId,
@@ -2065,6 +2071,67 @@ function RunColumn({
       ),
     [record.streamingDraftMessages, record.streamingTrace],
   );
+  const {
+    blob: persistedTraceBlob,
+    loading: persistedTraceLoading,
+    error: persistedTraceError,
+  } = useEvalTraceBlob({
+    iteration: record.iteration,
+    onTraceLoaded: onStreamingTraceLoaded,
+    enabled: !!record.iteration,
+  });
+  const continueInChatPayload = useMemo(() => {
+    if (!onContinueInChat) {
+      return null;
+    }
+
+    const sourceTrace = (persistedTraceBlob ?? streamingTraceEnvelope) as
+      | Record<string, unknown>
+      | null;
+
+    if (!sourceTrace) {
+      return null;
+    }
+
+    const adaptedTrace = adaptTraceToUiMessages({
+      trace: sourceTrace as any,
+      toolsMetadata: toolsMetadata as Record<string, Record<string, any>>,
+      toolServerMap,
+      connectedServerIds,
+    });
+
+    if (adaptedTrace.messages.length === 0) {
+      return null;
+    }
+
+    const advancedConfig =
+      record.iteration?.testCaseSnapshot?.advancedConfig ?? testCase?.advancedConfig;
+    const systemPrompt =
+      typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+    const temperature =
+      typeof advancedConfig?.temperature === "number"
+        ? advancedConfig.temperature
+        : undefined;
+
+    return {
+      messages: adaptedTrace.messages,
+      serverNames,
+      modelId: record.model,
+      systemPrompt,
+      temperature,
+    } satisfies Omit<EvalChatHandoff, "id">;
+  }, [
+    connectedServerIds,
+    onContinueInChat,
+    persistedTraceBlob,
+    record.iteration?.testCaseSnapshot?.advancedConfig,
+    record.model,
+    serverNames,
+    streamingTraceEnvelope,
+    testCase?.advancedConfig,
+    toolServerMap,
+    toolsMetadata,
+  ]);
   const hasStreamingTrace = streamingTraceEnvelope != null;
   const isWaitingForFirstTimelineSnapshot =
     traceMode === "timeline" &&
@@ -2223,25 +2290,46 @@ function RunColumn({
               className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
             />
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="h-7 shrink-0 px-2 text-[11px]"
-            onClick={onRetry}
-            disabled={record.status === "running" && record.iteration == null && !hasStreamingTrace}
-          >
-            <RotateCw
-              className={cn(
-                "mr-1 h-3 w-3",
+          <div className="flex items-center gap-1">
+            {onContinueInChat ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 px-2 text-[11px]"
+                onClick={() =>
+                  continueInChatPayload &&
+                  onContinueInChat(continueInChatPayload)
+                }
+                disabled={!continueInChatPayload}
+              >
+                Continue in Chat
+              </Button>
+            ) : null}
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              className="h-7 shrink-0 px-2 text-[11px]"
+              onClick={onRetry}
+              disabled={
                 record.status === "running" &&
-                  record.iteration == null &&
-                  !hasStreamingTrace &&
-                  "animate-spin",
-              )}
-            />
-            Retry
-          </Button>
+                record.iteration == null &&
+                !hasStreamingTrace
+              }
+            >
+              <RotateCw
+                className={cn(
+                  "mr-1 h-3 w-3",
+                  record.status === "running" &&
+                    record.iteration == null &&
+                    !hasStreamingTrace &&
+                    "animate-spin",
+                )}
+              />
+              Retry
+            </Button>
+          </div>
         </div>
 
         {record.metrics.mismatchCount != null &&
@@ -2265,17 +2353,15 @@ function RunColumn({
                   name: record.modelLabel,
                   provider: record.provider as any,
                 }}
-                serverNames={serverNames}
-                workspaceId={workspaceId}
                 emptyMessage={`No ${activeTab} data is available for this run.`}
                 fallbackTrace={streamingTraceEnvelope}
                 onTraceLoaded={onStreamingTraceLoaded}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 connectedServerIds={connectedServerIds}
-                hostedSelectedServerIds={hostedSelectedServerIds}
-                hostedOAuthTokens={hostedOAuthTokens}
-                generationKey={`${record.modelValue}:${record.startedAt ?? record.iteration?._id ?? "idle"}`}
+                traceBlob={persistedTraceBlob}
+                traceBlobLoading={persistedTraceLoading}
+                traceBlobError={persistedTraceError}
               />
             ) : (
               <EvalTraceSurface
@@ -2287,6 +2373,9 @@ function RunColumn({
                 fallbackActualToolCalls={actualToolCalls}
                 onTraceLoaded={onStreamingTraceLoaded}
                 onNavigateToChat={() => onTabChange("chat")}
+                traceBlob={persistedTraceBlob}
+                traceBlobLoading={persistedTraceLoading}
+                traceBlobError={persistedTraceError}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 connectedServerIds={connectedServerIds}

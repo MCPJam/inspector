@@ -30,6 +30,7 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2 } from "lucide-react";
+import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -101,6 +102,7 @@ export function SuiteIterationsView({
   onDeleteTestCasesBatch,
   onRunTestCase,
   runningTestCaseId = null,
+  onContinueInChat,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -159,6 +161,7 @@ export function SuiteIterationsView({
   /** Per-case run from the cases overview table (Explore / CI). */
   onRunTestCase?: (testCase: EvalCase) => void;
   runningTestCaseId?: string | null;
+  onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
@@ -494,6 +497,7 @@ export function SuiteIterationsView({
                   onBackToList={() =>
                     navigation.toSuiteOverview(suite._id, "test-cases")
                   }
+                  onContinueInChat={onContinueInChat}
                   onOpenLastRun={(iteration) => {
                     if (!iteration.suiteRunId) {
                       return;

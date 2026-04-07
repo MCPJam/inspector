@@ -27,6 +27,9 @@ interface EvalTraceSurfaceProps {
   fallbackActualToolCalls?: TraceViewerEvalToolCall[];
   /** Called after the persisted blob has loaded successfully. */
   onTraceLoaded?: () => void;
+  traceBlob?: TraceEnvelope | null;
+  traceBlobLoading?: boolean;
+  traceBlobError?: string | null;
   toolsMetadata: Record<string, Record<string, unknown>>;
   toolServerMap: ToolServerMap;
   connectedServerIds: string[];
@@ -71,14 +74,27 @@ export function EvalTraceSurface({
   fallbackTrace = null,
   fallbackActualToolCalls = [],
   onTraceLoaded,
+  traceBlob,
+  traceBlobLoading,
+  traceBlobError,
   toolsMetadata,
   toolServerMap,
   connectedServerIds,
 }: EvalTraceSurfaceProps) {
+  const shouldOwnTraceBlob =
+    traceBlob === undefined &&
+    traceBlobLoading === undefined &&
+    traceBlobError === undefined;
   const { blob, loading, error } = useEvalTraceBlob({
     iteration,
     onTraceLoaded,
+    enabled: shouldOwnTraceBlob,
   });
+  const resolvedBlob = shouldOwnTraceBlob ? blob : (traceBlob ?? null);
+  const resolvedLoading = shouldOwnTraceBlob
+    ? loading
+    : (traceBlobLoading ?? false);
+  const resolvedError = shouldOwnTraceBlob ? error : (traceBlobError ?? null);
 
   const traceModel = useMemo(() => {
     if (!iteration) return null;
@@ -86,14 +102,14 @@ export function EvalTraceSurface({
   }, [iteration, testCase]);
 
   const adaptedTrace = useMemo(() => {
-    if (!blob) return null;
+    if (!resolvedBlob) return null;
     return adaptTraceToUiMessages({
-      trace: blob,
+      trace: resolvedBlob,
       toolsMetadata: toolsMetadata as Record<string, Record<string, any>>,
       toolServerMap,
       connectedServerIds,
     });
-  }, [blob, connectedServerIds, toolServerMap, toolsMetadata]);
+  }, [resolvedBlob, connectedServerIds, toolServerMap, toolsMetadata]);
 
   const output = useMemo(() => {
     if (!adaptedTrace) {
@@ -107,19 +123,19 @@ export function EvalTraceSurface({
     return <SimpleEmptyState message={emptyMessage} />;
   }
 
-  const activeTrace = (blob ?? fallbackTrace) as TraceEnvelope | null;
+  const activeTrace = (resolvedBlob ?? fallbackTrace) as TraceEnvelope | null;
   const hasFallbackTrace = fallbackTrace != null;
 
-  if (loading && !hasFallbackTrace && !blob) {
+  if (resolvedLoading && !hasFallbackTrace && !resolvedBlob) {
     return <SimpleLoadingState message="Loading trace details…" />;
   }
 
-  if (error && !hasFallbackTrace) {
-    return <SimpleErrorState message={error} />;
+  if (resolvedError && !hasFallbackTrace) {
+    return <SimpleErrorState message={resolvedError} />;
   }
 
   if (mode === "output") {
-    if (!blob) {
+    if (!resolvedBlob) {
       if (iteration.error) {
         return <SimpleErrorState message={iteration.error} />;
       }
@@ -154,7 +170,7 @@ export function EvalTraceSurface({
 
   const expectedToolCalls = iteration.testCaseSnapshot?.expectedToolCalls ?? [];
   const actualToolCalls =
-    blob != null
+    resolvedBlob != null
       ? iteration.actualToolCalls ?? []
       : fallbackActualToolCalls;
 

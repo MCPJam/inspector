@@ -19,6 +19,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
+import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
@@ -241,6 +242,8 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [evalChatHandoff, setEvalChatHandoff] =
+    useState<EvalChatHandoff | null>(null);
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
@@ -485,6 +488,7 @@ export default function App() {
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
+    setSelectedMCPConfigs,
     toggleServerSelection,
     setSelectedMultipleServersToAllServers,
     workspaces,
@@ -1066,6 +1070,18 @@ export default function App() {
     applyNavigation(section, { updateHash: true });
   };
 
+  const handleContinueEvalInChat = useCallback(
+    (handoff: Omit<EvalChatHandoff, "id">) => {
+      setSelectedMCPConfigs(handoff.serverNames);
+      setEvalChatHandoff({
+        ...handoff,
+        id: `eval-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
+      applyNavigation("chat-v2", { updateHash: true });
+    },
+    [applyNavigation, setSelectedMCPConfigs],
+  );
+
   useEffect(() => {
     if (!isAuthenticated) {
       return;
@@ -1366,6 +1382,7 @@ export default function App() {
               <EvalsTab
                 selectedServer={appState.selectedServer}
                 workspaceId={convexWorkspaceId}
+                onContinueInChat={handleContinueEvalInChat}
               />
             ))}
           {activeTab === "ci-evals" &&
@@ -1489,6 +1506,12 @@ export default function App() {
               }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
+              evalChatHandoff={evalChatHandoff}
+              onEvalChatHandoffConsumed={(id) =>
+                setEvalChatHandoff((current) =>
+                  current?.id === id ? null : current,
+                )
+              }
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
