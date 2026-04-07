@@ -87,6 +87,20 @@ export function buildPersistedServerPayload(
   };
 }
 
+export function buildCarryForwardServerPayload(
+  serverName: string,
+  serverEntry: Pick<
+    ServerWithName,
+    "config" | "enabled" | "useOAuth" | "oauthFlowProfile"
+  >,
+): PersistedServerPayload {
+  const payload = buildPersistedServerPayload(serverName, serverEntry);
+
+  // Guest headers are intentionally dropped so guest-only secrets are not
+  // uploaded into workspace data during guest -> signed-in carry-forward.
+  return { ...payload, headers: undefined };
+}
+
 export function buildPersistedPayloadFromRemoteServer(
   remoteServer: Pick<
     RemoteServer,
@@ -102,6 +116,38 @@ export function buildPersistedPayloadFromRemoteServer(
     | "oauthScopes"
     | "clientId"
   >,
+): PersistedServerPayload {
+  return {
+    name: remoteServer.name,
+    enabled: remoteServer.enabled,
+    transportType: remoteServer.transportType,
+    command: remoteServer.command,
+    args: remoteServer.args ? [...remoteServer.args] : undefined,
+    url: remoteServer.url,
+    headers: stripAuthorizationHeader(remoteServer.headers),
+    timeout: remoteServer.timeout,
+    useOAuth: remoteServer.useOAuth,
+    oauthScopes: normalizeScopes(remoteServer.oauthScopes),
+    clientId: remoteServer.clientId,
+  };
+}
+
+export interface CarryForwardComparableServer {
+  name: string;
+  enabled: boolean;
+  transportType: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+  headers?: Record<string, string>;
+  timeout?: number;
+  useOAuth?: boolean;
+  oauthScopes?: string[] | string;
+  clientId?: string;
+}
+
+export function buildPersistedPayloadFromCarryForwardComparableServer(
+  remoteServer: CarryForwardComparableServer,
 ): PersistedServerPayload {
   return {
     name: remoteServer.name,
@@ -145,29 +191,20 @@ export function persistedServerPayloadsEqual(
   );
 }
 
-export function isRemoteServerEquivalent(
+export function isCarryForwardRemoteServerEquivalent(
   localServer: Pick<
     ServerWithName,
     "config" | "enabled" | "useOAuth" | "oauthFlowProfile"
   >,
-  remoteServer: Pick<
-    RemoteServer,
-    | "name"
-    | "enabled"
-    | "transportType"
-    | "command"
-    | "args"
-    | "url"
-    | "headers"
-    | "timeout"
-    | "useOAuth"
-    | "oauthScopes"
-    | "clientId"
-  >,
+  remoteServer: CarryForwardComparableServer,
 ): boolean {
+  const localPayload = buildPersistedServerPayload(remoteServer.name, localServer);
+  const remotePayload =
+    buildPersistedPayloadFromCarryForwardComparableServer(remoteServer);
+
   return persistedServerPayloadsEqual(
-    buildPersistedServerPayload(remoteServer.name, localServer),
-    buildPersistedPayloadFromRemoteServer(remoteServer),
+    { ...localPayload, headers: undefined },
+    { ...remotePayload, headers: undefined },
   );
 }
 

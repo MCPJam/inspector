@@ -15,19 +15,16 @@ import {
   useWorkspaceQueries,
   useWorkspaceServers,
 } from "./useWorkspaces";
-import {
-  deserializeServersFromConvex,
-  serializeServersForSharing,
-} from "@/lib/workspace-serialization";
+import { deserializeServersFromConvex } from "@/lib/workspace-serialization";
 import {
   stableStringifyJson,
   type WorkspaceClientConfig,
 } from "@/lib/client-config";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import {
-  buildPersistedServerPayload,
+  buildCarryForwardServerPayload,
   buildRemoteServerFromPersistedPayload,
-  isRemoteServerEquivalent,
+  isCarryForwardRemoteServerEquivalent,
 } from "@/lib/persisted-server-payload";
 import { useClientConfigStore } from "@/stores/client-config-store";
 import { useOrganizationBillingStatus } from "./useOrganizationBilling";
@@ -329,11 +326,8 @@ export function useWorkspaceState({
   );
   const carryForwardLocalWorkspaces = useMemo(
     () =>
-      Object.values(appState.workspaces).filter(
-        (workspace) =>
-          !workspace.sharedWorkspaceId &&
-          Object.keys(workspace.servers).length > 0,
-      ),
+      Object.values(appState.workspaces)
+        .filter((workspace) => Object.keys(workspace.servers).length > 0),
     [appState.workspaces],
   );
   const migratableLocalWorkspaceCount = migratableLocalWorkspaces.length;
@@ -409,6 +403,7 @@ export function useWorkspaceState({
     if (!isAuthenticated) {
       return;
     }
+    if (isAuthLoading) return;
     if (useLocalFallback) return;
     if (allRemoteWorkspaces === undefined) return;
     if (allRemoteWorkspaces.length > 0) return;
@@ -426,16 +421,36 @@ export function useWorkspaceState({
       migrationInFlightRef.current.add(workspace.id);
 
       try {
-        const serializedServers = serializeServersForSharing(workspace.servers);
         const workspaceId = await convexCreateWorkspace({
           name: workspace.name,
           description: workspace.description,
           clientConfig: workspace.clientConfig,
-          servers: serializedServers,
+          servers: {},
           ...(workspaceOrganizationId
             ? { organizationId: workspaceOrganizationId }
             : {}),
         });
+
+        const failedServerNames: string[] = [];
+        for (const [serverName, server] of Object.entries(workspace.servers)) {
+          const payload = buildCarryForwardServerPayload(serverName, server);
+
+          try {
+            await convexCreateServer({
+              workspaceId: workspaceId as string,
+              ...payload,
+            });
+          } catch (error) {
+            failedServerNames.push(serverName);
+            logger.error("Failed to migrate local server to Convex", {
+              workspaceId: workspace.id,
+              targetWorkspaceId: workspaceId,
+              serverName,
+              error: error instanceof Error ? error.message : "Unknown error",
+            });
+          }
+        }
+
         dispatch({
           type: "UPDATE_WORKSPACE",
           workspaceId: workspace.id,
@@ -446,6 +461,17 @@ export function useWorkspaceState({
               : {}),
           },
         });
+
+        if (appState.activeWorkspaceId === workspace.id) {
+          setConvexActiveWorkspaceId(workspaceId as string);
+        }
+
+        if (failedServerNames.length > 0) {
+          toast.error(
+            `Could not import some local servers after sign-in: ${failedServerNames.join(", ")}`,
+          );
+        }
+
         logger.info("Migrated workspace to Convex", { name: workspace.name });
       } catch (error) {
         migrationInFlightRef.current.delete(workspace.id);
@@ -470,21 +496,25 @@ export function useWorkspaceState({
     Promise.all(migratableLocalWorkspaces.map(migrateWorkspace));
   }, [
     isAuthenticated,
+    isAuthLoading,
     useLocalFallback,
     allRemoteWorkspaces,
     migratableLocalWorkspaces,
     migratableLocalWorkspaceCount,
     convexCreateWorkspace,
+    convexCreateServer,
     dispatch,
     logger,
     workspaceOrganizationId,
     canManageBillingForWorkspaceActions,
+    appState.activeWorkspaceId,
   ]);
 
   useEffect(() => {
     if (!isAuthenticated) {
       return;
     }
+    if (isAuthLoading) return;
     if (useLocalFallback) return;
     if (allRemoteWorkspaces === undefined) return;
     if (allRemoteWorkspaces.length === 0) return;
@@ -496,7 +526,7 @@ export function useWorkspaceState({
     if (carryForwardLocalWorkspaces.length === 0) return;
 
     const targetOrganizationId =
-      targetWorkspace.organizationId ?? activeOrganizationId;
+      targetWorkspace.organizationId ?? workspaceOrganizationId;
 
     const carryForwardWorkspace = async (
       workspace: Workspace,
@@ -517,7 +547,9 @@ export function useWorkspaceState({
           const existingRemoteServer = targetServersByName.get(serverName);
 
           if (existingRemoteServer) {
-            if (isRemoteServerEquivalent(server, existingRemoteServer)) {
+            if (
+              isCarryForwardRemoteServerEquivalent(server, existingRemoteServer)
+            ) {
               continue;
             }
 
@@ -525,7 +557,7 @@ export function useWorkspaceState({
             continue;
           }
 
-          const payload = buildPersistedServerPayload(serverName, server);
+          const payload = buildCarryForwardServerPayload(serverName, server);
 
           try {
             const createdServerId = await convexCreateServer({
@@ -556,16 +588,23 @@ export function useWorkspaceState({
         }
 
         if (conflictNames.length === 0 && failedNames.length === 0) {
-          dispatch({
-            type: "UPDATE_WORKSPACE",
-            workspaceId: workspace.id,
-            updates: {
-              sharedWorkspaceId: convexActiveWorkspaceId,
-              ...(targetOrganizationId
-                ? { organizationId: targetOrganizationId }
-                : {}),
-            },
-          });
+          const needsWorkspaceUpdate =
+            workspace.sharedWorkspaceId !== convexActiveWorkspaceId ||
+            (targetOrganizationId &&
+              workspace.organizationId !== targetOrganizationId);
+
+          if (needsWorkspaceUpdate) {
+            dispatch({
+              type: "UPDATE_WORKSPACE",
+              workspaceId: workspace.id,
+              updates: {
+                sharedWorkspaceId: convexActiveWorkspaceId,
+                ...(targetOrganizationId
+                  ? { organizationId: targetOrganizationId }
+                  : {}),
+              },
+            });
+          }
 
           logger.info("Carried forward guest workspace servers", {
             workspaceId: workspace.id,
@@ -607,6 +646,7 @@ export function useWorkspaceState({
     })();
   }, [
     isAuthenticated,
+    isAuthLoading,
     useLocalFallback,
     allRemoteWorkspaces,
     convexActiveWorkspaceId,
@@ -615,7 +655,7 @@ export function useWorkspaceState({
     carryForwardLocalWorkspaces,
     convexCreateServer,
     dispatch,
-    activeOrganizationId,
+    workspaceOrganizationId,
     logger,
   ]);
 
