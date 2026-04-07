@@ -193,13 +193,11 @@ function MessageList({
   isThinking,
   open,
   loadingIndicatorVariant = "default",
-  surfaceStyle,
 }: {
   messages: UIMessage[];
   isThinking: boolean;
   open: boolean;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
-  surfaceStyle?: CSSProperties;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -230,11 +228,7 @@ function MessageList({
 
   return (
     <div
-      className={cn(
-        "mb-4 overflow-hidden rounded-3xl border border-border/40 shadow-2xl backdrop-blur-xl",
-        !surfaceStyle && "bg-background/95",
-      )}
-      style={surfaceStyle}
+      className="mb-4 overflow-hidden rounded-3xl border border-border/40 bg-background/95 shadow-2xl backdrop-blur-xl"
     >
       <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
         {visibleMessages.map(({ message, text }, idx) => {
@@ -398,7 +392,6 @@ export function FullscreenChatOverlay({
             isThinking={isThinking}
             open={open}
             loadingIndicatorVariant={loadingIndicatorVariant}
-            surfaceStyle={surfaceStyle}
           />
           <Composer
             value={input}
