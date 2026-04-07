@@ -1,10 +1,7 @@
 import { cn } from "@/lib/utils";
 import { ClaudeLoadingIndicator } from "./claude-loading-indicator";
 
-export type LoadingIndicatorVariant =
-  | "default"
-  | "chatgpt-dot"
-  | "claude-mark";
+export type LoadingIndicatorVariant = "default" | "chatgpt-dot" | "claude-mark";
 
 interface LoadingIndicatorContentProps {
   variant?: LoadingIndicatorVariant;

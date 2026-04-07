@@ -76,7 +76,10 @@ function ThinkingRow({
   variant?: LoadingIndicatorVariant;
 }) {
   return (
-    <div data-testid="fullscreen-thinking-row" className="flex w-full justify-start">
+    <div
+      data-testid="fullscreen-thinking-row"
+      className="flex w-full justify-start"
+    >
       <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
         <LoadingIndicatorContent variant={variant} />
       </div>

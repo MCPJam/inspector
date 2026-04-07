@@ -205,21 +205,19 @@ export function TranscriptThread({
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds],
   );
-  const lastRenderableMessageId = useMemo(
-    () => {
-      const lastRenderableMessage = getLastRenderableConversationMessage(messages);
-      if (
-        !lastRenderableMessage ||
-        lastRenderableMessage.role !== "assistant" ||
-        !hasRenderableConversationContent(lastRenderableMessage)
-      ) {
-        return null;
-      }
+  const lastRenderableMessageId = useMemo(() => {
+    const lastRenderableMessage =
+      getLastRenderableConversationMessage(messages);
+    if (
+      !lastRenderableMessage ||
+      lastRenderableMessage.role !== "assistant" ||
+      !hasRenderableConversationContent(lastRenderableMessage)
+    ) {
+      return null;
+    }
 
-      return lastRenderableMessage.id;
-    },
-    [messages],
-  );
+    return lastRenderableMessage.id;
+  }, [messages]);
 
   useEffect(() => {
     if (!focusMessageId) {

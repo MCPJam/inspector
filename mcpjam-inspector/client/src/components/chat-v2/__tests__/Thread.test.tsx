@@ -35,7 +35,9 @@ vi.mock("../shared/thinking-indicator", () => ({
     variant?: string;
   }) => {
     mockThinkingIndicator({ model, variant });
-    return <div data-testid="thinking-indicator">Thinking... ({model.name})</div>;
+    return (
+      <div data-testid="thinking-indicator">Thinking... ({model.name})</div>
+    );
   },
 }));
 

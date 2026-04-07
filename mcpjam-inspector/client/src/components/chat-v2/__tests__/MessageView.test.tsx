@@ -143,7 +143,9 @@ describe("MessageView", () => {
       render(<MessageView {...defaultProps} message={message} />);
 
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("Assistant response")).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("Assistant response"),
+      ).not.toBeInTheDocument();
     });
   });
 

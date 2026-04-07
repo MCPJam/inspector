@@ -24,15 +24,15 @@ describe("LoadingIndicatorContent", () => {
     render(<LoadingIndicatorContent variant="claude-mark" />);
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
-    expect(screen.getByTestId("loading-indicator-claude-static")).not.toHaveAttribute(
-      "hidden",
-    );
-    expect(screen.getByTestId("loading-indicator-claude-strip-900")).toHaveAttribute(
-      "hidden",
-    );
-    expect(screen.getByTestId("loading-indicator-claude-strip-800")).toHaveAttribute(
-      "hidden",
-    );
+    expect(
+      screen.getByTestId("loading-indicator-claude-static"),
+    ).not.toHaveAttribute("hidden");
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-900"),
+    ).toHaveAttribute("hidden");
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-800"),
+    ).toHaveAttribute("hidden");
   });
 
   it("renders the direct static Claude mode without animated strips", () => {
@@ -43,14 +43,14 @@ describe("LoadingIndicatorContent", () => {
       "static",
     );
     expect(screen.queryByText("Thinking")).not.toBeInTheDocument();
-    expect(screen.getByTestId("loading-indicator-claude-static")).not.toHaveAttribute(
-      "hidden",
-    );
-    expect(screen.getByTestId("loading-indicator-claude-strip-900")).toHaveAttribute(
-      "hidden",
-    );
-    expect(screen.getByTestId("loading-indicator-claude-strip-800")).toHaveAttribute(
-      "hidden",
-    );
+    expect(
+      screen.getByTestId("loading-indicator-claude-static"),
+    ).not.toHaveAttribute("hidden");
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-900"),
+    ).toHaveAttribute("hidden");
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-800"),
+    ).toHaveAttribute("hidden");
   });
 });

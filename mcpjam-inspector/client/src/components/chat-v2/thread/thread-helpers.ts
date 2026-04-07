@@ -68,7 +68,9 @@ export function hasRenderableConversationContent(message: UIMessage): boolean {
   const parts = Array.isArray(message.parts) ? message.parts : [];
 
   if (parts.length > 0) {
-    return parts.some((part) => (part as { type?: string }).type !== "step-start");
+    return parts.some(
+      (part) => (part as { type?: string }).type !== "step-start",
+    );
   }
 
   if (typeof (message as { content?: unknown }).content === "string") {

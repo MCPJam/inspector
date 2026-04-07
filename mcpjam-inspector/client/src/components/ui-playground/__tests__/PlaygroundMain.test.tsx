@@ -221,7 +221,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
-  }) => (
+  }) =>
     (() => {
       mockThread({ messages, isLoading, loadingIndicatorVariant });
       return (
@@ -230,8 +230,7 @@ vi.mock("@/components/chat-v2/thread", () => ({
           {isLoading && <span data-testid="thread-loading">Loading...</span>}
         </div>
       );
-    })()
-  ),
+    })(),
 }));
 
 // Mock ChatInput component
@@ -496,7 +495,9 @@ describe("PlaygroundMain", () => {
     });
 
     it("passes the requested loading indicator variant to Thread", () => {
-      mockUseChatSession.messages = [{ id: "m1", role: "assistant", parts: [] }];
+      mockUseChatSession.messages = [
+        { id: "m1", role: "assistant", parts: [] },
+      ];
 
       render(
         <PlaygroundMain
