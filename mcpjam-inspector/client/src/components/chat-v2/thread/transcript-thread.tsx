@@ -17,10 +17,6 @@ import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
 import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
-import {
-  getLastRenderableConversationMessage,
-  hasRenderableConversationContent,
-} from "./thread-helpers";
 
 const NOOP = (..._args: unknown[]) => {};
 const TRANSCRIPT_SCROLL_SETTLE_MS = 120;
@@ -76,6 +72,7 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   contentClassName?: string;
   isLoading?: boolean;
   loadingIndicatorVariant?: LoadingIndicatorVariant;
+  lastRenderableMessageId?: string | null;
   getMessageWrapperProps?: (
     args: MessageWrapperArgs,
   ) => MessageWrapperProps | undefined;
@@ -196,6 +193,7 @@ export function TranscriptThread({
   contentClassName,
   isLoading = false,
   loadingIndicatorVariant = "default",
+  lastRenderableMessageId = null,
   getMessageWrapperProps,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -205,19 +203,6 @@ export function TranscriptThread({
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds],
   );
-  const lastRenderableMessageId = useMemo(() => {
-    const lastRenderableMessage =
-      getLastRenderableConversationMessage(messages);
-    if (
-      !lastRenderableMessage ||
-      lastRenderableMessage.role !== "assistant" ||
-      !hasRenderableConversationContent(lastRenderableMessage)
-    ) {
-      return null;
-    }
-
-    return lastRenderableMessage.id;
-  }, [messages]);
 
   useEffect(() => {
     if (!focusMessageId) {

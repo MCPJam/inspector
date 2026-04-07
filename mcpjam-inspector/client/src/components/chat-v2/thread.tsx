@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 import {
   useSandboxHostStyle,
@@ -131,10 +131,16 @@ export function Thread({
   const sandboxHostTheme = useSandboxHostTheme();
   const isChatgptDark =
     sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
-  const lastRenderableMessage = getLastRenderableConversationMessage(messages);
+  const lastRenderableMessage = useMemo(
+    () => getLastRenderableConversationMessage(messages),
+    [messages],
+  );
   const canAttachClaudeMascot =
     lastRenderableMessage?.role === "assistant" &&
     hasRenderableConversationContent(lastRenderableMessage);
+  const lastRenderableMessageId = canAttachClaudeMascot
+    ? lastRenderableMessage.id
+    : null;
   const shouldShowStandaloneThinkingIndicator =
     loadingIndicatorVariant === "claude-mark"
       ? isLoading && !canAttachClaudeMascot
@@ -182,6 +188,7 @@ export function Thread({
         viewportRef={viewportRef}
         isLoading={isLoading}
         loadingIndicatorVariant={loadingIndicatorVariant}
+        lastRenderableMessageId={lastRenderableMessageId}
         contentClassName="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
       />
       {shouldShowStandaloneThinkingIndicator && (
