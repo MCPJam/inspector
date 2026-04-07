@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import {
@@ -7,8 +8,8 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { formatRunId, getIterationBorderColor } from "./helpers";
+import { ChevronDown, ChevronRight, RotateCw } from "lucide-react";
+import { evalStatusLeftBorderClasses, formatRunId } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import { CiMetadataDisplay } from "./ci-metadata-display";
 import type { EvalIteration, EvalSuiteRun } from "./types";
@@ -18,6 +19,8 @@ interface RunAccordionViewProps {
   runs: EvalSuiteRun[];
   allIterations: EvalIteration[];
   onRunClick: (runId: string) => void;
+  onReplayRun?: (run: EvalSuiteRun) => void;
+  replayingRunId?: string | null;
   onTestCaseClick?: (testCaseId: string) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
 }
@@ -35,19 +38,19 @@ export function RunAccordionView({
   runs,
   allIterations,
   onRunClick,
+  onReplayRun,
+  replayingRunId = null,
   onTestCaseClick,
   userMap,
 }: RunAccordionViewProps) {
   // Sort runs by time (latest first)
   const sortedRuns = useMemo(
     () =>
-      [...runs]
-        .filter((r) => r.isActive !== false)
-        .sort((a, b) => {
-          const aTime = a.completedAt ?? a.createdAt ?? 0;
-          const bTime = b.completedAt ?? b.createdAt ?? 0;
-          return bTime - aTime;
-        }),
+      [...runs].sort((a, b) => {
+        const aTime = a.completedAt ?? a.createdAt ?? 0;
+        const bTime = b.completedAt ?? b.createdAt ?? 0;
+        return bTime - aTime;
+      }),
     [runs],
   );
 
@@ -127,7 +130,11 @@ export function RunAccordionView({
             : run.status === "cancelled"
               ? "cancelled"
               : "pending");
-        const borderColor = getIterationBorderColor(runResult);
+        const runAccent = evalStatusLeftBorderClasses(
+          run.status === "running" || run.status === "pending"
+            ? "running"
+            : runResult,
+        );
 
         const duration =
           run.completedAt && run.createdAt
@@ -140,6 +147,7 @@ export function RunAccordionView({
         const timeAgo = timestamp ? formatTimeAgo(timestamp) : null;
 
         const creator = run.createdBy && userMap?.get(run.createdBy);
+        const isReplayingRun = replayingRunId === run._id;
 
         const showCiMetadata =
           !!run.ciMetadata?.branch ||
@@ -147,114 +155,148 @@ export function RunAccordionView({
           !!run.ciMetadata?.runUrl;
 
         return (
-          <div key={run._id} className="relative">
-            {/* Colored left border */}
-            <div
-              className={`absolute left-0 top-0 h-full w-1 ${borderColor} ${index === 0 ? "rounded-tl-xl" : ""} ${index === sortedRuns.length - 1 && !isExpanded ? "rounded-bl-xl" : ""}`}
-            />
-
-            {/* Run header — clickable to expand/collapse */}
-            <button
-              onClick={() => toggleRun(run._id)}
-              className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-muted/50"
-            >
-              {/* Expand/collapse chevron */}
-              <span className="shrink-0 text-muted-foreground">
-                {isExpanded ? (
-                  <ChevronDown className="h-4 w-4" />
-                ) : (
-                  <ChevronRight className="h-4 w-4" />
-                )}
-              </span>
-
-              {/* Run info */}
-              <div className="flex flex-1 items-center gap-3 min-w-0">
-                <span className="text-xs font-medium shrink-0">
-                  Run {formatRunId(run._id)}
+          <div
+            key={run._id}
+            className={cn(
+              "relative border-l-2",
+              runAccent,
+              index === 0 && "rounded-tl-xl",
+              index === sortedRuns.length - 1 && !isExpanded && "rounded-bl-xl",
+            )}
+          >
+            {/* Run header */}
+            <div className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-muted/50">
+              <button
+                type="button"
+                aria-expanded={isExpanded}
+                onClick={() => toggleRun(run._id)}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-sm bg-transparent p-0 text-left appearance-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+              >
+                {/* Expand/collapse chevron */}
+                <span className="shrink-0 text-muted-foreground">
+                  {isExpanded ? (
+                    <ChevronDown className="h-4 w-4" />
+                  ) : (
+                    <ChevronRight className="h-4 w-4" />
+                  )}
                 </span>
 
-                {timeAgo && (
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    {timeAgo}
+                {/* Run info */}
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="text-xs font-medium shrink-0">
+                    Run {formatRunId(run._id)}
                   </span>
-                )}
 
-                {duration && (
-                  <span className="text-xs font-mono text-muted-foreground shrink-0">
-                    {duration}
-                  </span>
-                )}
+                  {timeAgo && (
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {timeAgo}
+                    </span>
+                  )}
 
-                {showCiMetadata && (
-                  <span className="shrink-0">
-                    <CiMetadataDisplay
-                      ciMetadata={run.ciMetadata}
-                      compact={true}
-                      compactMode="chip"
-                      interactive={false}
-                    />
-                  </span>
-                )}
+                  {duration && (
+                    <span className="text-xs font-mono text-muted-foreground shrink-0">
+                      {duration}
+                    </span>
+                  )}
 
-                {/* Spacer */}
-                <span className="flex-1" />
+                  {showCiMetadata && (
+                    <span className="shrink-0">
+                      <CiMetadataDisplay
+                        ciMetadata={run.ciMetadata}
+                        compact={true}
+                        compactMode="chip"
+                        interactive={false}
+                      />
+                    </span>
+                  )}
 
-                {/* Pass/fail summary */}
-                {total > 0 && (
-                  <span className="flex items-center gap-2 shrink-0">
-                    <span className="text-xs font-mono">
-                      <span className="text-green-500">{passed}</span>
-                      {failed > 0 && (
-                        <>
-                          <span className="text-muted-foreground"> / </span>
-                          <span className="text-red-500">{failed}</span>
-                        </>
+                  {run.replayedFromRunId && (
+                    <span className="shrink-0 rounded bg-blue-500/10 px-1.5 py-0.5 text-[11px] font-medium text-blue-600">
+                      Replay
+                    </span>
+                  )}
+
+                  <span className="flex-1" />
+
+                  {total > 0 && (
+                    <span className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs font-mono">
+                        <span className="text-emerald-600 dark:text-emerald-400">
+                          {passed}
+                        </span>
+                        {failed > 0 && (
+                          <>
+                            <span className="text-muted-foreground"> / </span>
+                            <span className="text-destructive">{failed}</span>
+                          </>
+                        )}
+                      </span>
+                      {passRate !== null && (
+                        <span
+                          className={cn(
+                            "text-xs font-medium px-1.5 py-0.5 rounded",
+                            passRate === 100
+                              ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                              : passRate >= 80
+                                ? "bg-amber-500/10 text-amber-700 dark:text-amber-400"
+                                : "bg-destructive/10 text-destructive",
+                          )}
+                        >
+                          {passRate}%
+                        </span>
                       )}
                     </span>
-                    {passRate !== null && (
-                      <span
-                        className={cn(
-                          "text-xs font-medium px-1.5 py-0.5 rounded",
-                          passRate === 100
-                            ? "bg-green-500/15 text-green-500"
-                            : passRate >= 80
-                              ? "bg-yellow-500/15 text-yellow-500"
-                              : "bg-red-500/15 text-red-500",
-                        )}
+                  )}
+
+                  {run.status === "running" && (
+                    <span className="text-xs text-amber-600 dark:text-amber-400 font-medium shrink-0">
+                      Running...
+                    </span>
+                  )}
+
+                  {creator && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Avatar className="size-5 shrink-0">
+                          <AvatarImage
+                            src={creator.imageUrl}
+                            alt={creator.name}
+                          />
+                          <AvatarFallback className="text-[9px]">
+                            {getInitials(creator.name)}
+                          </AvatarFallback>
+                        </Avatar>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p className="text-xs">{creator.name}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+              </button>
+
+              {run.hasServerReplayConfig && onReplayRun && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => onReplayRun(run)}
+                        disabled={isReplayingRun}
+                        className="h-7 gap-1.5 px-2 text-xs"
                       >
-                        {passRate}%
-                      </span>
-                    )}
-                  </span>
-                )}
-
-                {run.status === "running" && (
-                  <span className="text-xs text-yellow-500 font-medium shrink-0">
-                    Running...
-                  </span>
-                )}
-
-                {/* Avatar */}
-                {creator && (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Avatar className="size-5 shrink-0">
-                        <AvatarImage
-                          src={creator.imageUrl}
-                          alt={creator.name}
+                        <RotateCw
+                          className={`h-3.5 w-3.5 ${isReplayingRun ? "animate-spin" : ""}`}
                         />
-                        <AvatarFallback className="text-[9px]">
-                          {getInitials(creator.name)}
-                        </AvatarFallback>
-                      </Avatar>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p className="text-xs">{creator.name}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                )}
-              </div>
-            </button>
+                        {isReplayingRun ? "Replaying..." : "Replay"}
+                      </Button>
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>Replay this CI run</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
 
             {/* Expanded test cases */}
             {isExpanded && (
@@ -268,13 +310,9 @@ export function RunAccordionView({
                 ) : (
                   <div className="divide-y divide-border/50">
                     {testCases.map((tc, tcIndex) => {
-                      const resultIcon =
-                        tc.result === "passed"
-                          ? "text-green-500"
-                          : tc.result === "failed"
-                            ? "text-red-500"
-                            : "text-muted-foreground";
-
+                      const tcAccent = evalStatusLeftBorderClasses(
+                        tc.result === "pending" ? "running" : tc.result,
+                      );
                       return (
                         <button
                           key={`${tc.testCaseId}-${tcIndex}`}
@@ -286,54 +324,35 @@ export function RunAccordionView({
                               onRunClick(run._id);
                             }
                           }}
-                          className="flex w-full items-center gap-3 px-4 pl-11 py-2 text-left transition-colors hover:bg-muted/50"
+                          title={
+                            tc.result === "passed"
+                              ? "Passed"
+                              : tc.result === "failed"
+                                ? "Failed"
+                                : tc.result === "cancelled"
+                                  ? "Cancelled"
+                                  : "Pending"
+                          }
+                          className={cn(
+                            "flex w-full items-center gap-3 border-l-2 py-2 pl-[2.75rem] pr-4 text-left transition-colors hover:bg-muted/50",
+                            tcAccent,
+                          )}
                         >
-                          {/* Status dot */}
-                          <span
-                            className={cn(
-                              "h-2 w-2 rounded-full shrink-0",
-                              tc.result === "passed"
-                                ? "bg-green-500"
-                                : tc.result === "failed"
-                                  ? "bg-red-500"
-                                  : "bg-muted-foreground",
-                            )}
-                          />
-
-                          {/* Test name */}
                           <span className="text-xs flex-1 min-w-0 truncate">
                             {tc.title}
                           </span>
 
-                          {/* Model (if shown) */}
                           {tc.model && (
                             <span className="text-[10px] text-muted-foreground shrink-0">
                               {tc.model}
                             </span>
                           )}
 
-                          {/* Duration */}
                           {tc.duration > 0 && (
                             <span className="text-xs font-mono text-muted-foreground shrink-0">
                               {formatDuration(tc.duration)}
                             </span>
                           )}
-
-                          {/* Result label */}
-                          <span
-                            className={cn(
-                              "text-xs font-medium shrink-0",
-                              resultIcon,
-                            )}
-                          >
-                            {tc.result === "passed"
-                              ? "Passed"
-                              : tc.result === "failed"
-                                ? "Failed"
-                                : tc.result === "cancelled"
-                                  ? "Cancelled"
-                                  : "Pending"}
-                          </span>
                         </button>
                       );
                     })}

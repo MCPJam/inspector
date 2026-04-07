@@ -3,8 +3,9 @@ import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
   getServerTransportLabel,
+  getServerUrl,
 } from "../server-card-utils.js";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
 
 describe("getConnectionStatusMeta", () => {
@@ -17,14 +18,14 @@ describe("getConnectionStatusMeta", () => {
 
   it("returns connecting status meta with spinner", () => {
     const meta = getConnectionStatusMeta("connecting");
-    expect(meta.label).toBe("Connecting...");
+    expect(meta.label).toBe("Finishing setup...");
     expect(meta.indicatorColor).toBe("#3b82f6");
     expect(meta.iconClassName).toContain("animate-spin");
   });
 
   it("returns oauth-flow status meta", () => {
     const meta = getConnectionStatusMeta("oauth-flow");
-    expect(meta.label).toBe("Authorizing...");
+    expect(meta.label).toBe("Authorizing in browser...");
     expect(meta.indicatorColor).toBe("#a855f7");
     expect(meta.iconClassName).toContain("text-purple-500");
   });
@@ -53,7 +54,7 @@ describe("getConnectionStatusMeta", () => {
 describe("getServerCommandDisplay", () => {
   it("returns URL for HTTP/SSE config", () => {
     const config: MCPServerConfig = {
-      url: new URL("http://localhost:3000/mcp"),
+      url: "http://localhost:3000/mcp",
     };
     expect(getServerCommandDisplay(config)).toBe("http://localhost:3000/mcp");
   });
@@ -84,7 +85,7 @@ describe("getServerCommandDisplay", () => {
   });
 
   it("handles empty config gracefully", () => {
-    const config: MCPServerConfig = {};
+    const config = {} as MCPServerConfig;
     expect(getServerCommandDisplay(config)).toBe("");
   });
 
@@ -97,10 +98,31 @@ describe("getServerCommandDisplay", () => {
   });
 });
 
+describe("getServerUrl", () => {
+  it("returns URL string for HTTP config", () => {
+    const config: MCPServerConfig = {
+      url: "http://localhost:3000/mcp",
+    };
+    expect(getServerUrl(config)).toBe("http://localhost:3000/mcp");
+  });
+
+  it("returns joined command for stdio config", () => {
+    const config: MCPServerConfig = {
+      command: "node",
+      args: ["server.js"],
+    };
+    expect(getServerUrl(config)).toBe("node server.js");
+  });
+
+  it("returns undefined for empty config", () => {
+    expect(getServerUrl({} as MCPServerConfig)).toBeUndefined();
+  });
+});
+
 describe("getServerTransportLabel", () => {
   it('returns "HTTP/SSE" for URL config', () => {
     const config: MCPServerConfig = {
-      url: new URL("http://localhost:3000"),
+      url: "http://localhost:3000",
     };
     expect(getServerTransportLabel(config)).toBe("HTTP/SSE");
   });
@@ -114,7 +136,7 @@ describe("getServerTransportLabel", () => {
   });
 
   it('returns "STDIO" for empty config', () => {
-    const config: MCPServerConfig = {};
+    const config = {} as MCPServerConfig;
     expect(getServerTransportLabel(config)).toBe("STDIO");
   });
 });

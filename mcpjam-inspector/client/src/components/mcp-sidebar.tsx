@@ -13,9 +13,11 @@ import {
   ListTodo,
   SquareSlash,
   MessageCircleQuestionIcon,
-  GitBranch,
   GraduationCap,
   Box,
+  LayoutGrid,
+  GitBranch,
+  Puzzle,
 } from "lucide-react";
 import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 
@@ -24,8 +26,19 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
   SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
+  SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 import { useConvexAuth } from "convex/react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
@@ -33,6 +46,11 @@ import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarWorkspaceSelector } from "@/components/sidebar/sidebar-workspace-selector";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
 import {
   listTools,
@@ -47,6 +65,13 @@ import {
   isHostedSidebarTabAllowed,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
+import { buildEvalsHash } from "@/lib/evals-router";
+import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
+import { withTestingSurface } from "@/lib/testing-surface";
+import { HOSTED_LOCAL_ONLY_TOOLTIP } from "@/lib/hosted-ui";
+import { useLearnMore } from "@/hooks/use-learn-more";
+import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
+import type { BillingFeatureName } from "@/hooks/useOrganizationBilling";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { Workspace } from "@/state/app-types";
 
@@ -54,10 +79,16 @@ interface NavItem {
   title: string;
   url: string;
   icon: React.ComponentType;
+  disabled?: boolean;
+  disabledTooltip?: string;
   /** Only show this item when the named feature flag is enabled */
   featureFlag?: string;
   /** Hide this item when the named feature flag is enabled */
   hiddenByFlag?: string;
+  /** Hide this item when billing enforcement is active and the org lacks this feature */
+  billingFeature?: BillingFeatureName;
+  /** Nested Playground / Runs entries; omit from the flat main menu */
+  evalsSubnav?: boolean;
 }
 
 interface NavSection {
@@ -86,6 +117,57 @@ export function filterByFeatureFlags(
     .filter((section) => section.items.length > 0);
 }
 
+/**
+ * Keeps billed nav items visible; marks them disabled when the gate denies access
+ * and enforcement is enabled (not soft/disabled).
+ *
+ * Not used in the main sidebar pipeline — items stay clickable so the shell can
+ * show the billing upsell gate. Retained for tests and optional future use.
+ */
+export function applyBillingGateNavState(
+  sections: NavSection[],
+  options: {
+    billingUiEnabled: boolean;
+    /** When true, feature is denied by premiumness (locked). */
+    gateDenied: Partial<Record<BillingFeatureName, boolean>>;
+    enforcementActive: boolean;
+  },
+): NavSection[] {
+  const { billingUiEnabled, gateDenied, enforcementActive } = options;
+  if (!billingUiEnabled || !enforcementActive) {
+    return sections;
+  }
+
+  return sections.map((section) => ({
+    ...section,
+    items: section.items.map((item) => {
+      if (!item.billingFeature) {
+        return item;
+      }
+      const denied = gateDenied[item.billingFeature] === true;
+      if (!denied) {
+        return item;
+      }
+      return {
+        ...item,
+        disabled: true,
+        disabledTooltip: `${item.title} requires a plan upgrade.`,
+      };
+    }),
+  }));
+}
+
+export function shouldPrefetchSidebarTools(options: {
+  hostedMode: boolean;
+  isAuthenticated: boolean;
+}): boolean {
+  const { hostedMode, isAuthenticated } = options;
+  // Hosted guests can briefly hydrate stale "connected" local servers before
+  // runtime status sync clears them, which causes speculative tools/list calls
+  // against guest server configs. Only signed-in hosted users should prefetch.
+  return !hostedMode || isAuthenticated;
+}
+
 // Define sections with their respective items
 const navigationSections: NavSection[] = [
   {
@@ -95,6 +177,12 @@ const navigationSections: NavSection[] = [
         title: "Servers",
         url: "#servers",
         icon: MCPIcon,
+      },
+      {
+        title: "Registry",
+        url: "#registry",
+        icon: LayoutGrid,
+        featureFlag: "registry-enabled",
       },
       {
         title: "Chat",
@@ -123,16 +211,17 @@ const navigationSections: NavSection[] = [
         icon: Layers,
       },
       {
-        title: "Generate Evals",
-        url: "#evals",
-        icon: FlaskConical,
-        hiddenByFlag: "ci-evals-enabled",
+        title: "Client Config",
+        url: "#client-config",
+        icon: Settings,
+        featureFlag: "client-config-enabled",
       },
       {
-        title: "Evals CI/CD",
-        url: "#ci-evals",
-        icon: GitBranch,
-        featureFlag: "ci-evals-enabled",
+        title: "Evaluate",
+        url: "#evals",
+        icon: FlaskConical,
+        billingFeature: "evals",
+        evalsSubnav: true,
       },
     ],
   },
@@ -204,18 +293,40 @@ const navigationSections: NavSection[] = [
   },
 ];
 
-const hostedNavigationSections = navigationSections
-  .map((section) => ({
-    ...section,
-    items: section.items.filter((item) =>
-      isHostedSidebarTabAllowed(
-        normalizeHostedHashTab(
+export function getHostedNavigationSections(
+  sections: NavSection[],
+): NavSection[] {
+  return sections
+    .map((section) => ({
+      ...section,
+      items: section.items.flatMap((item) => {
+        const normalizedTab = normalizeHostedHashTab(
           item.url.startsWith("#") ? item.url.slice(1) : item.url,
-        ),
-      ),
-    ),
-  }))
-  .filter((section) => section.items.length > 0);
+        );
+
+        if (isHostedSidebarTabAllowed(normalizedTab)) {
+          return [item];
+        }
+
+        if (normalizedTab === "skills") {
+          return [
+            {
+              ...item,
+              disabled: true,
+              disabledTooltip: HOSTED_LOCAL_ONLY_TOOLTIP,
+              hiddenByFlag: undefined,
+            },
+          ];
+        }
+
+        return [];
+      }),
+    }))
+    .filter((section) => section.items.length > 0);
+}
+
+const hostedNavigationSections =
+  getHostedNavigationSections(navigationSections);
 
 interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onNavigate?: (section: string) => void;
@@ -230,9 +341,156 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoadingWorkspaces?: boolean;
   activeOrganizationId?: string;
+  billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
+  billingGateEnforcementActive?: boolean;
+  billingUiEnabled?: boolean;
+  isCreateWorkspaceDisabled?: boolean;
+  createWorkspaceDisabledReason?: string;
 }
 
 const APP_BUILDER_VISITED_KEY = "mcp-app-builder-visited";
+
+function navigateToEvalsExploreList() {
+  window.location.hash = withTestingSurface(buildEvalsHash({ type: "list" }));
+}
+
+function navigateToEvalsRunsList() {
+  navigateToCiEvalsRoute({ type: "list" });
+}
+
+type EvalsSubnavItem = {
+  title: "Playground" | "Runs";
+  href: string;
+  icon: typeof Puzzle | typeof GitBranch;
+  isActive: (activeTab?: string) => boolean;
+  onClick: () => void;
+};
+
+export function getEvalsSubnavItems(options: {
+  evaluateRunsEnabled: boolean;
+}): EvalsSubnavItem[] {
+  const items: EvalsSubnavItem[] = [
+    {
+      title: "Playground",
+      href: withTestingSurface(buildEvalsHash({ type: "list" })),
+      icon: Puzzle,
+      isActive: (activeTab) => activeTab === "evals",
+      onClick: navigateToEvalsExploreList,
+    },
+  ];
+
+  if (options.evaluateRunsEnabled) {
+    items.push({
+      title: "Runs",
+      href: "#/ci-evals",
+      icon: GitBranch,
+      isActive: (activeTab) => activeTab === "ci-evals",
+      onClick: navigateToEvalsRunsList,
+    });
+  }
+
+  return items;
+}
+
+export function SidebarEvalsNavGroup({
+  title,
+  Icon,
+  disabled,
+  disabledTooltip,
+  activeTab,
+  showRuns = true,
+}: {
+  title: string;
+  Icon: React.ComponentType<{ className?: string }>;
+  disabled?: boolean;
+  disabledTooltip?: string;
+  activeTab?: string;
+  showRuns?: boolean;
+}) {
+  const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
+  const subnavItems = getEvalsSubnavItems({
+    evaluateRunsEnabled: showRuns,
+  });
+
+  const parentButton = (
+    <SidebarMenuButton
+      tooltip={title}
+      isActive={!disabled && isEvalsFamily}
+      onClick={() => {
+        if (disabled) return;
+        navigateToEvalsExploreList();
+      }}
+      aria-disabled={disabled || undefined}
+      tabIndex={disabled ? -1 : undefined}
+      className={
+        disabled
+          ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
+          : isEvalsFamily
+            ? "[&[data-active=true]]:bg-accent cursor-pointer"
+            : "cursor-pointer"
+      }
+    >
+      <Icon className="h-4 w-4" />
+      <span>{title}</span>
+    </SidebarMenuButton>
+  );
+
+  return (
+    <SidebarGroup>
+      <SidebarGroupContent>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            {disabled ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className="w-full cursor-not-allowed"
+                    title={disabledTooltip}
+                  >
+                    {parentButton}
+                  </div>
+                </TooltipTrigger>
+                {disabledTooltip ? (
+                  <TooltipContent side="right" align="center">
+                    {disabledTooltip}
+                  </TooltipContent>
+                ) : null}
+              </Tooltip>
+            ) : (
+              parentButton
+            )}
+            <SidebarMenuSub>
+              {subnavItems.map((item) => {
+                const ItemIcon = item.icon;
+
+                return (
+                  <SidebarMenuSubItem key={item.title}>
+                    <SidebarMenuSubButton
+                      isActive={item.isActive(activeTab)}
+                      href={item.href}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (disabled) return;
+                        item.onClick();
+                      }}
+                      aria-disabled={disabled || undefined}
+                      className={
+                        disabled ? "pointer-events-none opacity-50" : undefined
+                      }
+                    >
+                      <ItemIcon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                );
+              })}
+            </SidebarMenuSub>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
+    </SidebarGroup>
+  );
+}
 
 export function MCPSidebar({
   onNavigate,
@@ -245,12 +503,20 @@ export function MCPSidebar({
   onDeleteWorkspace,
   isLoadingWorkspaces,
   activeOrganizationId,
+  billingGateDenied = {},
+  billingGateEnforcementActive = false,
+  billingUiEnabled = false,
+  isCreateWorkspaceDisabled = false,
+  createWorkspaceDisabledReason,
   ...props
 }: MCPSidebarProps) {
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const learningFlagEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
+  const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
+  const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -261,6 +527,8 @@ export function MCPSidebar({
   const [hasVisitedAppBuilder, setHasVisitedAppBuilder] = useState(() => {
     return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
   });
+  const learnMore = useLearnMore();
+  const { state, isMobile } = useSidebar();
 
   // Get list of connected server names
   const connectedServerNames = useMemo(() => {
@@ -272,7 +540,13 @@ export function MCPSidebar({
   // Fetch tools data for connected servers
   useEffect(() => {
     const fetchToolsData = async () => {
-      if (connectedServerNames.length === 0) {
+      if (
+        !shouldPrefetchSidebarTools({
+          hostedMode: HOSTED_MODE,
+          isAuthenticated,
+        }) ||
+        connectedServerNames.length === 0
+      ) {
         setToolsDataMap({});
         return;
       }
@@ -297,7 +571,7 @@ export function MCPSidebar({
     };
 
     fetchToolsData();
-  }, [connectedServerNames.join(",")]);
+  }, [connectedServerNames.join(","), isAuthenticated]);
 
   // Check if any connected server is an app
   const hasAppServer = useMemo(() => {
@@ -344,11 +618,18 @@ export function MCPSidebar({
     : null;
   const featureFlags = useMemo(
     () => ({
-      "ci-evals-enabled": !!ciEvalsEnabled && isAuthenticated,
       "mcpjam-learning": !!learningEnabled,
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
+      "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
+      "registry-enabled": registryEnabled === true,
     }),
-    [ciEvalsEnabled, learningEnabled, sandboxesEnabled, isAuthenticated],
+    [
+      learningEnabled,
+      sandboxesEnabled,
+      clientConfigEnabled,
+      registryEnabled,
+      isAuthenticated,
+    ],
   );
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
@@ -356,64 +637,153 @@ export function MCPSidebar({
   );
 
   return (
-    <Sidebar collapsible="icon" {...props}>
-      <SidebarHeader>
-        <button
-          onClick={() => handleNavClick("#servers")}
-          className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
-        >
-          <img
-            src={
-              themeMode === "dark" ? "/mcp_jam_dark.png" : "/mcp_jam_light.png"
-            }
-            alt="MCP Jam"
-            className="h-4 w-auto"
-          />
-        </button>
-        {updateReady && (
-          <div className="px-2 pb-2">
-            <Button
-              size="sm"
-              onClick={restartAndInstall}
-              className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
-            >
-              Update & Restart
-            </Button>
-          </div>
-        )}
-        <SidebarWorkspaceSelector
-          activeWorkspaceId={activeWorkspaceId}
-          workspaces={workspaces}
-          onSwitchWorkspace={onSwitchWorkspace}
-          onCreateWorkspace={onCreateWorkspace}
-          onDeleteWorkspace={onDeleteWorkspace}
-          isLoading={isLoadingWorkspaces}
-          onNavigateToSettings={() => handleNavClick("#workspace-settings")}
-        />
-      </SidebarHeader>
-      <SidebarContent>
-        {visibleNavigationSections.map((section, sectionIndex) => (
-          <React.Fragment key={section.id}>
-            <NavMain
-              items={section.items.map((item) => ({
-                ...item,
-                isActive: item.url === `#${activeTab}`,
-              }))}
-              onItemClick={handleNavClick}
-              appBuilderBubble={
-                section.id === "mcp-apps" ? appBuilderBubble : null
-              }
-            />
-            {/* Add subtle divider between sections (except after the last section) */}
-            {sectionIndex < visibleNavigationSections.length - 1 && (
-              <div className="mx-4 my-2 border-t border-border/50" />
+    <>
+      <Sidebar collapsible="icon" {...props}>
+        <SidebarHeader>
+          <div
+            className={cn(
+              "no-drag",
+              state === "collapsed" && !isMobile && "flex justify-center px-0",
             )}
-          </React.Fragment>
-        ))}
-      </SidebarContent>
-      <SidebarFooter>
-        <SidebarUser activeOrganizationId={activeOrganizationId} />
-      </SidebarFooter>
-    </Sidebar>
+          >
+            {isMobile ? (
+              <button
+                type="button"
+                onClick={() => handleNavClick("#servers")}
+                className="flex w-full cursor-pointer items-center justify-center px-4 py-4 transition-opacity hover:opacity-80"
+              >
+                <img
+                  src={
+                    themeMode === "dark"
+                      ? "/mcp_jam_dark.png"
+                      : "/mcp_jam_light.png"
+                  }
+                  alt="MCP Jam"
+                  className="h-4 w-auto"
+                />
+              </button>
+            ) : state === "expanded" ? (
+              <div className="relative isolate w-full">
+                <button
+                  type="button"
+                  onClick={() => handleNavClick("#servers")}
+                  className={cn(
+                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-3 transition-opacity duration-200",
+                    /* Reserve space for the collapse control so the logo stays visually centered and
+                       clicks on the logo never compete with the invisible hit target. */
+                    "px-2 pr-10 hover:opacity-80",
+                  )}
+                >
+                  <img
+                    src={
+                      themeMode === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCP Jam"
+                    className="h-4 w-auto"
+                  />
+                </button>
+                <SidebarTrigger
+                  className={cn(
+                    "absolute top-1/2 right-0 z-20 size-7 -translate-y-1/2 shrink-0",
+                    /* pointer-events must stay enabled: if we use pointer-events-none until hover,
+                       a click can lose :hover before mouseup/click (Electron / fast moves) and the
+                       event never reaches this button. Touch has no hover — use coarse-pointer rule. */
+                    "pointer-events-auto opacity-0 transition-opacity duration-200",
+                    /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
+                    "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
+                    "[@media(hover:none)]:opacity-100",
+                  )}
+                  aria-label="Collapse sidebar"
+                />
+              </div>
+            ) : (
+              <SidebarTrigger
+                className="size-7 shrink-0"
+                aria-label="Expand sidebar"
+              />
+            )}
+          </div>
+          {updateReady && (
+            <div className="px-2 pb-2">
+              <Button
+                size="sm"
+                onClick={restartAndInstall}
+                className="w-full bg-primary hover:bg-primary/90 text-primary-foreground h-7 text-xs font-medium rounded-md"
+              >
+                Update & Restart
+              </Button>
+            </div>
+          )}
+          <SidebarWorkspaceSelector
+            activeWorkspaceId={activeWorkspaceId}
+            workspaces={workspaces}
+            onSwitchWorkspace={onSwitchWorkspace}
+            onCreateWorkspace={onCreateWorkspace}
+            onDeleteWorkspace={onDeleteWorkspace}
+            isLoading={isLoadingWorkspaces}
+            onNavigateToSettings={() => handleNavClick("#workspace-settings")}
+            isCreateDisabled={isCreateWorkspaceDisabled}
+            createDisabledReason={createWorkspaceDisabledReason}
+            onLearnMoreExpand={
+              learnMoreEnabled ? learnMore.openExpandedModal : undefined
+            }
+          />
+        </SidebarHeader>
+        <SidebarContent>
+          {visibleNavigationSections.map((section, sectionIndex) => {
+            const evalsEntry = section.items.find((item) => item.evalsSubnav);
+            const flatItems = section.items.filter((item) => !item.evalsSubnav);
+
+            return (
+              <React.Fragment key={section.id}>
+                <NavMain
+                  items={flatItems.map((item) => ({
+                    ...item,
+                    isActive: item.url === `#${activeTab}`,
+                  }))}
+                  onItemClick={handleNavClick}
+                  appBuilderBubble={
+                    section.id === "mcp-apps" ? appBuilderBubble : null
+                  }
+                  learnMore={
+                    learnMoreEnabled
+                      ? {
+                          onExpand: learnMore.openExpandedModal,
+                        }
+                      : null
+                  }
+                />
+                {evalsEntry ? (
+                  <SidebarEvalsNavGroup
+                    title={evalsEntry.title}
+                    Icon={evalsEntry.icon}
+                    disabled={evalsEntry.disabled}
+                    disabledTooltip={evalsEntry.disabledTooltip}
+                    activeTab={activeTab}
+                    showRuns={evaluateRunsEnabled === true}
+                  />
+                ) : null}
+                {/* Add subtle divider between sections (except after the last section) */}
+                {sectionIndex < visibleNavigationSections.length - 1 && (
+                  <div className="mx-4 my-2 border-t border-border/50" />
+                )}
+              </React.Fragment>
+            );
+          })}
+        </SidebarContent>
+        <SidebarFooter>
+          <SidebarUser activeOrganizationId={activeOrganizationId} />
+        </SidebarFooter>
+      </Sidebar>
+      {learnMoreEnabled && (
+        <LearnMoreExpandedPanel
+          tabId={learnMore.expandedTabId}
+          sourceRect={learnMore.sourceRect}
+          onClose={learnMore.closeExpandedModal}
+        />
+      )}
+    </>
   );
 }

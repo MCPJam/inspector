@@ -23,6 +23,7 @@ export type {
   ServerSummary,
   ManagedClientState,
 } from "./types.js";
+export type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 // Types - Handlers and callbacks
 export type {
@@ -82,6 +83,13 @@ export {
 // Utility functions (useful for testing and advanced use cases)
 export { buildRequestInit } from "./transport-utils.js";
 export { isMethodUnavailableError, formatError } from "./error-utils.js";
+export {
+  MCP_UI_EXTENSION_ID,
+  MCP_UI_RESOURCE_MIME_TYPE,
+  getDefaultClientCapabilities,
+  normalizeClientCapabilities,
+  mergeClientCapabilities,
+} from "./capabilities.js";
 
 // Error classes
 export {

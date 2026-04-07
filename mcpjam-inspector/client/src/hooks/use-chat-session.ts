@@ -55,6 +55,7 @@ import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
+import { buildHostedServerRequest } from "@/lib/apis/web/context";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -274,6 +275,10 @@ export function useChatSession({
   const skipNextForkDetectionRef = useRef(false);
   const pendingForkSessionIdRef = useRef<string | null>(null);
   const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
+  const selectedServersSignature = useMemo(
+    () => selectedServers.join("\u0000"),
+    [selectedServers],
+  );
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -289,7 +294,8 @@ export function useChatSession({
       const mcpjamModels = models.filter((model) =>
         isMCPJamProvidedModel(String(model.id)),
       );
-      // Guest users only see the free guest models
+      // Guests should see the same MCPJam-hosted free model set as signed-in
+      // free users. Shared billing/feature entitlements still require auth.
       if (guestMode) {
         return mcpjamModels.filter((m) =>
           GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
@@ -383,6 +389,13 @@ export function useChatSession({
     // (via hostedContextNotReady), so this branch only runs for guests.
     const buildHostedBody = () => {
       if (!hostedWorkspaceId) {
+        if (directGuestMode && selectedServers.length > 0) {
+          return {
+            chatSessionId,
+            ...buildHostedServerRequest(selectedServers[0]),
+          };
+        }
+
         return {
           chatSessionId,
         };
@@ -430,6 +443,7 @@ export function useChatSession({
     temperature,
     systemPrompt,
     selectedServers,
+    directGuestMode,
     hostedWorkspaceId,
     chatSessionId,
     hostedSelectedServerIds,
@@ -655,10 +669,18 @@ export function useChatSession({
   useEffect(() => {
     const fetchToolsMetadata = async () => {
       if (selectedServers.length === 0) {
-        setToolsMetadata({});
-        setToolServerMap({});
-        setMcpToolsTokenCount(null);
-        setMcpToolsTokenCountLoading(false);
+        setToolsMetadata((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous,
+        );
+        setToolServerMap((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous,
+        );
+        setMcpToolsTokenCount((previous) =>
+          previous !== null ? null : previous,
+        );
+        setMcpToolsTokenCountLoading((previous) =>
+          previous ? false : previous,
+        );
         return;
       }
 
@@ -704,7 +726,12 @@ export function useChatSession({
     };
 
     fetchToolsMetadata();
-  }, [selectedServers, selectedModel, hostedShareToken, hostedSandboxToken]);
+  }, [
+    selectedServersSignature,
+    selectedModel,
+    hostedShareToken,
+    hostedSandboxToken,
+  ]);
 
   // System prompt token count
   useEffect(() => {
@@ -792,8 +819,8 @@ export function useChatSession({
   // Shared chats are guest-capable even though they are scoped to a workspace,
   // while direct guests have no workspace at all.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
-  // In non-hosted mode: only require auth for non-guest MCPJam models
-  // (server injects production guest token for guest-allowed models).
+  // In non-hosted mode: auth is only needed if a future MCPJam model opts out
+  // of guest access. Current free-tier MCPJam models run on guest auth.
   const requiresAuthForChat = HOSTED_MODE
     ? true
     : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));

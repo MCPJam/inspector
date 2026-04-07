@@ -1,5 +1,6 @@
-import { useState, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { EditableText } from "@/components/ui/editable-text";
@@ -27,9 +28,9 @@ import {
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useElectronHostedAuth } from "@/hooks/useElectronHostedAuth";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Organization,
   OrganizationMember,
@@ -41,17 +42,205 @@ import {
 } from "@/hooks/useOrganizations";
 import {
   useOrganizationBilling,
-  isPaidPlan,
+  type BillingInterval,
+  type OrganizationBillingStatus,
+  type OrganizationPlan,
+  type PlanCatalog,
 } from "@/hooks/useOrganizationBilling";
+import {
+  formatPlanName,
+  getBillingErrorMessage,
+  isGateAccessDenied,
+} from "@/lib/billing-entitlements";
+import type { CheckoutIntentWithOrganization } from "@/lib/billing-deep-link";
+import type { OrganizationRouteSection } from "@/lib/hosted-navigation";
+import { BILLING_GATES, resolveBillingGateState } from "@/lib/billing-gates";
+import {
+  getBillingUpsellCtaLabel,
+  getBillingUpsellTeaser,
+} from "@/lib/billing-upsell";
+import { cn } from "@/lib/utils";
+import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
+import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
+import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
 
 interface OrganizationsTabProps {
   organizationId?: string;
+  section?: OrganizationRouteSection;
+  checkoutIntent?: CheckoutIntentWithOrganization | null;
+  onCheckoutIntentConsumed?: () => void;
+  onCheckoutIntentNavigationStarted?: () => void;
+  navigateBillingInSameTab?: (url: string) => void;
 }
 
-export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
+function getOrganizationRouteHash(
+  organizationId: string,
+  section: OrganizationRouteSection,
+): string {
+  return section === "billing"
+    ? `organizations/${organizationId}/billing`
+    : `organizations/${organizationId}`;
+}
+
+interface PendingPaidUpgradeConfirmation {
+  tier: "team";
+  billingInterval: BillingInterval;
+}
+
+interface PendingDowngradeConfirmation {
+  targetPlan: "free" | "starter";
+  targetBillingInterval: BillingInterval | null;
+  currentPlan: OrganizationPlan;
+  currentBillingInterval: BillingInterval | null;
+}
+
+interface ScheduledBillingChangeCancellationState {
+  ctaLabel: string;
+  confirmLabel: string;
+  dialogTitle: string;
+  dialogDescription: string;
+  successMessage: string;
+}
+
+function shouldConfirmPaidUpgrade(
+  billingStatus: OrganizationBillingStatus | undefined,
+  tier: "starter" | "team",
+): boolean {
+  return (
+    tier === "team" &&
+    billingStatus?.plan === "starter" &&
+    (billingStatus.subscriptionStatus === "active" ||
+      billingStatus.subscriptionStatus === "trialing")
+  );
+}
+
+function formatCurrencyAmount(amount: number, currency: string): string {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(amount);
+}
+
+function formatBillingDate(timestampMs: number | null): string | null {
+  if (timestampMs == null) {
+    return null;
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(new Date(timestampMs));
+}
+
+function formatBillingIntervalLabel(interval: BillingInterval): string {
+  return interval === "annual" ? "annual" : "monthly";
+}
+
+function formatPlanDescriptor(
+  plan: OrganizationPlan,
+  billingInterval: BillingInterval | null,
+): string {
+  if (billingInterval == null) {
+    return formatPlanName(plan);
+  }
+
+  return `${formatPlanName(plan)} ${formatBillingIntervalLabel(billingInterval)}`;
+}
+
+function getScheduledBillingChangeCancellationState(
+  billingStatus: OrganizationBillingStatus | undefined,
+): ScheduledBillingChangeCancellationState | null {
+  if (
+    !billingStatus?.canManageBilling ||
+    !billingStatus.canCancelScheduledBillingChange ||
+    billingStatus.stripeCancelAtPeriodEnd
+  ) {
+    return null;
+  }
+
+  const currentPlan = billingStatus.plan;
+  const currentBillingInterval = billingStatus.billingInterval;
+  const scheduledPlan = billingStatus.stripeScheduledPlan;
+  const scheduledBillingInterval = billingStatus.stripeScheduledBillingInterval;
+
+  if (
+    (currentPlan !== "starter" && currentPlan !== "team") ||
+    currentBillingInterval == null ||
+    scheduledPlan == null ||
+    scheduledBillingInterval == null
+  ) {
+    return null;
+  }
+
+  if (
+    scheduledPlan === currentPlan &&
+    scheduledBillingInterval === currentBillingInterval
+  ) {
+    return null;
+  }
+
+  const currentIntervalLabel = formatBillingIntervalLabel(
+    currentBillingInterval,
+  );
+  const scheduledIntervalLabel = formatBillingIntervalLabel(
+    scheduledBillingInterval,
+  );
+  const currentPlanName = formatPlanName(currentPlan);
+  const effectiveDate = formatBillingDate(
+    billingStatus.stripeScheduledEffectiveAt,
+  );
+  const keepCurrentPlanLabel = `Keep ${currentPlanName} ${currentIntervalLabel} plan`;
+  const effectiveDateSuffix = effectiveDate ? ` on ${effectiveDate}` : "";
+  const scheduledDescriptor =
+    scheduledPlan === currentPlan
+      ? `${scheduledIntervalLabel} billing`
+      : `${formatPlanName(scheduledPlan)} ${scheduledIntervalLabel}`;
+  const changeNoun = scheduledPlan === currentPlan ? "switch" : "change";
+
+  return {
+    ctaLabel: keepCurrentPlanLabel,
+    confirmLabel: keepCurrentPlanLabel,
+    dialogTitle: `${keepCurrentPlanLabel}?`,
+    dialogDescription: `This cancels the pending ${changeNoun} to ${scheduledDescriptor}${effectiveDateSuffix}. ${currentPlanName} ${currentIntervalLabel} remains active.`,
+    successMessage: `Scheduled billing change canceled. ${currentPlanName} ${currentIntervalLabel} remains active.`,
+  };
+}
+
+function getPaidUpgradeConfirmationSummary(
+  planCatalog: PlanCatalog | undefined,
+  billingInterval: BillingInterval,
+): string {
+  const teamPlan = planCatalog?.plans.team;
+  const seatMinimum = teamPlan?.seatMinimum ?? 4;
+  const priceCents = teamPlan?.prices[billingInterval];
+
+  if (typeof priceCents !== "number") {
+    return billingInterval === "annual"
+      ? `Team with annual billing (${seatMinimum}-seat minimum)`
+      : `Team with monthly billing (${seatMinimum}-seat minimum)`;
+  }
+
+  const billedAmount = (priceCents * seatMinimum) / 100;
+  const cadence = billingInterval === "annual" ? "year" : "month";
+  const currency = planCatalog?.currency ?? "usd";
+
+  return `Team at ${formatCurrencyAmount(billedAmount, currency)}/${cadence} (${seatMinimum}-seat minimum)`;
+}
+
+export function OrganizationsTab({
+  organizationId,
+  section = "overview",
+  checkoutIntent = null,
+  onCheckoutIntentConsumed,
+  onCheckoutIntentNavigationStarted,
+  navigateBillingInSameTab,
+}: OrganizationsTabProps) {
   const { user, signIn } = useElectronHostedAuth();
-  const { isAuthenticated } = useConvexAuth();
+  const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
 
   const { sortedOrganizations, isLoading } = useOrganizationQueries({
     isAuthenticated,
@@ -62,7 +251,18 @@ export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
     ? sortedOrganizations.find((org) => org._id === organizationId)
     : null;
 
-  if (!user) {
+  if (isAuthLoading) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full p-8">
+        <div className="flex items-center gap-2 text-muted-foreground">
+          <RefreshCw className="size-4 animate-spin" />
+          Completing sign-in...
+        </div>
+      </div>
+    );
+  }
+
+  if (!user || !isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center h-full p-8">
         <div className="text-center space-y-4 max-w-md">
@@ -127,14 +327,44 @@ export function OrganizationsTab({ organizationId }: OrganizationsTabProps) {
     );
   }
 
-  return <OrganizationPage organization={organization} />;
+  return (
+    <OrganizationPage
+      organization={organization}
+      section={section}
+      checkoutIntent={
+        checkoutIntent?.organizationId === organization._id
+          ? checkoutIntent
+          : null
+      }
+      onCheckoutIntentConsumed={onCheckoutIntentConsumed}
+      onCheckoutIntentNavigationStarted={onCheckoutIntentNavigationStarted}
+      navigateBillingInSameTab={navigateBillingInSameTab}
+    />
+  );
 }
 
 interface OrganizationPageProps {
   organization: Organization;
+  section: OrganizationRouteSection;
+  checkoutIntent?: CheckoutIntentWithOrganization | null;
+  onCheckoutIntentConsumed?: () => void;
+  onCheckoutIntentNavigationStarted?: () => void;
+  navigateBillingInSameTab?: (url: string) => void;
 }
 
-function OrganizationPage({ organization }: OrganizationPageProps) {
+interface CheckoutNavigationOptions {
+  navigation?: "new-tab" | "same-tab";
+  onBeforeNavigate?: () => void;
+}
+
+function OrganizationPage({
+  organization,
+  section,
+  checkoutIntent = null,
+  onCheckoutIntentConsumed,
+  onCheckoutIntentNavigationStarted,
+  navigateBillingInSameTab,
+}: OrganizationPageProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useElectronHostedAuth();
   const currentUserEmail = user?.email;
@@ -171,13 +401,48 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const canInvite = canEdit;
   const {
     billingStatus,
+    entitlements,
+    organizationPremiumness,
+    planCatalog,
     isLoadingBilling,
-    isStartingCheckout,
+    isLoadingEntitlements,
+    isLoadingPlanCatalog,
+    isLoadingOrganizationPremiumness,
+    isStartingPlanChange,
+    pendingPlanChangeTarget,
     isOpeningPortal,
+    isCancelingScheduledBillingChange,
     error: billingError,
-    startCheckout,
+    startPlanChange,
     openPortal,
-  } = useOrganizationBilling(organization._id);
+    openCancellationPortal,
+    openIntervalChangePortal,
+    cancelScheduledBillingChange,
+  } = useOrganizationBilling(organization._id, { enabled: isAuthenticated });
+  const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
+    "billing-entitlements-ui",
+  );
+  const billingUiEnabled = billingEntitlementsUiEnabled === true;
+  const activeSection =
+    billingUiEnabled && section === "billing" ? "billing" : "overview";
+  const memberInviteGate = resolveBillingGateState({
+    billingUiEnabled,
+    organizationId: organization._id,
+    billingStatus,
+    premiumness: organizationPremiumness,
+    gate: BILLING_GATES.memberInvites,
+    isLoading:
+      billingUiEnabled &&
+      (isLoadingBilling || isLoadingOrganizationPremiumness),
+  });
+  const memberUpsellTeaser = getBillingUpsellTeaser({
+    planCatalog,
+    upgradePlan: memberInviteGate.upgradePlan,
+    intent: "members",
+  });
+  const memberUpsellCtaLabel = getBillingUpsellCtaLabel(
+    memberInviteGate.upgradePlan,
+  );
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
     if (!currentRole) return false;
@@ -218,6 +483,16 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
   const [isDeleting, setIsDeleting] = useState(false);
   const [leaveConfirmOpen, setLeaveConfirmOpen] = useState(false);
   const [isLeaving, setIsLeaving] = useState(false);
+  const [
+    scheduledBillingChangeConfirmOpen,
+    setScheduledBillingChangeConfirmOpen,
+  ] = useState(false);
+  const [pendingPaidUpgradeConfirmation, setPendingPaidUpgradeConfirmation] =
+    useState<PendingPaidUpgradeConfirmation | null>(null);
+  const [pendingDowngradeConfirmation, setPendingDowngradeConfirmation] =
+    useState<PendingDowngradeConfirmation | null>(null);
+  const scheduledBillingChangeCancellation =
+    getScheduledBillingChangeCancellationState(billingStatus);
 
   const handleSaveName = async (name: string) => {
     try {
@@ -294,6 +569,16 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
 
   const handleInvite = async () => {
     if (!inviteEmail.trim() || !canInvite) return;
+    if (memberInviteGate.isLoading) {
+      return;
+    }
+    if (memberInviteGate.isDenied) {
+      toast.error(
+        memberInviteGate.denialMessage ??
+          "Upgrade required to add more members",
+      );
+      return;
+    }
     setIsInviting(true);
     try {
       const result = await addMember({
@@ -309,7 +594,13 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
       }
       setInviteEmail("");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to invite member");
+      toast.error(
+        getBillingErrorMessage(
+          error,
+          "Failed to invite member",
+          billingStatus?.canManageBilling ?? false,
+        ),
+      );
     } finally {
       setIsInviting(false);
     }
@@ -323,7 +614,13 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
       });
       toast.success("Member removed");
     } catch (error) {
-      toast.error((error as Error).message || "Failed to remove member");
+      toast.error(
+        getBillingErrorMessage(
+          error,
+          "Failed to remove member",
+          billingStatus?.canManageBilling ?? false,
+        ),
+      );
     }
   };
 
@@ -412,47 +709,317 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     }
   };
 
-  const handleBillingAction = async () => {
-    if (!billingStatus) return;
+  const initial = organization.name.charAt(0).toUpperCase();
+  const auditLogLocked =
+    billingUiEnabled && isGateAccessDenied(organizationPremiumness, "auditLog");
+  const navigateToSection = (nextSection: OrganizationRouteSection) => {
+    window.location.hash = getOrganizationRouteHash(
+      organization._id,
+      nextSection,
+    );
+  };
+  const handleViewBilling = () => navigateToSection("billing");
 
+  const openBillingUrl = useCallback(
+    (url: string, navigation: "new-tab" | "same-tab" = "new-tab") => {
+      if (navigation === "same-tab") {
+        (
+          navigateBillingInSameTab ??
+          ((nextUrl: string) => window.location.assign(nextUrl))
+        )(url);
+        return;
+      }
+
+      window.open(url, "_blank", "noopener,noreferrer");
+    },
+    [navigateBillingInSameTab],
+  );
+
+  const getBillingReturnUrl = useCallback(
+    () =>
+      `${window.location.origin}${window.location.pathname}#${getOrganizationRouteHash(
+        organization._id,
+        "billing",
+      )}`,
+    [organization._id],
+  );
+
+  const handleManageBilling = async () => {
     try {
-      const returnUrl = `${window.location.origin}${window.location.pathname}#organizations/${organization._id}`;
-      const billingUrl = isPaidPlan(billingStatus.plan)
-        ? await openPortal(returnUrl)
-        : await startCheckout(returnUrl);
-      window.open(billingUrl, "_blank", "noopener,noreferrer");
+      const billingUrl = await openPortal(getBillingReturnUrl());
+      openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to start billing flow",
+        error instanceof Error
+          ? error.message
+          : "Failed to open billing portal",
       );
     }
   };
 
-  const initial = organization.name.charAt(0).toUpperCase();
-  const isBillingActionPending = isStartingCheckout || isOpeningPortal;
-  const billingActionLabel =
-    billingStatus && isPaidPlan(billingStatus.plan)
-      ? "Manage subscription"
-      : "Upgrade plan";
-  const formattedPeriodEnd =
-    billingStatus?.stripeCurrentPeriodEnd != null
-      ? new Intl.DateTimeFormat(undefined, {
-          month: "short",
-          day: "numeric",
-          year: "numeric",
-        }).format(new Date(billingStatus.stripeCurrentPeriodEnd))
-      : "Not available";
-  const subscriptionStatusLabel = billingStatus?.subscriptionStatus
-    ? billingStatus.subscriptionStatus.replace(/_/g, " ")
-    : "Not subscribed";
-  const billingAccountLabel = billingStatus?.hasCustomer
-    ? "Connected"
-    : "Not connected";
+  const handleChangeBillingInterval = async (
+    targetBillingInterval: BillingInterval,
+  ) => {
+    try {
+      const billingUrl = await openIntervalChangePortal(
+        getBillingReturnUrl(),
+        targetBillingInterval,
+      );
+      openBillingUrl(billingUrl);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to open billing interval change",
+      );
+    }
+  };
+
+  const handleDowngradePlan = async (
+    targetPlan: OrganizationPlan,
+    targetBillingInterval: BillingInterval,
+  ) => {
+    const currentPlan = billingStatus?.plan;
+
+    if (
+      currentPlan === "team" &&
+      targetPlan === "starter" &&
+      billingStatus?.billingInterval != null
+    ) {
+      setPendingDowngradeConfirmation({
+        targetPlan: "starter",
+        targetBillingInterval,
+        currentPlan,
+        currentBillingInterval: billingStatus.billingInterval,
+      });
+      return;
+    }
+
+    if (
+      (currentPlan === "starter" || currentPlan === "team") &&
+      targetPlan === "free"
+    ) {
+      setPendingDowngradeConfirmation({
+        targetPlan: "free",
+        targetBillingInterval: null,
+        currentPlan,
+        currentBillingInterval: billingStatus.billingInterval,
+      });
+      return;
+    }
+
+    await handleManageBilling();
+  };
+
+  const handleOpenScheduledBillingChangeCancelDialog = () => {
+    if (!scheduledBillingChangeCancellation) return;
+    setScheduledBillingChangeConfirmOpen(true);
+  };
+
+  const handleConfirmScheduledBillingChangeCancellation = async () => {
+    if (!scheduledBillingChangeCancellation) return;
+
+    try {
+      await cancelScheduledBillingChange();
+      setScheduledBillingChangeConfirmOpen(false);
+      toast.success(scheduledBillingChangeCancellation.successMessage);
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Failed to cancel scheduled billing change",
+      );
+    }
+  };
+
+  const handleConfirmDowngrade = async () => {
+    if (!pendingDowngradeConfirmation) return;
+
+    try {
+      if (pendingDowngradeConfirmation.targetPlan === "free") {
+        const billingUrl = await openCancellationPortal(getBillingReturnUrl());
+        openBillingUrl(billingUrl);
+        setPendingDowngradeConfirmation(null);
+        return;
+      }
+
+      const result = await startPlanChange(
+        getBillingReturnUrl(),
+        "starter",
+        pendingDowngradeConfirmation.targetBillingInterval ?? "monthly",
+        { confirmPaidPlanChange: false },
+      );
+
+      if (result.kind === "updated") {
+        toast.success(
+          `Plan updated to ${formatPlanName(
+            result.subscription.plan ?? pendingDowngradeConfirmation.targetPlan,
+          )}.`,
+        );
+        setPendingDowngradeConfirmation(null);
+        return;
+      }
+
+      if (result.kind === "scheduled") {
+        const targetLabel = formatPlanDescriptor(
+          pendingDowngradeConfirmation.targetPlan,
+          pendingDowngradeConfirmation.targetBillingInterval,
+        );
+        toast.success(`Downgrade to ${targetLabel} scheduled for renewal.`);
+        setPendingDowngradeConfirmation(null);
+        return;
+      }
+
+      const billingUrl =
+        result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+      openBillingUrl(billingUrl);
+      setPendingDowngradeConfirmation(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to change plan",
+      );
+    }
+  };
+
+  const executeManualPlanChange = async (
+    tier: "starter" | "team",
+    billingInterval: "monthly" | "annual",
+    options: CheckoutNavigationOptions = {},
+  ) => {
+    try {
+      const result = await startPlanChange(
+        getBillingReturnUrl(),
+        tier,
+        billingInterval,
+        { confirmPaidPlanChange: true },
+      );
+
+      if (result.kind === "updated") {
+        toast.success(
+          `Plan updated to ${formatPlanName(result.subscription.plan ?? tier)}.`,
+        );
+        return;
+      }
+
+      if (result.kind === "scheduled") {
+        toast.success("Plan change scheduled for renewal.");
+        return;
+      }
+
+      const billingUrl =
+        result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+      options.onBeforeNavigate?.();
+      openBillingUrl(billingUrl, options.navigation);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Failed to change plan",
+      );
+    }
+  };
+
+  const handlePlanChange = async (
+    tier: "starter" | "team",
+    billingInterval: "monthly" | "annual",
+    options: CheckoutNavigationOptions = {},
+  ) => {
+    if (shouldConfirmPaidUpgrade(billingStatus, tier)) {
+      setPendingPaidUpgradeConfirmation({
+        tier,
+        billingInterval,
+      });
+      return;
+    }
+
+    await executeManualPlanChange(tier, billingInterval, options);
+  };
+
+  const handleConfirmPaidUpgrade = async () => {
+    if (!pendingPaidUpgradeConfirmation) return;
+
+    try {
+      await executeManualPlanChange(
+        pendingPaidUpgradeConfirmation.tier,
+        pendingPaidUpgradeConfirmation.billingInterval,
+      );
+    } finally {
+      setPendingPaidUpgradeConfirmation(null);
+    }
+  };
+
+  const paidUpgradeConfirmationSummary = pendingPaidUpgradeConfirmation
+    ? getPaidUpgradeConfirmationSummary(
+        planCatalog,
+        pendingPaidUpgradeConfirmation.billingInterval,
+      )
+    : null;
+  const pendingDowngradeEffectiveDate = formatBillingDate(
+    billingStatus?.stripeCurrentPeriodEnd ?? null,
+  );
+  const pendingDowngradeTargetLabel = pendingDowngradeConfirmation
+    ? formatPlanDescriptor(
+        pendingDowngradeConfirmation.targetPlan,
+        pendingDowngradeConfirmation.targetBillingInterval,
+      )
+    : null;
+  const pendingDowngradeCurrentLabel = pendingDowngradeConfirmation
+    ? formatPlanDescriptor(
+        pendingDowngradeConfirmation.currentPlan,
+        pendingDowngradeConfirmation.currentBillingInterval,
+      )
+    : null;
+
+  const handleAutoPlanChange = useCallback(
+    async (tier: "starter" | "team", billingInterval: "monthly" | "annual") => {
+      try {
+        const result = await startPlanChange(
+          getBillingReturnUrl(),
+          tier,
+          billingInterval,
+          { confirmPaidPlanChange: false },
+        );
+
+        if (result.kind === "updated") {
+          toast.success(
+            `Plan updated to ${formatPlanName(result.subscription.plan ?? tier)}.`,
+          );
+          return;
+        }
+
+        if (result.kind === "scheduled") {
+          toast.success("Plan change scheduled for renewal.");
+          return;
+        }
+
+        const billingUrl =
+          result.kind === "checkout" ? result.checkoutUrl : result.portalUrl;
+        onCheckoutIntentNavigationStarted?.();
+        openBillingUrl(billingUrl, "same-tab");
+      } catch (error) {
+        if (
+          !(
+            error instanceof Error &&
+            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
+          )
+        ) {
+          toast.error(
+            error instanceof Error ? error.message : "Failed to change plan",
+          );
+        }
+        throw error;
+      }
+    },
+    [
+      getBillingReturnUrl,
+      onCheckoutIntentNavigationStarted,
+      openBillingUrl,
+      startPlanChange,
+    ],
+  );
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-5xl space-y-5 p-4 md:p-5">
-        <Card className="border-border/60">
+      <div className="mx-auto max-w-5xl space-y-6 p-4 md:p-5">
+        <Card className="overflow-hidden border-border/60">
           <CardContent className="space-y-5 p-5">
             <div className="flex flex-col gap-4 md:flex-row md:items-center">
               <div className="relative shrink-0">
@@ -491,7 +1058,7 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                 ) : null}
               </div>
 
-              <div className="flex-1">
+              <div className="flex-1 space-y-1">
                 {canEdit ? (
                   <EditableText
                     value={organization.name}
@@ -504,235 +1071,361 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
                     {organization.name}
                   </h1>
                 )}
+                {billingUiEnabled ? (
+                  <p className="text-sm text-muted-foreground">
+                    Organization settings
+                  </p>
+                ) : null}
               </div>
             </div>
+          </CardContent>
+          {billingUiEnabled ? (
+            <nav
+              className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
+              aria-label="Organization settings sections"
+            >
+              <button
+                type="button"
+                onClick={() => navigateToSection("overview")}
+                aria-current={activeSection === "overview" ? "page" : undefined}
+                className={cn(
+                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                  activeSection === "overview"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                General
+              </button>
+              <button
+                type="button"
+                onClick={() => navigateToSection("billing")}
+                aria-current={activeSection === "billing" ? "page" : undefined}
+                className={cn(
+                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                  activeSection === "billing"
+                    ? "border-primary text-foreground"
+                    : "border-transparent text-muted-foreground hover:text-foreground",
+                )}
+              >
+                Billing
+              </button>
+            </nav>
+          ) : null}
+        </Card>
 
-            <div className="h-px bg-border/70" />
-
-            <div className="space-y-4">
-              <div className="space-y-1">
-                <h2 className="flex items-center gap-2 text-xl font-semibold">
+        {activeSection === "billing" ? (
+          <>
+            <OrganizationBillingSection
+              billingStatus={billingStatus}
+              organizationName={organization.name}
+              planCatalog={planCatalog}
+              isLoadingBilling={isLoadingBilling}
+              isLoadingPlanCatalog={isLoadingPlanCatalog}
+              isStartingPlanChange={isStartingPlanChange}
+              pendingPlanChangeTarget={pendingPlanChangeTarget}
+              isOpeningPortal={isOpeningPortal}
+              onDowngradePlan={handleDowngradePlan}
+              onStartPlanChange={handlePlanChange}
+              onStartAutoPlanChange={handleAutoPlanChange}
+              checkoutIntent={checkoutIntent}
+              onCheckoutIntentConsumed={onCheckoutIntentConsumed}
+            />
+            {billingError ? (
+              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                {billingError}
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <Card className="border-border/60">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-xl">
                   <Users className="size-4 text-muted-foreground" />
                   Members
-                </h2>
+                </CardTitle>
                 <p className="text-sm text-muted-foreground">
                   Active members ({activeMembers.length})
                   {pendingMembers.length > 0
                     ? ` • Pending invites (${pendingMembers.length})`
                     : ""}
                 </p>
-              </div>
+              </CardHeader>
+              <CardContent className="space-y-4 pt-0">
+                {canInvite ? (
+                  <div className="space-y-3">
+                    <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        placeholder="Email address"
+                        value={inviteEmail}
+                        onChange={(e) => setInviteEmail(e.target.value)}
+                        onKeyDown={(e) =>
+                          e.key === "Enter" && void handleInvite()
+                        }
+                        className="h-9 w-full sm:w-80"
+                      />
+                      <Button
+                        size="sm"
+                        className="h-9"
+                        onClick={handleInvite}
+                        disabled={
+                          !inviteEmail.trim() ||
+                          isInviting ||
+                          memberInviteGate.isLoading ||
+                          memberInviteGate.isDenied
+                        }
+                      >
+                        <UserPlus className="mr-2 size-4" />
+                        {isInviting ? "Inviting..." : "Add member"}
+                      </Button>
+                    </div>
 
-              {canInvite ? (
-                <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center">
-                  <Input
-                    placeholder="Email address"
-                    value={inviteEmail}
-                    onChange={(e) => setInviteEmail(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleInvite()}
-                    className="h-9 w-full sm:w-80"
-                  />
-                  <Button
-                    size="sm"
-                    className="h-9"
-                    onClick={handleInvite}
-                    disabled={!inviteEmail.trim() || isInviting}
-                  >
-                    <UserPlus className="mr-2 size-4" />
-                    {isInviting ? "Inviting..." : "Add member"}
-                  </Button>
-                </div>
-              ) : null}
+                    {memberInviteGate.isDenied ? (
+                      <Alert
+                        className="border-primary/20 bg-primary/[0.04]"
+                        data-testid="member-limit-upsell"
+                      >
+                        <CreditCard className="size-4 text-primary" />
+                        <AlertTitle>Need more members?</AlertTitle>
+                        <AlertDescription className="gap-2">
+                          {memberInviteGate.denialMessage ? (
+                            <p>{memberInviteGate.denialMessage}</p>
+                          ) : null}
+                          {memberUpsellTeaser ? (
+                            <p className="text-foreground/80">
+                              {memberUpsellTeaser}
+                            </p>
+                          ) : null}
+                          {billingStatus?.canManageBilling ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              className="mt-1"
+                              onClick={handleViewBilling}
+                            >
+                              {memberUpsellCtaLabel}
+                            </Button>
+                          ) : (
+                            <p className="font-medium text-foreground/80">
+                              Ask an organization owner to review billing
+                              options.
+                            </p>
+                          )}
+                        </AlertDescription>
+                      </Alert>
+                    ) : null}
+                  </div>
+                ) : null}
 
-              {membersLoading ? (
-                <div className="flex items-center gap-2 py-3 text-muted-foreground">
-                  <RefreshCw className="size-4 animate-spin" />
-                  Loading members...
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {activeMembers.map((member) => {
-                    const memberRole = resolveOrganizationRole(member);
-                    return (
+                {membersLoading ? (
+                  <div className="flex items-center gap-2 py-3 text-muted-foreground">
+                    <RefreshCw className="size-4 animate-spin" />
+                    Loading members...
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {activeMembers.map((member) => {
+                      const memberRole = resolveOrganizationRole(member);
+                      return (
+                        <OrganizationMemberRow
+                          key={member._id}
+                          member={member}
+                          role={memberRole}
+                          currentUserEmail={currentUserEmail}
+                          canEditRole={isOwner && memberRole !== "owner"}
+                          isRoleUpdating={roleUpdatingEmail === member.email}
+                          onRoleChange={
+                            isOwner && memberRole !== "owner"
+                              ? (role) =>
+                                  void handleChangeMemberRole(member, role)
+                              : undefined
+                          }
+                          onTransferOwnership={
+                            isOwner && memberRole !== "owner"
+                              ? () => setTransferTargetMember(member)
+                              : undefined
+                          }
+                          isTransferringOwnership={
+                            isTransferringOwnership &&
+                            transferTargetMember?.email === member.email
+                          }
+                          onRemove={
+                            canRemoveMember(member)
+                              ? () => handleRemoveMember(member.email)
+                              : undefined
+                          }
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+
+                {pendingMembers.length > 0 ? (
+                  <div className="space-y-1 pt-2">
+                    {pendingMembers.map((member) => (
                       <OrganizationMemberRow
                         key={member._id}
                         member={member}
-                        role={memberRole}
                         currentUserEmail={currentUserEmail}
-                        canEditRole={isOwner && memberRole !== "owner"}
-                        isRoleUpdating={roleUpdatingEmail === member.email}
-                        onRoleChange={
-                          isOwner && memberRole !== "owner"
-                            ? (role) =>
-                                void handleChangeMemberRole(member, role)
-                            : undefined
-                        }
-                        onTransferOwnership={
-                          isOwner && memberRole !== "owner"
-                            ? () => setTransferTargetMember(member)
-                            : undefined
-                        }
-                        isTransferringOwnership={
-                          isTransferringOwnership &&
-                          transferTargetMember?.email === member.email
-                        }
+                        isPending
                         onRemove={
-                          canRemoveMember(member)
+                          canRemovePendingMember()
                             ? () => handleRemoveMember(member.email)
                             : undefined
                         }
                       />
-                    );
-                  })}
-                </div>
-              )}
-
-              {pendingMembers.length > 0 ? (
-                <div className="space-y-1 pt-2">
-                  {pendingMembers.map((member) => (
-                    <OrganizationMemberRow
-                      key={member._id}
-                      member={member}
-                      currentUserEmail={currentUserEmail}
-                      isPending
-                      onRemove={
-                        canRemovePendingMember()
-                          ? () => handleRemoveMember(member.email)
-                          : undefined
-                      }
-                    />
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="border-border/60">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-xl">
-              <CreditCard className="size-4 text-muted-foreground" />
-              Billing
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              View your plan details and manage your subscription settings.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-3 pt-0">
-            {isLoadingBilling ? (
-              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                Loading billing details...
-              </div>
-            ) : billingStatus && !billingStatus.billingConfigured ? (
-              <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
-                Billing is not configured in this environment.
-              </div>
-            ) : billingStatus ? (
-              <>
-                <div className="grid gap-3 rounded-md border border-border/70 p-3.5 sm:grid-cols-2">
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Current plan
-                    </p>
-                    <Badge
-                      variant={
-                        isPaidPlan(billingStatus.plan) ? "default" : "secondary"
-                      }
-                    >
-                      {billingStatus.plan.toUpperCase()}
-                    </Badge>
+                    ))}
                   </div>
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Subscription status
-                    </p>
-                    <p className="text-sm font-medium capitalize">
-                      {subscriptionStatusLabel}
-                    </p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Current period ends
-                    </p>
-                    <p className="text-sm font-medium">{formattedPeriodEnd}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-xs uppercase tracking-wide text-muted-foreground">
-                      Billing account
-                    </p>
-                    <p className="text-sm font-medium">{billingAccountLabel}</p>
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <Button
-                    size="default"
-                    className="h-10 px-5"
-                    variant={
-                      isPaidPlan(billingStatus.plan) ? "outline" : "default"
-                    }
-                    onClick={handleBillingAction}
-                    disabled={
-                      !billingStatus.canManageBilling || isBillingActionPending
-                    }
-                  >
-                    {isBillingActionPending ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Loading...
-                      </>
-                    ) : (
-                      billingActionLabel
-                    )}
-                  </Button>
-                </div>
-                {!billingStatus.canManageBilling ? (
-                  <p className="text-xs text-muted-foreground">
-                    Only organization owners can manage billing.
-                  </p>
                 ) : null}
-              </>
-            ) : null}
-            {billingError ? (
-              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-                {billingError}
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
+              </CardContent>
+            </Card>
 
-        <Card className="border-destructive/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="flex items-center gap-2 text-xl text-destructive">
-              <AlertTriangle className="size-4" />
-              Danger Zone
-            </CardTitle>
-            <p className="text-sm text-muted-foreground">
-              These actions are permanent and may remove access for members.
-            </p>
-          </CardHeader>
-          <CardContent className="space-y-2.5 pt-0">
-            {!membersLoading && !isOwner ? (
-              <Button
-                variant="outline"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => setLeaveConfirmOpen(true)}
-              >
-                <LogOut className="mr-2 size-4" />
-                Leave Organization
-              </Button>
+            {billingUiEnabled ? (
+              <Card className="border-border/60">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2 text-xl">
+                    <CreditCard className="size-4 text-muted-foreground" />
+                    Billing
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Review your plan here or open the billing view for the full
+                    pricing matrix, checkout, and subscription management.
+                  </p>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0">
+                  {isLoadingBilling ? (
+                    <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                      Loading billing details...
+                    </div>
+                  ) : billingStatus && !billingStatus.billingConfigured ? (
+                    <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                      Billing is not configured in this environment.
+                    </div>
+                  ) : billingStatus ? (
+                    <>
+                      <OrganizationCurrentPlanPanel
+                        billingStatus={billingStatus}
+                        planCatalog={planCatalog}
+                        isLoadingPlanCatalog={isLoadingPlanCatalog}
+                        onChangeBillingInterval={handleChangeBillingInterval}
+                        onCancelScheduledBillingChange={
+                          scheduledBillingChangeCancellation
+                            ? handleOpenScheduledBillingChangeCancelDialog
+                            : undefined
+                        }
+                        cancelScheduledBillingChangeLabel={
+                          scheduledBillingChangeCancellation?.ctaLabel ?? null
+                        }
+                        onManageBilling={handleManageBilling}
+                        isOpeningPortal={isOpeningPortal}
+                      />
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <Button
+                          size="default"
+                          className="h-10 px-5"
+                          variant="outline"
+                          onClick={handleViewBilling}
+                        >
+                          View plans
+                        </Button>
+                        {!billingStatus.canManageBilling ? (
+                          <p className="min-w-0 text-sm font-medium text-primary">
+                            Only organization owners can manage billing.
+                          </p>
+                        ) : null}
+                      </div>
+                    </>
+                  ) : null}
+                  {billingError ? (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                      {billingError}
+                    </div>
+                  ) : null}
+                </CardContent>
+              </Card>
             ) : null}
-            {!membersLoading && isOwner ? (
-              <Button
-                variant="outline"
-                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => setDeleteConfirmOpen(true)}
-              >
-                <Trash2 className="mr-2 size-4" />
-                Delete Organization
-              </Button>
-            ) : null}
-          </CardContent>
-        </Card>
+
+            <Card className="border-border/60">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-xl">
+                  <Building2 className="size-4 text-muted-foreground" />
+                  Audit Log
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Review organization activity and export it as CSV.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-3 pt-0">
+                {billingUiEnabled &&
+                (isLoadingEntitlements || isLoadingOrganizationPremiumness) ? (
+                  <div className="rounded-md border border-dashed border-border/70 p-3 text-sm text-muted-foreground">
+                    Loading audit log access...
+                  </div>
+                ) : auditLogLocked ? (
+                  <div className="rounded-md border border-border/70 p-4">
+                    <div className="space-y-1.5">
+                      <h3 className="text-sm font-medium">
+                        Audit Log requires Enterprise
+                      </h3>
+                      <p className="text-sm text-muted-foreground">
+                        Audit Log is not included on your current plan.
+                        {billingStatus?.canManageBilling
+                          ? " Upgrade this organization to Enterprise to restore access."
+                          : " Ask an organization owner to upgrade to Enterprise."}
+                      </p>
+                    </div>
+                    {billingUiEnabled ? (
+                      <Button className="mt-3" onClick={handleViewBilling}>
+                        View billing options
+                      </Button>
+                    ) : null}
+                  </div>
+                ) : (
+                  <OrganizationAuditLog
+                    organizationId={organization._id}
+                    organizationName={organization.name}
+                    isAuthenticated={isAuthenticated}
+                  />
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="border-destructive/40">
+              <CardHeader className="pb-2">
+                <CardTitle className="flex items-center gap-2 text-xl text-destructive">
+                  <AlertTriangle className="size-4" />
+                  Danger Zone
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  These actions are permanent and may remove access for members.
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-2.5 pt-0">
+                {!membersLoading && !isOwner ? (
+                  <Button
+                    variant="outline"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setLeaveConfirmOpen(true)}
+                  >
+                    <LogOut className="mr-2 size-4" />
+                    Leave Organization
+                  </Button>
+                ) : null}
+                {!membersLoading && isOwner ? (
+                  <Button
+                    variant="outline"
+                    className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setDeleteConfirmOpen(true)}
+                  >
+                    <Trash2 className="mr-2 size-4" />
+                    Delete Organization
+                  </Button>
+                ) : null}
+              </CardContent>
+            </Card>
+          </>
+        )}
       </div>
 
       {/* Ownership Transfer Confirmation */}
@@ -769,6 +1462,177 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
               {isTransferringOwnership
                 ? "Transferring..."
                 : "Transfer ownership"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={scheduledBillingChangeConfirmOpen}
+        onOpenChange={(open) => {
+          if (!open && !isCancelingScheduledBillingChange) {
+            setScheduledBillingChangeConfirmOpen(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {scheduledBillingChangeCancellation?.dialogTitle ??
+                "Cancel scheduled billing change?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {scheduledBillingChangeCancellation?.dialogDescription ??
+                "This cancels the pending billing change and keeps the current subscription active."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isCancelingScheduledBillingChange}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmScheduledBillingChangeCancellation();
+              }}
+              disabled={isCancelingScheduledBillingChange}
+            >
+              {isCancelingScheduledBillingChange
+                ? "Saving..."
+                : (scheduledBillingChangeCancellation?.confirmLabel ??
+                  "Keep current plan")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingDowngradeConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !isStartingPlanChange && !isOpeningPortal) {
+            setPendingDowngradeConfirmation(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingDowngradeConfirmation?.targetPlan === "free"
+                ? "Return to Free at renewal?"
+                : "Downgrade to Starter?"}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              {pendingDowngradeConfirmation?.targetPlan === "free" ? (
+                <>
+                  <span className="block">
+                    This cancellation takes effect at renewal, not now.
+                  </span>
+                  <span className="block">
+                    {pendingDowngradeCurrentLabel ?? "Your paid plan"} remains
+                    active until{" "}
+                    {pendingDowngradeEffectiveDate ??
+                      "the end of the current billing period"}
+                    .
+                  </span>
+                  <span className="block">
+                    After that, the organization returns to Free.
+                  </span>
+                </>
+              ) : (
+                <>
+                  <span className="block">
+                    This downgrade takes effect at renewal, not now.
+                  </span>
+                  <span className="block">
+                    {pendingDowngradeTargetLabel ?? "Starter"} begins{" "}
+                    {pendingDowngradeEffectiveDate ??
+                      "at the end of the current billing period"}
+                    .
+                  </span>
+                  <span className="block">
+                    {pendingDowngradeCurrentLabel ?? "Your current plan"}{" "}
+                    remains active until then.
+                  </span>
+                </>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+            <span className="font-medium text-foreground">
+              {pendingDowngradeConfirmation?.targetPlan === "free"
+                ? "Stripe will open a cancellation flow that keeps paid access active until renewal."
+                : `${pendingDowngradeTargetLabel ?? "Starter"} will replace ${
+                    pendingDowngradeCurrentLabel ?? "the current plan"
+                  } at renewal.`}
+            </span>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              disabled={isStartingPlanChange || isOpeningPortal}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmDowngrade();
+              }}
+              disabled={isStartingPlanChange || isOpeningPortal}
+            >
+              {isStartingPlanChange || isOpeningPortal
+                ? "Saving..."
+                : pendingDowngradeConfirmation?.targetPlan === "free"
+                  ? "Open cancellation flow"
+                  : "Schedule downgrade"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingPaidUpgradeConfirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !isStartingPlanChange) {
+            setPendingPaidUpgradeConfirmation(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Upgrade to Team?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">
+                This upgrade takes effect immediately and updates your existing
+                Starter subscription in place.
+              </span>
+              <span className="block">
+                We do not send you through Stripe Checkout.
+              </span>
+              <span className="block">
+                Stripe prorates the rest of your current billing period instead
+                of waiting until renewal, so unused Starter time is factored
+                into the Team change.
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="rounded-md border border-border/60 bg-muted/30 px-4 py-3 text-sm">
+            <span className="font-medium text-foreground">
+              {paidUpgradeConfirmationSummary ??
+                "Team billing will apply with the 4-seat minimum."}
+            </span>
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isStartingPlanChange}>
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void handleConfirmPaidUpgrade();
+              }}
+              disabled={isStartingPlanChange}
+            >
+              {isStartingPlanChange ? "Upgrading..." : "Upgrade now"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -822,3 +1686,5 @@ function OrganizationPage({ organization }: OrganizationPageProps) {
     </div>
   );
 }
+const PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE =
+  "Paid plan changes require an explicit confirmation.";

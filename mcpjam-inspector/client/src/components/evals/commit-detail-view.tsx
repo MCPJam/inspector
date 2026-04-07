@@ -1,16 +1,6 @@
 import { useState, useMemo, useEffect } from "react";
-import {
-  GitBranch,
-  GitCommit,
-  XCircle,
-  CheckCircle2,
-  MinusCircle,
-  Clock,
-  Sparkles,
-  Loader2,
-} from "lucide-react";
+import { GitBranch, GitCommit, Clock, Loader2 } from "lucide-react";
 import { useQuery } from "convex/react";
-import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import type {
   CommitGroup,
@@ -18,10 +8,15 @@ import type {
   EvalIteration,
   SuiteDetailsQueryResponse,
 } from "./types";
-import { formatDuration } from "./helpers";
+import {
+  formatDuration,
+  formatRunId,
+  orderCommitGroupRunsByOutcome,
+} from "./helpers";
+import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { RunHeaderCompactStats } from "./run-header-compact-stats";
 import { navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import type { CiEvalsRoute } from "@/lib/ci-evals-router";
-import { useCommitTriage } from "./use-ai-triage";
 import { useRunDetailData } from "./use-suite-data";
 import { RunDetailView } from "./run-detail-view";
 
@@ -94,86 +89,16 @@ export function CommitDetailView({
   const totalCases = getTotalCases(commitGroup.runs);
   const isManual = commitGroup.commitSha.startsWith("manual-");
 
-  // Build ordered suite list: failed first, then running, then passed, then not-run
-  const orderedRuns = useMemo(() => {
-    const failed: EvalSuiteRun[] = [];
-    const running: EvalSuiteRun[] = [];
-    const passed: EvalSuiteRun[] = [];
-    const notRun: EvalSuiteRun[] = [];
-
-    for (const run of commitGroup.runs) {
-      if (run.status === "running" || run.status === "pending") {
-        running.push(run);
-      } else if (run.result === "failed") {
-        failed.push(run);
-      } else if (run.result === "passed") {
-        passed.push(run);
-      } else {
-        notRun.push(run);
-      }
-    }
-    return [...failed, ...running, ...passed, ...notRun];
-  }, [commitGroup.runs]);
-
-  // Auto-select first suite if none selected
-  useEffect(() => {
-    if (
-      route.type === "commit-detail" &&
-      !route.suite &&
-      orderedRuns.length > 0
-    ) {
-      navigateToCiEvalsRoute(
-        {
-          type: "commit-detail",
-          commitSha: commitGroup.commitSha,
-          suite: orderedRuns[0].suiteId,
-        },
-        { replace: true },
-      );
-    }
-  }, [route, orderedRuns, commitGroup.commitSha]);
+  const orderedRuns = useMemo(
+    () => orderCommitGroupRunsByOutcome(commitGroup.runs),
+    [commitGroup.runs],
+  );
 
   // Find the selected run
   const selectedRun = useMemo(() => {
     if (!selectedSuiteId) return null;
     return commitGroup.runs.find((r) => r.suiteId === selectedSuiteId) ?? null;
   }, [selectedSuiteId, commitGroup.runs]);
-
-  // Runs with failures for AI triage
-  const runsWithFailedCases = useMemo(
-    () => commitGroup.runs.filter((r) => (r.summary?.failed ?? 0) > 0),
-    [commitGroup.runs],
-  );
-  const failedRunIds = useMemo(
-    () => runsWithFailedCases.map((r) => r._id),
-    [runsWithFailedCases],
-  );
-  const aiTriage = useCommitTriage(failedRunIds);
-
-  useEffect(() => {
-    if (
-      failedRunIds.length > 0 &&
-      !aiTriage.summary &&
-      !aiTriage.loading &&
-      !aiTriage.unavailable
-    ) {
-      aiTriage.requestTriage();
-    }
-  }, [
-    failedRunIds.length,
-    aiTriage.summary,
-    aiTriage.loading,
-    aiTriage.unavailable,
-    aiTriage.requestTriage,
-  ]);
-
-  const handleSelectSuite = (suiteId: string) => {
-    navigateToCiEvalsRoute({
-      type: "commit-detail",
-      commitSha: commitGroup.commitSha,
-      suite: suiteId,
-    });
-  };
 
   const handleSelectIteration = (iterationId: string) => {
     if (selectedSuiteId) {
@@ -262,106 +187,26 @@ export function CommitDetailView({
           {commitGroup.runs.length} suite
           {commitGroup.runs.length !== 1 ? "s" : ""}
         </div>
-
-        {/* AI triage inline */}
-        {totalCases.failed > 0 &&
-          !aiTriage.unavailable &&
-          (aiTriage.summary || aiTriage.loading) && (
-            <div className="mt-3 flex items-start gap-2 rounded-md border border-orange-200/60 bg-orange-50/30 px-3 py-2 dark:border-orange-900/40 dark:bg-orange-950/10">
-              <Badge
-                variant="outline"
-                className="border-orange-300/70 bg-orange-100/60 text-orange-700 text-[10px] font-bold uppercase tracking-wider shrink-0 dark:border-orange-800/50 dark:bg-orange-900/30 dark:text-orange-400"
-              >
-                <Sparkles className="mr-1 h-3 w-3" />
-                AI
-              </Badge>
-              {aiTriage.summary ? (
-                <p className="text-xs leading-relaxed">{aiTriage.summary}</p>
-              ) : (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <Loader2 className="h-3 w-3 animate-spin" />
-                  analyzing...
-                </span>
-              )}
-            </div>
-          )}
       </div>
 
-      {/* Two-pane body */}
-      <div className="flex flex-1 min-h-0">
-        {/* Left: Suite list */}
-        <div className="w-[280px] shrink-0 border-r flex flex-col bg-background">
-          <div className="border-b px-3 py-2 shrink-0">
-            <div className="text-xs font-semibold">
-              Suites · {commitGroup.runs.length}
+      <div className="flex flex-1 min-h-0 min-w-0 flex-col overflow-y-auto">
+        {selectedRun && selectedSuiteId ? (
+          <CommitSuiteRunDetail
+            run={selectedRun}
+            suiteId={selectedSuiteId}
+            suiteName={commitGroup.suiteMap.get(selectedSuiteId) || "Unknown"}
+            selectedIterationId={selectedIterationId}
+            onSelectIteration={handleSelectIteration}
+            runDetailSortBy={runDetailSortBy}
+            onSortChange={setRunDetailSortBy}
+          />
+        ) : (
+          <div className="flex flex-1 items-center justify-center p-6">
+            <div className="text-sm text-muted-foreground">
+              Select a suite from the sidebar to view run details
             </div>
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="divide-y">
-              {orderedRuns.map((run) => {
-                const suiteName =
-                  commitGroup.suiteMap.get(run.suiteId) || "Unknown";
-                const isSelected = run.suiteId === selectedSuiteId;
-                const isFailed = run.result === "failed";
-                const isRunning =
-                  run.status === "running" || run.status === "pending";
-                const isPassed = run.result === "passed";
-
-                return (
-                  <button
-                    key={run._id}
-                    onClick={() => handleSelectSuite(run.suiteId)}
-                    className={cn(
-                      "w-full text-left px-3 py-2.5 transition-colors hover:bg-muted/50",
-                      isSelected && "bg-primary/5 border-l-2 border-l-primary",
-                    )}
-                  >
-                    <div className="flex items-center gap-2">
-                      {isFailed ? (
-                        <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
-                      ) : isRunning ? (
-                        <Clock className="h-3.5 w-3.5 shrink-0 text-amber-500 animate-pulse" />
-                      ) : isPassed ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-500" />
-                      ) : (
-                        <MinusCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      )}
-                      <span className="text-xs font-medium truncate flex-1">
-                        {suiteName}
-                      </span>
-                    </div>
-                    {isRunning && (
-                      <div className="mt-1 ml-5.5 text-[10px] text-amber-500">
-                        in progress
-                      </div>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Right: Suite run detail */}
-        <div className="flex-1 min-w-0 overflow-y-auto">
-          {selectedRun && selectedSuiteId ? (
-            <CommitSuiteRunDetail
-              run={selectedRun}
-              suiteId={selectedSuiteId}
-              suiteName={commitGroup.suiteMap.get(selectedSuiteId) || "Unknown"}
-              selectedIterationId={selectedIterationId}
-              onSelectIteration={handleSelectIteration}
-              runDetailSortBy={runDetailSortBy}
-              onSortChange={setRunDetailSortBy}
-            />
-          ) : (
-            <div className="flex-1 flex items-center justify-center h-full">
-              <div className="text-sm text-muted-foreground">
-                Select a suite to view details
-              </div>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
@@ -386,8 +231,6 @@ function CommitSuiteRunDetail({
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
 }) {
-  const [showRunSummarySidebar, setShowRunSummarySidebar] = useState(false);
-
   // Load iterations for this suite
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
@@ -429,21 +272,36 @@ function CommitSuiteRunDetail({
     );
   }
 
+  const metricLabel = run.source === "sdk" ? "Pass Rate" : "Accuracy";
+
   return (
-    <RunDetailView
-      selectedRunDetails={run}
-      caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-      source={run.source as "ui" | "sdk" | undefined}
-      selectedRunChartData={selectedRunChartData}
-      runDetailSortBy={runDetailSortBy}
-      onSortChange={onSortChange}
-      showRunSummarySidebar={showRunSummarySidebar}
-      setShowRunSummarySidebar={setShowRunSummarySidebar}
-      serverNames={run.configSnapshot?.environment?.servers ?? []}
-      selectedIterationId={selectedIterationId}
-      onSelectIteration={onSelectIteration}
-      hideCiMetadata
-    />
+    <>
+      <div className="flex shrink-0 flex-col gap-1 px-4 pt-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold tracking-tight">
+            Run {formatRunId(run._id)}
+          </h2>
+          <PassCriteriaBadge
+            run={run}
+            variant="compact"
+            metricLabel={metricLabel}
+          />
+        </div>
+        <RunHeaderCompactStats run={run} />
+      </div>
+      <RunDetailView
+        selectedRunDetails={run}
+        caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+        source={run.source as "ui" | "sdk" | undefined}
+        selectedRunChartData={selectedRunChartData}
+        runDetailSortBy={runDetailSortBy}
+        onSortChange={onSortChange}
+        serverNames={run.configSnapshot?.environment?.servers ?? []}
+        selectedIterationId={selectedIterationId}
+        onSelectIteration={onSelectIteration}
+        hideCiMetadata
+      />
+    </>
   );
 }
 
@@ -466,7 +324,7 @@ function StatusBadge({
   }
   if (status === "failed") {
     return (
-      <Badge className="gap-1.5 bg-red-50 text-destructive border-red-200 hover:bg-red-100 dark:bg-red-950/50 dark:text-red-400">
+      <Badge className="gap-1.5 bg-destructive/10 text-destructive border-destructive/30 hover:bg-destructive/20 dark:bg-destructive/20 dark:border-destructive/40">
         <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
         {failCount} Failed
       </Badge>

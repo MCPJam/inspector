@@ -14,13 +14,17 @@ import {
   reportEvalResults,
   reportEvalResultsSafely,
   startEvalRun,
+  uploadWidgetSnapshots,
 } from "./report-eval-results.js";
 import type { PromptResult } from "./PromptResult.js";
 import type { EvalRunResult } from "./EvalTest.js";
 import { captureEvalReportingFailure } from "./sentry.js";
+import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 import {
+  promptsToEvalResult,
   runToEvalResults,
   suiteRunToEvalResults,
+  type PromptsToEvalResultOverrides,
   type RunToEvalResultsOptions,
   type SuiteRunToEvalResultsOptions,
 } from "./eval-result-mapping.js";
@@ -49,7 +53,7 @@ export interface EvalRunReporter {
     promptResult: PromptResult,
     overrides?: Partial<
       Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
-    >
+    > & { failOnToolError?: boolean }
   ): void;
 
   /**
@@ -60,7 +64,24 @@ export interface EvalRunReporter {
     promptResult: PromptResult,
     overrides?: Partial<
       Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
-    >
+    > & { failOnToolError?: boolean }
+  ): Promise<void>;
+
+  /**
+   * Aggregate multiple PromptResults into one EvalResultInput and add it.
+   */
+  addFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
+  ): void;
+
+  /**
+   * Aggregate multiple PromptResults into one EvalResultInput, add it, and
+   * auto-flush when the buffer is large enough.
+   */
+  recordFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
   ): Promise<void>;
 
   /**
@@ -148,22 +169,74 @@ class EvalRunReporterImpl implements EvalRunReporter {
     promptResult: PromptResult,
     overrides?: Partial<
       Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
-    >
+    > & { failOnToolError?: boolean }
   ): void {
-    this.add(promptResult.toEvalResult(overrides));
+    this.add(
+      promptResult.toEvalResult({
+        ...overrides,
+        failOnToolError:
+          overrides?.failOnToolError !== undefined
+            ? overrides.failOnToolError
+            : this.input.failOnToolError,
+      })
+    );
   }
 
   async recordFromPrompt(
     promptResult: PromptResult,
     overrides?: Partial<
       Omit<EvalResultInput, "actualToolCalls" | "tokens" | "trace">
-    >
+    > & { failOnToolError?: boolean }
   ): Promise<void> {
-    await this.record(promptResult.toEvalResult(overrides));
+    await this.record(
+      promptResult.toEvalResult({
+        ...overrides,
+        failOnToolError:
+          overrides?.failOnToolError !== undefined
+            ? overrides.failOnToolError
+            : this.input.failOnToolError,
+      })
+    );
+  }
+
+  addFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
+  ): void {
+    this.add(
+      promptsToEvalResult(prompts, {
+        ...overrides,
+        failOnToolError:
+          overrides.failOnToolError !== undefined
+            ? overrides.failOnToolError
+            : this.input.failOnToolError,
+      })
+    );
+  }
+
+  async recordFromPrompts(
+    prompts: PromptResult[],
+    overrides: PromptsToEvalResultOverrides
+  ): Promise<void> {
+    await this.record(
+      promptsToEvalResult(prompts, {
+        ...overrides,
+        failOnToolError:
+          overrides.failOnToolError !== undefined
+            ? overrides.failOnToolError
+            : this.input.failOnToolError,
+      })
+    );
   }
 
   addFromRun(run: EvalRunResult, options: RunToEvalResultsOptions): void {
-    const results = runToEvalResults(run, options);
+    const results = runToEvalResults(run, {
+      ...options,
+      failOnToolError:
+        options.failOnToolError !== undefined
+          ? options.failOnToolError
+          : this.input.failOnToolError,
+    });
     for (const result of results) {
       this.add(result);
     }
@@ -173,7 +246,13 @@ class EvalRunReporterImpl implements EvalRunReporter {
     run: EvalRunResult,
     options: RunToEvalResultsOptions
   ): Promise<void> {
-    const results = runToEvalResults(run, options);
+    const results = runToEvalResults(run, {
+      ...options,
+      failOnToolError:
+        options.failOnToolError !== undefined
+          ? options.failOnToolError
+          : this.input.failOnToolError,
+    });
     for (const result of results) {
       await this.record(result);
     }
@@ -183,7 +262,13 @@ class EvalRunReporterImpl implements EvalRunReporter {
     suiteRun: Map<string, EvalRunResult>,
     options: SuiteRunToEvalResultsOptions
   ): void {
-    const results = suiteRunToEvalResults(suiteRun, options);
+    const results = suiteRunToEvalResults(suiteRun, {
+      ...options,
+      failOnToolError:
+        options.failOnToolError !== undefined
+          ? options.failOnToolError
+          : this.input.failOnToolError,
+    });
     for (const result of results) {
       this.add(result);
     }
@@ -193,7 +278,13 @@ class EvalRunReporterImpl implements EvalRunReporter {
     suiteRun: Map<string, EvalRunResult>,
     options: SuiteRunToEvalResultsOptions
   ): Promise<void> {
-    const results = suiteRunToEvalResults(suiteRun, options);
+    const results = suiteRunToEvalResults(suiteRun, {
+      ...options,
+      failOnToolError:
+        options.failOnToolError !== undefined
+          ? options.failOnToolError
+          : this.input.failOnToolError,
+    });
     for (const result of results) {
       await this.record(result);
     }
@@ -209,11 +300,13 @@ class EvalRunReporterImpl implements EvalRunReporter {
       return;
     }
     try {
+      const serverReplayConfigs = resolveServerReplayConfigs(this.input);
       if (!this.runId) {
         const started = await startEvalRun(this.runtimeConfig, {
           suiteName: this.input.suiteName,
           suiteDescription: this.input.suiteDescription,
           serverNames: this.input.serverNames,
+          serverReplayConfigs,
           notes: this.input.notes,
           passCriteria: this.input.passCriteria,
           externalRunId: this.externalRunId,
@@ -243,7 +336,11 @@ class EvalRunReporterImpl implements EvalRunReporter {
         return;
       }
 
-      const uploadReady = this.withUniqueExternalIterationIds(this.buffered);
+      const withIds = this.withUniqueExternalIterationIds(this.buffered);
+      const uploadReady = await uploadWidgetSnapshots(
+        this.runtimeConfig,
+        withIds
+      );
       const chunks = chunkResultsForUpload(uploadReady);
       for (const chunk of chunks) {
         await appendEvalRunIterations(this.runtimeConfig, {
@@ -278,10 +375,12 @@ class EvalRunReporterImpl implements EvalRunReporter {
     this.ensureNotFinalized();
 
     if (!this.runId) {
+      const serverReplayConfigs = resolveServerReplayConfigs(this.input);
       const reportInput: ReportEvalResultsInput = {
         suiteName: this.input.suiteName,
         suiteDescription: this.input.suiteDescription,
         serverNames: this.input.serverNames,
+        serverReplayConfigs,
         notes: this.input.notes,
         passCriteria: this.input.passCriteria,
         externalRunId: this.externalRunId,
@@ -289,6 +388,8 @@ class EvalRunReporterImpl implements EvalRunReporter {
         apiKey: this.input.apiKey,
         baseUrl: this.input.baseUrl,
         strict: this.input.strict,
+        agent: this.input.agent,
+        mcpClientManager: this.input.mcpClientManager,
         results: this.buffered,
       };
 

@@ -31,8 +31,9 @@ import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import {
   getConnectionStatusMeta,
   getServerCommandDisplay,
+  getServerUrl,
 } from "./server-card-utils";
-import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
+import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import type { ServerDetailTab } from "./ServerDetailModal";
 import { downloadJsonFile } from "@/lib/json-config-parser";
@@ -51,6 +52,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { ShareServerDialog } from "./ShareServerDialog";
+import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -64,8 +66,12 @@ function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   }
 }
 
+// Temporary hide while sandbox sharing replaces server sharing in the main UI.
+const SERVER_SHARE_UI_ENABLED = false;
+
 interface ServerConnectionCardProps {
   server: ServerWithName;
+  needsReconnect?: boolean;
   onDisconnect: (serverName: string) => void;
   onReconnect: (
     serverName: string,
@@ -78,19 +84,24 @@ interface ServerConnectionCardProps {
     server: ServerWithName,
     defaultTab: ServerDetailTab,
   ) => void;
+  /** When set (e.g. active workspace on Servers tab), prefetches Explore AI test cases on MCP connect. */
+  workspaceId?: string | null;
 }
 
 export function ServerConnectionCard({
   server,
+  needsReconnect = false,
   onDisconnect,
   onReconnect,
   onRemove,
   serverTunnelUrl,
   hostedServerId,
   onOpenDetailModal,
+  workspaceId,
 }: ServerConnectionCardProps) {
+  useExploreCasesPrefetchOnConnect(workspaceId ?? null, server, hostedServerId);
+
   const posthog = usePostHog();
-  const ciEvalsEnabled = useFeatureFlagEnabled("ci-evals-enabled");
   const { getAccessToken } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const [isReconnecting, setIsReconnecting] = useState(false);
@@ -106,8 +117,12 @@ export function ServerConnectionCard({
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 
-  const { label: connectionStatusLabel, indicatorColor } =
-    getConnectionStatusMeta(server.connectionStatus);
+  const {
+    label: connectionStatusLabel,
+    indicatorColor,
+    Icon: ConnectionStatusIcon,
+    iconClassName,
+  } = getConnectionStatusMeta(server.connectionStatus);
   const commandDisplay = getServerCommandDisplay(server.config);
 
   const initializationInfo = server.initializationInfo;
@@ -124,10 +139,10 @@ export function ServerConnectionCard({
   const hasError =
     server.connectionStatus === "failed" && Boolean(server.lastError);
   const isHostedHttpReconnectBlocked = isHostedInsecureHttpServer(server);
-  const isReconnectMenuDisabled =
-    isReconnecting ||
+  const isPendingConnection =
     server.connectionStatus === "connecting" ||
     server.connectionStatus === "oauth-flow";
+  const isReconnectMenuDisabled = isReconnecting || isPendingConnection;
   const isStdioServer = "command" in server.config;
   const isInsecureHttpServer =
     "url" in server.config &&
@@ -140,6 +155,7 @@ export function ServerConnectionCard({
       }
     })();
   const canShareServer =
+    SERVER_SHARE_UI_ENABLED &&
     HOSTED_MODE &&
     !!hostedServerId &&
     isAuthenticated &&
@@ -225,14 +241,7 @@ export function ServerConnectionCard({
     setIsCopyingBrief(true);
     try {
       const data = await exportServerApi(server.name);
-      const serverUrl =
-        "url" in server.config && server.config.url
-          ? server.config.url.toString()
-          : "command" in server.config
-            ? [server.config.command, ...(server.config.args ?? [])]
-                .filter(Boolean)
-                .join(" ")
-            : undefined;
+      const serverUrl = getServerUrl(server.config);
       const markdown = generateAgentBrief(data, { serverUrl });
       await navigator.clipboard.writeText(markdown);
       toast.success("Agent brief copied to clipboard");
@@ -376,6 +385,11 @@ export function ServerConnectionCard({
                 <h3 className="truncate text-sm font-semibold text-foreground">
                   {server.name}
                 </h3>
+                {needsReconnect ? (
+                  <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                    Needs reconnect
+                  </span>
+                ) : null}
                 {version && (
                   <span className="text-xs text-muted-foreground">
                     v{version}
@@ -405,10 +419,14 @@ export function ServerConnectionCard({
                 onClick={(e) => e.stopPropagation()}
               >
                 <span className="inline-flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                  <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: indicatorColor }}
-                  />
+                  {isPendingConnection ? (
+                    <ConnectionStatusIcon className={iconClassName} />
+                  ) : (
+                    <span
+                      className="h-1.5 w-1.5 rounded-full"
+                      style={{ backgroundColor: indicatorColor }}
+                    />
+                  )}
                   <span>
                     {server.connectionStatus === "failed"
                       ? `${connectionStatusLabel} (${server.retryCount})`
@@ -517,27 +535,25 @@ export function ServerConnectionCard({
                       )}
                       {isExporting ? "Exporting..." : "Export server info"}
                     </DropdownMenuItem>
-                    {ciEvalsEnabled && (
-                      <DropdownMenuItem
-                        onClick={() => {
-                          handleCopyAgentBrief();
-                        }}
-                        disabled={
-                          isCopyingBrief ||
-                          server.connectionStatus !== "connected"
-                        }
-                        className="text-xs cursor-pointer"
-                      >
-                        {isCopyingBrief ? (
-                          <Loader2 className="h-3 w-3 mr-2 animate-spin" />
-                        ) : (
-                          <FileText className="h-3 w-3 mr-2" />
-                        )}
-                        {isCopyingBrief
-                          ? "Copying..."
-                          : "Copy markdown for server evals"}
-                      </DropdownMenuItem>
-                    )}
+                    <DropdownMenuItem
+                      onClick={() => {
+                        handleCopyAgentBrief();
+                      }}
+                      disabled={
+                        isCopyingBrief ||
+                        server.connectionStatus !== "connected"
+                      }
+                      className="text-xs cursor-pointer"
+                    >
+                      {isCopyingBrief ? (
+                        <Loader2 className="h-3 w-3 mr-2 animate-spin" />
+                      ) : (
+                        <FileText className="h-3 w-3 mr-2" />
+                      )}
+                      {isCopyingBrief
+                        ? "Copying..."
+                        : "Copy markdown for server evals"}
+                    </DropdownMenuItem>
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -577,9 +593,19 @@ export function ServerConnectionCard({
             </button>
           </div>
 
+          {server.connectionStatus === "oauth-flow" && (
+            <div
+              className="mt-3 rounded-md border border-purple-300/40 bg-purple-500/10 p-2 text-xs text-muted-foreground"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Complete sign-in in the browser. Inspector will resume
+              automatically.
+            </div>
+          )}
+
           <div className="mt-3 flex items-center justify-end">
             <div
-              className="flex items-center gap-2"
+              className="flex flex-wrap items-center justify-end gap-2"
               onClick={(e) => e.stopPropagation()}
             >
               {canShareServer && (

@@ -163,7 +163,7 @@ export function PlaygroundLeft({
           tools={tools}
           toolNames={toolNames}
           filteredToolNames={filteredToolNames}
-          selectedToolName={selectedToolName}
+          selectedToolName={isListExpanded ? null : selectedToolName}
           fetchingTools={fetchingTools}
           searchQuery={searchQuery}
           onSearchQueryChange={setSearchQuery}
@@ -174,9 +174,10 @@ export function PlaygroundLeft({
         <ToolParametersView
           selectedToolName={selectedToolName!}
           selectedTool={tools[selectedToolName!]}
+          toolNames={toolNames}
           formFields={formFields}
           onExpand={() => setIsListExpanded(true)}
-          onClear={() => onSelectTool(null)}
+          onSelectTool={onSelectTool}
           onFieldChange={onFieldChange}
           onToggleField={onToggleField}
           shouldRenderUiTypeOverrideSelector={
@@ -189,7 +190,7 @@ export function PlaygroundLeft({
 
   return (
     <div
-      className="h-full flex flex-col border-r border-border bg-background overflow-hidden"
+      className="h-full min-w-0 flex flex-col bg-background overflow-hidden"
       onKeyDownCapture={handleKeyDown}
     >
       {/* Header with tabs and actions */}
@@ -295,9 +296,10 @@ function SavedRequestsTab({
 interface ToolParametersViewProps {
   selectedToolName: string;
   selectedTool?: Tool;
+  toolNames: string[];
   formFields: FormField[];
   onExpand: () => void;
-  onClear: () => void;
+  onSelectTool: (name: string | null) => void;
   onFieldChange: (name: string, value: unknown) => void;
   onToggleField: (name: string, isSet: boolean) => void;
   shouldRenderUiTypeOverrideSelector: boolean;
@@ -306,9 +308,10 @@ interface ToolParametersViewProps {
 function ToolParametersView({
   selectedToolName,
   selectedTool,
+  toolNames,
   formFields,
   onExpand,
-  onClear,
+  onSelectTool,
   onFieldChange,
   onToggleField,
   shouldRenderUiTypeOverrideSelector,
@@ -325,7 +328,10 @@ function ToolParametersView({
       <SelectedToolHeader
         toolName={selectedToolName}
         onExpand={onExpand}
-        onClear={onClear}
+        toolSwitchList={{
+          names: toolNames,
+          onSelect: (name) => onSelectTool(name),
+        }}
         showProtocolSelector={shouldRenderUiTypeOverrideSelector}
       />
       <ScrollArea className="flex-1 min-h-0">

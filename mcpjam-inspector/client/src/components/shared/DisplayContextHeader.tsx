@@ -4,7 +4,8 @@
  * Reusable component for display context controls (device, locale, timezone, CSP, capabilities, safe area).
  * Extracted from PlaygroundMain to be shared between App Builder and Views pages.
  *
- * Reads/writes to useUIPlaygroundStore for state management.
+ * Reads/writes UI playground state via useUIPlaygroundStore and derives theme, locale, timezone,
+ * display modes, device capabilities, and safe-area defaults from useClientConfigStore hostContext.
  */
 
 import { useState, useMemo, useCallback, useEffect, useRef } from "react";
@@ -42,11 +43,17 @@ import {
   type CspMode,
 } from "@/stores/ui-playground-store";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
 import { SafeAreaEditor } from "@/components/ui-playground/SafeAreaEditor";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import {
+  extractHostDeviceCapabilities,
+  extractHostLocale,
+  extractHostTimeZone,
+} from "@/lib/client-config";
 
 /** Device frame configurations - extends shared viewport config with UI properties */
 export const PRESET_DEVICE_CONFIGS: Record<
@@ -138,6 +145,10 @@ export interface DisplayContextHeaderProps {
   protocol: UIType | null;
   /** Optional: show theme toggle (default: false) */
   showThemeToggle?: boolean;
+  /** Optional: local theme mode override for surfaces that should not touch global app theme */
+  themeModeOverride?: "light" | "dark";
+  /** Optional: local theme toggle handler paired with themeModeOverride */
+  onThemeToggleOverride?: () => void;
   /** Optional: custom class name */
   className?: string;
 }
@@ -145,6 +156,8 @@ export interface DisplayContextHeaderProps {
 export function DisplayContextHeader({
   protocol,
   showThemeToggle = false,
+  themeModeOverride,
+  onThemeToggleOverride,
   className,
 }: DisplayContextHeaderProps) {
   // Popover states
@@ -158,10 +171,6 @@ export function DisplayContextHeader({
   const setDeviceType = useUIPlaygroundStore((s) => s.setDeviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
   const setCustomViewport = useUIPlaygroundStore((s) => s.setCustomViewport);
-  const globals = useUIPlaygroundStore((s) => s.globals);
-  const updateGlobal = useUIPlaygroundStore((s) => s.updateGlobal);
-  const capabilities = useUIPlaygroundStore((s) => s.capabilities);
-  const setCapabilities = useUIPlaygroundStore((s) => s.setCapabilities);
 
   // Host style (Claude / ChatGPT)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
@@ -174,6 +183,8 @@ export function DisplayContextHeader({
   // CSP mode for MCP Apps (SEP-1865)
   const mcpAppsCspMode = useUIPlaygroundStore((s) => s.mcpAppsCspMode);
   const setMcpAppsCspMode = useUIPlaygroundStore((s) => s.setMcpAppsCspMode);
+  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const patchHostContext = useClientConfigStore((s) => s.patchHostContext);
 
   // Protocol-aware CSP mode
   const activeCspMode = protocol === UIType.MCP_APPS ? mcpAppsCspMode : cspMode;
@@ -197,15 +208,27 @@ export function DisplayContextHeader({
     prevViolationCount.current = violationCount;
   }, [violationCount]);
 
-  // Theme handling
+  const fallbackLocale = navigator.language || "en-US";
+  const fallbackTimeZone =
+    Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
+  const usesThemeOverride =
+    themeModeOverride !== undefined && onThemeToggleOverride !== undefined;
+  const effectiveThemeMode = usesThemeOverride ? themeModeOverride : themeMode;
 
+  // App Builder can scope theme changes to the emulated thread/composer surface.
+  // Other consumers still fall back to the global MCPJam preference theme.
   const handleThemeChange = useCallback(() => {
+    if (usesThemeOverride && onThemeToggleOverride) {
+      onThemeToggleOverride();
+      return;
+    }
+
     const newTheme = themeMode === "dark" ? "light" : "dark";
     updateThemeMode(newTheme);
     setThemeMode(newTheme);
-  }, [themeMode, setThemeMode]);
+  }, [onThemeToggleOverride, setThemeMode, themeMode, usesThemeOverride]);
 
   // Device config - use custom dimensions from store for custom type
   const deviceConfig = useMemo(() => {
@@ -220,9 +243,21 @@ export function DisplayContextHeader({
   }, [deviceType, customViewport]);
   const DeviceIcon = deviceConfig.icon;
 
-  // Locale and timezone from globals
-  const locale = globals.locale;
-  const timeZone = globals.timeZone;
+  // Host display context comes directly from hostContext.
+  const locale = extractHostLocale(hostContext, fallbackLocale);
+  const timeZone = extractHostTimeZone(hostContext, fallbackTimeZone);
+  const capabilities = extractHostDeviceCapabilities(hostContext);
+
+  const handleCapabilityToggle = useCallback(
+    (key: "hover" | "touch") => {
+      const nextCapabilities = {
+        hover: key === "hover" ? !capabilities.hover : capabilities.hover,
+        touch: key === "touch" ? !capabilities.touch : capabilities.touch,
+      };
+      patchHostContext({ deviceCapabilities: nextCapabilities });
+    },
+    [capabilities, patchHostContext],
+  );
 
   // Show ChatGPT Apps controls when: no protocol selected (default) or openai-apps
   const showChatGPTControls =
@@ -394,7 +429,7 @@ export function DisplayContextHeader({
                     <button
                       key={option.code}
                       onClick={() => {
-                        updateGlobal("locale", option.code);
+                        patchHostContext({ locale: option.code });
                         setLocalePopoverOpen(false);
                       }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
@@ -475,9 +510,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.hover ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ hover: !capabilities.hover })
-                    }
+                    onClick={() => handleCapabilityToggle("hover")}
                     className="h-7 w-7"
                   >
                     <MousePointer2 className="h-3.5 w-3.5" />
@@ -495,9 +528,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.touch ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ touch: !capabilities.touch })
-                    }
+                    onClick={() => handleCapabilityToggle("touch")}
                     className="h-7 w-7"
                   >
                     <Hand className="h-3.5 w-3.5" />
@@ -687,7 +718,7 @@ export function DisplayContextHeader({
                     <button
                       key={option.code}
                       onClick={() => {
-                        updateGlobal("locale", option.code);
+                        patchHostContext({ locale: option.code });
                         setLocalePopoverOpen(false);
                       }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
@@ -737,7 +768,7 @@ export function DisplayContextHeader({
                     <button
                       key={option.zone}
                       onClick={() => {
-                        updateGlobal("timeZone", option.zone);
+                        patchHostContext({ timeZone: option.zone });
                         setTimezonePopoverOpen(false);
                       }}
                       className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-accent transition-colors ${
@@ -819,9 +850,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.hover ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ hover: !capabilities.hover })
-                    }
+                    onClick={() => handleCapabilityToggle("hover")}
                     className="h-7 w-7"
                   >
                     <MousePointer2 className="h-3.5 w-3.5" />
@@ -839,9 +868,7 @@ export function DisplayContextHeader({
                   <Button
                     variant={capabilities.touch ? "secondary" : "ghost"}
                     size="icon"
-                    onClick={() =>
-                      setCapabilities({ touch: !capabilities.touch })
-                    }
+                    onClick={() => handleCapabilityToggle("touch")}
                     className="h-7 w-7"
                   >
                     <Hand className="h-3.5 w-3.5" />
@@ -916,9 +943,10 @@ export function DisplayContextHeader({
                 variant="ghost"
                 size="icon"
                 onClick={handleThemeChange}
+                data-testid="display-context-theme-toggle"
                 className="h-7 w-7 border bg-background shadow-xs"
               >
-                {themeMode === "dark" ? (
+                {effectiveThemeMode === "dark" ? (
                   <Sun className="h-3.5 w-3.5" />
                 ) : (
                   <Moon className="h-3.5 w-3.5" />
@@ -926,7 +954,7 @@ export function DisplayContextHeader({
               </Button>
             </TooltipTrigger>
             <TooltipContent>
-              {themeMode === "dark" ? "Light mode" : "Dark mode"}
+              {effectiveThemeMode === "dark" ? "Light mode" : "Dark mode"}
             </TooltipContent>
           </Tooltip>
         )}

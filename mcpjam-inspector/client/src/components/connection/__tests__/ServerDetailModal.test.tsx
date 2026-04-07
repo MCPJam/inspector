@@ -184,6 +184,20 @@ describe("ServerDetailModal", () => {
     expect(screen.getByText("Search tool")).toBeInTheDocument();
   });
 
+  it("shows a connect prompt in overview when the server is disconnected", () => {
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        server={createServer({ connectionStatus: "disconnected" })}
+        defaultTab="overview"
+      />,
+    );
+
+    expect(
+      screen.getByText("Connect to view server overview"),
+    ).toBeInTheDocument();
+  });
+
   it("submits the configuration form without closing the modal", async () => {
     const onSubmit = vi.fn().mockResolvedValue({
       ok: true,

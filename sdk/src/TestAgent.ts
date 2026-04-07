@@ -14,6 +14,7 @@ import type {
   ToolSet,
   ModelMessage,
   UserModelMessage,
+  StepResult,
 } from "ai";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { createModelFromString, parseLLMString } from "./model-factory.js";
@@ -24,10 +25,18 @@ import type { CustomProvider, ToolCall as PromptToolCall } from "./types.js";
 import type { EvalAgent, PromptOptions } from "./EvalAgent.js";
 import type { Tool, AiSdkTool } from "./mcp-client-manager/types.js";
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
-import type { EvalWidgetSnapshotInput } from "./eval-reporting-types.js";
+import type {
+  EvalWidgetSnapshotInput,
+  MCPServerReplayConfig,
+} from "./eval-reporting-types.js";
 import { ensureJsonSchemaObject } from "./mcp-client-manager/tool-converters.js";
 import { buildMcpAppWidgetSnapshot } from "./widget-snapshots.js";
 import { injectOpenAICompat } from "./widget-helpers.js";
+import {
+  createEvalSpanIntegration,
+  patchEvalSpansMessageRangesFromSteps,
+} from "./eval-trace-spans.js";
+
 
 /**
  * Configuration for creating a TestAgent
@@ -103,6 +112,7 @@ type StartedToolCall = {
   arguments: Record<string, unknown>;
   shortCircuited: boolean;
 };
+
 
 /**
  * Agent for running LLM prompts with tool calling.
@@ -472,6 +482,20 @@ export class TestAgent implements EvalAgent {
     let partialOutputTokens = 0;
     let lastCompletedStepText = "";
 
+    // Build tool name → serverId map for span metadata
+    const serverIdByTool = new Map<string, string>();
+    for (const [name, tool] of Object.entries(this.tools)) {
+      const sid = (tool as any)?._serverId;
+      if (typeof sid === "string" && sid) {
+        serverIdByTool.set(name, sid);
+      }
+    }
+
+    const spanIntegration = createEvalSpanIntegration({
+      rel: () => Date.now() - startTime,
+      serverIdByTool,
+    });
+
     try {
       const modelOptions: CreateModelOptions = {
         apiKey: this.apiKey,
@@ -482,7 +506,7 @@ export class TestAgent implements EvalAgent {
         options?.stopAfterToolCall
       );
 
-      // Instrument tools to track MCP execution time
+      // Instrument tools to track MCP execution time and widget snapshots
       const instrumentedTools = this.createInstrumentedTools(
         (ms) => {
           totalMcpMs += ms;
@@ -498,8 +522,7 @@ export class TestAgent implements EvalAgent {
       const userMessage: UserModelMessage = { role: "user", content: message };
       const resolvedTimeout = options?.timeout ?? options?.timeoutMs;
 
-      // Cast model to any to handle AI SDK version compatibility
-      const result = await generateText({
+      const generateTextOptions: any = {
         model: model as any,
         tools: instrumentedTools,
         system: this.systemPrompt,
@@ -517,11 +540,17 @@ export class TestAgent implements EvalAgent {
         ...(resolvedTimeout !== undefined && {
           timeout: resolvedTimeout,
         }),
+        experimental_telemetry: {
+          isEnabled: true,
+          recordInputs: false,
+          recordOutputs: false,
+          integrations: [spanIntegration],
+        },
         stopWhen: this.resolveStopWhen(
           options?.stopWhen,
           options?.stopAfterToolCall
         ),
-        onStepFinish: (stepResult) => {
+        onStepFinish: (stepResult: StepResult<ToolSet>) => {
           const now = Date.now();
           const stepDuration = now - lastStepEndTime;
           // LLM time for this step = step duration - MCP time in this step
@@ -533,12 +562,14 @@ export class TestAgent implements EvalAgent {
             return;
           }
 
+          const stepMessages = stepResult.response?.messages
+            ? [...stepResult.response.messages]
+            : [];
+
           partialInputTokens += stepResult.usage?.inputTokens ?? 0;
           partialOutputTokens += stepResult.usage?.outputTokens ?? 0;
           lastCompletedStepText = stepResult.text ?? "";
-          lastCompletedStepMessages = stepResult.response?.messages
-            ? [...stepResult.response.messages]
-            : [];
+          lastCompletedStepMessages = stepMessages;
           completedToolCalls.push(
             ...stepResult.toolCalls.map((toolCall) => ({
               toolName: toolCall.toolName,
@@ -547,7 +578,9 @@ export class TestAgent implements EvalAgent {
           );
           pendingStepToolCalls.length = 0;
         },
-      });
+      };
+
+      const result = await generateText(generateTextOptions);
 
       const e2eMs = Date.now() - startTime;
       const toolCalls = extractToolCalls(result);
@@ -563,6 +596,15 @@ export class TestAgent implements EvalAgent {
         messages.push(...result.response.messages);
       }
 
+      const recordedSpans = spanIntegration.getSpans();
+      patchEvalSpansMessageRangesFromSteps(
+        recordedSpans,
+        1,
+        result.steps as ReadonlyArray<
+          { response?: { messages?: ModelMessage[] } } | undefined
+        >
+      );
+
       this.lastResult = PromptResult.from({
         prompt: message,
         messages,
@@ -577,6 +619,7 @@ export class TestAgent implements EvalAgent {
         provider: this._parsedProvider,
         model: this._parsedModel,
         widgetSnapshots: Array.from(widgetSnapshots.values()),
+        spans: recordedSpans,
       });
 
       this.promptHistory.push(this.lastResult);
@@ -594,6 +637,7 @@ export class TestAgent implements EvalAgent {
             : error instanceof Error
               ? error.message
               : String(error);
+      spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },
         ...lastCompletedStepMessages,
@@ -627,6 +671,7 @@ export class TestAgent implements EvalAgent {
         provider: this._parsedProvider,
         model: this._parsedModel,
         widgetSnapshots: Array.from(widgetSnapshots.values()),
+        spans: spanIntegration.getSpans(),
       });
       this.promptHistory.push(this.lastResult);
       return this.lastResult;
@@ -723,6 +768,13 @@ export class TestAgent implements EvalAgent {
    */
   getMaxSteps(): number {
     return this.maxSteps;
+  }
+
+  /**
+   * Get replayable server configs from the attached MCP client manager.
+   */
+  getServerReplayConfigs(): MCPServerReplayConfig[] | undefined {
+    return this.mcpClientManager?.getServerReplayConfigs();
   }
 
   /**

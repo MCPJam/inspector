@@ -17,12 +17,12 @@ import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
-import {
+import type {
+  MCPReadResourceResult,
+  MCPResource,
+  MCPResourceTemplate,
   MCPServerConfig,
-  type MCPReadResourceResult,
-  type MCPResource,
-  type MCPResourceTemplate,
-} from "@mcpjam/sdk";
+} from "@mcpjam/sdk/browser";
 import {
   listResources,
   readResource as readResourceApi,

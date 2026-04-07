@@ -113,6 +113,7 @@ export type ModelProvider =
 // We may add them back as a premium offering in the future.
 const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "openai/gpt-oss-120b",
+  "openai/gpt-4o-mini",
   "openai/gpt-5-nano",
   "anthropic/claude-haiku-4.5",
   "openai/gpt-5.1-codex-mini",
@@ -139,9 +140,24 @@ export const isMCPJamProvidedModel = (modelId: string): boolean => {
 // Duplicated from backend GUEST_ALLOWED_MODELS — kept in sync manually
 // since the repos are separate. Backend is the authoritative enforcement.
 export const GUEST_ALLOWED_MODEL_IDS: string[] = [
+  "meta-llama/llama-4-scout",
+  "openai/gpt-oss-120b",
+  "openai/gpt-5-nano",
   "anthropic/claude-haiku-4.5",
+  "openai/gpt-5.1-codex-mini",
   "openai/gpt-5-mini",
+  "moonshotai/kimi-k2-thinking",
+  "moonshotai/kimi-k2-0905",
+  "moonshotai/kimi-k2.5",
   "google/gemini-2.5-flash",
+  "z-ai/glm-4.6",
+  "z-ai/glm-4.7",
+  "z-ai/glm-4.7-flash",
+  "google/gemini-3-flash-preview",
+  "x-ai/grok-4.1-fast",
+  "x-ai/grok-code-fast-1",
+  "deepseek/deepseek-v3.2",
+  "minimax/minimax-m2.1",
 ];
 
 export const isGuestAllowedModel = (modelId: string): boolean => {
@@ -597,7 +613,13 @@ export interface ServerFormData {
   oauthScopes?: string[];
   clientId?: string;
   clientSecret?: string;
+  /** Registry credential key for resolving OAuth client ID from env (e.g. "github") */
+  oauthCredentialKey?: string;
+  /** True for registry servers that use backend-managed preregistered OAuth credentials */
+  useRegistryOAuthProxy?: boolean;
   requestTimeout?: number;
+  /** Convex _id of the registry server for workspace/registry bookkeeping */
+  registryServerId?: string;
 }
 
 export interface OauthTokens {

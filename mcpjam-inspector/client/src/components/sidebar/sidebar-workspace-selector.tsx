@@ -12,12 +12,17 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LearnMoreHoverCard } from "@/components/learn-more/LearnMoreHoverCard";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn, getInitials } from "@/lib/utils";
 import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
 import { useConvexAuth } from "convex/react";
-import { useProfilePicture } from "@/hooks/useProfilePicture";
 import type { Workspace } from "@/state/app-types";
 import { resolveWorkspaceIcon } from "@/components/workspace/WorkspaceEmojiPicker";
 
@@ -29,6 +34,35 @@ interface SidebarWorkspaceSelectorProps {
   onDeleteWorkspace: (workspaceId: string) => void;
   isLoading?: boolean;
   onNavigateToSettings?: () => void;
+  isCreateDisabled?: boolean;
+  createDisabledReason?: string;
+  onLearnMoreExpand?: (tabId: string, sourceRect: DOMRect | null) => void;
+}
+
+interface WorkspaceDeleteState {
+  canDelete: boolean;
+  reason: string;
+}
+
+function getWorkspaceDeleteState({
+  workspace,
+  isAuthenticated,
+}: {
+  workspace: Workspace;
+  isAuthenticated: boolean;
+}): WorkspaceDeleteState {
+  if (!isAuthenticated || !workspace.sharedWorkspaceId) {
+    return { canDelete: true, reason: "Delete workspace" };
+  }
+
+  if (workspace.canDeleteWorkspace !== false) {
+    return { canDelete: true, reason: "Delete workspace" };
+  }
+
+  return {
+    canDelete: false,
+    reason: "Only workspace admins can delete this workspace",
+  };
 }
 
 export function SidebarWorkspaceSelector({
@@ -39,10 +73,12 @@ export function SidebarWorkspaceSelector({
   onDeleteWorkspace,
   isLoading,
   onNavigateToSettings,
+  isCreateDisabled = false,
+  createDisabledReason,
+  onLearnMoreExpand,
 }: SidebarWorkspaceSelectorProps) {
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
-  const { profilePictureUrl } = useProfilePicture();
 
   const activeWorkspace = workspaces[activeWorkspaceId];
   const sharedWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
@@ -75,6 +111,9 @@ export function SidebarWorkspaceSelector({
   });
 
   const handleCreateWorkspace = () => {
+    if (isCreateDisabled) {
+      return;
+    }
     let baseName = "New workspace";
     let name = baseName;
     let counter = 1;
@@ -88,55 +127,121 @@ export function SidebarWorkspaceSelector({
     onCreateWorkspace(name, true);
   };
 
+  const createWorkspaceItem = (
+    <DropdownMenuItem
+      onClick={handleCreateWorkspace}
+      disabled={isCreateDisabled}
+      title={createDisabledReason}
+      className={cn("cursor-pointer", isCreateDisabled && "cursor-not-allowed")}
+    >
+      <Plus className="size-4" />
+      Add Workspace
+    </DropdownMenuItem>
+  );
+
   return (
     <SidebarMenu>
       <SidebarMenuItem>
         <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <SidebarMenuButton
-              size="lg"
-              className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
-            >
-              <WorkspaceIconBadge
-                icon={activeWorkspace?.icon}
-                fallback={initial}
-                size={8}
-              />
-              <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
-                <span className="truncate font-semibold">{workspaceName}</span>
-                {displayMembers.length > 0 && (
-                  <div className="flex -space-x-1.5 mt-0.5">
-                    {displayMembers.map((member) => {
-                      const name = member.user?.name || member.email;
-                      const initials = getInitials(name);
-                      return (
-                        <Avatar
-                          key={member._id}
-                          className="size-5 border border-sidebar-background"
-                        >
-                          <AvatarImage
-                            src={member.user?.imageUrl || undefined}
-                            alt={name}
-                          />
-                          <AvatarFallback className="text-[8px] bg-muted">
-                            {initials}
-                          </AvatarFallback>
-                        </Avatar>
-                      );
-                    })}
-                    {activeMembers.length > 3 && (
-                      <div className="size-5 rounded-full border border-sidebar-background bg-muted flex items-center justify-center">
-                        <span className="text-[8px] text-muted-foreground font-medium">
-                          +{activeMembers.length - 3}
-                        </span>
+          {onLearnMoreExpand ? (
+            <LearnMoreHoverCard tabId="workspaces" onExpand={onLearnMoreExpand}>
+              <DropdownMenuTrigger asChild>
+                <SidebarMenuButton
+                  size="lg"
+                  className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+                >
+                  <WorkspaceIconBadge
+                    icon={activeWorkspace?.icon}
+                    fallback={initial}
+                    size={8}
+                  />
+                  <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
+                    <span className="truncate font-semibold">
+                      {workspaceName}
+                    </span>
+                    {displayMembers.length > 0 && (
+                      <div className="flex -space-x-1.5 mt-0.5">
+                        {displayMembers.map((member) => {
+                          const name = member.user?.name || member.email;
+                          const initials = getInitials(name);
+                          return (
+                            <Avatar
+                              key={member._id}
+                              className="size-5 border border-sidebar-background"
+                            >
+                              <AvatarImage
+                                src={member.user?.imageUrl || undefined}
+                                alt={name}
+                              />
+                              <AvatarFallback className="text-[8px] bg-muted">
+                                {initials}
+                              </AvatarFallback>
+                            </Avatar>
+                          );
+                        })}
+                        {activeMembers.length > 3 && (
+                          <div className="size-5 rounded-full border border-sidebar-background bg-muted flex items-center justify-center">
+                            <span className="text-[8px] text-muted-foreground font-medium">
+                              +{activeMembers.length - 3}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-              <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
-            </SidebarMenuButton>
-          </DropdownMenuTrigger>
+                  <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+                </SidebarMenuButton>
+              </DropdownMenuTrigger>
+            </LearnMoreHoverCard>
+          ) : (
+            <DropdownMenuTrigger asChild>
+              <SidebarMenuButton
+                size="lg"
+                className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
+              >
+                <WorkspaceIconBadge
+                  icon={activeWorkspace?.icon}
+                  fallback={initial}
+                  size={8}
+                />
+                <div className="grid flex-1 text-left text-sm leading-tight group-data-[collapsible=icon]:hidden">
+                  <span className="truncate font-semibold">
+                    {workspaceName}
+                  </span>
+                  {displayMembers.length > 0 && (
+                    <div className="flex -space-x-1.5 mt-0.5">
+                      {displayMembers.map((member) => {
+                        const name = member.user?.name || member.email;
+                        const initials = getInitials(name);
+                        return (
+                          <Avatar
+                            key={member._id}
+                            className="size-5 border border-sidebar-background"
+                          >
+                            <AvatarImage
+                              src={member.user?.imageUrl || undefined}
+                              alt={name}
+                            />
+                            <AvatarFallback className="text-[8px] bg-muted">
+                              {initials}
+                            </AvatarFallback>
+                          </Avatar>
+                        );
+                      })}
+                      {activeMembers.length > 3 && (
+                        <div className="size-5 rounded-full border border-sidebar-background bg-muted flex items-center justify-center">
+                          <span className="text-[8px] text-muted-foreground font-medium">
+                            +{activeMembers.length - 3}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+              </SidebarMenuButton>
+            </DropdownMenuTrigger>
+          )}
           <DropdownMenuContent
             className="w-[--radix-dropdown-menu-trigger-width] min-w-56 rounded-lg"
             side={isMobile ? "bottom" : "right"}
@@ -162,26 +267,33 @@ export function SidebarWorkspaceSelector({
                     <span className="truncate block">{workspace.name}</span>
                   </div>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    onDeleteWorkspace(workspace.id);
-                  }}
-                  className="opacity-0 group-hover/item:opacity-100 hover:text-destructive transition-opacity p-1"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
+                {!workspace.isDefault && (
+                  <WorkspaceDeleteButton
+                    workspace={workspace}
+                    deleteState={getWorkspaceDeleteState({
+                      workspace,
+                      isAuthenticated,
+                    })}
+                    onDeleteWorkspace={onDeleteWorkspace}
+                  />
+                )}
               </DropdownMenuItem>
             ))}
             <DropdownMenuSeparator />
-            <DropdownMenuItem
-              onClick={handleCreateWorkspace}
-              className="cursor-pointer"
-            >
-              <Plus className="size-4" />
-              Add Workspace
-            </DropdownMenuItem>
+            {isCreateDisabled && createDisabledReason ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex" title={createDisabledReason}>
+                    {createWorkspaceItem}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  {createDisabledReason}
+                </TooltipContent>
+              </Tooltip>
+            ) : (
+              createWorkspaceItem
+            )}
             {onNavigateToSettings && (
               <DropdownMenuItem
                 onClick={onNavigateToSettings}
@@ -195,6 +307,52 @@ export function SidebarWorkspaceSelector({
         </DropdownMenu>
       </SidebarMenuItem>
     </SidebarMenu>
+  );
+}
+
+function WorkspaceDeleteButton({
+  workspace,
+  deleteState,
+  onDeleteWorkspace,
+}: {
+  workspace: Workspace;
+  deleteState: WorkspaceDeleteState;
+  onDeleteWorkspace: (workspaceId: string) => void;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="flex"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+          }}
+        >
+          <button
+            type="button"
+            disabled={!deleteState.canDelete}
+            aria-label={`Delete workspace ${workspace.name}`}
+            title={deleteState.reason}
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              if (!deleteState.canDelete) return;
+              onDeleteWorkspace(workspace.id);
+            }}
+            className={cn(
+              "opacity-0 group-hover/item:opacity-100 transition-opacity p-1",
+              deleteState.canDelete
+                ? "hover:text-destructive"
+                : "cursor-not-allowed text-muted-foreground/70",
+            )}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right">{deleteState.reason}</TooltipContent>
+    </Tooltip>
   );
 }
 

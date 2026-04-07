@@ -1,6 +1,6 @@
 import type { ComponentType } from "react";
 import { Check, Loader2, Wifi, X } from "lucide-react";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { ConnectionStatus } from "@/state/app-types";
 
 interface ConnectionStatusMeta {
@@ -18,13 +18,13 @@ const connectionStatusMeta: Record<ConnectionStatus, ConnectionStatusMeta> = {
     iconClassName: "h-3 w-3 text-green-500",
   },
   connecting: {
-    label: "Connecting...",
+    label: "Finishing setup...",
     indicatorColor: "#3b82f6",
     Icon: Loader2,
     iconClassName: "h-3 w-3 text-blue-500 animate-spin",
   },
   "oauth-flow": {
-    label: "Authorizing...",
+    label: "Authorizing in browser...",
     indicatorColor: "#a855f7",
     Icon: Loader2,
     iconClassName: "h-3 w-3 text-purple-500 animate-spin",
@@ -54,6 +54,17 @@ export const getServerCommandDisplay = (config: MCPServerConfig): string => {
   const command = config.command ?? "";
   const args = config.args ?? [];
   return [command, ...args].filter(Boolean).join(" ").trim();
+};
+
+/** HTTP/SSE URL or joined stdio command string, for agent briefs / export metadata. */
+export const getServerUrl = (config: MCPServerConfig): string | undefined => {
+  if (config.url) {
+    return config.url.toString();
+  }
+  const command = config.command ?? "";
+  const args = config.args ?? [];
+  const joined = [command, ...args].filter(Boolean).join(" ").trim();
+  return joined.length > 0 ? joined : undefined;
 };
 
 export const getServerTransportLabel = (config: MCPServerConfig): string => {

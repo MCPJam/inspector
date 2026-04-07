@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 
 const validateHostedServerMock = vi.fn();
+const webPostMock = vi.fn();
+const buildGuestServerRequestMock = vi.fn();
+const isGuestModeMock = vi.fn(() => false);
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -12,12 +15,18 @@ vi.mock("@/lib/apis/web/servers-api", () => ({
     validateHostedServerMock(...args),
 }));
 
+vi.mock("@/lib/apis/web/base", () => ({
+  webPost: (...args: unknown[]) => webPostMock(...args),
+}));
+
 vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
 vi.mock("@/lib/apis/web/context", () => ({
-  isGuestMode: () => false,
+  buildGuestServerRequest: (...args: unknown[]) =>
+    buildGuestServerRequestMock(...args),
+  isGuestMode: () => isGuestModeMock(),
 }));
 
 import { reconnectServer, testConnection } from "../mcp-api";
@@ -25,6 +34,10 @@ import { reconnectServer, testConnection } from "../mcp-api";
 describe("mcp-api hosted-mode reconnect hardening", () => {
   beforeEach(() => {
     validateHostedServerMock.mockReset();
+    webPostMock.mockReset();
+    buildGuestServerRequestMock.mockReset();
+    isGuestModeMock.mockReset();
+    isGuestModeMock.mockReturnValue(false);
   });
 
   it("normalizes hosted workspace timing errors for testConnection", async () => {
@@ -83,7 +96,37 @@ describe("mcp-api hosted-mode reconnect hardening", () => {
     expect(validateHostedServerMock).toHaveBeenCalledWith(
       "server-4",
       "access-token",
+      undefined,
     );
+    expect(result).toEqual({ success: true, status: "ok" });
+  });
+
+  it("validates direct guests using the provided server config instead of hosted context lookup", async () => {
+    isGuestModeMock.mockReturnValue(true);
+    buildGuestServerRequestMock.mockReturnValue({
+      serverUrl: "https://mcp.excalidraw.com/mcp",
+    });
+    webPostMock.mockResolvedValueOnce({
+      success: true,
+      status: "ok",
+    });
+
+    const config = {
+      url: "https://mcp.excalidraw.com/mcp",
+      capabilities: { roots: { listChanged: true } },
+    } as unknown as MCPServerConfig;
+
+    const result = await testConnection(config, "Excalidraw (App)");
+
+    expect(buildGuestServerRequestMock).toHaveBeenCalledWith(
+      config,
+      undefined,
+      { roots: { listChanged: true } },
+    );
+    expect(webPostMock).toHaveBeenCalledWith("/api/web/servers/validate", {
+      serverUrl: "https://mcp.excalidraw.com/mcp",
+    });
+    expect(validateHostedServerMock).not.toHaveBeenCalled();
     expect(result).toEqual({ success: true, status: "ok" });
   });
 });

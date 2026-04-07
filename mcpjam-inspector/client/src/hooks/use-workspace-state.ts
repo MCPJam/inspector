@@ -17,11 +17,46 @@ import {
   deserializeServersFromConvex,
   serializeServersForSharing,
 } from "@/lib/workspace-serialization";
+import {
+  stableStringifyJson,
+  type WorkspaceClientConfig,
+} from "@/lib/client-config";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import { useOrganizationBillingStatus } from "./useOrganizationBilling";
+
+const CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS = 10000;
+
+function stringifyWorkspaceClientConfig(
+  clientConfig: WorkspaceClientConfig | undefined,
+) {
+  return stableStringifyJson(clientConfig ?? null);
+}
+
+interface PendingClientConfigSync {
+  workspaceId: string;
+  expectedSerializedConfig: string;
+  resolve: () => void;
+  reject: (error: Error) => void;
+  timeoutId: ReturnType<typeof setTimeout>;
+}
 
 interface LoggerLike {
   info: (message: string, meta?: Record<string, unknown>) => void;
   warn: (message: string, meta?: Record<string, unknown>) => void;
   error: (message: string, meta?: Record<string, unknown>) => void;
+}
+
+function isSyntheticDefaultWorkspace(workspace: Workspace) {
+  return (
+    workspace.id === "default" &&
+    workspace.isDefault === true &&
+    workspace.sharedWorkspaceId === undefined &&
+    workspace.organizationId === undefined &&
+    workspace.name === "Default" &&
+    workspace.description === "Default workspace" &&
+    Object.keys(workspace.servers).length === 0
+  );
 }
 
 export interface UseWorkspaceStateParams {
@@ -30,6 +65,7 @@ export interface UseWorkspaceStateParams {
   isAuthenticated: boolean;
   isAuthLoading: boolean;
   activeOrganizationId?: string;
+  routeOrganizationId?: string;
   logger: LoggerLike;
 }
 
@@ -39,18 +75,29 @@ export function useWorkspaceState({
   isAuthenticated,
   isAuthLoading,
   activeOrganizationId,
+  routeOrganizationId,
   logger,
 }: UseWorkspaceStateParams) {
-  const { workspaces: remoteWorkspaces, isLoading: isLoadingWorkspaces } =
-    useWorkspaceQueries({
-      isAuthenticated,
-      organizationId: activeOrganizationId,
-    });
+  const workspaceOrganizationId = routeOrganizationId ?? activeOrganizationId;
+  const {
+    allWorkspaces: allRemoteWorkspaces,
+    workspaces: remoteWorkspaces,
+    isLoading: isLoadingWorkspaces,
+  } = useWorkspaceQueries({
+    isAuthenticated,
+    organizationId: workspaceOrganizationId,
+  });
   const {
     createWorkspace: convexCreateWorkspace,
+    ensureDefaultWorkspace: convexEnsureDefaultWorkspace,
     updateWorkspace: convexUpdateWorkspace,
+    updateClientConfig: convexUpdateClientConfig,
     deleteWorkspace: convexDeleteWorkspace,
   } = useWorkspaceMutations();
+  const billingStatus = useOrganizationBillingStatus(
+    workspaceOrganizationId ?? null,
+    { enabled: isAuthenticated },
+  );
 
   const [convexActiveWorkspaceId, setConvexActiveWorkspaceId] = useState<
     string | null
@@ -67,10 +114,30 @@ export function useWorkspaceState({
       isAuthenticated,
     });
 
-  const hasMigratedRef = useRef(false);
+  const migrationInFlightRef = useRef(new Set<string>());
+  const ensureDefaultInFlightRef = useRef(new Set<string>());
+  const ensureDefaultCompletedRef = useRef(new Set<string>());
+  const migrationErrorNotifiedRef = useRef(new Set<string>());
   const [useLocalFallback, setUseLocalFallback] = useState(false);
   const convexTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const pendingClientConfigSyncRef = useRef<PendingClientConfigSync | null>(
+    null,
+  );
   const CONVEX_TIMEOUT_MS = 10000;
+
+  const clearPendingClientConfigSync = useCallback((error?: Error) => {
+    const pending = pendingClientConfigSyncRef.current;
+    if (!pending) {
+      return;
+    }
+
+    clearTimeout(pending.timeoutId);
+    pendingClientConfigSyncRef.current = null;
+
+    if (error) {
+      pending.reject(error);
+    }
+  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -112,6 +179,24 @@ export function useWorkspaceState({
     };
   }, [isAuthenticated, remoteWorkspaces, useLocalFallback, logger]);
 
+  useEffect(() => {
+    if (isAuthenticated && !useLocalFallback) {
+      return;
+    }
+
+    clearPendingClientConfigSync(
+      new Error("Workspace client config sync was interrupted."),
+    );
+  }, [clearPendingClientConfigSync, isAuthenticated, useLocalFallback]);
+
+  useEffect(() => {
+    return () => {
+      clearPendingClientConfigSync(
+        new Error("Workspace client config sync was interrupted."),
+      );
+    };
+  }, [clearPendingClientConfigSync]);
+
   const isLoadingRemoteWorkspaces =
     (isAuthenticated &&
       !useLocalFallback &&
@@ -142,9 +227,11 @@ export function useWorkspaceState({
             name: rw.name,
             description: rw.description,
             icon: rw.icon,
+            clientConfig: rw.clientConfig,
             servers: deserializedServers,
             createdAt: new Date(rw.createdAt),
             updatedAt: new Date(rw.updatedAt),
+            canDeleteWorkspace: rw.canDeleteWorkspace,
             sharedWorkspaceId: rw._id,
             organizationId: rw.organizationId,
             visibility: rw.visibility,
@@ -153,6 +240,26 @@ export function useWorkspaceState({
       }),
     );
   }, [remoteWorkspaces, convexActiveWorkspaceId, activeWorkspaceServersFlat]);
+
+  useEffect(() => {
+    const pending = pendingClientConfigSyncRef.current;
+    if (!pending) {
+      return;
+    }
+
+    const syncedClientConfig =
+      convexWorkspaces[pending.workspaceId]?.clientConfig ?? undefined;
+    if (
+      stringifyWorkspaceClientConfig(syncedClientConfig) !==
+      pending.expectedSerializedConfig
+    ) {
+      return;
+    }
+
+    clearTimeout(pending.timeoutId);
+    pendingClientConfigSyncRef.current = null;
+    pending.resolve();
+  }, [convexWorkspaces]);
 
   const effectiveWorkspaces = useMemo((): Record<string, Workspace> => {
     if (useLocalFallback) {
@@ -202,6 +309,22 @@ export function useWorkspaceState({
     effectiveWorkspaces,
   ]);
 
+  const migratableLocalWorkspaces = useMemo(
+    () =>
+      Object.values(appState.workspaces).filter(
+        (workspace) =>
+          !workspace.sharedWorkspaceId &&
+          !isSyntheticDefaultWorkspace(workspace),
+      ),
+    [appState.workspaces],
+  );
+  const migratableLocalWorkspaceCount = migratableLocalWorkspaces.length;
+  const hasAnyRemoteWorkspaces = (allRemoteWorkspaces?.length ?? 0) > 0;
+  const hasCurrentOrganizationWorkspaces = (remoteWorkspaces?.length ?? 0) > 0;
+  const canManageBillingForWorkspaceActions = workspaceOrganizationId
+    ? (billingStatus?.canManageBilling ?? false)
+    : true;
+
   useEffect(() => {
     if (isAuthenticated && remoteWorkspaces && remoteWorkspaces.length > 0) {
       if (
@@ -235,37 +358,89 @@ export function useWorkspaceState({
   }, [convexActiveWorkspaceId]);
 
   useEffect(() => {
+    if (!isAuthenticated || useLocalFallback) {
+      migrationInFlightRef.current.clear();
+      ensureDefaultInFlightRef.current.clear();
+      // Intentionally NOT clearing ensureDefaultCompletedRef here — it must
+      // survive transient auth-state flickers so that a workspace that was
+      // already successfully created isn't re-created when the Convex
+      // subscription briefly returns an empty result during reconnection.
+      migrationErrorNotifiedRef.current.clear();
+    }
+  }, [isAuthenticated, useLocalFallback]);
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      useLocalFallback ||
+      allRemoteWorkspaces === undefined ||
+      allRemoteWorkspaces.length > 0 ||
+      migratableLocalWorkspaceCount === 0
+    ) {
+      migrationErrorNotifiedRef.current.clear();
+    }
+  }, [
+    isAuthenticated,
+    useLocalFallback,
+    allRemoteWorkspaces,
+    migratableLocalWorkspaceCount,
+  ]);
+
+  useEffect(() => {
     if (!isAuthenticated) {
-      hasMigratedRef.current = false;
       return;
     }
     if (useLocalFallback) return;
-    if (hasMigratedRef.current) return;
-    if (remoteWorkspaces === undefined) return;
-
-    hasMigratedRef.current = true;
-
-    const localWorkspaces = Object.values(appState.workspaces).filter(
-      (w) => !w.sharedWorkspaceId,
-    );
-
-    if (localWorkspaces.length === 0) return;
-    if (remoteWorkspaces.length > 0) return;
+    if (allRemoteWorkspaces === undefined) return;
+    if (allRemoteWorkspaces.length > 0) return;
+    if (migratableLocalWorkspaceCount === 0) return;
 
     logger.info("Migrating local workspaces to Convex", {
-      count: localWorkspaces.length,
+      count: migratableLocalWorkspaceCount,
     });
 
     const migrateWorkspace = async (workspace: Workspace) => {
+      if (migrationInFlightRef.current.has(workspace.id)) {
+        return;
+      }
+
+      migrationInFlightRef.current.add(workspace.id);
+
       try {
         const serializedServers = serializeServersForSharing(workspace.servers);
-        await convexCreateWorkspace({
+        const workspaceId = await convexCreateWorkspace({
           name: workspace.name,
           description: workspace.description,
+          clientConfig: workspace.clientConfig,
           servers: serializedServers,
+          ...(workspaceOrganizationId
+            ? { organizationId: workspaceOrganizationId }
+            : {}),
+        });
+        dispatch({
+          type: "UPDATE_WORKSPACE",
+          workspaceId: workspace.id,
+          updates: {
+            sharedWorkspaceId: workspaceId as string,
+            ...(workspaceOrganizationId
+              ? { organizationId: workspaceOrganizationId }
+              : {}),
+          },
         });
         logger.info("Migrated workspace to Convex", { name: workspace.name });
       } catch (error) {
+        migrationInFlightRef.current.delete(workspace.id);
+        const requestKey = workspaceOrganizationId ?? "fallback";
+        if (!migrationErrorNotifiedRef.current.has(requestKey)) {
+          migrationErrorNotifiedRef.current.add(requestKey);
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Some local workspaces could not be migrated",
+              canManageBillingForWorkspaceActions,
+            ),
+          );
+        }
         logger.error("Failed to migrate workspace", {
           name: workspace.name,
           error: error instanceof Error ? error.message : "Unknown error",
@@ -273,13 +448,63 @@ export function useWorkspaceState({
       }
     };
 
-    Promise.all(localWorkspaces.map(migrateWorkspace));
+    Promise.all(migratableLocalWorkspaces.map(migrateWorkspace));
+  }, [
+    isAuthenticated,
+    useLocalFallback,
+    allRemoteWorkspaces,
+    migratableLocalWorkspaces,
+    migratableLocalWorkspaceCount,
+    convexCreateWorkspace,
+    dispatch,
+    logger,
+    workspaceOrganizationId,
+    canManageBillingForWorkspaceActions,
+  ]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      return;
+    }
+    if (useLocalFallback) return;
+    if (remoteWorkspaces === undefined) return;
+    if (hasCurrentOrganizationWorkspaces) return;
+    if (!hasAnyRemoteWorkspaces && migratableLocalWorkspaceCount > 0) return;
+
+    const requestKey = workspaceOrganizationId ?? "fallback";
+    if (ensureDefaultInFlightRef.current.has(requestKey)) {
+      return;
+    }
+    if (ensureDefaultCompletedRef.current.has(requestKey)) {
+      return;
+    }
+
+    ensureDefaultInFlightRef.current.add(requestKey);
+
+    convexEnsureDefaultWorkspace(
+      workspaceOrganizationId
+        ? { organizationId: workspaceOrganizationId }
+        : {},
+    )
+      .then((workspaceId) => {
+        ensureDefaultCompletedRef.current.add(requestKey);
+      })
+      .catch((error) => {
+        ensureDefaultInFlightRef.current.delete(requestKey);
+        logger.error("Failed to ensure default workspace", {
+          organizationId: workspaceOrganizationId,
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
+      });
   }, [
     isAuthenticated,
     useLocalFallback,
     remoteWorkspaces,
-    appState.workspaces,
-    convexCreateWorkspace,
+    hasCurrentOrganizationWorkspaces,
+    hasAnyRemoteWorkspaces,
+    migratableLocalWorkspaceCount,
+    convexEnsureDefaultWorkspace,
+    workspaceOrganizationId,
     logger,
   ]);
 
@@ -289,9 +514,10 @@ export function useWorkspaceState({
         try {
           const workspaceId = await convexCreateWorkspace({
             name,
+            clientConfig: undefined,
             servers: {},
-            ...(activeOrganizationId
-              ? { organizationId: activeOrganizationId }
+            ...(workspaceOrganizationId
+              ? { organizationId: workspaceOrganizationId }
               : {}),
           });
           if (switchTo && workspaceId) {
@@ -300,9 +526,13 @@ export function useWorkspaceState({
           toast.success(`Workspace "${name}" created`);
           return workspaceId as string;
         } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          toast.error(`Failed to create workspace: ${errorMessage}`);
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Failed to create workspace",
+              canManageBillingForWorkspaceActions,
+            ),
+          );
           return "";
         }
       }
@@ -323,7 +553,13 @@ export function useWorkspaceState({
       toast.success(`Workspace "${name}" created`);
       return newWorkspace.id;
     },
-    [isAuthenticated, convexCreateWorkspace, dispatch, activeOrganizationId],
+    [
+      isAuthenticated,
+      convexCreateWorkspace,
+      dispatch,
+      workspaceOrganizationId,
+      canManageBillingForWorkspaceActions,
+    ],
   );
 
   const handleUpdateWorkspace = useCallback(
@@ -361,6 +597,81 @@ export function useWorkspaceState({
     [isAuthenticated, convexUpdateWorkspace, logger, dispatch],
   );
 
+  const handleUpdateClientConfig = useCallback(
+    async (
+      workspaceId: string,
+      clientConfig: WorkspaceClientConfig | undefined,
+    ): Promise<void> => {
+      const clientConfigStore = useClientConfigStore.getState();
+      const awaitRemoteEcho = isAuthenticated && !useLocalFallback;
+
+      clientConfigStore.beginSave({
+        workspaceId,
+        savedConfig: clientConfig,
+        awaitRemoteEcho,
+      });
+
+      if (awaitRemoteEcho) {
+        const remoteEchoPromise = new Promise<void>((resolve, reject) => {
+          clearPendingClientConfigSync();
+
+          const timeoutId = setTimeout(() => {
+            pendingClientConfigSyncRef.current = null;
+            reject(
+              new Error(
+                "Timed out waiting for workspace client config to sync.",
+              ),
+            );
+          }, CLIENT_CONFIG_SYNC_ECHO_TIMEOUT_MS);
+
+          pendingClientConfigSyncRef.current = {
+            workspaceId,
+            expectedSerializedConfig:
+              stringifyWorkspaceClientConfig(clientConfig),
+            resolve,
+            reject,
+            timeoutId,
+          };
+        });
+
+        try {
+          await convexUpdateClientConfig({
+            workspaceId,
+            clientConfig,
+          });
+          await remoteEchoPromise;
+        } catch (error) {
+          clearPendingClientConfigSync();
+          clientConfigStore.failSave();
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+          logger.error("Failed to update workspace client config", {
+            error: errorMessage,
+            workspaceId,
+          });
+          toast.error(errorMessage);
+          throw error instanceof Error ? error : new Error(errorMessage);
+        }
+        return;
+      }
+
+      dispatch({
+        type: "UPDATE_WORKSPACE",
+        workspaceId,
+        updates: { clientConfig },
+      });
+      clientConfigStore.markSaved(clientConfig);
+    },
+    [
+      isAuthenticated,
+      useLocalFallback,
+      convexUpdateClientConfig,
+      clearPendingClientConfigSync,
+      logger,
+      dispatch,
+    ],
+  );
+
   const handleDeleteWorkspace = useCallback(
     async (workspaceId: string): Promise<boolean> => {
       // If deleting the active workspace, switch to another first
@@ -393,7 +704,14 @@ export function useWorkspaceState({
           await convexDeleteWorkspace({ workspaceId });
         } catch (error) {
           let errorMessage = "Failed to delete workspace";
-          if (error instanceof Error) {
+          if (
+            error &&
+            typeof error === "object" &&
+            "data" in error &&
+            typeof (error as { data: unknown }).data === "string"
+          ) {
+            errorMessage = (error as { data: string }).data;
+          } else if (error instanceof Error) {
             const match = error.message.match(/Uncaught Error: (.+?)(?:\n|$)/);
             errorMessage = match ? match[1] : error.message;
           }
@@ -437,16 +755,21 @@ export function useWorkspaceState({
           await convexCreateWorkspace({
             name: newName,
             description: sourceWorkspace.description,
+            clientConfig: sourceWorkspace.clientConfig,
             servers: serializedServers,
-            ...(activeOrganizationId
-              ? { organizationId: activeOrganizationId }
+            ...(workspaceOrganizationId
+              ? { organizationId: workspaceOrganizationId }
               : {}),
           });
           toast.success(`Workspace duplicated as "${newName}"`);
         } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          toast.error(`Failed to duplicate workspace: ${errorMessage}`);
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Failed to duplicate workspace",
+              canManageBillingForWorkspaceActions,
+            ),
+          );
         }
       } else {
         dispatch({ type: "DUPLICATE_WORKSPACE", workspaceId, newName });
@@ -458,7 +781,8 @@ export function useWorkspaceState({
       isAuthenticated,
       convexCreateWorkspace,
       dispatch,
-      activeOrganizationId,
+      workspaceOrganizationId,
+      canManageBillingForWorkspaceActions,
     ],
   );
 
@@ -519,16 +843,21 @@ export function useWorkspaceState({
           await convexCreateWorkspace({
             name: workspaceData.name,
             description: workspaceData.description,
+            clientConfig: workspaceData.clientConfig,
             servers: serializedServers,
-            ...(activeOrganizationId
-              ? { organizationId: activeOrganizationId }
+            ...(workspaceOrganizationId
+              ? { organizationId: workspaceOrganizationId }
               : {}),
           });
           toast.success(`Workspace "${workspaceData.name}" imported`);
         } catch (error) {
-          const errorMessage =
-            error instanceof Error ? error.message : "Unknown error";
-          toast.error(`Failed to import workspace: ${errorMessage}`);
+          toast.error(
+            getBillingErrorMessage(
+              error,
+              "Failed to import workspace",
+              canManageBillingForWorkspaceActions,
+            ),
+          );
         }
       } else {
         const importedWorkspace: Workspace = {
@@ -542,7 +871,13 @@ export function useWorkspaceState({
         toast.success(`Workspace "${importedWorkspace.name}" imported`);
       }
     },
-    [isAuthenticated, convexCreateWorkspace, dispatch, activeOrganizationId],
+    [
+      isAuthenticated,
+      convexCreateWorkspace,
+      dispatch,
+      workspaceOrganizationId,
+      canManageBillingForWorkspaceActions,
+    ],
   );
 
   return {
@@ -556,6 +891,7 @@ export function useWorkspaceState({
     effectiveActiveWorkspaceId,
     handleCreateWorkspace,
     handleUpdateWorkspace,
+    handleUpdateClientConfig,
     handleDeleteWorkspace,
     handleDuplicateWorkspace,
     handleSetDefaultWorkspace,

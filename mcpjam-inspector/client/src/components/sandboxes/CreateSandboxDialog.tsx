@@ -26,6 +26,7 @@ import { Slider } from "@/components/ui/slider";
 import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 interface WorkspaceServerOption {
   _id: string;
@@ -118,6 +119,15 @@ export function CreateSandboxDialog({
 
     setIsSaving(true);
     try {
+      const optionalServerIds = sandbox
+        ? sandbox.servers
+            .filter(
+              (s) =>
+                s.optional === true && selectedServerIds.includes(s.serverId),
+            )
+            .map((s) => s.serverId)
+        : [];
+
       const payload = {
         name: trimmedName,
         description: description.trim() || undefined,
@@ -128,6 +138,7 @@ export function CreateSandboxDialog({
         requireToolApproval,
         allowGuestAccess,
         serverIds: selectedServerIds,
+        optionalServerIds,
       };
 
       const next = (
@@ -146,9 +157,7 @@ export function CreateSandboxDialog({
       toast.success(sandbox ? "Sandbox updated" : "Sandbox created");
       onClose();
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to save sandbox",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to save sandbox"));
     } finally {
       setIsSaving(false);
     }

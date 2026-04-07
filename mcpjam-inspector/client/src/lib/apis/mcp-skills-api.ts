@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/session-token";
+import { runByMode } from "@/lib/apis/mode-client";
 import type {
   Skill,
   SkillListItem,
@@ -23,23 +24,30 @@ export interface UploadSkillResponse {
  * List all available skills from .mcpjam/skills/
  */
 export async function listSkills(): Promise<SkillListItem[]> {
-  const res = await authFetch("/api/mcp/skills/list", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({}),
+  return runByMode({
+    hosted: async () => [],
+    local: async () => {
+      const res = await authFetch("/api/mcp/skills/list", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+
+      let body: any = null;
+      try {
+        body = await res.json();
+      } catch {}
+
+      if (!res.ok) {
+        const message = body?.error || `List skills failed (${res.status})`;
+        throw new Error(message);
+      }
+
+      return Array.isArray(body?.skills)
+        ? (body.skills as SkillListItem[])
+        : [];
+    },
   });
-
-  let body: any = null;
-  try {
-    body = await res.json();
-  } catch {}
-
-  if (!res.ok) {
-    const message = body?.error || `List skills failed (${res.status})`;
-    throw new Error(message);
-  }
-
-  return Array.isArray(body?.skills) ? (body.skills as SkillListItem[]) : [];
 }
 
 /**

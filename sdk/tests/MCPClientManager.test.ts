@@ -26,6 +26,20 @@ describe("MCPClientManager", () => {
       );
       expect(manager).toBeInstanceOf(MCPClientManager);
     });
+
+    it("lazyConnect skips eager connect so listServers is empty until connectToServer", () => {
+      const manager = new MCPClientManager(
+        {
+          pending: {
+            url: "http://127.0.0.1:9/mcp",
+            timeout: 1000,
+          },
+        },
+        { lazyConnect: true }
+      );
+      expect(manager.listServers()).toEqual([]);
+      expect(manager.getConnectionStatus("pending")).toBe("disconnected");
+    });
   });
 
   describe("STDIO server", () => {
@@ -161,15 +175,123 @@ describe("MCPClientManager", () => {
     }, 10000);
 
     it("should support accessToken in config", async () => {
-      // The mock server doesn't validate tokens, but we test the config is accepted
-      await manager.connectToServer("http-server-auth", {
-        url: serverUrl,
-        accessToken: "test-bearer-token",
-        preferSSE: true,
+      const isolated = await startMockHttpServer();
+      const authManager = new MCPClientManager();
+
+      try {
+        await authManager.connectToServer("http-server-auth", {
+          url: isolated.url,
+          accessToken: "test-bearer-token",
+          preferSSE: true,
+        });
+
+        expect(authManager.getConnectionStatus("http-server-auth")).toBe(
+          "connected"
+        );
+        expect(authManager.getServerReplayConfigs()).toEqual([
+          {
+            serverId: "http-server-auth",
+            url: isolated.url,
+            accessToken: "test-bearer-token",
+            preferSSE: true,
+          },
+        ]);
+      } finally {
+        await authManager.disconnectAllServers();
+        await isolated.stop();
+      }
+    }, 15000);
+
+    it("skips non-replayable HTTP configs with custom request state", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("custom-http", {
+        config: {
+          url: "https://example.com/mcp",
+          accessToken: "at_test",
+          requestInit: {
+            headers: {
+              "X-Custom": "1",
+            },
+          },
+        },
+        timeout: 1000,
       });
 
-      expect(manager.getConnectionStatus("http-server-auth")).toBe("connected");
-    }, 10000);
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("returns tokenless replay configs for public HTTP servers with empty headers", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("public-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {},
+          },
+          preferSSE: true,
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([
+        {
+          serverId: "public-http",
+          url: "https://example.com/mcp",
+          preferSSE: true,
+        },
+      ]);
+    });
+
+    it("skips stdio servers when building replay configs", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("stdio-server", {
+        config: {
+          command: "node",
+          args: ["server.js"],
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("skips HTTP configs with unsupported requestInit options", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("request-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            method: "POST",
+          },
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([]);
+    });
+
+    it("extracts bearer auth from requestInit headers for replay configs", () => {
+      const replayManager = new MCPClientManager();
+      (replayManager as any).clientStates.set("header-http", {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {
+              Authorization: "Bearer at_from_headers",
+            },
+          },
+        },
+        timeout: 1000,
+      });
+
+      expect(replayManager.getServerReplayConfigs()).toEqual([
+        {
+          serverId: "header-http",
+          url: "https://example.com/mcp",
+          accessToken: "at_from_headers",
+        },
+      ]);
+    });
   });
 
   describe("HTTP server (streamable)", () => {
@@ -277,7 +399,7 @@ describe("MCPClientManager", () => {
       expect(capabilities?.tools).toBeDefined();
     }, 30000);
 
-    it("should advertise MCP Apps UI extension in client capabilities", async () => {
+    it("should advertise MCP Apps UI extension by default", async () => {
       await manager.connectToServer("extensions-test", {
         command: "npx",
         args: ["-y", "@modelcontextprotocol/server-everything"],
@@ -288,12 +410,126 @@ describe("MCPClientManager", () => {
 
       const extensions = (info!.clientCapabilities as Record<string, unknown>)
         .extensions as Record<string, unknown>;
-      expect(extensions).toBeDefined();
       expect(extensions["io.modelcontextprotocol/ui"]).toEqual({
         mimeTypes: ["text/html;profile=mcp-app"],
       });
 
       await manager.disconnectServer("extensions-test");
+    }, 30000);
+
+    it("should merge legacy per-server capabilities on top of default UI capabilities", async () => {
+      await manager.connectToServer("legacy-caps-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        capabilities: {
+          experimental: {
+            inspectorProfile: {},
+          },
+        } as any,
+      });
+
+      const info = manager.getInitializationInfo("legacy-caps-test");
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).toMatchObject({
+        experimental: {
+          inspectorProfile: {},
+        },
+        elicitation: {},
+      });
+
+      const extensions = (info!.clientCapabilities as Record<string, unknown>)
+        .extensions as Record<string, unknown>;
+      expect(extensions["io.modelcontextprotocol/ui"]).toEqual({
+        mimeTypes: ["text/html;profile=mcp-app"],
+      });
+
+      await manager.disconnectServer("legacy-caps-test");
+    }, 30000);
+
+    it("should merge manager defaultCapabilities with legacy per-server capabilities", async () => {
+      const managerWithDefaults = new MCPClientManager(
+        {},
+        {
+          defaultCapabilities: {
+            sampling: {},
+          } as any,
+        }
+      );
+
+      try {
+        await managerWithDefaults.connectToServer("manager-default-caps-test", {
+          command: "npx",
+          args: ["-y", "@modelcontextprotocol/server-everything"],
+          capabilities: {
+            experimental: {
+              inspectorProfile: {},
+            },
+          } as any,
+        });
+
+        const info = managerWithDefaults.getInitializationInfo(
+          "manager-default-caps-test"
+        );
+        expect(info).toBeDefined();
+        expect(info!.clientCapabilities).toMatchObject({
+          sampling: {},
+          experimental: {
+            inspectorProfile: {},
+          },
+          elicitation: {},
+        });
+        expect(
+          (
+            (info!.clientCapabilities as Record<string, unknown>).extensions as
+              | Record<string, unknown>
+              | undefined
+          )?.["io.modelcontextprotocol/ui"]
+        ).toEqual({
+          mimeTypes: ["text/html;profile=mcp-app"],
+        });
+      } finally {
+        await managerWithDefaults.disconnectAllServers();
+      }
+    }, 30000);
+
+    it("should let per-server clientCapabilities bypass defaults and legacy merge", async () => {
+      await manager.connectToServer("custom-caps-test", {
+        command: "npx",
+        args: ["-y", "@modelcontextprotocol/server-everything"],
+        capabilities: {
+          experimental: {
+            legacyPath: {},
+          },
+        } as any,
+        clientCapabilities: {
+          experimental: {
+            exactPath: {},
+          },
+        } as any,
+      });
+
+      const info = manager.getInitializationInfo("custom-caps-test");
+      expect(info).toBeDefined();
+      expect(info!.clientCapabilities).toMatchObject({
+        experimental: {
+          exactPath: {},
+        },
+        elicitation: {},
+      });
+      expect(info!.clientCapabilities).not.toMatchObject({
+        experimental: {
+          legacyPath: {},
+        },
+      });
+      expect(
+        (
+          (info!.clientCapabilities as Record<string, unknown>).extensions as
+            | Record<string, unknown>
+            | undefined
+        )?.["io.modelcontextprotocol/ui"]
+      ).toBeUndefined();
+
+      await manager.disconnectServer("custom-caps-test");
     }, 30000);
 
     it("should remove server", async () => {

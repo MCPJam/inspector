@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronRight } from "lucide-react";
-import { JsonEditor } from "@/components/ui/json-editor";
+import { ScrollableJsonView } from "@/components/ui/json-editor";
 import { cn } from "@/lib/utils";
 import {
   Collapsible,
@@ -159,14 +159,10 @@ export function HTTPHistoryEntry({
               <div className="text-xs font-medium text-muted-foreground mb-1">
                 URL
               </div>
-              <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                <JsonEditor
-                  height="100%"
-                  value={{ url }}
-                  readOnly
-                  showToolbar={false}
-                />
-              </div>
+              <ScrollableJsonView
+                value={{ url }}
+                containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
+              />
             </div>
 
             {/* Request Headers */}
@@ -175,14 +171,10 @@ export function HTTPHistoryEntry({
                 <div className="text-xs font-medium text-muted-foreground mb-1">
                   Request Headers
                 </div>
-                <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                  <JsonEditor
-                    height="100%"
-                    value={requestHeaders}
-                    readOnly
-                    showToolbar={false}
-                  />
-                </div>
+                <ScrollableJsonView
+                  value={requestHeaders}
+                  containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
+                />
               </div>
             )}
 
@@ -192,14 +184,10 @@ export function HTTPHistoryEntry({
                 <div className="text-xs font-medium text-muted-foreground mb-1">
                   Request Body
                 </div>
-                <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
-                  <JsonEditor
-                    height="100%"
-                    value={requestBody}
-                    readOnly
-                    showToolbar={false}
-                  />
-                </div>
+                <ScrollableJsonView
+                  value={requestBody}
+                  containerClassName="rounded-sm bg-background/60 p-2 max-h-[300px]"
+                />
               </div>
             )}
 
@@ -209,14 +197,10 @@ export function HTTPHistoryEntry({
                 <div className="text-xs font-medium text-muted-foreground mb-1">
                   Response Headers
                 </div>
-                <div className="rounded-sm bg-background/60 p-2 max-h-[200px] overflow-auto">
-                  <JsonEditor
-                    height="100%"
-                    value={responseHeaders}
-                    readOnly
-                    showToolbar={false}
-                  />
-                </div>
+                <ScrollableJsonView
+                  value={responseHeaders}
+                  containerClassName="rounded-sm bg-background/60 p-2 max-h-[200px]"
+                />
               </div>
             )}
 
@@ -226,14 +210,10 @@ export function HTTPHistoryEntry({
                 <div className="text-xs font-medium text-muted-foreground mb-1">
                   Response Body
                 </div>
-                <div className="rounded-sm bg-background/60 p-2 max-h-[300px] overflow-auto">
-                  <JsonEditor
-                    height="100%"
-                    value={responseBody}
-                    readOnly
-                    showToolbar={false}
-                  />
-                </div>
+                <ScrollableJsonView
+                  value={responseBody}
+                  containerClassName="rounded-sm bg-background/60 p-2 max-h-[300px]"
+                />
               </div>
             )}
 

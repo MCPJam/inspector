@@ -1,6 +1,17 @@
 import { useMemo } from "react";
-import { ChartContainer } from "@/components/ui/chart";
-import { Area, AreaChart } from "recharts";
+import { RotateCw } from "lucide-react";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Area, AreaChart, PieChart, Pie, Label } from "recharts";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration, EvalSuiteRun } from "./types";
 
@@ -23,6 +34,9 @@ interface SuiteHeroStatsProps {
   testCaseCount: number;
   isSDK: boolean;
   onRunClick?: (runId: string) => void;
+  onReplayLatestRun?: (run: EvalSuiteRun) => void;
+  isReplayingLatestRun?: boolean;
+  missingReplayProviderKeys?: string[];
 }
 
 export function SuiteHeroStats({
@@ -33,12 +47,14 @@ export function SuiteHeroStats({
   testCaseCount,
   isSDK,
   onRunClick,
+  onReplayLatestRun,
+  isReplayingLatestRun = false,
+  missingReplayProviderKeys = [],
 }: SuiteHeroStatsProps) {
   const stats = useMemo(() => {
-    const activeRuns = runs.filter((run) => run.isActive !== false);
-    if (activeRuns.length === 0) return null;
+    if (runs.length === 0) return null;
 
-    const activeRunIds = new Set(activeRuns.map((r) => r._id));
+    const activeRunIds = new Set(runs.map((r) => r._id));
     const activeIterations = allIterations.filter(
       (iter) => iter.suiteRunId && activeRunIds.has(iter.suiteRunId),
     );
@@ -55,7 +71,7 @@ export function SuiteHeroStats({
     const accuracy = Math.round((passed / total) * 100);
 
     // Latest run info
-    const latestRun = [...activeRuns].sort((a, b) => {
+    const latestRun = [...runs].sort((a, b) => {
       const aTime = a.completedAt ?? a.createdAt ?? 0;
       const bTime = b.completedAt ?? b.createdAt ?? 0;
       return bTime - aTime;
@@ -77,9 +93,7 @@ export function SuiteHeroStats({
     ).length;
 
     // Avg duration across runs
-    const completedRuns = activeRuns.filter(
-      (r) => r.completedAt && r.createdAt,
-    );
+    const completedRuns = runs.filter((r) => r.completedAt && r.createdAt);
     const avgDuration =
       completedRuns.length > 0
         ? completedRuns.reduce(
@@ -93,7 +107,7 @@ export function SuiteHeroStats({
       passed,
       failed,
       total,
-      runCount: activeRuns.length,
+      runCount: runs.length,
       latestRunAgo,
       latestPassed,
       latestTotal,
@@ -132,10 +146,69 @@ export function SuiteHeroStats({
   const metricLabel = isSDK ? "Pass Rate" : "Accuracy";
   const showTrend = runTrendData.length >= 3;
   const showModelComparison = modelStats.length >= 2;
+  const latestReplayableRun = [...runs]
+    .filter((run) => run.hasServerReplayConfig)
+    .sort((a, b) => {
+      const aTime = a.completedAt ?? a.createdAt ?? 0;
+      const bTime = b.completedAt ?? b.createdAt ?? 0;
+      return bTime - aTime;
+    })[0];
 
   return (
     <div className="rounded-xl border bg-card text-card-foreground">
       <div className="flex items-center gap-6 p-5">
+        {/* Suite pass/fail donut */}
+        <div className="shrink-0">
+          <ChartContainer
+            config={{
+              passed: {
+                label: "Passed",
+                color: "hsl(142.1 76.2% 36.3%)",
+              },
+              failed: {
+                label: "Failed",
+                color: "hsl(0 84.2% 60.2%)",
+              },
+            }}
+            className="h-[88px] w-[88px]"
+          >
+            <PieChart>
+              <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+              <Pie
+                data={stats.donutData}
+                dataKey="value"
+                nameKey="name"
+                innerRadius={28}
+                outerRadius={40}
+                strokeWidth={2}
+              >
+                <Label
+                  content={({ viewBox }) => {
+                    if (viewBox && "cx" in viewBox && "cy" in viewBox) {
+                      return (
+                        <text
+                          x={viewBox.cx}
+                          y={viewBox.cy}
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                        >
+                          <tspan
+                            x={viewBox.cx}
+                            y={viewBox.cy}
+                            className="fill-foreground text-lg font-bold"
+                          >
+                            {stats.accuracy}%
+                          </tspan>
+                        </text>
+                      );
+                    }
+                  }}
+                />
+              </Pie>
+            </PieChart>
+          </ChartContainer>
+        </div>
+
         {/* Stats */}
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 mb-1">
@@ -181,6 +254,39 @@ export function SuiteHeroStats({
             </span>
           </div>
         </div>
+
+        {latestReplayableRun && onReplayLatestRun && (
+          <div className="shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onReplayLatestRun(latestReplayableRun)}
+                    disabled={
+                      isReplayingLatestRun ||
+                      missingReplayProviderKeys.length > 0
+                    }
+                    className="gap-2"
+                  >
+                    <RotateCw
+                      className={`h-4 w-4 ${isReplayingLatestRun ? "animate-spin" : ""}`}
+                    />
+                    {isReplayingLatestRun
+                      ? "Replaying..."
+                      : "Replay latest run"}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              {missingReplayProviderKeys.length > 0 && (
+                <TooltipContent>
+                  {`Add your ${missingReplayProviderKeys.join(", ")} API key${missingReplayProviderKeys.length > 1 ? "s" : ""} in Settings to replay`}
+                </TooltipContent>
+              )}
+            </Tooltip>
+          </div>
+        )}
 
         {/* Sparkline trend (only if ≥3 runs) */}
         {showTrend && (

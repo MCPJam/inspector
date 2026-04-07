@@ -22,7 +22,7 @@ import { EmptyState } from "./ui/empty-state";
 import { ThreePanelLayout } from "./ui/three-panel-layout";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { extractDisplayFromValue } from "@/components/chat-v2/shared/tool-result-text";
-import { MCPServerConfig, type MCPPrompt } from "@mcpjam/sdk";
+import type { MCPPrompt, MCPServerConfig } from "@mcpjam/sdk/browser";
 import {
   getPrompt as getPromptApi,
   listPrompts as listPromptsApi,
@@ -291,7 +291,19 @@ export function PromptsTab({ serverConfig, serverName }: PromptsTabProps) {
             toolName={selectedPrompt}
             description={selectedPromptData?.description}
             onExpand={() => setSelectedPrompt("")}
-            onClear={() => setSelectedPrompt("")}
+            toolSwitchList={{
+              names: prompts.map((p) => p.name),
+              onSelect: (name) => {
+                setSelectedPrompt(name);
+                setError("");
+                setPromptContent(null);
+
+                const prompt = prompts.find((p) => p.name === name);
+                if (!prompt?.arguments || prompt.arguments.length === 0) {
+                  void getPrompt(name, {});
+                }
+              },
+            }}
           />
 
           <ScrollArea className="flex-1">

@@ -54,7 +54,7 @@ export function ErrorBox({
 
   const containerClasses = isPlatformError
     ? "border-warning bg-warning/20 text-warning-foreground"
-    : "border-destructive bg-destructive/20 text-destructive-foreground";
+    : "border-destructive bg-destructive/20 text-destructive";
 
   const iconClasses = isPlatformError ? "text-warning" : "text-destructive";
 
@@ -68,7 +68,7 @@ export function ErrorBox({
 
   const preClasses = isPlatformError
     ? "text-warning-foreground"
-    : "text-destructive-foreground";
+    : "text-destructive";
 
   const isAuthError = code === "auth_error";
 

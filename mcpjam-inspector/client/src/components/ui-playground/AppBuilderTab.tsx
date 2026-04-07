@@ -6,7 +6,13 @@
  * allowing users to execute tools and then chat about the results.
  */
 
-import { useEffect, useCallback, useMemo, useState } from "react";
+import {
+  useEffect,
+  useCallback,
+  useMemo,
+  useState,
+  useLayoutEffect,
+} from "react";
 import type { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { Wrench } from "lucide-react";
 import {
@@ -20,12 +26,12 @@ import { PlaygroundLeft } from "./PlaygroundLeft";
 import { PlaygroundMain } from "./PlaygroundMain";
 import SaveRequestDialog from "../tools/SaveRequestDialog";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
-import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { listTools } from "@/lib/apis/mcp-tools-api";
 import { generateFormFieldsFromSchema } from "@/lib/tool-form";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { usePostHog } from "posthog-js/react";
+import { motion, useReducedMotion } from "framer-motion";
 
 // Custom hooks
 import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
@@ -34,19 +40,51 @@ import { useServerKey, useSavedRequests, useToolExecution } from "./hooks";
 import { PANEL_SIZES } from "./constants";
 import { UIType, detectUiTypeFromTool } from "@/lib/mcp-ui/mcp-apps-utils";
 
+// Onboarding
+import { useOnboarding } from "@/hooks/use-onboarding";
+import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton";
+import type { ServerFormData } from "@/shared/types.js";
+import type { ServerWithName } from "@/hooks/use-app-state";
+import { useSidebar } from "@/components/ui/sidebar";
 interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
+  servers?: Record<string, ServerWithName>;
+  isAuthenticated?: boolean;
+  isAuthLoading?: boolean;
+  onConnect?: (formData: ServerFormData) => void;
+  onOnboardingChange?: (isOnboarding: boolean) => void;
 }
+
+const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
+
+const SIDEBAR_EASE: [number, number, number, number] = [0.4, 0, 0.2, 1];
 
 export function AppBuilderTab({
   serverConfig,
   serverName,
+  servers = {},
+  isAuthenticated = false,
+  isAuthLoading = false,
+  onConnect,
+  onOnboardingChange,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
-  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const prefersReducedMotion = useReducedMotion();
   // Compute server key for saved requests storage
   const serverKey = useServerKey(serverConfig);
+
+  // Onboarding state machine
+  const onboarding = useOnboarding({
+    servers,
+    onConnect: onConnect ?? (() => {}),
+    isAuthenticated,
+    isAuthLoading,
+  });
+
+  const firstRunComposerSeed =
+    onboarding.phase === "connecting_excalidraw" ||
+    onboarding.phase === "connected_guided";
 
   // Get store state and actions
   const {
@@ -55,8 +93,6 @@ export function AppBuilderTab({
     formFields,
     isExecuting,
     deviceType,
-    displayMode,
-    globals,
     isSidebarVisible,
     selectedProtocol,
     setTools,
@@ -70,33 +106,40 @@ export function AppBuilderTab({
     setExecutionError,
     setWidgetState,
     setDeviceType,
-    setDisplayMode,
-    updateGlobal,
     toggleSidebar,
     setSelectedProtocol,
     reset,
+    setSidebarVisible,
   } = useUIPlaygroundStore();
 
-  // Sync theme from preferences to globals
-  useEffect(() => {
-    updateGlobal("theme", themeMode);
-  }, [themeMode, updateGlobal]);
+  const { setOpen: setMcpSidebarOpen } = useSidebar();
 
-  // Locale change handler
-  const handleLocaleChange = useCallback(
-    (locale: string) => {
-      updateGlobal("locale", locale);
-    },
-    [updateGlobal],
-  );
-
-  // Timezone change handler (SEP-1865)
-  const handleTimeZoneChange = useCallback(
-    (timeZone: string) => {
-      updateGlobal("timeZone", timeZone);
-    },
-    [updateGlobal],
-  );
+  useLayoutEffect(() => {
+    onOnboardingChange?.(false);
+    setMcpSidebarOpen(true);
+    // NUX: collapse tools sidebar for the whole first-run connect + guided flow. While the server is
+    // still connecting, `isGuidedPostConnect` is false (no connected server yet); include phase so we
+    // don't flash the sidebar open until connect completes.
+    const collapsePlaygroundToolsForNux =
+      onboarding.phase === "connecting_excalidraw" ||
+      onboarding.isGuidedPostConnect;
+    if (collapsePlaygroundToolsForNux) {
+      setSidebarVisible(false);
+    } else {
+      setSidebarVisible(true);
+    }
+    return () => {
+      onOnboardingChange?.(false);
+      setSidebarVisible(true);
+      setMcpSidebarOpen(true);
+    };
+  }, [
+    onboarding.phase,
+    onboarding.isGuidedPostConnect,
+    onOnboardingChange,
+    setMcpSidebarOpen,
+    setSidebarVisible,
+  ]);
 
   // Log when App Builder tab is viewed
   useEffect(() => {
@@ -216,7 +259,23 @@ export function AppBuilderTab({
     ? PANEL_SIZES.CENTER.DEFAULT_WITH_PANELS
     : PANEL_SIZES.CENTER.DEFAULT_WITHOUT_PANELS;
 
-  // No server selected
+  if (onboarding.isResolvingRemoteCompletion) {
+    return (
+      <div className="h-full flex flex-col overflow-hidden relative">
+        <AppBuilderSkeleton />
+      </div>
+    );
+  }
+
+  if (onboarding.isBootstrappingFirstRunConnection && onConnect) {
+    return (
+      <div className="h-full flex flex-col overflow-hidden relative">
+        <AppBuilderSkeleton />
+      </div>
+    );
+  }
+
+  // No server selected — show empty state once onboarding is not active
   if (!serverConfig) {
     return (
       <EmptyState
@@ -227,9 +286,21 @@ export function AppBuilderTab({
     );
   }
 
+  const sidebarMotionProps = prefersReducedMotion
+    ? {
+        initial: false as const,
+        animate: { opacity: 1 },
+        transition: { duration: 0 },
+      }
+    : {
+        initial: { opacity: 0, x: -12 },
+        animate: { opacity: 1, x: 0 },
+        transition: { duration: 0.22, ease: SIDEBAR_EASE },
+      };
+
   return (
-    <div className="h-full flex flex-col overflow-hidden">
-      <ResizablePanelGroup direction="horizontal" className="flex-1 min-h-0">
+    <div className="relative flex h-full flex-col overflow-hidden">
+      <ResizablePanelGroup direction="horizontal" className="min-h-0 flex-1">
         {/* Left Panel - Tools Sidebar */}
         {isSidebarVisible ? (
           <>
@@ -239,36 +310,46 @@ export function AppBuilderTab({
               defaultSize={PANEL_SIZES.LEFT.DEFAULT}
               minSize={PANEL_SIZES.LEFT.MIN}
               maxSize={PANEL_SIZES.LEFT.MAX}
+              collapsible
+              collapsedSize={0}
+              onCollapse={() => setSidebarVisible(false)}
             >
-              <PlaygroundLeft
-                tools={tools}
-                selectedToolName={selectedTool}
-                fetchingTools={fetchingTools}
-                onRefresh={fetchTools}
-                onSelectTool={setSelectedTool}
-                formFields={formFields}
-                onFieldChange={updateFormField}
-                onToggleField={updateFormFieldIsSet}
-                isExecuting={isExecuting}
-                onExecute={executeTool}
-                onSave={savedRequestsHook.openSaveDialog}
-                savedRequests={savedRequestsHook.savedRequests}
-                highlightedRequestId={savedRequestsHook.highlightedRequestId}
-                onLoadRequest={savedRequestsHook.handleLoadRequest}
-                onRenameRequest={savedRequestsHook.handleRenameRequest}
-                onDuplicateRequest={savedRequestsHook.handleDuplicateRequest}
-                onDeleteRequest={savedRequestsHook.handleDeleteRequest}
-                onClose={toggleSidebar}
-              />
+              <motion.div className="h-full min-w-0" {...sidebarMotionProps}>
+                <PlaygroundLeft
+                  tools={tools}
+                  selectedToolName={selectedTool}
+                  fetchingTools={fetchingTools}
+                  onRefresh={fetchTools}
+                  onSelectTool={setSelectedTool}
+                  formFields={formFields}
+                  onFieldChange={updateFormField}
+                  onToggleField={updateFormFieldIsSet}
+                  isExecuting={isExecuting}
+                  onExecute={executeTool}
+                  onSave={savedRequestsHook.openSaveDialog}
+                  savedRequests={savedRequestsHook.savedRequests}
+                  highlightedRequestId={savedRequestsHook.highlightedRequestId}
+                  onLoadRequest={savedRequestsHook.handleLoadRequest}
+                  onRenameRequest={savedRequestsHook.handleRenameRequest}
+                  onDuplicateRequest={savedRequestsHook.handleDuplicateRequest}
+                  onDeleteRequest={savedRequestsHook.handleDeleteRequest}
+                  onClose={toggleSidebar}
+                />
+              </motion.div>
             </ResizablePanel>
             <ResizableHandle withHandle />
           </>
         ) : (
-          <CollapsedPanelStrip
-            side="left"
-            onOpen={toggleSidebar}
-            tooltipText="Show tools sidebar"
-          />
+          <motion.div
+            className="flex h-full min-w-0 shrink-0"
+            {...sidebarMotionProps}
+          >
+            <CollapsedPanelStrip
+              side="left"
+              onOpen={toggleSidebar}
+              tooltipText="Show tools sidebar"
+            />
+          </motion.div>
         )}
 
         {/* Center Panel - Chat Thread */}
@@ -288,15 +369,26 @@ export function AppBuilderTab({
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}
-            displayMode={displayMode}
-            onDisplayModeChange={setDisplayMode}
-            locale={globals.locale}
-            onLocaleChange={handleLocaleChange}
-            timeZone={globals.timeZone}
-            onTimeZoneChange={handleTimeZoneChange}
+            initialInput={
+              firstRunComposerSeed ? APP_BUILDER_FIRST_RUN_PROMPT : undefined
+            }
+            initialInputTypewriter={firstRunComposerSeed}
+            blockSubmitUntilServerConnected={firstRunComposerSeed}
+            pulseSubmit={firstRunComposerSeed}
+            showPostConnectGuide={false}
+            onFirstMessageSent={
+              onboarding.isGuidedPostConnect
+                ? () => {
+                    setSidebarVisible(true);
+                    onboarding.completeOnboarding();
+                  }
+                : undefined
+            }
           />
         </ResizablePanel>
       </ResizablePanelGroup>
+
+      {/* Post-connect guide is now rendered inside PlaygroundMain */}
 
       <SaveRequestDialog
         open={savedRequestsHook.saveDialogState.isOpen}

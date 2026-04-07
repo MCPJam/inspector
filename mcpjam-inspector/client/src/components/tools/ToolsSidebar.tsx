@@ -241,7 +241,10 @@ export function ToolsSidebar({
           <SelectedToolHeader
             toolName={selectedToolName}
             onExpand={() => onSelectTool("")}
-            onClear={() => onSelectTool("")}
+            toolSwitchList={{
+              names: toolNames,
+              onSelect: (name) => onSelectTool(name),
+            }}
           />
 
           <div className="flex-1 overflow-hidden">

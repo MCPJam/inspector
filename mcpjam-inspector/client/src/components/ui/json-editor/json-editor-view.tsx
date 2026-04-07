@@ -47,6 +47,8 @@ export function JsonEditorView({
       <JsonTreeView
         value={value}
         className={className}
+        height={height ?? "100%"}
+        maxHeight={maxHeight}
         defaultExpandDepth={defaultExpandDepth}
         collapsedPaths={collapsedPaths}
         onCollapseChange={onCollapseChange}

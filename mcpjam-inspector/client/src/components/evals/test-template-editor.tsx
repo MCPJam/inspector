@@ -2,14 +2,12 @@ import { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Card } from "@/components/ui/card";
 import { Play, Loader2, Save } from "lucide-react";
 import posthog from "posthog-js";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { authFetch } from "@/lib/session-token";
+import { listEvalTools, runEvalTestCase } from "@/lib/apis/evals-api";
 import {
   Tooltip,
   TooltipContent,
@@ -31,11 +29,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useAiProviderKeys } from "@/hooks/use-ai-provider-keys";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import type { ModelDefinition } from "@/shared/types";
 import {
-  useAiProviderKeys,
-  type ProviderTokens,
-} from "@/hooks/use-ai-provider-keys";
-import { isMCPJamProvidedModel } from "@/shared/types";
+  buildTestCaseModelOptions,
+  prepareSingleTestCaseRun,
+  resolveSelectedTestCaseModelValue,
+  setPersistedTestCaseModelValue,
+} from "./single-test-case-runner";
 
 interface TestTemplate {
   title: string;
@@ -55,6 +57,8 @@ interface TestTemplateEditorProps {
   suiteId: string;
   selectedTestCaseId: string;
   connectedServerNames: Set<string>;
+  workspaceId: string | null;
+  availableModels: ModelDefinition[];
 }
 
 const validateExpectedToolCalls = (
@@ -124,6 +128,8 @@ export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
   connectedServerNames,
+  workspaceId,
+  availableModels,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
   const { getToken, hasToken } = useAiProviderKeys();
@@ -196,20 +202,17 @@ export function TestTemplateEditor({
   }, [selectedTestCaseId, currentTestCase?._id]); // Reset when switching test cases or when test case first loads
 
   // Get suite config for servers (to fetch available tools)
-  const suiteConfig = useQuery(
-    "testSuites:getTestSuitesOverview" as any,
-    {},
-  ) as any;
-  const suite = useMemo(() => {
-    if (!suiteConfig) return null;
-    return suiteConfig.find((entry: any) => entry.suite._id === suiteId)?.suite;
-  }, [suiteConfig, suiteId]);
+  const suite = useQuery("testSuites:getTestSuite" as any, {
+    suiteId,
+  }) as any;
 
   // Calculate missing servers
   const missingServers = useMemo(() => {
     if (!suite) return [];
     const suiteServers = suite.environment?.servers || [];
-    return suiteServers.filter((server) => !connectedServerNames.has(server));
+    return suiteServers.filter(
+      (server: string) => !connectedServerNames.has(server),
+    );
   }, [suite, connectedServerNames]);
 
   const canRun = missingServers.length === 0;
@@ -226,23 +229,19 @@ export function TestTemplateEditor({
       }
 
       try {
-        const response = await authFetch("/api/mcp/list-tools", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverIds }),
+        const data = await listEvalTools({
+          workspaceId,
+          serverIds,
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableTools(data.tools || []);
-        }
+        setAvailableTools(data.tools || []);
       } catch (error) {
         console.error("Failed to fetch tools:", error);
+        setAvailableTools([]);
       }
     }
 
     fetchTools();
-  }, [suite]);
+  }, [suite, workspaceId]);
 
   const handleTitleClick = () => {
     setIsEditingTitle(true);
@@ -333,7 +332,7 @@ export function TestTemplateEditor({
       toast.success("Changes saved");
     } catch (error) {
       console.error("Failed to save:", error);
-      toast.error("Failed to save changes");
+      toast.error(getBillingErrorMessage(error, "Failed to save changes"));
       throw error;
     }
   };
@@ -342,82 +341,40 @@ export function TestTemplateEditor({
   const handleRun = async () => {
     if (!selectedModel || !currentTestCase || !suite) return;
 
-    // Parse the selected model (format: "provider/model")
-    const [provider, ...modelParts] = selectedModel.split("/");
-    const model = modelParts.join("/");
-
-    if (!provider || !model) {
-      toast.error("Invalid model selection");
-      return;
-    }
-
-    // Check for API key if needed
-    if (!isMCPJamProvidedModel(model)) {
-      const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-      if (!hasToken(tokenKey)) {
-        toast.error(
-          `Please add your ${provider} API key in Settings before running this test`,
-        );
-        return;
-      }
-    }
-
     // Clear previous result
     setCurrentQuickRunResult(null);
     setIsRunning(true);
 
-    // Track test case run started
-    posthog.capture("eval_test_case_run_started", {
-      location: "test_template_editor",
-      platform: detectPlatform(),
-      environment: detectEnvironment(),
-      suite_id: suiteId,
-      test_case_id: currentTestCase._id,
-      model: selectedModel,
-    });
-
     try {
-      const accessToken = await getAccessToken();
-      const serverIds = suite.environment?.servers || [];
-
-      // Collect API key if needed
-      const modelApiKeys: Record<string, string> = {};
-      if (!isMCPJamProvidedModel(model)) {
-        const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-        const key = getToken(tokenKey);
-        if (key) {
-          modelApiKeys[provider] = key;
-        }
-      }
-
-      const response = await authFetch("/api/mcp/evals/run-test-case", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          testCaseId: currentTestCase._id,
-          model,
-          provider,
-          serverIds,
-          modelApiKeys:
-            Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-          convexAuthToken: accessToken,
-          // Send current form state to run with unsaved changes
-          testCaseOverrides: editForm
-            ? {
-                query: editForm.query,
-                expectedToolCalls: editForm.expectedToolCalls,
-                runs: editForm.runs,
-              }
-            : undefined,
-        }),
+      const preparedRun = await prepareSingleTestCaseRun({
+        workspaceId,
+        suite,
+        testCase: currentTestCase,
+        selectedModel,
+        getAccessToken,
+        getToken,
+        hasToken,
+        // Send current form state to run with unsaved changes
+        testCaseOverrides: editForm
+          ? {
+              query: editForm.query,
+              expectedToolCalls: editForm.expectedToolCalls,
+              runs: editForm.runs,
+            }
+          : undefined,
       });
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(errorText || "Failed to run test case");
-      }
+      // Track test case run started
+      posthog.capture("eval_test_case_run_started", {
+        location: "test_template_editor",
+        platform: detectPlatform(),
+        environment: detectEnvironment(),
+        suite_id: suiteId,
+        test_case_id: currentTestCase._id,
+        model: preparedRun.modelValue,
+      });
 
-      const data = await response.json();
+      const data = await runEvalTestCase(preparedRun.request);
 
       // Store the iteration result
       if (data.iteration) {
@@ -437,7 +394,7 @@ export function TestTemplateEditor({
           environment: detectEnvironment(),
           suite_id: suiteId,
           test_case_id: currentTestCase._id,
-          model: selectedModel,
+          model: preparedRun.modelValue,
           result: iteration.result || "unknown",
           duration_ms: durationMs,
         });
@@ -446,25 +403,10 @@ export function TestTemplateEditor({
       toast.success("Test completed successfully!");
     } catch (error) {
       console.error("Failed to run test case:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to run test case",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to run test case"));
     } finally {
       setIsRunning(false);
     }
-  };
-
-  // Combined save and run handler
-  const handleSaveAndRun = async () => {
-    if (hasUnsavedChanges) {
-      try {
-        await handleSave();
-      } catch (error) {
-        // If save fails, don't proceed with run
-        return;
-      }
-    }
-    await handleRun();
   };
 
   const handleClearResult = async () => {
@@ -482,7 +424,7 @@ export function TestTemplateEditor({
       toast.success("Result cleared");
     } catch (error) {
       console.error("Failed to clear result:", error);
-      toast.error("Failed to clear result");
+      toast.error(getBillingErrorMessage(error, "Failed to clear result"));
     }
   };
 
@@ -503,29 +445,30 @@ export function TestTemplateEditor({
       setOptimisticNegative(null);
     } catch (error) {
       console.error("Failed to toggle negative test:", error);
-      toast.error("Failed to update test type");
+      toast.error(getBillingErrorMessage(error, "Failed to update test type"));
       // Revert optimistic update on error
       setOptimisticNegative(null);
     }
   };
 
-  // Use models from the test case (which come from the suite configuration)
+  // Offer the full eval model set while keeping the case's saved model selectable.
   const modelOptions = useMemo(() => {
-    if (!currentTestCase) return [];
-    const models = currentTestCase.models || [];
-    return models.map((m: any) => ({
-      value: `${m.provider}/${m.model}`,
-      label: m.model, // Show only model name, not provider
-      provider: m.provider,
-    }));
-  }, [currentTestCase]);
+    return buildTestCaseModelOptions(availableModels, currentTestCase);
+  }, [availableModels, currentTestCase]);
 
-  // Auto-select first model if none selected
   useEffect(() => {
-    if (modelOptions.length > 0 && !selectedModel) {
-      setSelectedModel(modelOptions[0].value);
-    }
-  }, [modelOptions, selectedModel]);
+    const nextSelectedModel = resolveSelectedTestCaseModelValue({
+      testCaseId: currentTestCase?._id ?? selectedTestCaseId,
+      testCase: currentTestCase,
+      modelOptions,
+    });
+
+    setSelectedModel(nextSelectedModel ?? "");
+  }, [currentTestCase, modelOptions, selectedTestCaseId]);
+
+  useEffect(() => {
+    setPersistedTestCaseModelValue(selectedTestCaseId, selectedModel || null);
+  }, [selectedModel, selectedTestCaseId]);
 
   if (!currentTestCase) {
     return (
@@ -800,8 +743,8 @@ export function TestTemplateEditor({
           testCase={currentTestCase}
           loading={isRunning}
           onClear={handleClearResult}
-          serverNames={(suite?.environment?.servers || []).filter((name) =>
-            connectedServerNames.has(name),
+          serverNames={(suite?.environment?.servers || []).filter(
+            (name: string) => connectedServerNames.has(name),
           )}
         />
       </ResizablePanel>

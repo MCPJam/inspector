@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch } from "react";
+import { useConvex } from "convex/react";
 import { toast } from "sonner";
-import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
 import type {
   AppAction,
   AppState,
@@ -32,8 +33,24 @@ import { HOSTED_MODE } from "@/lib/config";
 import { injectHostedServerMapping } from "@/lib/apis/web/context";
 import type { OAuthTestProfile } from "@/lib/oauth/profile";
 import { authFetch } from "@/lib/session-token";
+import { useClientConfigStore } from "@/stores/client-config-store";
 import { useUIPlaygroundStore } from "@/stores/ui-playground-store";
 import { useServerMutations, type RemoteServer } from "./useWorkspaces";
+import {
+  CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE,
+  getEffectiveServerClientCapabilities,
+} from "@/lib/client-config";
+import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
+import { readOnboardingState } from "@/lib/onboarding-state";
+
+/** Skip noisy connect toast while first-run App Builder onboarding is in progress. */
+function shouldSuppressExcalidrawConnectToastForOnboarding(
+  serverName: string,
+): boolean {
+  if (serverName !== EXCALIDRAW_SERVER_NAME) return false;
+  const status = readOnboardingState()?.status;
+  return status === "seen";
+}
 
 /**
  * Saves OAuth-related configuration to localStorage for reconnection purposes.
@@ -52,6 +69,9 @@ function saveOAuthConfigToLocalStorage(formData: ServerFormData): void {
   }
   if (formData.headers && Object.keys(formData.headers).length > 0) {
     oauthConfig.customHeaders = formData.headers;
+  }
+  if (formData.registryServerId) {
+    oauthConfig.registryServerId = formData.registryServerId;
   }
   if (Object.keys(oauthConfig).length > 0) {
     localStorage.setItem(
@@ -140,6 +160,19 @@ interface LoggerLike {
   debug: (message: string, meta?: Record<string, unknown>) => void;
 }
 
+interface RegistryOAuthConfigResponse {
+  clientId?: string;
+  scopes?: string[];
+}
+
+interface ResolvedOAuthInitiationInputs {
+  clientId?: string;
+  clientSecret?: string;
+  registryServerId?: string;
+  scopes?: string[];
+  useRegistryOAuthProxy: boolean;
+}
+
 interface UseServerStateParams {
   appState: AppState;
   dispatch: Dispatch<AppAction>;
@@ -172,6 +205,7 @@ export function useServerState({
   activeWorkspaceServersFlat,
   logger,
 }: UseServerStateParams) {
+  const convex = useConvex();
   const {
     createServer: convexCreateServer,
     updateServer: convexUpdateServer,
@@ -253,6 +287,63 @@ export function useServerState({
   const effectiveServers = useMemo(() => {
     return activeWorkspace?.servers || {};
   }, [activeWorkspace]);
+
+  const isClientConfigSyncPending = useClientConfigStore(
+    (state) =>
+      state.isAwaitingRemoteEcho &&
+      state.pendingWorkspaceId === effectiveActiveWorkspaceId,
+  );
+
+  const withWorkspaceClientCapabilities = useCallback(
+    (serverConfig: MCPServerConfig): MCPServerConfig => {
+      const mergedCapabilities = getEffectiveServerClientCapabilities({
+        workspaceClientConfig: activeWorkspace?.clientConfig,
+        serverCapabilities: serverConfig.capabilities as
+          | Record<string, unknown>
+          | undefined,
+      });
+
+      return {
+        ...serverConfig,
+        capabilities: mergedCapabilities,
+        clientCapabilities: mergedCapabilities,
+      };
+    },
+    [activeWorkspace?.clientConfig],
+  );
+
+  const assertClientConfigSynced = useCallback(() => {
+    if (!isClientConfigSyncPending) {
+      return;
+    }
+
+    throw new Error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
+  }, [isClientConfigSyncPending]);
+
+  const notifyIfClientConfigSyncPending = useCallback(() => {
+    if (!isClientConfigSyncPending) {
+      return false;
+    }
+
+    toast.error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
+    return true;
+  }, [isClientConfigSyncPending]);
+
+  const guardedTestConnection = useCallback(
+    async (serverConfig: MCPServerConfig, serverName: string) => {
+      assertClientConfigSynced();
+      return testConnection(serverConfig, serverName);
+    },
+    [assertClientConfigSynced],
+  );
+
+  const guardedReconnectServer = useCallback(
+    async (serverName: string, serverConfig: MCPServerConfig) => {
+      assertClientConfigSynced();
+      return reconnectServer(serverName, serverConfig);
+    },
+    [assertClientConfigSynced],
+  );
 
   const validateForm = (formData: ServerFormData): string | null => {
     if (formData.type === "stdio") {
@@ -506,6 +597,51 @@ export function useServerState({
     [logger],
   );
 
+  const resolveOAuthInitiationInputs = useCallback(
+    async (
+      formData: ServerFormData,
+    ): Promise<ResolvedOAuthInitiationInputs> => {
+      let registryOAuthConfig: RegistryOAuthConfigResponse | null = null;
+
+      if (formData.registryServerId) {
+        try {
+          registryOAuthConfig = (await convex.query(
+            "registryServers:getRegistryServerOAuthConfig" as any,
+            { registryServerId: formData.registryServerId } as any,
+          )) as RegistryOAuthConfigResponse | null;
+        } catch (error) {
+          const errorMessage =
+            error instanceof Error ? error.message : "Unknown error";
+          throw new Error(
+            `Failed to resolve registry OAuth config: ${errorMessage}`,
+          );
+        }
+      }
+
+      const clientId =
+        typeof registryOAuthConfig?.clientId === "string" &&
+        registryOAuthConfig.clientId.trim() !== ""
+          ? registryOAuthConfig.clientId
+          : formData.clientId;
+      const scopes =
+        Array.isArray(registryOAuthConfig?.scopes) &&
+        registryOAuthConfig.scopes.every(
+          (scope): scope is string => typeof scope === "string",
+        )
+          ? registryOAuthConfig.scopes
+          : formData.oauthScopes;
+
+      return {
+        clientId,
+        clientSecret: formData.clientSecret,
+        registryServerId: formData.registryServerId,
+        scopes,
+        useRegistryOAuthProxy: Boolean(clientId && formData.registryServerId),
+      };
+    },
+    [convex],
+  );
+
   const handleOAuthCallbackComplete = useCallback(
     async (code: string) => {
       const pendingServerName = localStorage.getItem("mcp-oauth-pending");
@@ -527,7 +663,7 @@ export function useServerState({
 
           try {
             const connectionResult = await testConnectionAfterOAuth(
-              result.serverConfig,
+              withWorkspaceClientCapabilities(result.serverConfig),
               serverName,
             );
             if (connectionResult.success) {
@@ -606,6 +742,8 @@ export function useServerState({
       logger,
       storeInitInfo,
       testConnectionAfterOAuth,
+      guardedTestConnection,
+      withWorkspaceClientCapabilities,
     ],
   );
 
@@ -691,6 +829,10 @@ export function useServerState({
 
   const handleConnect = useCallback(
     async (formData: ServerFormData) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       const validationError = validateForm(formData);
       if (validationError) {
         toast.error(validationError);
@@ -772,8 +914,8 @@ export function useServerState({
                 },
               },
             } satisfies HttpServerConfig;
-            const connectionResult = await testConnection(
-              serverConfig,
+            const connectionResult = await guardedTestConnection(
+              withWorkspaceClientCapabilities(serverConfig),
               formData.name,
             );
             if (isStaleOp(formData.name, token)) return;
@@ -816,20 +958,23 @@ export function useServerState({
             } as ServerWithName,
           });
 
+          const oauthInputs = await resolveOAuthInitiationInputs(formData);
           const oauthOptions: any = {
             serverName: formData.name,
             serverUrl: formData.url,
-            clientId: formData.clientId,
-            clientSecret: formData.clientSecret,
+            clientId: oauthInputs.clientId,
+            clientSecret: oauthInputs.clientSecret,
+            registryServerId: oauthInputs.registryServerId,
+            useRegistryOAuthProxy: oauthInputs.useRegistryOAuthProxy,
           };
-          if (formData.oauthScopes && formData.oauthScopes.length > 0) {
-            oauthOptions.scopes = formData.oauthScopes;
+          if (oauthInputs.scopes && oauthInputs.scopes.length > 0) {
+            oauthOptions.scopes = oauthInputs.scopes;
           }
           const oauthResult = await initiateOAuth(oauthOptions);
           if (oauthResult.success) {
             if (oauthResult.serverConfig) {
-              const connectionResult = await testConnection(
-                oauthResult.serverConfig,
+              const connectionResult = await guardedTestConnection(
+                withWorkspaceClientCapabilities(oauthResult.serverConfig),
                 formData.name,
               );
               if (isStaleOp(formData.name, token)) return;
@@ -883,7 +1028,11 @@ export function useServerState({
         if (!hasPendingCallback) {
           clearOAuthData(formData.name);
         }
-        const result = await testConnection(mcpConfig, formData.name);
+        const effectiveConfig = withWorkspaceClientCapabilities(mcpConfig);
+        const result = await guardedTestConnection(
+          effectiveConfig,
+          formData.name,
+        );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
           dispatch({
@@ -899,7 +1048,11 @@ export function useServerState({
             );
           }
           logger.info("Connection successful", { serverName: formData.name });
-          toast.success("Connected successfully!");
+          if (
+            !shouldSuppressExcalidrawConnectToastForOnboarding(formData.name)
+          ) {
+            toast.success("Connected successfully!");
+          }
           storeInitInfo(formData.name, result.initInfo).catch((err) =>
             logger.warn("Failed to fetch init info", {
               serverName: formData.name,
@@ -939,9 +1092,13 @@ export function useServerState({
       isAuthenticated,
       appState.workspaces,
       appState.activeWorkspaceId,
+      notifyIfClientConfigSyncPending,
+      resolveOAuthInitiationInputs,
       syncServerToConvex,
       logger,
       storeInitInfo,
+      guardedTestConnection,
+      withWorkspaceClientCapabilities,
     ],
   );
 
@@ -1089,7 +1246,10 @@ export function useServerState({
       const token = nextOpToken(serverName);
 
       try {
-        const result = await reconnectServer(serverName, serverConfig);
+        const result = await guardedReconnectServer(
+          serverName,
+          withWorkspaceClientCapabilities(serverConfig),
+        );
         if (isStaleOp(serverName, token)) {
           return { success: false, error: "Operation cancelled" };
         }
@@ -1123,7 +1283,12 @@ export function useServerState({
         return { success: false, error: errorMessage };
       }
     },
-    [dispatch, storeInitInfo],
+    [
+      dispatch,
+      storeInitInfo,
+      guardedReconnectServer,
+      withWorkspaceClientCapabilities,
+    ],
   );
 
   const handleConnectWithTokensFromOAuthFlow = useCallback(
@@ -1139,6 +1304,10 @@ export function useServerState({
       },
       serverUrl: string,
     ) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
@@ -1150,7 +1319,7 @@ export function useServerState({
         toast.error(`Connection failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow],
+    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
   );
 
   const handleRefreshTokensFromOAuthFlow = useCallback(
@@ -1166,6 +1335,10 @@ export function useServerState({
       },
       serverUrl: string,
     ) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       const result = await applyTokensFromOAuthFlow(
         serverName,
         tokens,
@@ -1177,7 +1350,7 @@ export function useServerState({
         toast.error(`Token refresh failed: ${result.error}`);
       }
     },
-    [applyTokensFromOAuthFlow],
+    [applyTokensFromOAuthFlow, notifyIfClientConfigSyncPending],
   );
 
   const cliConfigProcessedRef = useRef<boolean>(false);
@@ -1351,6 +1524,10 @@ export function useServerState({
 
   const handleReconnect = useCallback(
     async (serverName: string, options?: { forceOAuthFlow?: boolean }) => {
+      if (notifyIfClientConfigSyncPending()) {
+        return;
+      }
+
       logger.info("Reconnecting to server", { serverName, options });
       const server = effectiveServers[serverName];
       if (!server) {
@@ -1407,9 +1584,9 @@ export function useServerState({
           toast.error(`OAuth failed: ${serverName}`);
           return;
         }
-        const result = await reconnectServer(
+        const result = await guardedReconnectServer(
           serverName,
-          oauthResult.serverConfig!,
+          withWorkspaceClientCapabilities(oauthResult.serverConfig!),
         );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
@@ -1449,9 +1626,9 @@ export function useServerState({
           toast.error(`Failed to connect: ${serverName}`);
           return;
         }
-        const result = await reconnectServer(
+        const result = await guardedReconnectServer(
           serverName,
-          authResult.serverConfig,
+          withWorkspaceClientCapabilities(authResult.serverConfig),
         );
         if (isStaleOp(serverName, token)) return;
         if (result.success) {
@@ -1491,7 +1668,15 @@ export function useServerState({
         });
       }
     },
-    [effectiveServers, storeInitInfo, logger, dispatch],
+    [
+      effectiveServers,
+      storeInitInfo,
+      logger,
+      dispatch,
+      notifyIfClientConfigSyncPending,
+      guardedReconnectServer,
+      withWorkspaceClientCapabilities,
+    ],
   );
 
   useEffect(() => {
@@ -1624,6 +1809,10 @@ export function useServerState({
       }
 
       const hadOAuthTokens = originalServer?.oauthTokens != null;
+      if (notifyIfClientConfigSyncPending()) {
+        return { ok: false, serverName: originalServerName };
+      }
+
       const shouldPreserveOAuth =
         hadOAuthTokens &&
         formData.useOAuth &&
@@ -1640,8 +1829,8 @@ export function useServerState({
         });
         saveOAuthConfigToLocalStorage(formData);
         try {
-          const result = await testConnection(
-            originalServer.config,
+          const result = await guardedTestConnection(
+            withWorkspaceClientCapabilities(originalServer.config),
             originalServerName,
           );
           if (result.success) {
@@ -1702,6 +1891,8 @@ export function useServerState({
       removeServerFromStateAndCloud,
       setSelectedServer,
       syncServerToConvex,
+      notifyIfClientConfigSyncPending,
+      guardedTestConnection,
     ],
   );
 

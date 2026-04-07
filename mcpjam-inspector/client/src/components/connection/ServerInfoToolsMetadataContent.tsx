@@ -1,5 +1,5 @@
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
-import { JsonEditor } from "@/components/ui/json-editor";
+import { ScrollableJsonView } from "@/components/ui/json-editor";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 
 interface ServerInfoToolsMetadataContentProps {
@@ -87,11 +87,10 @@ export function ServerInfoToolsMetadataContent({
                   <div className="text-xs text-muted-foreground font-medium mb-3">
                     ANNOTATIONS
                   </div>
-                  <JsonEditor
-                    showLineNumbers={false}
-                    height="100%"
+                  <ScrollableJsonView
                     value={annotations}
-                    viewOnly
+                    showLineNumbers={false}
+                    containerClassName="max-h-96 rounded-lg"
                   />
                 </div>
               )}

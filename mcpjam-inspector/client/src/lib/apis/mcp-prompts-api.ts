@@ -1,11 +1,11 @@
-import type { MCPPrompt } from "@mcpjam/sdk";
+import type { MCPPrompt } from "@mcpjam/sdk/browser";
 import { authFetch } from "@/lib/session-token";
 import {
   getHostedPrompt,
   listHostedPrompts,
   listHostedPromptsMulti,
 } from "@/lib/apis/web/prompts-api";
-import { resolveHostedServerId } from "@/lib/apis/web/context";
+import { isGuestMode, resolveHostedServerId } from "@/lib/apis/web/context";
 import { runByMode } from "@/lib/apis/mode-client";
 
 export interface PromptContentResponse {
@@ -84,6 +84,32 @@ export async function listPromptsForServers(
 ): Promise<BatchPromptsResponse> {
   return runByMode({
     hosted: async () => {
+      if (isGuestMode()) {
+        const prompts: Record<string, MCPPrompt[]> = {};
+        const errors: Record<string, string> = {};
+
+        await Promise.all(
+          serverIds.map(async (serverName) => {
+            try {
+              const body = await listHostedPrompts({
+                serverNameOrId: serverName,
+              });
+              prompts[serverName] = Array.isArray(body?.prompts)
+                ? (body.prompts as MCPPrompt[])
+                : [];
+            } catch (error) {
+              errors[serverName] =
+                error instanceof Error ? error.message : String(error);
+            }
+          }),
+        );
+
+        return {
+          prompts,
+          errors: Object.keys(errors).length > 0 ? errors : undefined,
+        };
+      }
+
       const body = await listHostedPromptsMulti({
         serverNamesOrIds: serverIds,
       });

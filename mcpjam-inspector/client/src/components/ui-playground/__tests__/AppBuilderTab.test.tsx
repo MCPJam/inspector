@@ -1,12 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AppBuilderTab } from "../AppBuilderTab";
-import type { MCPServerConfig } from "@mcpjam/sdk";
+import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+
+const mockToastDismiss = vi.fn();
+const mockSetMcpSidebarOpen = vi.fn();
 
 // Mock posthog
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
+  }),
+}));
+
+vi.mock("sonner", () => ({
+  toast: {
+    dismiss: (...args: unknown[]) => mockToastDismiss(...args),
+  },
+}));
+
+vi.mock("@/components/ui/sidebar", () => ({
+  useSidebar: () => ({
+    setOpen: mockSetMcpSidebarOpen,
   }),
 }));
 
@@ -71,6 +86,7 @@ const mockUIPlaygroundStore = {
   toggleSidebar: vi.fn(),
   setSelectedProtocol: vi.fn(),
   reset: vi.fn(),
+  setSidebarVisible: vi.fn(),
 };
 
 vi.mock("@/stores/ui-playground-store", () => ({
@@ -107,8 +123,25 @@ vi.mock("../../ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: React.ReactNode }) => (
     <div data-testid="resizable-panel-group">{children}</div>
   ),
-  ResizablePanel: ({ children }: { children: React.ReactNode }) => (
-    <div data-testid="resizable-panel">{children}</div>
+  ResizablePanel: ({
+    children,
+    onCollapse,
+  }: {
+    children: React.ReactNode;
+    onCollapse?: () => void;
+  }) => (
+    <div data-testid="resizable-panel">
+      {onCollapse && (
+        <button
+          type="button"
+          data-testid="simulate-panel-collapse"
+          onClick={onCollapse}
+        >
+          Simulate collapse
+        </button>
+      )}
+      {children}
+    </div>
   ),
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
@@ -155,13 +188,40 @@ vi.mock("../PlaygroundMain", () => ({
   PlaygroundMain: ({
     serverName,
     isExecuting,
+    showPostConnectGuide,
+    initialInput,
+    initialInputTypewriter,
+    blockSubmitUntilServerConnected,
+    onFirstMessageSent,
   }: {
     serverName: string;
     isExecuting: boolean;
+    showPostConnectGuide?: boolean;
+    initialInput?: string;
+    initialInputTypewriter?: boolean;
+    blockSubmitUntilServerConnected?: boolean;
+    onFirstMessageSent?: () => void;
   }) => (
     <div data-testid="playground-main">
       <span data-testid="server-name">{serverName}</span>
       {isExecuting && <span data-testid="executing">Executing...</span>}
+      {initialInput && (
+        <span data-testid="guided-initial-input">{initialInput}</span>
+      )}
+      <span data-testid="initial-input-typewriter">
+        {initialInputTypewriter ? "true" : "false"}
+      </span>
+      <span data-testid="block-submit-until-connected">
+        {blockSubmitUntilServerConnected ? "true" : "false"}
+      </span>
+      {showPostConnectGuide && (
+        <div data-testid="post-connect-guide">Post Connect Guide</div>
+      )}
+      {onFirstMessageSent && (
+        <button data-testid="first-message-sent" onClick={onFirstMessageSent}>
+          First Message Sent
+        </button>
+      )}
     </div>
   ),
 }));
@@ -170,6 +230,35 @@ vi.mock("../PlaygroundMain", () => ({
 vi.mock("../../tools/SaveRequestDialog", () => ({
   default: ({ open }: { open: boolean }) =>
     open ? <div data-testid="save-dialog">Save Dialog</div> : null,
+}));
+
+// Mock onboarding hook
+const mockOnboarding = {
+  phase: "dismissed" as string,
+  isGuidedPostConnect: false,
+  isResolvingRemoteCompletion: false,
+  isBootstrappingFirstRunConnection: false,
+  connectExcalidraw: vi.fn(),
+  completeOnboarding: vi.fn(),
+  connectError: null as string | null,
+  retryConnect: vi.fn(),
+};
+vi.mock("@/hooks/use-onboarding", () => ({
+  useOnboarding: () => mockOnboarding,
+}));
+
+// Mock PostConnectGuide
+vi.mock("../../app-builder/PostConnectGuide", () => ({
+  PostConnectGuide: () => (
+    <div data-testid="post-connect-guide">Post Connect Guide</div>
+  ),
+}));
+
+// Mock AppBuilderSkeleton
+vi.mock("../../app-builder/AppBuilderSkeleton", () => ({
+  AppBuilderSkeleton: () => (
+    <div data-testid="app-builder-skeleton">Skeleton</div>
+  ),
 }));
 
 // Mock CollapsedPanelStrip
@@ -206,6 +295,15 @@ describe("AppBuilderTab", () => {
       formFields: [],
       isExecuting: false,
       isSidebarVisible: true,
+    });
+
+    // Reset onboarding state (default: dismissed, no overlay)
+    Object.assign(mockOnboarding, {
+      phase: "dismissed",
+      isGuidedPostConnect: false,
+      isResolvingRemoteCompletion: false,
+      isBootstrappingFirstRunConnection: false,
+      connectError: null,
     });
   });
 
@@ -406,6 +504,27 @@ describe("AppBuilderTab", () => {
 
       expect(mockUIPlaygroundStore.toggleSidebar).toHaveBeenCalled();
     });
+
+    it("calls setSidebarVisible(false) when the left panel collapses (e.g. drag)", async () => {
+      const serverConfig = createServerConfig();
+      mockUIPlaygroundStore.isSidebarVisible = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("simulate-panel-collapse"),
+        ).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId("simulate-panel-collapse"));
+
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        false,
+      );
+    });
   });
 
   describe("tool execution", () => {
@@ -423,8 +542,8 @@ describe("AppBuilderTab", () => {
     });
   });
 
-  describe("theme sync", () => {
-    it("syncs theme from preferences to globals", async () => {
+  describe("display context source of truth", () => {
+    it("does not mirror theme into playground globals", async () => {
       const serverConfig = createServerConfig();
 
       render(
@@ -432,11 +551,188 @@ describe("AppBuilderTab", () => {
       );
 
       await waitFor(() => {
-        expect(mockUIPlaygroundStore.updateGlobal).toHaveBeenCalledWith(
-          "theme",
-          "light",
+        expect(mockListTools).toHaveBeenCalledWith({
+          serverId: "test-server",
+        });
+      });
+
+      expect(mockUIPlaygroundStore.updateGlobal).not.toHaveBeenCalledWith(
+        "theme",
+        "light",
+      );
+    });
+  });
+
+  describe("onboarding", () => {
+    it("renders bootstrap skeleton before the Excalidraw server row exists on first run", () => {
+      mockOnboarding.isBootstrappingFirstRunConnection = true;
+
+      render(<AppBuilderTab onConnect={vi.fn()} />);
+
+      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+    });
+
+    it("falls back to empty state when bootstrapping but onConnect is not provided", () => {
+      mockOnboarding.isBootstrappingFirstRunConnection = true;
+
+      render(<AppBuilderTab onConnect={undefined} />);
+
+      expect(
+        screen.queryByTestId("app-builder-skeleton"),
+      ).not.toBeInTheDocument();
+      expect(screen.getByText("No Server Selected")).toBeInTheDocument();
+    });
+
+    it("renders only the skeleton while signed-in onboarding state is resolving", () => {
+      mockOnboarding.isResolvingRemoteCompletion = true;
+
+      render(<AppBuilderTab />);
+
+      expect(screen.getByTestId("app-builder-skeleton")).toBeInTheDocument();
+      expect(screen.queryByText("No Server Selected")).not.toBeInTheDocument();
+    });
+
+    it("shows App Builder while Excalidraw is connecting when not bootstrapping", () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isBootstrappingFirstRunConnection = false;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      expect(screen.getByTestId("playground-main")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("app-builder-skeleton"),
+      ).not.toBeInTheDocument();
+    });
+
+    it("does not render the post-connect guide shell (NUX uses prefilled prompt only)", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isGuidedPostConnect = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("post-connect-guide"),
+        ).not.toBeInTheDocument();
+      });
+    });
+
+    it("passes the seeded guided prompt to PlaygroundMain while post-connect onboarding is active", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isGuidedPostConnect = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("guided-initial-input")).toHaveTextContent(
+          "Draw me an MCP architecture diagram",
         );
       });
+
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        false,
+      );
+    });
+
+    it("passes the seeded prompt and typewriter flags while Excalidraw is still connecting", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isGuidedPostConnect = false;
+      mockOnboarding.isBootstrappingFirstRunConnection = false;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("guided-initial-input")).toHaveTextContent(
+          "Draw me an MCP architecture diagram",
+        );
+      });
+
+      expect(screen.getByTestId("initial-input-typewriter")).toHaveTextContent(
+        "true",
+      );
+      expect(
+        screen.getByTestId("block-submit-until-connected"),
+      ).toHaveTextContent("true");
+    });
+
+    it("collapses tools sidebar during connect before isGuidedPostConnect is true", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connecting_excalidraw";
+      mockOnboarding.isGuidedPostConnect = false;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("playground-main")).toBeInTheDocument();
+      });
+
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        false,
+      );
+    });
+
+    it("completes onboarding after the first guided message is sent", async () => {
+      const serverConfig = createServerConfig();
+      mockOnboarding.phase = "connected_guided";
+      mockOnboarding.isGuidedPostConnect = true;
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("first-message-sent")).toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByTestId("first-message-sent"));
+
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        true,
+      );
+      expect(mockOnboarding.completeOnboarding).toHaveBeenCalledTimes(1);
+    });
+
+    it("restores sidebars and reports no onboarding when unmounted", () => {
+      const onOnboardingChange = vi.fn();
+
+      const { unmount } = render(
+        <AppBuilderTab onOnboardingChange={onOnboardingChange} />,
+      );
+
+      expect(onOnboardingChange).toHaveBeenCalledWith(false);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenCalledWith(
+        true,
+      );
+      expect(mockSetMcpSidebarOpen).toHaveBeenCalledWith(true);
+
+      unmount();
+
+      expect(onOnboardingChange).toHaveBeenLastCalledWith(false);
+      expect(mockUIPlaygroundStore.setSidebarVisible).toHaveBeenLastCalledWith(
+        true,
+      );
+      expect(mockSetMcpSidebarOpen).toHaveBeenLastCalledWith(true);
+    });
+
+    it("shows empty state when onboarding is dismissed and no server", () => {
+      mockOnboarding.phase = "dismissed";
+      render(<AppBuilderTab />);
+
+      expect(screen.getByText("No Server Selected")).toBeInTheDocument();
     });
   });
 

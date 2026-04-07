@@ -48,7 +48,9 @@ describe("uploadEvalArtifact", () => {
   });
 
   it("captures once when reporting parsed artifact results fails", async () => {
-    global.fetch = jest.fn().mockResolvedValue(errorResponse(404, "Not Found")) as any;
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(errorResponse(404, "Not Found")) as any;
 
     await expect(
       uploadEvalArtifact({

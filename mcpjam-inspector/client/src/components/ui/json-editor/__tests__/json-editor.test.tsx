@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import { describe, it, expect, vi } from "vitest";
 import { JsonEditor } from "../json-editor";
 import { buildLineLayouts } from "../json-editor-edit";
 
@@ -125,6 +125,28 @@ describe("JsonEditor", () => {
     });
   });
 
+  describe("collapsible tree view sizing", () => {
+    it("applies numeric height to the tree scroll container", () => {
+      const { container } = render(
+        <JsonEditor value={{ a: 1 }} viewOnly collapsible height={200} />,
+      );
+
+      const treeRoot = container.querySelector(".overflow-auto.pl-7");
+      expect(treeRoot).toBeTruthy();
+      expect((treeRoot as HTMLElement).style.height).toBe("200px");
+    });
+
+    it("defaults collapsible view height to 100% on the tree container", () => {
+      const { container } = render(
+        <JsonEditor value={{ a: 1 }} viewOnly collapsible />,
+      );
+
+      const treeRoot = container.querySelector(".overflow-auto.pl-7");
+      expect(treeRoot).toBeTruthy();
+      expect((treeRoot as HTMLElement).style.height).toBe("100%");
+    });
+  });
+
   describe("expandJsonStrings", () => {
     it("expands stringified JSON in viewOnly mode", () => {
       render(
@@ -156,7 +178,7 @@ describe("JsonEditor", () => {
       expect(pre?.className).toContain("break-words");
     });
 
-    it("uses a shared vertical scroll container in view-only mode", () => {
+    it("uses a shared read-only viewport for scrollbar and gesture scrolling", () => {
       const { container } = render(
         <JsonEditor
           value={{ avatarUrl: `https://${"a".repeat(120)}` }}
@@ -165,7 +187,7 @@ describe("JsonEditor", () => {
       );
 
       const viewport = container.querySelector(
-        ".overflow-y-auto.overscroll-none",
+        ".overflow-auto.overscroll-none",
       );
       expect(viewport).toBeTruthy();
       expect(viewport?.className).toContain("items-start");
@@ -175,14 +197,34 @@ describe("JsonEditor", () => {
         ".self-stretch.flex-shrink-0.text-right.select-none",
       );
       expect(gutter?.className).toContain("self-stretch");
-
-      const fixedGutterBackground = container.querySelector(
-        ".absolute.inset-y-0.left-0.w-12.bg-muted\\/50.border-r.border-border\\/50",
-      );
-      expect(fixedGutterBackground).toBeTruthy();
+      expect(gutter?.className).toContain("sticky");
+      expect(gutter?.className).toContain("bg-muted/50");
+      expect(gutter?.className).toContain("border-r");
 
       const pre = container.querySelector("pre");
       expect(pre?.className).not.toContain("overflow-auto");
+    });
+
+    it("keeps horizontal overflow on the shared read-only viewport", () => {
+      const { container } = render(
+        <JsonEditor
+          value={{ items: [{ id: 1 }] }}
+          viewOnly
+          height={200}
+          wrapLongLinesInView={false}
+        />,
+      );
+
+      const innerCol = container.querySelector("pre")?.parentElement;
+      expect(innerCol).toBeTruthy();
+      expect(innerCol?.className).toContain("overflow-visible");
+      expect(innerCol?.className).toContain("w-max");
+      expect(innerCol?.className).not.toContain("overflow-x-auto");
+      expect(innerCol?.className).not.toContain("overflow-y-clip");
+
+      expect(
+        container.querySelector(".overflow-auto.overscroll-none"),
+      ).toBeTruthy();
     });
 
     it("can disable wrapping in view-only mode", () => {

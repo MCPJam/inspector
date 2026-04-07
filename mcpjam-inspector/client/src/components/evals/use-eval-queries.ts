@@ -15,12 +15,14 @@ export function useEvalQueries({
   selectedSuiteId,
   deletingSuiteId,
   workspaceId,
+  organizationId,
 }: {
   isAuthenticated: boolean;
   user: any;
   selectedSuiteId: string | null;
   deletingSuiteId: string | null;
   workspaceId: string | null;
+  organizationId: string | null;
 }) {
   // Overview query - list all suites
   const enableOverviewQuery = isAuthenticated && !!user;
@@ -29,6 +31,7 @@ export function useEvalQueries({
     enableOverviewQuery
       ? ({
           ...(workspaceId ? { workspaceId } : {}),
+          ...(!workspaceId && organizationId ? { organizationId } : {}),
         } as any)
       : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
@@ -53,7 +56,7 @@ export function useEvalQueries({
   ) as EvalSuiteRun[] | undefined;
 
   // Loading states
-  const isOverviewLoading = suiteOverview === undefined;
+  const isOverviewLoading = enableOverviewQuery && suiteOverview === undefined;
   const isSuiteDetailsLoading =
     enableSuiteDetailsQuery && suiteDetails === undefined;
   const isSuiteRunsLoading = enableSuiteDetailsQuery && suiteRuns === undefined;
@@ -82,17 +85,13 @@ export function useEvalQueries({
     [suiteRuns],
   );
 
-  // Filter iterations to only include those from active runs
   const activeIterations = useMemo(() => {
     if (!suiteRuns || sortedIterations.length === 0) return sortedIterations;
 
-    const activeRunIds = new Set(
-      suiteRuns.filter((run) => run.isActive !== false).map((run) => run._id),
-    );
+    const runIds = new Set(suiteRuns.map((run) => run._id));
 
     return sortedIterations.filter(
-      (iteration) =>
-        !iteration.suiteRunId || activeRunIds.has(iteration.suiteRunId),
+      (iteration) => !iteration.suiteRunId || runIds.has(iteration.suiteRunId),
     );
   }, [sortedIterations, suiteRuns]);
 

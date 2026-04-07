@@ -13,6 +13,7 @@ import {
   readToolResultMeta,
   readToolResultServerId,
 } from "@/lib/tool-result-utils";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 export interface TraceContentPart {
   type: string;
@@ -51,14 +52,22 @@ export interface TraceWidgetSnapshot {
 }
 
 export interface TraceEnvelope {
+  traceVersion?: 1;
   messages?: TraceMessage[];
   widgetSnapshots?: TraceWidgetSnapshot[];
+  spans?: EvalTraceSpan[];
   [key: string]: unknown;
 }
 
 export interface AdaptedTraceResult {
   messages: UIMessage[];
   toolRenderOverrides: Record<string, ToolRenderOverride>;
+  uiMessageSourceRanges: Record<
+    string,
+    { startIndex: number; endIndex: number }
+  >;
+  sourceMessageIndexToUiMessageIds: Record<number, string[]>;
+  sourceMessageIndexToFocusUiMessageId: Record<number, string>;
 }
 
 type ToolResultDisplay = "sibling-text" | "attached-to-tool";
@@ -68,6 +77,15 @@ interface TraceToolResultEntry {
   part: TraceContentPart;
   messageIndex: number;
   partIndex: number;
+}
+
+interface AdaptedUiMessage {
+  message: UIMessage;
+  sourceRange: {
+    startIndex: number;
+    endIndex: number;
+  };
+  focusSourceIndices?: number[];
 }
 
 const EMPTY_TOOL_METADATA: Record<string, unknown> = {};
@@ -156,7 +174,7 @@ function resolveTraceMessages(
       widgetSnapshots = trace.widgetSnapshots as TraceWidgetSnapshot[];
     }
   } else if (isRecord(trace) && typeof trace.role === "string") {
-    messages = [trace as TraceMessage];
+    messages = [trace as unknown as TraceMessage];
   }
 
   return { messages, widgetSnapshots };
@@ -551,7 +569,7 @@ function buildAssistantMessage(params: {
   connectedServerIds: Set<string>;
   toolRenderOverrides: Record<string, ToolRenderOverride>;
   toolResultDisplay: ToolResultDisplay;
-}): { message: UIMessage; extraMessages: UIMessage[] } {
+}): { message: AdaptedUiMessage; extraMessages: AdaptedUiMessage[] } {
   const assistantParts = normalizeMessageContent(params.message);
   const toolResultEntries = params.toolMessages.flatMap(
     (toolMessage, toolMessageOffset) =>
@@ -565,6 +583,7 @@ function buildAssistantMessage(params: {
   );
   const resultBuckets = createResultBuckets(toolResultEntries);
   const parts: UIMessage["parts"] = [];
+  const focusSourceIndices = new Set<number>([params.messageIndex]);
 
   assistantParts.forEach((part, partIndex) => {
     if (part.type === "tool-call") {
@@ -575,11 +594,15 @@ function buildAssistantMessage(params: {
           partIndex,
           getToolName(part),
         );
-      const matchedResult = claimMatchingResult(
+      const matchedResultEntry = claimMatchingResult(
         resultBuckets,
         toolCallId,
         !part.toolCallId,
-      )?.part;
+      );
+      if (matchedResultEntry) {
+        focusSourceIndices.add(matchedResultEntry.messageIndex);
+      }
+      const matchedResult = matchedResultEntry?.part;
 
       const toolCallWithId = part.toolCallId ? part : { ...part, toolCallId };
 
@@ -624,33 +647,47 @@ function buildAssistantMessage(params: {
       };
 
       return {
-        id: `trace-assistant-orphan-${entry.messageIndex}-${entry.partIndex}`,
-        role: "assistant",
-        parts: buildToolParts({
-          toolCall: syntheticToolCall,
-          matchedResult: {
-            ...entry.part,
-            toolCallId,
-            toolName,
-          },
-          messageIndex: entry.messageIndex,
-          partIndex: entry.partIndex,
-          widgetSnapshotMap: params.widgetSnapshotMap,
-          toolsMetadata: params.toolsMetadata,
-          toolServerMap: params.toolServerMap,
-          connectedServerIds: params.connectedServerIds,
-          toolRenderOverrides: params.toolRenderOverrides,
-          toolResultDisplay: params.toolResultDisplay,
-        }),
-      } satisfies UIMessage;
+        message: {
+          id: `trace-assistant-orphan-${entry.messageIndex}-${entry.partIndex}`,
+          role: "assistant",
+          parts: buildToolParts({
+            toolCall: syntheticToolCall,
+            matchedResult: {
+              ...entry.part,
+              toolCallId,
+              toolName,
+            },
+            messageIndex: entry.messageIndex,
+            partIndex: entry.partIndex,
+            widgetSnapshotMap: params.widgetSnapshotMap,
+            toolsMetadata: params.toolsMetadata,
+            toolServerMap: params.toolServerMap,
+            connectedServerIds: params.connectedServerIds,
+            toolRenderOverrides: params.toolRenderOverrides,
+            toolResultDisplay: params.toolResultDisplay,
+          }),
+        } satisfies UIMessage,
+        sourceRange: {
+          startIndex: entry.messageIndex,
+          endIndex: entry.messageIndex,
+        },
+        focusSourceIndices: [entry.messageIndex],
+      } satisfies AdaptedUiMessage;
     },
   );
 
   return {
     message: {
-      id: `trace-${params.message.role}-${params.messageIndex}`,
-      role: "assistant",
-      parts,
+      message: {
+        id: `trace-${params.message.role}-${params.messageIndex}`,
+        role: "assistant",
+        parts,
+      },
+      sourceRange: {
+        startIndex: params.messageIndex,
+        endIndex: params.messageIndex + params.toolMessages.length,
+      },
+      focusSourceIndices: [...focusSourceIndices],
     },
     extraMessages,
   };
@@ -659,15 +696,22 @@ function buildAssistantMessage(params: {
 function buildUserMessage(
   message: TraceMessage,
   messageIndex: number,
-): UIMessage {
+): AdaptedUiMessage {
   const parts = normalizeMessageContent(message)
     .map((part) => adaptTracePart(part))
     .filter((part): part is NonNullable<typeof part> => Boolean(part));
 
   return {
-    id: `trace-user-${messageIndex}`,
-    role: "user",
-    parts,
+    message: {
+      id: `trace-user-${messageIndex}`,
+      role: "user",
+      parts,
+    },
+    sourceRange: {
+      startIndex: messageIndex,
+      endIndex: messageIndex,
+    },
+    focusSourceIndices: [messageIndex],
   };
 }
 
@@ -682,45 +726,52 @@ function buildOrphanToolMessages(params: {
   toolResultDisplay: ToolResultDisplay;
 }) {
   return params.toolMessages.flatMap((message, messageOffset) =>
-    normalizeMessageContent(message)
-      .map((part, partIndex) => {
-        if (part.type !== "tool-result") return null;
-        const toolName = getToolName(part);
-        const toolCallId =
-          part.toolCallId ??
-          buildSyntheticToolCallId(
-            params.startIndex + messageOffset,
-            partIndex,
-            toolName,
-          );
+    normalizeMessageContent(message).flatMap((part, partIndex) => {
+      if (part.type !== "tool-result") return [];
+      const toolName = getToolName(part);
+      const toolCallId =
+        part.toolCallId ??
+        buildSyntheticToolCallId(
+          params.startIndex + messageOffset,
+          partIndex,
+          toolName,
+        );
 
-        return {
-          id: `trace-assistant-orphan-${params.startIndex + messageOffset}-${partIndex}`,
-          role: "assistant",
-          parts: buildToolParts({
-            toolCall: {
-              type: "tool-call",
-              toolCallId,
-              toolName,
-              input: {},
-            },
-            matchedResult: {
-              ...part,
-              toolCallId,
-              toolName,
-            },
-            messageIndex: params.startIndex + messageOffset,
-            partIndex,
-            widgetSnapshotMap: params.widgetSnapshotMap,
-            toolsMetadata: params.toolsMetadata,
-            toolServerMap: params.toolServerMap,
-            connectedServerIds: params.connectedServerIds,
-            toolRenderOverrides: params.toolRenderOverrides,
-            toolResultDisplay: params.toolResultDisplay,
-          }),
-        } satisfies UIMessage;
-      })
-      .filter((entry): entry is UIMessage => Boolean(entry)),
+      return [
+        {
+          message: {
+            id: `trace-assistant-orphan-${params.startIndex + messageOffset}-${partIndex}`,
+            role: "assistant",
+            parts: buildToolParts({
+              toolCall: {
+                type: "tool-call",
+                toolCallId,
+                toolName,
+                input: {},
+              },
+              matchedResult: {
+                ...part,
+                toolCallId,
+                toolName,
+              },
+              messageIndex: params.startIndex + messageOffset,
+              partIndex,
+              widgetSnapshotMap: params.widgetSnapshotMap,
+              toolsMetadata: params.toolsMetadata,
+              toolServerMap: params.toolServerMap,
+              connectedServerIds: params.connectedServerIds,
+              toolRenderOverrides: params.toolRenderOverrides,
+              toolResultDisplay: params.toolResultDisplay,
+            }),
+          } satisfies UIMessage,
+          sourceRange: {
+            startIndex: params.startIndex + messageOffset,
+            endIndex: params.startIndex + messageOffset,
+          },
+          focusSourceIndices: [params.startIndex + messageOffset],
+        } satisfies AdaptedUiMessage,
+      ];
+    }),
   );
 }
 
@@ -737,16 +788,38 @@ export function adaptTraceToUiMessages(params: {
   );
   const toolRenderOverrides: Record<string, ToolRenderOverride> = {};
   const uiMessages: UIMessage[] = [];
+  const uiMessageSourceRanges: Record<
+    string,
+    { startIndex: number; endIndex: number }
+  > = {};
+  const sourceMessageIndexToUiMessageIds: Record<number, string[]> = {};
+  const sourceMessageIndexToFocusUiMessageId: Record<number, string> = {};
   const toolsMetadata = params.toolsMetadata ?? {};
   const toolServerMap = params.toolServerMap ?? {};
   const connectedServerIds = new Set(params.connectedServerIds ?? []);
   const toolResultDisplay = params.toolResultDisplay ?? "sibling-text";
 
+  function recordUiMessage(entry: AdaptedUiMessage): void {
+    uiMessages.push(entry.message);
+    uiMessageSourceRanges[entry.message.id] = entry.sourceRange;
+    for (
+      let sourceIndex = entry.sourceRange.startIndex;
+      sourceIndex <= entry.sourceRange.endIndex;
+      sourceIndex += 1
+    ) {
+      sourceMessageIndexToUiMessageIds[sourceIndex] ??= [];
+      sourceMessageIndexToUiMessageIds[sourceIndex]!.push(entry.message.id);
+    }
+    for (const sourceIndex of entry.focusSourceIndices ?? []) {
+      sourceMessageIndexToFocusUiMessageId[sourceIndex] = entry.message.id;
+    }
+  }
+
   for (let index = 0; index < messages.length; index++) {
     const message = messages[index];
 
     if (message.role === "user") {
-      uiMessages.push(buildUserMessage(message, index));
+      recordUiMessage(buildUserMessage(message, index));
       continue;
     }
 
@@ -769,10 +842,8 @@ export function adaptTraceToUiMessages(params: {
         toolRenderOverrides,
         toolResultDisplay,
       });
-      uiMessages.push(
-        adaptedAssistant.message,
-        ...adaptedAssistant.extraMessages,
-      );
+      recordUiMessage(adaptedAssistant.message);
+      adaptedAssistant.extraMessages.forEach((entry) => recordUiMessage(entry));
       index = nextIndex - 1;
       continue;
     }
@@ -785,18 +856,16 @@ export function adaptTraceToUiMessages(params: {
         nextIndex += 1;
       }
 
-      uiMessages.push(
-        ...buildOrphanToolMessages({
-          toolMessages,
-          startIndex: index,
-          widgetSnapshotMap,
-          toolsMetadata,
-          toolServerMap,
-          connectedServerIds,
-          toolRenderOverrides,
-          toolResultDisplay,
-        }),
-      );
+      buildOrphanToolMessages({
+        toolMessages,
+        startIndex: index,
+        widgetSnapshotMap,
+        toolsMetadata,
+        toolServerMap,
+        connectedServerIds,
+        toolRenderOverrides,
+        toolResultDisplay,
+      }).forEach((entry) => recordUiMessage(entry));
       index = nextIndex - 1;
     }
   }
@@ -804,5 +873,8 @@ export function adaptTraceToUiMessages(params: {
   return {
     messages: uiMessages,
     toolRenderOverrides,
+    uiMessageSourceRanges,
+    sourceMessageIndexToUiMessageIds,
+    sourceMessageIndexToFocusUiMessageId,
   };
 }

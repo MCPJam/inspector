@@ -1,11 +1,15 @@
 import { HOSTED_MODE } from "@/lib/config";
 import { getGuestBearerToken } from "@/lib/guest-session";
+import { CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE } from "@/lib/client-config";
+import { getDefaultClientCapabilities } from "@mcpjam/sdk/browser";
 
 type GetAccessTokenFn = () => Promise<string | undefined | null>;
 
 export interface HostedApiContext {
   workspaceId: string | null;
   serverIdsByName: Record<string, string>;
+  clientCapabilities?: Record<string, unknown>;
+  clientConfigSyncPending?: boolean;
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
   guestOauthTokensByServerName?: Record<string, string>;
@@ -63,6 +67,14 @@ function assertHostedMode() {
   }
 }
 
+function assertHostedClientConfigSynced() {
+  if (!hostedApiContext.clientConfigSyncPending) {
+    return;
+  }
+
+  throw new Error(CLIENT_CONFIG_SYNC_PENDING_ERROR_MESSAGE);
+}
+
 /**
  * True when running in hosted mode as a direct guest connection.
  * Direct guests store server configs in localStorage and connect directly
@@ -106,6 +118,7 @@ function shouldPreferGuestBearer(): boolean {
 export function buildGuestServerRequest(
   config: unknown,
   oauthAccessToken?: string,
+  clientCapabilities?: Record<string, unknown>,
 ): Record<string, unknown> {
   const httpConfig = config as {
     url?: string | URL;
@@ -125,11 +138,19 @@ export function buildGuestServerRequest(
       ? { serverHeaders: headers }
       : {}),
     ...(oauthAccessToken ? { oauthAccessToken } : {}),
+    ...(clientCapabilities ? { clientCapabilities } : {}),
   };
 }
 
 export function setHostedApiContext(next: HostedApiContext | null): void {
-  hostedApiContext = next ?? EMPTY_CONTEXT;
+  hostedApiContext = next
+    ? {
+        ...next,
+        clientCapabilities:
+          next.clientCapabilities ??
+          (getDefaultClientCapabilities() as Record<string, unknown>),
+      }
+    : EMPTY_CONTEXT;
   resetTokenCache();
 }
 
@@ -196,6 +217,35 @@ export function resolveHostedServerIds(serverNamesOrIds: string[]): string[] {
   return resolved;
 }
 
+function findHostedServerName(serverId: string): string | undefined {
+  return Object.entries(hostedApiContext.serverIdsByName).find(
+    ([, mappedId]) => mappedId === serverId,
+  )?.[0];
+}
+
+function resolveHostedServerEntries(
+  serverNamesOrIds: string[],
+): Array<{ serverId: string; serverName: string }> {
+  const seen = new Set<string>();
+  const resolved: Array<{ serverId: string; serverName: string }> = [];
+
+  for (const serverNameOrId of serverNamesOrIds) {
+    const serverId = resolveHostedServerId(serverNameOrId);
+    if (seen.has(serverId)) continue;
+    seen.add(serverId);
+
+    resolved.push({
+      serverId,
+      serverName:
+        hostedApiContext.serverIdsByName[serverNameOrId] !== undefined
+          ? serverNameOrId
+          : (findHostedServerName(serverId) ?? serverNameOrId),
+    });
+  }
+
+  return resolved;
+}
+
 export function getHostedOAuthToken(serverId: string): string | undefined {
   return hostedApiContext.oauthTokensByServerId?.[serverId];
 }
@@ -232,10 +282,15 @@ export function buildHostedServerRequest(
       readStoredGuestOAuthAccessToken(serverNameOrId) ??
       hostedApiContext.guestOauthTokensByServerName?.[serverNameOrId];
 
-    return buildGuestServerRequest(config, oauthToken);
+    return buildGuestServerRequest(
+      config,
+      oauthToken,
+      hostedApiContext.clientCapabilities,
+    );
   }
 
   // Authenticated path: resolve via Convex server mappings
+  assertHostedClientConfigSynced();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
   const shareToken = getHostedShareToken();
@@ -245,6 +300,9 @@ export function buildHostedServerRequest(
     workspaceId: getHostedWorkspaceId(),
     serverId,
     ...(oauthToken ? { oauthAccessToken: oauthToken } : {}),
+    ...(hostedApiContext.clientCapabilities
+      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+      : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),
     ...(sandboxToken ? { sandboxToken } : {}),
@@ -254,12 +312,16 @@ export function buildHostedServerRequest(
 export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   workspaceId: string;
   serverIds: string[];
+  clientCapabilities?: Record<string, unknown>;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
   shareToken?: string;
   sandboxToken?: string;
 } {
-  const serverIds = resolveHostedServerIds(serverNamesOrIds);
+  assertHostedClientConfigSynced();
+  const serverIds = resolveHostedServerEntries(serverNamesOrIds).map(
+    (entry) => entry.serverId,
+  );
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const shareToken = getHostedShareToken();
   const sandboxToken = getHostedSandboxToken();
@@ -267,6 +329,42 @@ export function buildHostedServerBatchRequest(serverNamesOrIds: string[]): {
   return {
     workspaceId: getHostedWorkspaceId(),
     serverIds,
+    ...(hostedApiContext.clientCapabilities
+      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+      : {}),
+    ...(oauthTokens ? { oauthTokens } : {}),
+    ...(accessScope ? { accessScope } : {}),
+    ...(shareToken ? { shareToken } : {}),
+    ...(sandboxToken ? { sandboxToken } : {}),
+  };
+}
+
+export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
+  workspaceId: string;
+  serverIds: string[];
+  serverNames: string[];
+  clientCapabilities?: Record<string, unknown>;
+  oauthTokens?: Record<string, string>;
+  accessScope?: HostedAccessScope;
+  shareToken?: string;
+  sandboxToken?: string;
+} {
+  assertHostedClientConfigSynced();
+  const serverEntries = resolveHostedServerEntries(serverNamesOrIds);
+  const serverIds = serverEntries.map((entry) => entry.serverId);
+  const serverNames = serverEntries.map((entry) => entry.serverName);
+  const oauthTokens = buildHostedOAuthTokensMap(serverIds);
+  const shareToken = getHostedShareToken();
+  const sandboxToken = getHostedSandboxToken();
+  const accessScope = getHostedAccessScope();
+
+  return {
+    workspaceId: getHostedWorkspaceId(),
+    serverIds,
+    serverNames,
+    ...(hostedApiContext.clientCapabilities
+      ? { clientCapabilities: hostedApiContext.clientCapabilities }
+      : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
     ...(shareToken ? { shareToken } : {}),

@@ -35,6 +35,7 @@ new TestAgent(options: TestAgentOptions)
 | `temperature`     | `number`                         | No       | `undefined` | Sampling temperature (0-2). If undefined, uses model default. |
 | `maxSteps`        | `number`                         | No       | `10`        | Maximum agentic loop iterations                               |
 | `customProviders` | `Record<string, CustomProvider>` | No       | `undefined` | Custom LLM provider definitions                               |
+| `mcpClientManager`| `MCPClientManager`               | No       | `undefined` | Same connected manager used for `connectToServer` / `getToolsForAiSdk`. **Required** to populate [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on each [`PromptResult`](/sdk/reference/prompt-result) (see note below). |
 
 ### Example
 
@@ -48,6 +49,10 @@ const agent = new TestAgent({
   maxSteps: 5,
 });
 ```
+
+<Info>
+  **MCP Apps, traces, and `mcpClientManager`:** MCP App widgets are backed by HTML served from an MCP **resource** (`ui.resourceUri`), not by the tool’s JSON result alone. After each tool call, `TestAgent` uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch that HTML and attach **`widgetSnapshots`** to the [`PromptResult`](/sdk/reference/prompt-result). When you upload results to MCPJam, those snapshots are stored so the Evals trace viewer can **replay the widget offline**. If you omit `mcpClientManager`, prompts still run and tools still execute — but **`widgetSnapshots` stay empty** and uploaded traces will only contain messages and spans (no embedded app replay). Passing `manager` is also what enables **replay credential** capture for authenticated HTTP servers when reporting to MCPJam.
+</Info>
 
 ---
 
@@ -63,6 +68,8 @@ prompt(
   options?: PromptOptions
 ): Promise<PromptResult>
 ```
+
+Use [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on the returned result (or `toEvalResult()` when reporting) to access MCP App HTML captured during the run when `mcpClientManager` was set.
 
 #### Parameters
 
@@ -342,7 +349,7 @@ async function main() {
   });
   await manager.connectToServer("everything");
 
-  // Create agent
+  // Create agent (pass manager when you need widget snapshots or MCPJam replay configs)
   const agent = new TestAgent({
     tools: await manager.getTools(),
     model: "anthropic/claude-sonnet-4-20250514",
@@ -350,6 +357,7 @@ async function main() {
     systemPrompt: "You are a helpful assistant.",
     temperature: 0.3,
     maxSteps: 10,
+    mcpClientManager: manager,
   });
 
   // Single prompt

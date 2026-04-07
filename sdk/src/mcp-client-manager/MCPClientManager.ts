@@ -4,8 +4,8 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import {
-  getDefaultEnvironment,
   StdioClientTransport,
+  getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -50,6 +50,7 @@ import type {
   Tool,
   AiSdkTool,
 } from "./types.js";
+import type { MCPServerReplayConfig } from "../eval-reporting-types.js";
 
 import {
   DEFAULT_CLIENT_VERSION,
@@ -90,6 +91,11 @@ import {
   convertMCPToolsToVercelTools,
   type ToolSchemaOverrides,
 } from "./tool-converters.js";
+import {
+  getDefaultClientCapabilities,
+  mergeClientCapabilities,
+  normalizeClientCapabilities,
+} from "./capabilities.js";
 
 /**
  * Manages multiple MCP server connections with support for tools, resources,
@@ -129,6 +135,7 @@ export class MCPClientManager {
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultProgressHandler?: ProgressHandler;
+  private readonly lazyConnect: boolean;
 
   // Progress token counter for uniqueness
   private progressTokenCounter = 0;
@@ -146,15 +153,21 @@ export class MCPClientManager {
     this.defaultClientVersion =
       options.defaultClientVersion ?? DEFAULT_CLIENT_VERSION;
     this.defaultClientName = options.defaultClientName;
-    this.defaultCapabilities = { ...(options.defaultCapabilities ?? {}) };
+    this.defaultCapabilities = mergeClientCapabilities(
+      getDefaultClientCapabilities(),
+      options.defaultCapabilities
+    );
     this.defaultTimeout = options.defaultTimeout ?? DEFAULT_TIMEOUT;
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultProgressHandler = options.progressHandler;
+    this.lazyConnect = options.lazyConnect ?? false;
 
-    // Start connecting to all configured servers
-    for (const [id, config] of Object.entries(servers)) {
-      void this.connectToServer(id, config);
+    // Start connecting to all configured servers (unless replay/trace-repair use explicit connect)
+    if (!this.lazyConnect) {
+      for (const [id, config] of Object.entries(servers)) {
+        void this.connectToServer(id, config);
+      }
     }
   }
 
@@ -185,6 +198,17 @@ export class MCPClientManager {
       status: this.getConnectionStatus(serverId),
       config: state.config,
     }));
+  }
+
+  /**
+   * Gets replayable HTTP server configs for eval reporting.
+   */
+  getServerReplayConfigs(): MCPServerReplayConfig[] {
+    return Array.from(this.clientStates.entries())
+      .map(([serverId, state]) => this.buildServerReplayConfig(serverId, state))
+      .filter(
+        (config): config is MCPServerReplayConfig => config !== undefined
+      );
   }
 
   /**
@@ -278,6 +302,7 @@ export class MCPClientManager {
     const state: ManagedClientState = existingState ?? { config, timeout };
     state.config = config;
     state.timeout = timeout;
+    state.authProvider = undefined;
 
     // Reuse existing connection promise if in-flight
     if (state.promise) {
@@ -1016,7 +1041,8 @@ export class MCPClientManager {
           serverId,
           client,
           config,
-          timeout
+          timeout,
+          state
         );
       }
 
@@ -1060,12 +1086,14 @@ export class MCPClientManager {
     serverId: string,
     client: Client,
     config: HttpServerConfig,
-    timeout: number
+    timeout: number,
+    state: ManagedClientState
   ): Promise<Transport> {
     const url = new URL(config.url);
 
     let effectiveAuthProvider = config.authProvider;
     let effectiveAccessToken = config.accessToken;
+    state.authProvider = undefined;
 
     if (config.refreshToken) {
       const trimmedRefresh = config.refreshToken.trim();
@@ -1107,6 +1135,10 @@ export class MCPClientManager {
         trimmedRefresh,
         trimmedClientSecret
       );
+      state.authProvider =
+        effectiveAuthProvider instanceof RefreshTokenOAuthProvider
+          ? effectiveAuthProvider
+          : undefined;
       effectiveAccessToken = undefined;
     }
 
@@ -1219,6 +1251,137 @@ export class MCPClientManager {
     this.toolsMetadataCache.delete(serverId);
   }
 
+  private buildServerReplayConfig(
+    serverId: string,
+    state: ManagedClientState
+  ): MCPServerReplayConfig | undefined {
+    const { config } = state;
+    if (!this.isHttpConfig(config)) {
+      return undefined;
+    }
+    if (
+      config.authProvider ||
+      config.eventSourceInit ||
+      config.reconnectionOptions ||
+      config.sessionId
+    ) {
+      return undefined;
+    }
+    if (
+      config.requestInit &&
+      !this.hasReplayableRequestInit(config.requestInit, true)
+    ) {
+      return undefined;
+    }
+
+    const replayConfig: MCPServerReplayConfig = {
+      serverId,
+      url: config.url,
+    };
+
+    if (config.preferSSE !== undefined) {
+      replayConfig.preferSSE = config.preferSSE;
+    }
+
+    if (config.refreshToken) {
+      const currentAccessToken = state.authProvider?.tokens()?.access_token;
+      const currentRefreshToken = state.authProvider
+        ?.prepareTokenRequest()
+        .get("refresh_token");
+      const clientId = config.clientId?.trim();
+      const clientSecret = config.clientSecret?.trim();
+
+      if (currentRefreshToken && currentRefreshToken.trim()) {
+        replayConfig.refreshToken = currentRefreshToken.trim();
+      } else if (currentAccessToken && currentAccessToken.trim()) {
+        replayConfig.accessToken = currentAccessToken.trim();
+      }
+      if (clientId) {
+        replayConfig.clientId = clientId;
+      }
+      if (clientSecret) {
+        replayConfig.clientSecret = clientSecret;
+      }
+
+      return replayConfig.refreshToken || replayConfig.accessToken
+        ? replayConfig
+        : undefined;
+    }
+
+    const accessToken = this.extractReplayAccessToken(config);
+    if (accessToken) {
+      replayConfig.accessToken = accessToken;
+    }
+
+    return replayConfig;
+  }
+
+  private isHttpConfig(config: MCPServerConfig): config is HttpServerConfig {
+    return !this.isStdioConfig(config);
+  }
+
+  private extractReplayAccessToken(
+    config: HttpServerConfig
+  ): string | undefined {
+    const accessToken = config.accessToken?.trim();
+    if (accessToken) {
+      return accessToken;
+    }
+
+    if (
+      !config.requestInit ||
+      !this.hasReplayableRequestInit(config.requestInit)
+    ) {
+      return undefined;
+    }
+
+    return this.extractBearerAccessToken(config.requestInit.headers);
+  }
+
+  private hasReplayableRequestInit(
+    requestInit: RequestInit,
+    allowEmptyHeaders = false
+  ): boolean {
+    const { headers, ...rest } = requestInit;
+    const hasUnsupportedOptions = Object.values(rest).some(
+      (value) => value !== undefined
+    );
+    if (hasUnsupportedOptions) {
+      return false;
+    }
+
+    const normalizedHeaders = normalizeHeaders(headers);
+    const hasNonAuthHeaders = Object.keys(normalizedHeaders).some(
+      (key) => key.toLowerCase() !== "authorization"
+    );
+    if (hasNonAuthHeaders) {
+      return false;
+    }
+
+    if (Object.keys(normalizedHeaders).length === 0) {
+      return allowEmptyHeaders;
+    }
+
+    return Boolean(this.extractBearerAccessToken(headers));
+  }
+
+  private extractBearerAccessToken(
+    headers: HeadersInit | undefined
+  ): string | undefined {
+    const authorization = getExistingAuthorization(normalizeHeaders(headers));
+    if (!authorization) {
+      return undefined;
+    }
+
+    const match = authorization.match(/^Bearer\s+(.+)$/i);
+    if (!match) {
+      return undefined;
+    }
+
+    const token = match[1]?.trim();
+    return token ? token : undefined;
+  }
+
   private withTimeout(
     serverId: string,
     options?: RequestOptions
@@ -1254,20 +1417,14 @@ export class MCPClientManager {
   }
 
   private buildCapabilities(config: MCPServerConfig): ClientCapabilityOptions {
-    const capabilities: ClientCapabilityOptions = {
-      ...this.defaultCapabilities,
-      ...(config.capabilities ?? {}),
-    };
-    if (!capabilities.elicitation) {
-      capabilities.elicitation = {};
+    if (config.clientCapabilities) {
+      return normalizeClientCapabilities(config.clientCapabilities);
     }
-    // Advertise MCP Apps UI support (ext-apps spec)
-    (capabilities as Record<string, unknown>).extensions = {
-      "io.modelcontextprotocol/ui": {
-        mimeTypes: ["text/html;profile=mcp-app"],
-      },
-    };
-    return capabilities;
+
+    return mergeClientCapabilities(
+      this.defaultCapabilities,
+      config.capabilities
+    );
   }
 
   private resolveRpcLogger(config: MCPServerConfig): RpcLogger | undefined {

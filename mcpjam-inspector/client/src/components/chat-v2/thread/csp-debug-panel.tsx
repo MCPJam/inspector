@@ -18,6 +18,8 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import type { CspMode } from "@/stores/ui-playground-store";
 import type { CspViolation } from "@/stores/widget-debug-store";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { useSandboxHostTheme } from "@/contexts/sandbox-host-style-context";
 
 interface CspDebugPanelProps {
   cspInfo?: {
@@ -186,6 +188,9 @@ function generateCodeSnippet(
 }
 
 export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
+  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedThemeMode = sandboxHostTheme ?? themeMode;
   const currentMode = cspInfo?.mode ?? "permissive";
   const violations = cspInfo?.violations ?? [];
   const hasViolations = violations.length > 0;
@@ -235,7 +240,11 @@ export function CspDebugPanel({ cspInfo, protocol }: CspDebugPanelProps) {
       {/* Suggested Fix */}
       {hasViolations && suggestedFixes.length > 0 && (
         <details className="group">
-          <summary className="flex items-center gap-1.5 text-amber-600 dark:text-amber-400 cursor-pointer list-none">
+          <summary
+            className={`flex items-center gap-1.5 cursor-pointer list-none ${
+              resolvedThemeMode === "dark" ? "text-amber-400" : "text-amber-600"
+            }`}
+          >
             <ChevronRight className="h-3.5 w-3.5 transition-transform group-open:rotate-90" />
             <Lightbulb className="h-3.5 w-3.5" />
             <span className="font-medium">Suggested fix</span>

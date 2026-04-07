@@ -7,6 +7,7 @@ const mockState = vi.hoisted(() => ({
   stop: vi.fn(),
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
+  buildHostedServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
   hasToken: vi.fn(() => false),
@@ -40,6 +41,11 @@ const guestModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
+const freeParityGuestModel = {
+  id: "openai/gpt-oss-120b",
+  name: "GPT OSS 120B",
+  provider: "openai" as const,
+};
 const premiumModel = {
   id: "anthropic/claude-sonnet-4.5",
   name: "Claude Sonnet 4.5",
@@ -51,7 +57,11 @@ vi.mock("@/lib/config", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
-  buildAvailableModels: vi.fn(() => [premiumModel, guestModel]),
+  buildAvailableModels: vi.fn(() => [
+    premiumModel,
+    freeParityGuestModel,
+    guestModel,
+  ]),
   getDefaultModel: vi.fn((models: Array<typeof guestModel>) => models[0]),
 }));
 
@@ -105,6 +115,10 @@ vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: mockState.getGuestBearerToken,
 }));
 
+vi.mock("@/lib/apis/web/context", () => ({
+  buildHostedServerRequest: mockState.buildHostedServerRequest,
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({
     getAccessToken: mockState.getAccessToken,
@@ -141,6 +155,7 @@ describe("useChatSession hosted mode", () => {
   beforeEach(() => {
     mockState.convexAuth.isAuthenticated = true;
     mockState.convexAuth.isLoading = false;
+    mockState.buildHostedServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
@@ -210,6 +225,57 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("includes the selected direct-guest server in hosted chat bodies", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.buildHostedServerRequest.mockReturnValue({
+      serverUrl: "https://mcp.excalidraw.com/mcp",
+      serverHeaders: { "X-Api-Key": "guest-key" },
+      oauthAccessToken: "guest-oauth-token",
+      clientCapabilities: { roots: { listChanged: true } },
+    });
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["Excalidraw (App)"],
+      }),
+    );
+
+    const body = lastTransportOptions.body();
+
+    expect(result.current.chatSessionId).toBe("chat-session-id");
+    expect(mockState.buildHostedServerRequest).toHaveBeenCalledWith(
+      "Excalidraw (App)",
+    );
+    expect(body).toMatchObject({
+      chatSessionId: "chat-session-id",
+      serverUrl: "https://mcp.excalidraw.com/mcp",
+      serverHeaders: { "X-Api-Key": "guest-key" },
+      oauthAccessToken: "guest-oauth-token",
+      clientCapabilities: { roots: { listChanged: true } },
+    });
+    unmount();
+  });
+
+  it("keeps plain hosted guest chat bodies when no server is selected", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+      }),
+    );
+
+    const body = lastTransportOptions.body();
+
+    expect(result.current.chatSessionId).toBe("chat-session-id");
+    expect(mockState.buildHostedServerRequest).not.toHaveBeenCalled();
+    expect(body).toMatchObject({
+      chatSessionId: "chat-session-id",
+    });
+    expect(body.serverUrl).toBeUndefined();
+    unmount();
+  });
+
   it("treats anonymous shared-chat viewers as guest users", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
@@ -228,6 +294,7 @@ describe("useChatSession hosted mode", () => {
     });
 
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "openai/gpt-oss-120b",
       "openai/gpt-5-mini",
     ]);
     expect(result.current.isAuthReady).toBe(true);

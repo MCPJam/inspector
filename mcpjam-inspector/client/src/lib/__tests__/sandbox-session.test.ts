@@ -91,7 +91,21 @@ describe("sandbox-session", () => {
 
     expect(readSandboxSession()).toEqual({
       token: "sandbox-token",
-      payload,
+      payload: {
+        ...payload,
+        servers: [
+          {
+            serverId: "srv_1",
+            serverName: "Bench",
+            useOAuth: true,
+            serverUrl: "https://example.com/mcp",
+            clientId: "client_1",
+            oauthScopes: ["read"],
+            optional: false,
+          },
+        ],
+        welcomeDialog: undefined,
+      },
       surface: "share_link",
     });
   });

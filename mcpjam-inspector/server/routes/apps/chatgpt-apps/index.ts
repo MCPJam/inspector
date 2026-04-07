@@ -201,7 +201,7 @@ chatgpt.post("/widget/store", async (c) => {
       deviceType: deviceType ?? "desktop",
       userLocation: userLocation ?? null, // Coarse IP-based location per SDK spec
       maxHeight: maxHeight ?? null, // Host-controlled max height constraint
-      cspMode: cspMode ?? "widget-declared", // CSP enforcement mode (strict by default)
+      cspMode: cspMode ?? "permissive", // CSP enforcement mode (permissive by default)
       capabilities: capabilities ?? { hover: true, touch: false }, // Device capabilities
       safeAreaInsets: safeAreaInsets ?? {
         top: 0,
@@ -281,10 +281,7 @@ chatgpt.get("/widget-html/:toolId", async (c) => {
       | undefined;
 
     // Build CSP configuration based on mode
-    const cspConfig = buildCspHeader(
-      cspMode ?? "widget-declared",
-      widgetCspRaw,
-    );
+    const cspConfig = buildCspHeader(cspMode ?? "permissive", widgetCspRaw);
 
     const baseUrl = extractBaseUrl(htmlContent);
     const runtimeConfig: RuntimeConfig = {
@@ -413,7 +410,7 @@ chatgpt.get("/widget-content/:toolId", async (c) => {
     } = widgetData;
 
     // Use query param override if provided, otherwise use stored mode
-    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "widget-declared";
+    const effectiveCspMode = cspModeParam ?? storedCspMode ?? "permissive";
 
     const mcpClientManager = c.mcpClientManager;
     const availableServers = mcpClientManager

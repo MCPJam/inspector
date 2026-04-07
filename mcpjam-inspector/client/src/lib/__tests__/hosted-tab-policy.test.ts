@@ -11,9 +11,10 @@ import {
 
 describe("hosted-tab-policy", () => {
   it("normalizes legacy hash aliases to canonical tabs", () => {
-    expect(normalizeHostedHashTab("registry")).toBe("servers");
     expect(normalizeHostedHashTab("chat")).toBe("chat-v2");
     expect(normalizeHostedHashTab("chat-v2")).toBe("chat-v2");
+    // "registry" is now a first-class tab, not an alias
+    expect(normalizeHostedHashTab("registry")).toBe("registry");
   });
 
   it("keeps prompts visible in hosted sidebar allow-list", () => {
@@ -56,7 +57,8 @@ describe("hosted-tab-policy", () => {
   it("hides blocked tabs from hosted sidebar", () => {
     expect(isHostedSidebarTabAllowed("skills")).toBe(false);
     expect(isHostedSidebarTabAllowed("tasks")).toBe(false);
-    expect(isHostedSidebarTabAllowed("evals")).toBe(false);
+    expect(isHostedSidebarTabAllowed("evals")).toBe(true);
+    expect(isHostedHashTabBlocked("evals")).toBe(false);
   });
 
   it("allows oauth-flow in hosted sidebar", () => {

@@ -76,10 +76,10 @@ export function ToolList({
                       onSelectTool(name);
                     }
                   }}
-                  className={`w-full text-left px-3 py-2 rounded-md transition-colors ${
+                  className={`w-full text-left px-3 py-2 rounded-md border border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-1 ${
                     isSelected
-                      ? "bg-primary/10 border border-primary/30 cursor-pointer"
-                      : "hover:bg-muted/50 border border-transparent cursor-pointer"
+                      ? "cursor-pointer bg-primary/10"
+                      : "cursor-pointer hover:bg-muted/50"
                   }`}
                 >
                   <code className="text-xs font-mono font-medium truncate block">

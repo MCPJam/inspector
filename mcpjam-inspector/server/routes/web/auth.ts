@@ -33,10 +33,13 @@ function refineHostedTokens<T extends z.ZodRawShape>(schema: z.ZodObject<T>) {
   });
 }
 
+const clientCapabilitiesSchema = z.record(z.string(), z.unknown());
+
 export const workspaceServerSchema = refineHostedTokens(
   z.object({
     workspaceId: z.string().min(1),
     serverId: z.string().min(1),
+    clientCapabilities: clientCapabilitiesSchema.optional(),
     oauthAccessToken: z.string().optional(),
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
@@ -71,6 +74,7 @@ export const promptsListMultiSchema = refineHostedTokens(
   z.object({
     workspaceId: z.string().min(1),
     serverIds: z.array(z.string().min(1)).min(1),
+    clientCapabilities: clientCapabilitiesSchema.optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["workspace_member", "chat_v2"]).optional(),
     shareToken: z.string().min(1).optional(),
@@ -90,6 +94,7 @@ export const hostedChatSchema = refineHostedTokens(
     .object({
       workspaceId: z.string().min(1),
       selectedServerIds: z.array(z.string().min(1)),
+      clientCapabilities: clientCapabilitiesSchema.optional(),
       chatSessionId: z.string().min(1).optional(),
       surface: z.enum(["preview", "share_link"]).optional(),
       oauthTokens: z.record(z.string(), z.string()).optional(),
@@ -105,6 +110,7 @@ export const hostedChatSchema = refineHostedTokens(
 export const guestServerInputSchema = z.object({
   serverUrl: z.string().min(1),
   serverHeaders: z.record(z.string(), z.string()).optional(),
+  clientCapabilities: clientCapabilitiesSchema.optional(),
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -215,6 +221,7 @@ function toHttpConfig(
   authResponse: ConvexAuthorizeResponse,
   timeoutMs: number,
   oauthAccessToken?: string,
+  clientCapabilities?: Record<string, unknown>,
 ): HttpServerConfig {
   if (authResponse.serverConfig.transportType !== "http") {
     throw new WebRouteError(
@@ -242,6 +249,7 @@ function toHttpConfig(
 
   return {
     url: authResponse.serverConfig.url,
+    capabilities: clientCapabilities,
     requestInit: {
       headers,
     },
@@ -261,6 +269,7 @@ export async function createAuthorizedManager(
   serverIds: string[],
   timeoutMs: number,
   oauthTokens?: Record<string, string>,
+  clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "workspace_member" | "chat_v2";
     shareToken?: string;
@@ -296,7 +305,10 @@ export async function createAuthorizedManager(
         }
       }
 
-      return [serverId, toHttpConfig(auth, timeoutMs, oauthToken)] as const;
+      return [
+        serverId,
+        toHttpConfig(auth, timeoutMs, oauthToken, clientCapabilities),
+      ] as const;
     }),
   );
 
@@ -330,7 +342,13 @@ export async function handleRoute<T>(
     return c.json(result, successStatus);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(c, routeError.status, routeError.code, routeError.message);
+    return webError(
+      c,
+      routeError.status,
+      routeError.code,
+      routeError.message,
+      routeError.details,
+    );
   }
 }
 
@@ -464,6 +482,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
       const httpConfig: HttpServerConfig = {
         url: guestInput.serverUrl,
+        capabilities: guestInput.clientCapabilities,
         requestInit: {
           headers,
         },
@@ -510,6 +529,8 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         serverIds,
         timeoutMs,
         oauthTokens,
+        (raw.clientCapabilities as Record<string, unknown> | undefined) ??
+          undefined,
         {
           accessScope,
           shareToken,

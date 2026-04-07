@@ -286,4 +286,25 @@ describe("isGuestMode and buildHostedServerRequest consistency", () => {
       /No guest server config found/,
     );
   });
+
+  it("buildGuestServerRequest forwards explicit clientCapabilities overrides", () => {
+    expect(
+      buildGuestServerRequest(
+        {
+          url: "https://example.com/mcp",
+        },
+        undefined,
+        {
+          elicitation: {},
+          experimental: { inspectorProfile: true },
+        },
+      ),
+    ).toEqual({
+      serverUrl: "https://example.com/mcp",
+      clientCapabilities: {
+        elicitation: {},
+        experimental: { inspectorProfile: true },
+      },
+    });
+  });
 });

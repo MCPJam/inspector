@@ -9,13 +9,17 @@ import {
 import { ServerWithName } from "@/hooks/use-app-state";
 import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
-import { JsonEditor } from "@/components/ui/json-editor";
+import { ScrollableJsonView } from "@/components/ui/json-editor";
 
 interface ServerInfoContentProps {
   server: ServerWithName;
+  needsReconnect?: boolean;
 }
 
-export function ServerInfoContent({ server }: ServerInfoContentProps) {
+export function ServerInfoContent({
+  server,
+  needsReconnect = false,
+}: ServerInfoContentProps) {
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [expandedTokens, setExpandedTokens] = useState<Set<string>>(new Set());
 
@@ -118,15 +122,11 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
               View Decoded JWT
             </button>
             {expandedTokens.has(`${tokenKey}Decoded`) && (
-              <div className="mt-1">
-                <JsonEditor
-                  showLineNumbers={false}
-                  height="100%"
-                  value={decoded}
-                  readOnly
-                  showToolbar={false}
-                />
-              </div>
+              <ScrollableJsonView
+                value={decoded}
+                showLineNumbers={false}
+                containerClassName="mt-1 max-h-96 rounded-lg"
+              />
             )}
           </div>
         )}
@@ -197,6 +197,12 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
 
   return (
     <div className="space-y-4">
+      {needsReconnect ? (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm text-muted-foreground">
+          Saved client capabilities differ from this server's last initialize
+          payload. Reconnect the server to apply the workspace client profile.
+        </div>
+      ) : null}
       {serverName && (
         <div>
           <div className="text-sm font-medium text-muted-foreground mb-1">
@@ -260,13 +266,10 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
           <div className="text-sm font-medium text-muted-foreground mb-2">
             Server Capabilities
           </div>
-          <JsonEditor
-            showLineNumbers={false}
-            height="100%"
+          <ScrollableJsonView
             value={serverCapabilities}
-            readOnly
-            showToolbar={false}
-            maxHeight="384px"
+            showLineNumbers={false}
+            containerClassName="max-h-96 rounded-lg"
           />
         </div>
       )}
@@ -276,13 +279,10 @@ export function ServerInfoContent({ server }: ServerInfoContentProps) {
           <div className="text-sm font-medium text-muted-foreground mb-2">
             Client Capabilities
           </div>
-          <JsonEditor
-            showLineNumbers={false}
-            height="100%"
+          <ScrollableJsonView
             value={clientCapabilities}
-            readOnly
-            showToolbar={false}
-            maxHeight="384px"
+            showLineNumbers={false}
+            containerClassName="max-h-96 rounded-lg"
           />
         </div>
       )}

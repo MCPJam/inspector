@@ -12,7 +12,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { useAppState } from "@/hooks/use-app-state";
 import {
   useAiProviderKeys,
   type ProviderTokens,
@@ -26,12 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-  WIZARD_STEPS,
-  STORAGE_KEYS,
-  DEFAULTS,
-  API_ENDPOINTS,
-} from "./constants";
+import { WIZARD_STEPS, STORAGE_KEYS, DEFAULTS } from "./constants";
 import { ServersStep } from "./eval-runner/ServersStep";
 import { ModelStep } from "./eval-runner/ModelStep";
 import { TestsStep } from "./eval-runner/TestsStep";
@@ -42,9 +36,17 @@ import type {
   ExpectedToolCall,
 } from "./eval-runner/types";
 import { useSharedAppState } from "@/state/app-state-context";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  generateEvalTests,
+  generateNegativeEvalTests,
+  listEvalTools,
+  runEvals,
+} from "@/lib/apis/evals-api";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
+  workspaceId: string;
   inline?: boolean;
   onSuccess?: (suiteId?: string) => void;
   preselectedServer?: string;
@@ -97,6 +99,7 @@ const validateExpectedToolCalls = (toolCalls: ExpectedToolCall[]): boolean => {
 
 export function EvalRunner({
   availableModels,
+  workspaceId,
   inline = false,
   onSuccess,
   preselectedServer,
@@ -249,23 +252,18 @@ export function EvalRunner({
       }
 
       try {
-        const response = await fetch(API_ENDPOINTS.LIST_TOOLS, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ serverIds: selectedServers }),
+        const data = await listEvalTools({
+          workspaceId,
+          serverIds: selectedServers,
         });
-
-        if (response.ok) {
-          const data = await response.json();
-          setAvailableTools(data.tools || []);
-        }
+        setAvailableTools(data.tools || []);
       } catch (error) {
         console.error("Failed to fetch tools:", error);
       }
     }
 
     fetchTools();
-  }, [selectedServers]);
+  }, [selectedServers, workspaceId]);
 
   useEffect(() => {
     if (!inline && !open) {
@@ -400,21 +398,11 @@ export function EvalRunner({
 
     try {
       const accessToken = await getAccessToken();
-
-      const response = await fetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          serverIds: selectedServers,
-          convexAuthToken: accessToken,
-        }),
+      const result = await generateEvalTests({
+        workspaceId,
+        serverIds: selectedServers,
+        convexAuthToken: accessToken,
       });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to generate tests");
-      }
 
       if (result.tests && result.tests.length > 0) {
         const generatedTemplates = result.tests.map(
@@ -437,9 +425,7 @@ export function EvalRunner({
     } catch (error) {
       console.error("Failed to generate tests:", error);
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to generate test cases",
+        getBillingErrorMessage(error, "Failed to generate test cases"),
       );
     } finally {
       setIsGenerating(false);
@@ -468,24 +454,11 @@ export function EvalRunner({
 
     try {
       const accessToken = await getAccessToken();
-
-      const response = await fetch(
-        API_ENDPOINTS.EVALS_GENERATE_NEGATIVE_TESTS,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverIds: selectedServers,
-            convexAuthToken: accessToken,
-          }),
-        },
-      );
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.error || "Failed to generate negative tests");
-      }
+      const result = await generateNegativeEvalTests({
+        workspaceId,
+        serverIds: selectedServers,
+        convexAuthToken: accessToken,
+      });
 
       if (result.tests && result.tests.length > 0) {
         const generatedNegativeTemplates: TestTemplate[] = result.tests.map(
@@ -514,9 +487,7 @@ export function EvalRunner({
     } catch (error) {
       console.error("Failed to generate negative tests:", error);
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Failed to generate negative test cases",
+        getBillingErrorMessage(error, "Failed to generate negative test cases"),
       );
     } finally {
       setIsGeneratingNegativeTests(false);
@@ -618,35 +589,19 @@ export function EvalRunner({
       // Build pass criteria description for notes
       const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-      const response = await fetch(API_ENDPOINTS.EVALS_RUN, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          suiteName: suiteName.trim(),
-          suiteDescription: suiteDescription.trim() || undefined,
-          tests: expandedTests,
-          serverIds: selectedServers,
-          modelApiKeys,
-          convexAuthToken: accessToken,
-          passCriteria: {
-            minimumPassRate: minimumPassRate,
-          },
-          notes: criteriaNote,
-        }),
+      const result = await runEvals({
+        workspaceId,
+        suiteName: suiteName.trim(),
+        suiteDescription: suiteDescription.trim() || undefined,
+        tests: expandedTests,
+        serverIds: selectedServers,
+        modelApiKeys,
+        convexAuthToken: accessToken,
+        passCriteria: {
+          minimumPassRate: minimumPassRate,
+        },
+        notes: criteriaNote,
       });
-
-      if (!response.ok) {
-        let errorMessage = "Failed to start evals";
-        try {
-          const result = await response.json();
-          errorMessage = result.error || errorMessage;
-        } catch (parseError) {
-          console.error("Failed to parse error response:", parseError);
-        }
-        throw new Error(errorMessage);
-      }
-
-      const result = await response.json();
       toast.success(result.message || "Evals started successfully!");
 
       // Track suite created
@@ -666,9 +621,7 @@ export function EvalRunner({
       setShowNameError(false);
       setCurrentStep(3);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Failed to start evals",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to start evals"));
     } finally {
       setIsSubmitting(false);
     }

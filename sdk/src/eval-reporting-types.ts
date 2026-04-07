@@ -1,3 +1,5 @@
+import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
+
 export type EvalExpectedToolCall = {
   toolName: string;
   arguments?: Record<string, unknown>;
@@ -12,11 +14,36 @@ export type EvalCiMetadata = {
   commitSha?: string;
 };
 
+export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanStatus = "ok" | "error";
+
+export type EvalTraceSpanInput = {
+  id: string;
+  parentId?: string;
+  name: string;
+  category: EvalTraceSpanCategory;
+  startMs: number;
+  endMs: number;
+  promptIndex?: number;
+  stepIndex?: number;
+  status?: EvalTraceSpanStatus;
+  toolCallId?: string;
+  toolName?: string;
+  serverId?: string;
+  modelId?: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  messageStartIndex?: number;
+  messageEndIndex?: number;
+};
+
 export type EvalTraceInput =
   | string
   | Array<{ role: string; content: unknown }>
   | {
       messages?: Array<{ role: string; content: unknown }>;
+      spans?: EvalTraceSpanInput[];
       prompts?: unknown[];
       raw?: unknown;
     };
@@ -71,11 +98,22 @@ export type EvalResultInput = {
   widgetSnapshots?: EvalWidgetSnapshotInput[];
 };
 
+export type MCPServerReplayConfig = {
+  serverId: string;
+  url: string;
+  preferSSE?: boolean;
+  accessToken?: string;
+  refreshToken?: string;
+  clientId?: string;
+  clientSecret?: string;
+};
+
 export type MCPJamReportingConfig = {
   enabled?: boolean;
   apiKey?: string;
   baseUrl?: string;
   serverNames?: string[];
+  serverReplayConfigs?: MCPServerReplayConfig[];
   suiteName?: string;
   suiteDescription?: string;
   notes?: string;
@@ -83,6 +121,11 @@ export type MCPJamReportingConfig = {
     minimumPassRate: number;
   };
   strict?: boolean;
+  /**
+   * When not `false`, auto-reported results fail if the trace shows tool
+   * execution errors. Default: strict tool outcomes (equivalent to `true`).
+   */
+  failOnToolError?: boolean;
   externalRunId?: string;
   framework?: string;
   ci?: EvalCiMetadata;
@@ -93,6 +136,10 @@ export type MCPJamReportingConfig = {
 export type ReportEvalResultsInput = MCPJamReportingConfig & {
   suiteName: string;
   results: EvalResultInput[];
+  agent?: {
+    getServerReplayConfigs?: () => MCPServerReplayConfig[] | undefined;
+  };
+  mcpClientManager?: MCPClientManager;
 };
 
 export type ReportEvalResultsOutput = {

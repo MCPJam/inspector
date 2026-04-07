@@ -52,7 +52,7 @@ Browser `console.*` is acceptable for client-side debugging.
 
 ## Testing
 
-**All changes should include tests.** Uses Vitest. Run with `npm run test` (or `test:watch`, `test:coverage`).
+**All changes should include tests.** In this repo, `npm run test` runs the Vitest suite (`test:watch`, `test:coverage` are available); we are not opinionated about test frameworks elsewhere.
 
 ### Structure
 
@@ -72,3 +72,10 @@ Tests live in `__tests__/` directories next to source files. Use existing tests 
 ### Checklist
 
 Cover: happy path, validation errors, error handling, edge cases (null, empty, etc.).
+
+## Eval Prompt Policy
+
+- Keep eval-generation and repair prompts focused on attributable cases: prefer short, discovery-backed, live-workspace-safe scenarios over long synthetic workflows.
+- Do not rely on fake names, ids, places, or other brittle workspace fixtures unless an earlier step in the case establishes them.
+- When tool metadata supports a stable prerequisite or discovery sequence, preserve it instead of simplifying it away.
+- Major case rewrites are allowed when they are needed to remove brittle fixture assumptions and isolate MCP server behavior.

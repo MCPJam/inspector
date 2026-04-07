@@ -10,6 +10,7 @@ import { calculateLatencyStats, type LatencyStats } from "./percentiles.js";
 import { posthog } from "./telemetry.js";
 import { reportEvalResultsSafely } from "./report-eval-results.js";
 import { iterationsToEvalResultInputs } from "./eval-result-mapping.js";
+import { resolveServerReplayConfigs } from "./server-replay-configs.js";
 
 /**
  * Configuration for an EvalTest
@@ -344,14 +345,15 @@ export class EvalTest {
       options.onFailure(this.getFailureReport());
     }
 
-    await this.autoSaveRunIfConfigured(runResult, options);
+    await this.autoSaveRunIfConfigured(runResult, options, agent);
 
     return runResult;
   }
 
   private async autoSaveRunIfConfigured(
     runResult: EvalRunResult,
-    options: EvalTestRunOptions
+    options: EvalTestRunOptions,
+    agent: EvalAgent
   ): Promise<void> {
     if (options.__suppressMcpjamAutoSave) {
       return;
@@ -367,7 +369,10 @@ export class EvalTest {
       return;
     }
 
-    const results = this.buildEvalResultInputs(runResult.iterationDetails);
+    const results = this.buildEvalResultInputs(
+      runResult.iterationDetails,
+      config
+    );
     if (results.length === 0) {
       return;
     }
@@ -376,6 +381,11 @@ export class EvalTest {
       suiteName: config?.suiteName ?? `EvalTest: ${this.getName()}`,
       suiteDescription: config?.suiteDescription,
       serverNames: config?.serverNames,
+      serverReplayConfigs: resolveServerReplayConfigs({
+        serverReplayConfigs: config?.serverReplayConfigs,
+        serverNames: config?.serverNames,
+        agent,
+      }),
       notes: config?.notes,
       passCriteria: config?.passCriteria,
       externalRunId: config?.externalRunId,
@@ -389,12 +399,14 @@ export class EvalTest {
   }
 
   private buildEvalResultInputs(
-    iterations: IterationResult[]
+    iterations: IterationResult[],
+    reporting?: MCPJamReportingConfig
   ): EvalResultInput[] {
     return iterationsToEvalResultInputs(
       this.getName(),
       iterations,
-      this.config.expectedToolCalls
+      this.config.expectedToolCalls,
+      reporting?.failOnToolError
     );
   }
 

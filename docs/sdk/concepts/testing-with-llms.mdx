@@ -34,8 +34,11 @@ const agent = new TestAgent({
   tools: await manager.getTools(),
   model: "anthropic/claude-sonnet-4-20250514",
   apiKey: process.env.ANTHROPIC_API_KEY,
+  mcpClientManager: manager,
 });
 ```
+
+Pass the same **`mcpClientManager`** instance when you use **MCP App** tools and upload evals to MCPJam: that enables [`getWidgetSnapshots()`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) (HTML from `readResource` on `ui.resourceUri`) so traces can replay widgets offline. See the [TestAgent reference](/sdk/reference/test-agent).
 
 ## Running Prompts
 
@@ -79,6 +82,9 @@ result.totalTokens();           // tokens used
 // Error handling
 result.hasError();              // did something go wrong?
 result.getError();              // error message if so
+
+// MCP Apps (when agent was created with mcpClientManager)
+result.getWidgetSnapshots();    // HTML snapshots for MCPJam trace replay
 ```
 
 <Info>

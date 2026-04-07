@@ -1,8 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type RefObject } from "react";
+import { cn } from "@/lib/utils";
+import {
+  useSandboxHostStyle,
+  useSandboxHostTheme,
+} from "@/contexts/sandbox-host-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 
-import { MessageView } from "./thread/message-view";
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
@@ -11,6 +15,7 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
+import { TranscriptThread } from "./thread/transcript-thread";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -40,6 +45,10 @@ interface ThreadProps {
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  focusMessageId?: string | null;
+  highlightedMessageIds?: string[];
+  navigationKey?: string | number | null;
+  viewportRef?: RefObject<HTMLElement | null>;
 }
 
 export function Thread({
@@ -64,6 +73,10 @@ export function Thread({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  focusMessageId = null,
+  highlightedMessageIds = [],
+  navigationKey = null,
+  viewportRef,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -107,44 +120,58 @@ export function Thread({
   const canSendFullscreenChat =
     !fullscreenChatDisabled && fullscreenChatInput.trim().length > 0;
 
+  const sandboxHostStyle = useSandboxHostStyle();
+  const sandboxHostTheme = useSandboxHostTheme();
+  const isChatgptDark =
+    sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
+
   return (
-    <div className="flex-1 min-h-0 pb-4">
+    <div
+      className={cn(
+        "flex-1 min-h-0 pb-4",
+        isChatgptDark && "bg-[#212121] text-[#DFDFDF]",
+      )}
+    >
       {/* Fixed spacer to reserve space for PIP widget */}
       {pipWidgetId && (
         <div className="h-[480px] flex-shrink-0 pointer-events-none" />
       )}
-      <div className="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8">
-        {messages.map((message, idx) => (
-          <MessageView
-            key={idx}
-            message={message}
-            model={model}
-            onSendFollowUp={sendFollowUpMessage}
-            toolsMetadata={toolsMetadata}
-            toolServerMap={toolServerMap}
-            onWidgetStateChange={onWidgetStateChange}
-            onModelContextUpdate={onModelContextUpdate}
-            pipWidgetId={pipWidgetId}
-            fullscreenWidgetId={fullscreenWidgetId}
-            onRequestPip={handleRequestPip}
-            onExitPip={handleExitPip}
-            onRequestFullscreen={handleRequestFullscreen}
-            onExitFullscreen={handleExitFullscreen}
-            displayMode={displayMode}
-            onDisplayModeChange={onDisplayModeChange}
-            selectedProtocolOverrideIfBothExists={
-              selectedProtocolOverrideIfBothExists
-            }
-            onToolApprovalResponse={onToolApprovalResponse}
-            toolRenderOverrides={toolRenderOverrides}
-            showSaveViewButton={showSaveViewButton}
-            minimalMode={minimalMode}
-            interactive={interactive}
-            reasoningDisplayMode={reasoningDisplayMode}
-          />
-        ))}
-        {isLoading && <ThinkingIndicator model={model} />}
-      </div>
+      <TranscriptThread
+        messages={messages}
+        model={model}
+        sendFollowUpMessage={sendFollowUpMessage}
+        toolsMetadata={toolsMetadata}
+        toolServerMap={toolServerMap}
+        onWidgetStateChange={onWidgetStateChange}
+        onModelContextUpdate={onModelContextUpdate}
+        pipWidgetId={pipWidgetId}
+        fullscreenWidgetId={fullscreenWidgetId}
+        onRequestPip={handleRequestPip}
+        onExitPip={handleExitPip}
+        onRequestFullscreen={handleRequestFullscreen}
+        onExitFullscreen={handleExitFullscreen}
+        displayMode={displayMode}
+        onDisplayModeChange={onDisplayModeChange}
+        selectedProtocolOverrideIfBothExists={
+          selectedProtocolOverrideIfBothExists
+        }
+        onToolApprovalResponse={onToolApprovalResponse}
+        toolRenderOverrides={toolRenderOverrides}
+        showSaveViewButton={showSaveViewButton}
+        minimalMode={minimalMode}
+        interactive={interactive}
+        reasoningDisplayMode={reasoningDisplayMode}
+        focusMessageId={focusMessageId}
+        highlightedMessageIds={highlightedMessageIds}
+        navigationKey={navigationKey}
+        viewportRef={viewportRef}
+        contentClassName="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+      />
+      {isLoading && (
+        <div className="max-w-4xl mx-auto px-4">
+          <ThinkingIndicator model={model} />
+        </div>
+      )}
 
       {showFullscreenChatOverlay && (
         <FullscreenChatOverlay

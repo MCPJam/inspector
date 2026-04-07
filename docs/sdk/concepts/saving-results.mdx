@@ -20,6 +20,13 @@ export MCPJAM_API_KEY=mcpjam_...
 
 That's it — both `EvalTest` and `EvalSuite` will auto-save results when this key is available.
 
+`MCPJAM_API_KEY` enables result uploads.
+
+**Attach the connected `MCPClientManager` to [`TestAgent`](/sdk/reference/test-agent)** (or pass `agent` / `mcpClientManager` to manual reporting APIs) when you need either of the following:
+
+1. **MCP App / widget replay in Evals traces** — After each MCP App tool call, the agent uses the manager’s [`readResource`](/sdk/reference/mcp-client-manager#readresource) to fetch HTML from the tool’s `ui.resourceUri` and fills [`widgetSnapshots`](/sdk/reference/prompt-result#mcp-app-widget-snapshots) on [`PromptResult`](/sdk/reference/prompt-result). Without the manager, traces still upload (messages + spans) but **widgets will not replay** in the dashboard. The tool’s JSON result alone is not enough for offline iframe replay.
+2. **Replay credentials (authenticated HTTP MCP)** — The SDK can persist server connection details for debugging and reruns. You do not need to build a second secret object yourself; replay config is derived automatically when the agent or manager is attached.
+
 ## Auto-Save from EvalTest
 
 When `MCPJAM_API_KEY` is set, `EvalTest.run()` automatically saves results:
@@ -31,6 +38,37 @@ await test.run(agent, {
     suiteName: "Addition Eval",
     passCriteria: { minimumPassRate: 90 },
   },
+});
+```
+
+**Tool execution:** Auto-saved payloads use the same **pass/fail rules** as the [eval reporting reference](/sdk/reference/eval-reporting#tool-execution-and-passed): failed tool calls default to `passed: false` unless you set `failOnToolError: false` on the `mcpjam` object.
+
+For authenticated HTTP servers:
+
+```typescript
+import { MCPClientManager, TestAgent } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager({
+  asana: {
+    url: process.env.MCP_SERVER_URL!,
+    refreshToken: process.env.MCP_REFRESH_TOKEN!,
+    clientId: process.env.MCP_CLIENT_ID!,
+    clientSecret: process.env.MCP_CLIENT_SECRET,
+  },
+});
+
+await manager.connectToServer("asana");
+
+const agent = new TestAgent({
+  tools: await manager.getTools(),
+  model: "openai/gpt-4o-mini",
+  apiKey: process.env.OPENAI_API_KEY!,
+  mcpClientManager: manager,
+});
+
+await test.run(agent, {
+  iterations: 30,
+  mcpjam: { suiteName: "Asana Eval" },
 });
 ```
 
@@ -78,6 +116,7 @@ import {
 // 1) One-shot save (strict — throws on failure)
 await reportEvalResults({
   suiteName: "Nightly",
+  mcpClientManager: manager,
   results: [{ caseTitle: "healthcheck", passed: true }],
 });
 
@@ -88,7 +127,11 @@ const result = await reportEvalResultsSafely({
 });
 
 // 3) Incremental reporter (long-running processes)
-const reporter = createEvalRunReporter({ suiteName: "Incremental" });
+// Assumes `agent` was created with `mcpClientManager: manager`
+const reporter = createEvalRunReporter({
+  suiteName: "Incremental",
+  agent,
+});
 await reporter.record({ caseTitle: "step-1", passed: true });
 await reporter.record({ caseTitle: "step-2", passed: false, error: "timeout" });
 const output = await reporter.finalize();
@@ -100,6 +143,18 @@ await uploadEvalArtifact({
   artifact: junitXmlString,
 });
 ```
+
+`reportEvalResults()` and `createEvalRunReporter()` resolve replay credentials in this order:
+
+1. `serverReplayConfigs` if you pass it explicitly
+2. `agent.getServerReplayConfigs()`
+3. `mcpClientManager.getServerReplayConfigs()`
+
+Most users should pass `agent` or `mcpClientManager` and let the SDK derive replay credentials automatically. Use `serverReplayConfigs` only as an advanced override.
+
+When replay configs are inferred from `agent` or `mcpClientManager`, the SDK limits them to the `serverNames` you attach to the run when `serverNames` is provided.
+
+**Manual reporters (Vitest/Jest hooks):** Pass `agent` or `mcpClientManager` into [`createEvalRunReporter`](/sdk/reference/eval-reporting#createevalrunreporter) — not only on `TestAgent` — and call **`await reporter.finalize()` before `await manager.disconnectAllServers()`** so replay config is still available at upload time. See [Replay metadata for the MCPJam UI](/sdk/reference/eval-reporting#replay-metadata-for-the-mcpjam-ui).
 
 ## CI Metadata
 

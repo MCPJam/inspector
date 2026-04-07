@@ -11,7 +11,14 @@
  * which manages PiP/fullscreen at the widget level.
  */
 
-import { FormEvent, useState, useEffect, useCallback, useMemo } from "react";
+import {
+  FormEvent,
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import { ArrowDown, Braces, Loader2, Trash2 } from "lucide-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { ModelDefinition } from "@/shared/types";
@@ -62,12 +69,23 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import { extractEffectiveHostDisplayMode } from "@/lib/client-config";
+import { PostConnectGuide } from "@/components/app-builder/PostConnectGuide";
+import {
+  SandboxHostStyleProvider,
+  SandboxHostThemeProvider,
+} from "@/contexts/sandbox-host-style-context";
+import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { HandDrawnSendHint } from "./HandDrawnSendHint";
 
 /** Custom device config - dimensions come from store */
 const CUSTOM_DEVICE_BASE = {
   label: "Custom",
   icon: Settings2,
 };
+
+type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
   serverName: string;
@@ -105,6 +123,15 @@ interface PlaygroundMainProps {
   disableChatInput?: boolean;
   hideSaveViewButton?: boolean;
   disabledInputPlaceholder?: string;
+  // Onboarding
+  initialInput?: string;
+  /** When true with `initialInput`, reveals the string with a typewriter effect (App Builder NUX). */
+  initialInputTypewriter?: boolean;
+  /** When true, Send / Enter are blocked until the playground server is connected. */
+  blockSubmitUntilServerConnected?: boolean;
+  pulseSubmit?: boolean;
+  showPostConnectGuide?: boolean;
+  onFirstMessageSent?: () => void;
 }
 
 function ScrollToBottomButton() {
@@ -164,7 +191,7 @@ export function PlaygroundMain({
   // These are kept for backward compatibility but are no longer used
   deviceType: _deviceType = "mobile",
   onDeviceTypeChange: _onDeviceTypeChange,
-  displayMode = "inline",
+  displayMode: displayModeProp = "inline",
   onDisplayModeChange,
   locale: _locale = "en-US",
   onLocaleChange: _onLocaleChange,
@@ -174,11 +201,17 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
+  initialInput,
+  initialInputTypewriter = false,
+  blockSubmitUntilServerConnected = false,
+  pulseSubmit = false,
+  showPostConnectGuide = false,
+  onFirstMessageSent,
 }: PlaygroundMainProps) {
   const { signUp } = useElectronHostedAuth();
   const posthog = usePostHog();
   const clearLogs = useTrafficLogStore((s) => s.clear);
-  const [input, setInput] = useState("");
+
   const [mcpPromptResults, setMcpPromptResults] = useState<MCPPromptResult[]>(
     [],
   );
@@ -202,6 +235,8 @@ export function PlaygroundMain({
   // Device config from store (managed by DisplayContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
+  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const patchHostContext = useClientConfigStore((s) => s.patchHostContext);
 
   // Device config for frame sizing
   const deviceConfig = useMemo(() => {
@@ -224,6 +259,10 @@ export function PlaygroundMain({
         ? [serverName]
         : [],
     [serverName, servers],
+  );
+
+  const serverConnected = Boolean(
+    serverName && servers[serverName]?.connectionStatus === "connected",
   );
 
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
@@ -251,6 +290,7 @@ export function PlaygroundMain({
   );
 
   // Use shared chat session hook
+  const composerOnResetRef = useRef<() => void>(() => {});
   const {
     messages,
     setMessages,
@@ -281,9 +321,7 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => {
-      setInput("");
-    },
+    onReset: () => composerOnResetRef.current(),
   });
 
   // Set playground active flag for widget renderers to read
@@ -301,17 +339,58 @@ export function PlaygroundMain({
   // Host chat background: actual chat area colors from each host's UI
   // (separate from the 76 MCP spec widget design tokens)
   const hostStyle = useUIPlaygroundStore((s) => s.hostStyle);
-  const themeMode = usePreferencesStore((s) => s.themeMode);
+  const globalThemeMode = usePreferencesStore(
+    (s) => s.themeMode,
+  ) as ThreadThemeMode;
+  const themePreset = usePreferencesStore((s) => s.themePreset);
+  const [threadThemeOverride, setThreadThemeOverride] =
+    useState<ThreadThemeMode | null>(null);
+  const effectiveThreadTheme = threadThemeOverride ?? globalThemeMode;
   const chatBg =
     hostStyle === "chatgpt"
       ? CHATGPT_CHAT_BACKGROUND
       : CLAUDE_DESKTOP_CHAT_BACKGROUND;
-  const hostBackgroundColor = chatBg[themeMode];
+  const hostBackgroundColor = chatBg[effectiveThreadTheme];
+  const displayMode =
+    extractEffectiveHostDisplayMode(hostContext) ?? displayModeProp;
+
+  // The App Builder theme toggle is intentionally local to the emulated thread
+  // and composer surface. It should not change MCPJam's global theme or leak
+  // into other tabs.
+  const toggleLocalThreadTheme = useCallback(() => {
+    setThreadThemeOverride((currentThemeOverride) => {
+      const currentTheme = currentThemeOverride ?? globalThemeMode;
+      const nextTheme: ThreadThemeMode =
+        currentTheme === "dark" ? "light" : "dark";
+
+      return nextTheme === globalThemeMode ? null : nextTheme;
+    });
+  }, [globalThemeMode]);
+
+  const handleDisplayModeChange = useCallback(
+    (mode: DisplayMode) => {
+      patchHostContext({ displayMode: mode });
+      onDisplayModeChange?.(mode);
+    },
+    [patchHostContext, onDisplayModeChange],
+  );
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
+
+  // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
+  const composer = useComposerOnboarding({
+    initialInput,
+    initialInputTypewriter,
+    blockSubmitUntilServerConnected,
+    pulseSubmit,
+    showPostConnectGuide,
+    serverConnected,
+    isThreadEmpty,
+  });
+  composerOnResetRef.current = composer.onSessionReset;
 
   // Keyboard shortcut for clear chat (Cmd/Ctrl+Shift+K)
   useEffect(() => {
@@ -424,6 +503,7 @@ export function PlaygroundMain({
 
   // Handle clear chat
   const handleClearChat = useCallback(() => {
+    composer.prepareForClearChat();
     resetChat();
     clearLogs();
     setInjectedToolRenderOverrides({});
@@ -439,7 +519,7 @@ export function PlaygroundMain({
   );
 
   // Placeholder text
-  let placeholder = "Ask something to render UI...";
+  let placeholder = "Try a prompt that could call your tools...";
   if (disableChatInput) {
     placeholder = disabledInputPlaceholder;
   }
@@ -463,8 +543,15 @@ export function PlaygroundMain({
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const hasContent =
-      input.trim() || mcpPromptResults.length > 0 || fileAttachments.length > 0;
-    if (hasContent && status === "ready" && !submitBlocked) {
+      composer.input.trim() ||
+      mcpPromptResults.length > 0 ||
+      fileAttachments.length > 0;
+    if (
+      hasContent &&
+      status === "ready" &&
+      !submitBlocked &&
+      !composer.submitGatedByServer
+    ) {
       if (displayMode === "fullscreen" && isWidgetFullscreen) {
         setIsFullscreenChatOpen(true);
       }
@@ -506,13 +593,16 @@ export function PlaygroundMain({
           ? await attachmentsToFileUIParts(fileAttachments)
           : undefined;
 
-      sendMessage({ text: input, files });
-      setInput("");
+      sendMessage({ text: composer.input, files });
+      composer.setInput("");
       setMcpPromptResults([]);
       // Revoke object URLs and clear file attachments
       revokeFileAttachmentUrls(fileAttachments);
       setFileAttachments([]);
       setModelContextQueue([]); // Clear after sending
+
+      // Notify onboarding that the first message was sent
+      onFirstMessageSent?.();
     }
   };
 
@@ -521,8 +611,8 @@ export function PlaygroundMain({
 
   // Shared chat input props
   const sharedChatInputProps = {
-    value: input,
-    onChange: setInput,
+    value: composer.input,
+    onChange: composer.handleInputChange,
     onSubmit,
     stop,
     disabled: inputDisabled,
@@ -538,8 +628,11 @@ export function PlaygroundMain({
     onSystemPromptChange: setSystemPrompt,
     temperature,
     onTemperatureChange: setTemperature,
-    onResetChat: resetChat,
-    submitDisabled: submitBlocked,
+    onResetChat: () => {
+      composer.prepareForClearChat();
+      resetChat();
+    },
+    submitDisabled: submitBlocked || composer.submitGatedByServer,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount: null,
@@ -557,6 +650,9 @@ export function PlaygroundMain({
     onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: setRequireToolApproval,
+    pulseSubmit: composer.sendButtonOnboardingPulse,
+    minimalMode: showPostConnectGuide,
+    moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
   };
 
   // Check if widget should take over the full container
@@ -584,9 +680,26 @@ export function PlaygroundMain({
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
       {isThreadEmpty ? (
-        // Empty state - centered welcome message
-        <div className="flex-1 flex items-center justify-center overflow-y-auto overflow-x-hidden px-4 min-h-0">
-          <div className="text-center max-w-md mx-auto space-y-6 py-8">
+        // Empty state — centered (welcome + composer, or post-connect guide)
+        <div
+          className={cn(
+            "flex-1 flex overflow-y-auto overflow-x-hidden px-4 min-h-0",
+            "items-center justify-center",
+            hostStyle === "chatgpt"
+              ? effectiveThreadTheme === "dark"
+                ? "bg-[#212121] text-neutral-50"
+                : "bg-white text-neutral-950"
+              : effectiveThreadTheme === "dark"
+                ? "bg-[#262624] text-[#F1F0ED]"
+                : "bg-[#FAF9F5] text-[rgba(61,57,41,1)]",
+          )}
+        >
+          <div
+            className={cn(
+              "mx-auto w-full max-w-4xl text-center",
+              !showPostConnectGuide && "py-8",
+            )}
+          >
             {isAuthLoading ? (
               <div className="space-y-4">
                 <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
@@ -594,10 +707,83 @@ export function PlaygroundMain({
               </div>
             ) : shouldShowUpsell ? (
               <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+            ) : showPostConnectGuide ? (
+              <>
+                <PostConnectGuide />
+                <ChatInput {...sharedChatInputProps} hasMessages={false} />
+              </>
             ) : (
-              <h3 className="text-sm font-semibold text-foreground mb-2">
-                Test ChatGPT Apps and MCP Apps
-              </h3>
+              <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
+                <div className="text-center max-w-md">
+                  <img
+                    src={
+                      effectiveThreadTheme === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCPJam"
+                    draggable={false}
+                    className="h-10 w-auto mx-auto mb-4"
+                  />
+                  <div className="space-y-3">
+                    <h3
+                      className={cn(
+                        "text-lg font-semibold",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-white"
+                            : "text-neutral-950"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]"
+                            : "text-[rgba(61,57,41,1)]",
+                      )}
+                    >
+                      This is your playground for MCP.
+                    </h3>
+                    <p
+                      className={cn(
+                        "text-base leading-7",
+                        hostStyle === "chatgpt"
+                          ? effectiveThreadTheme === "dark"
+                            ? "text-neutral-400"
+                            : "text-neutral-600"
+                          : effectiveThreadTheme === "dark"
+                            ? "text-[#F1F0ED]/80"
+                            : "text-[rgba(61,57,41,0.72)]",
+                      )}
+                    >
+                      Test prompts, inspect tools, and debug AI-powered apps.
+                      Type a message here, or run a tool on the left.
+                    </p>
+                  </div>
+                </div>
+                {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
+                  <div className="w-full shrink-0">
+                    {errorMessage && (
+                      <div className="pb-3">
+                        <ErrorBox
+                          message={errorMessage.message}
+                          errorDetails={errorMessage.details}
+                          code={errorMessage.code}
+                          statusCode={errorMessage.statusCode}
+                          isRetryable={errorMessage.isRetryable}
+                          isMCPJamPlatformError={
+                            errorMessage.isMCPJamPlatformError
+                          }
+                          onResetChat={resetChat}
+                        />
+                      </div>
+                    )}
+                    <ChatInput {...sharedChatInputProps} hasMessages={false} />
+                    {composer.sendNuxCtaVisible && (
+                      <HandDrawnSendHint
+                        hostStyle={hostStyle}
+                        theme={effectiveThreadTheme}
+                      />
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -620,7 +806,7 @@ export function PlaygroundMain({
                 onWidgetStateChange={handleWidgetStateChange}
                 onModelContextUpdate={handleModelContextUpdate}
                 displayMode={displayMode}
-                onDisplayModeChange={onDisplayModeChange}
+                onDisplayModeChange={handleDisplayModeChange}
                 onFullscreenChange={setIsWidgetFullscreen}
                 selectedProtocolOverrideIfBothExists={
                   selectedProtocol ?? undefined
@@ -642,30 +828,33 @@ export function PlaygroundMain({
         </StickToBottom>
       )}
 
-      {/* Single ChatInput that persists - hidden when widget takes over */}
-      {!isWidgetFullTakeover && !showFullscreenChatOverlay && (
-        <div
-          className={cn(
-            "flex-shrink-0 max-w-3xl mx-auto w-full",
-            isThreadEmpty ? "px-4 pb-4" : "p-3",
-          )}
-        >
-          {errorMessage && (
-            <div className="pb-3">
-              <ErrorBox
-                message={errorMessage.message}
-                errorDetails={errorMessage.details}
-                code={errorMessage.code}
-                statusCode={errorMessage.statusCode}
-                isRetryable={errorMessage.isRetryable}
-                isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
-                onResetChat={resetChat}
-              />
-            </div>
-          )}
-          <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
-        </div>
-      )}
+      {/* Footer ChatInput: with messages, or empty when center has no composer
+          (auth loading / upsell). Otherwise empty thread uses centered composer only. */}
+      {!isWidgetFullTakeover &&
+        !showFullscreenChatOverlay &&
+        (!isThreadEmpty || shouldShowUpsell || isAuthLoading) && (
+          <div
+            className={cn(
+              "mx-auto w-full max-w-4xl shrink-0",
+              isThreadEmpty ? "px-4 pb-4" : "p-3",
+            )}
+          >
+            {errorMessage && (
+              <div className="pb-3">
+                <ErrorBox
+                  message={errorMessage.message}
+                  errorDetails={errorMessage.details}
+                  code={errorMessage.code}
+                  statusCode={errorMessage.statusCode}
+                  isRetryable={errorMessage.isRetryable}
+                  isMCPJamPlatformError={errorMessage.isMCPJamPlatformError}
+                  onResetChat={resetChat}
+                />
+              </div>
+            )}
+            <ChatInput {...sharedChatInputProps} hasMessages={!isThreadEmpty} />
+          </div>
+        )}
 
       {/* Fullscreen overlay chat (input pinned + collapsible thread) */}
       {showFullscreenChatOverlay && (
@@ -673,20 +862,20 @@ export function PlaygroundMain({
           messages={messages}
           open={isFullscreenChatOpen}
           onOpenChange={setIsFullscreenChatOpen}
-          input={input}
-          onInputChange={setInput}
+          input={composer.input}
+          onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={inputDisabled}
           canSend={
             !disableChatInput &&
             status === "ready" &&
             !submitBlocked &&
-            input.trim().length > 0
+            composer.input.trim().length > 0
           }
           isThinking={status === "submitted"}
           onSend={() => {
-            sendMessage({ text: input });
-            setInput("");
+            sendMessage({ text: composer.input });
+            composer.setInput("");
             setMcpPromptResults([]);
           }}
         />
@@ -696,36 +885,53 @@ export function PlaygroundMain({
 
   // Device frame container - display mode is passed to widgets via Thread
   return (
-    <div className="h-full flex flex-col bg-muted/20 overflow-hidden">
-      {/* Device frame header */}
-      <div className="relative flex items-center justify-center px-3 py-2 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0">
-        {/* All controls centered */}
-        <DisplayContextHeader protocol={selectedProtocol} showThemeToggle />
+    <div
+      className={cn(
+        "h-full flex flex-col overflow-hidden",
+        showPostConnectGuide ? "bg-background" : "bg-muted/20",
+      )}
+    >
+      {/* Device frame header — hidden during onboarding */}
+      {!showPostConnectGuide && (
+        <div
+          className="relative flex h-11 items-center justify-center px-3 border-b border-border bg-background/50 text-xs text-muted-foreground flex-shrink-0"
+          data-testid="playground-main-header"
+        >
+          {/* All controls centered */}
+          <DisplayContextHeader
+            protocol={selectedProtocol}
+            showThemeToggle
+            themeModeOverride={effectiveThreadTheme}
+            onThemeToggleOverride={toggleLocalThreadTheme}
+          />
 
-        {/* Right actions - absolutely positioned */}
-        {!isThreadEmpty && (
-          <div className="absolute right-3">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 text-muted-foreground hover:text-foreground"
-                  onClick={() => setShowClearConfirm(true)}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Clear chat</p>
-                <p className="text-xs text-muted-foreground">
-                  {navigator.platform.includes("Mac") ? "⌘⇧K" : "Ctrl+Shift+K"}
-                </p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        )}
-      </div>
+          {/* Right actions - absolutely positioned */}
+          {!isThreadEmpty && (
+            <div className="absolute right-3">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-muted-foreground hover:text-foreground"
+                    onClick={() => setShowClearConfirm(true)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Clear chat</p>
+                  <p className="text-xs text-muted-foreground">
+                    {navigator.platform.includes("Mac")
+                      ? "⌘⇧K"
+                      : "Ctrl+Shift+K"}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </div>
+          )}
+        </div>
+      )}
 
       <ConfirmChatResetDialog
         open={showClearConfirm}
@@ -735,54 +941,71 @@ export function PlaygroundMain({
 
       {/* Device frame container */}
       <div className="flex-1 flex items-center justify-center min-h-0 overflow-auto">
-        <div
-          className="relative flex flex-col overflow-hidden"
-          style={{
-            width: deviceConfig.width,
-            maxWidth: "100%",
-            height: isWidgetFullTakeover ? "100%" : deviceConfig.height,
-            maxHeight: "100%",
-            transform: isWidgetFullscreen ? "none" : "translateZ(0)",
-            backgroundColor: hostBackgroundColor,
-          }}
-        >
-          {/* X-Ray mode: show raw JSON view of AI payload */}
-          {xrayMode && (
-            <StickToBottom
-              className="relative flex flex-1 flex-col min-h-0"
-              resize="smooth"
-              initial="smooth"
+        <SandboxHostStyleProvider value={hostStyle}>
+          <SandboxHostThemeProvider value={effectiveThreadTheme}>
+            <div
+              className={cn(
+                "sandbox-host-shell app-theme-scope relative flex flex-col overflow-hidden",
+                effectiveThreadTheme === "dark" && "dark",
+              )}
+              data-testid="playground-thread-shell"
+              data-host-style={hostStyle}
+              data-theme-preset={themePreset}
+              data-thread-theme={effectiveThreadTheme}
+              style={{
+                width: showPostConnectGuide ? "100%" : deviceConfig.width,
+                maxWidth: "100%",
+                height: showPostConnectGuide
+                  ? "100%"
+                  : isWidgetFullTakeover
+                    ? "100%"
+                    : deviceConfig.height,
+                maxHeight: "100%",
+                transform: isWidgetFullscreen ? "none" : "translateZ(0)",
+                backgroundColor: showPostConnectGuide
+                  ? undefined
+                  : hostBackgroundColor,
+              }}
             >
-              <div className="relative flex-1 min-h-0">
-                <StickToBottom.Content className="flex flex-col min-h-0">
-                  <XRaySnapshotView
-                    systemPrompt={systemPrompt}
-                    messages={messages}
-                    selectedServers={selectedServers}
-                    onClose={() => setXrayMode(false)}
-                  />
-                </StickToBottom.Content>
-                <ScrollToBottomButton />
+              {/* X-Ray mode: show raw JSON view of AI payload */}
+              {xrayMode && (
+                <StickToBottom
+                  className="relative flex flex-1 flex-col min-h-0"
+                  resize="smooth"
+                  initial="smooth"
+                >
+                  <div className="relative flex-1 min-h-0">
+                    <StickToBottom.Content className="flex flex-col min-h-0">
+                      <XRaySnapshotView
+                        systemPrompt={systemPrompt}
+                        messages={messages}
+                        selectedServers={selectedServers}
+                        onClose={() => setXrayMode(false)}
+                      />
+                    </StickToBottom.Content>
+                    <ScrollToBottomButton />
+                  </div>
+                  <div className="flex-shrink-0 border-t border-border">
+                    <div className="max-w-xl mx-auto w-full p-3">
+                      <ChatInput
+                        {...sharedChatInputProps}
+                        hasMessages={!isThreadEmpty}
+                      />
+                    </div>
+                  </div>
+                </StickToBottom>
+              )}
+              {/* Thread: kept mounted (but hidden) during X-Ray to preserve
+                  MCPAppsRenderer iframes and bridge connections */}
+              <div
+                className="flex flex-col flex-1 min-h-0"
+                style={xrayMode ? { display: "none" } : undefined}
+              >
+                {threadContent}
               </div>
-              <div className="flex-shrink-0 border-t border-border">
-                <div className="max-w-xl mx-auto w-full p-3">
-                  <ChatInput
-                    {...sharedChatInputProps}
-                    hasMessages={!isThreadEmpty}
-                  />
-                </div>
-              </div>
-            </StickToBottom>
-          )}
-          {/* Thread: kept mounted (but hidden) during X-Ray to preserve
-              MCPAppsRenderer iframes and bridge connections */}
-          <div
-            className="flex flex-col flex-1 min-h-0"
-            style={xrayMode ? { display: "none" } : undefined}
-          >
-            {threadContent}
-          </div>
-        </div>
+            </div>
+          </SandboxHostThemeProvider>
+        </SandboxHostStyleProvider>
       </div>
     </div>
   );

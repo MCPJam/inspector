@@ -1,15 +1,41 @@
-import { useMemo } from "react";
-import { Loader2, CheckCircle2, XCircle } from "lucide-react";
-import { PassCriteriaBadge } from "./pass-criteria-badge";
+import { useMemo, type ReactNode } from "react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { motion, useReducedMotion, type Variants } from "framer-motion";
+import { cn } from "@/lib/utils";
 import { IterationDetails } from "./iteration-details";
-import { getIterationBorderColor } from "./helpers";
+import {
+  evalStatusLeftBorderClasses,
+  formatDuration,
+  formatRunId,
+} from "./helpers";
+import { EVAL_OUTCOME_STATUS_TEXT_CLASS } from "./constants";
+import { RunMetricsBarCharts } from "./run-metrics-bar-charts";
 import {
   computeIterationResult,
   computeIterationPassed,
 } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
-import { AiTriagePanel } from "./ai-triage-panel";
+import { RunInsightsPrimaryBlock } from "./run-insights-primary-block";
+import {
+  RunCaseInsightTraceCaption,
+  shouldOmitRunCaseInsightCaption,
+} from "./run-case-insight-block";
+import { findRunInsightForCase } from "./run-insight-helpers";
+import { useRunInsights } from "./use-run-insights";
+import { useServerQuality } from "./use-server-quality";
+import { InsightPrimaryBlock } from "./insight-primary-block";
+import { navigateToEvalsRoute } from "@/lib/evals-router";
+import { ArrowUpDown, ChevronRight, ExternalLink } from "lucide-react";
+import { getSidebarRunInsightsPassRateLabel } from "./run-header-compact-stats";
+import { RunInsightsSidebarSummary } from "./run-insights-sidebar";
 
 interface RunDetailViewProps {
   selectedRunDetails: EvalSuiteRun;
@@ -36,12 +62,341 @@ interface RunDetailViewProps {
   };
   runDetailSortBy: "model" | "test" | "result";
   onSortChange: (sortBy: "model" | "test" | "result") => void;
-  showRunSummarySidebar: boolean;
-  setShowRunSummarySidebar: (show: boolean) => void;
   serverNames?: string[];
   selectedIterationId: string | null;
   onSelectIteration: (id: string) => void;
   hideCiMetadata?: boolean;
+  /** When true, omit replay source line (shown in SuiteHeader instead). */
+  hideReplayLineage?: boolean;
+  /** When true, only the iteration detail pane is shown (list lives in a parent sidebar). */
+  omitIterationList?: boolean;
+  onOpenRunInsights?: () => void;
+  runInsightsSelected?: boolean;
+  /** Overrides default navigation to test-edit for iteration row edit actions. */
+  onEditTestCase?: (testCaseId: string) => void;
+  /** When true, every iteration with testCaseId shows the external-edit icon. */
+  alwaysShowEditIterationRows?: boolean;
+}
+
+function runDetailSortLabel(sortBy: "model" | "test" | "result"): string {
+  switch (sortBy) {
+    case "model":
+      return "Model";
+    case "test":
+      return "Test";
+    case "result":
+      return "Result";
+    default:
+      return sortBy;
+  }
+}
+
+function normalizeRunPassRatePercent(passRate: number): number {
+  if (passRate > 0 && passRate <= 1) {
+    return Math.round(passRate * 100);
+  }
+  return Math.round(passRate);
+}
+
+function IterationListItem({
+  iteration,
+  isSelected,
+  onSelect,
+  onEditTestCase,
+  alwaysShowEditIterationRows = false,
+}: {
+  iteration: EvalIteration;
+  isSelected: boolean;
+  onSelect: () => void;
+  /** When set, failed iterations with a testCaseId show an editor link. */
+  onEditTestCase?: (testCaseId: string) => void;
+  alwaysShowEditIterationRows?: boolean;
+}) {
+  const isPending =
+    iteration.status === "pending" || iteration.status === "running";
+
+  const testInfo = iteration.testCaseSnapshot;
+  const modelName = testInfo?.model || "—";
+
+  const computedResult = computeIterationResult(iteration);
+  const isFailed = computedResult === "failed";
+  const showEditLink =
+    Boolean(onEditTestCase && iteration.testCaseId) &&
+    (alwaysShowEditIterationRows || isFailed);
+
+  const editLabel = isFailed ? "Edit in Playground" : "Edit";
+
+  const caseTitle = testInfo?.title || "Iteration";
+  const iterationAriaLabel = testInfo?.isNegativeTest
+    ? `Negative test (expects the tool not to be called): ${caseTitle}, ${modelName}. View iteration details.`
+    : `View iteration details: ${caseTitle}, ${modelName}`;
+
+  return (
+    <div
+      className={cn(
+        "relative border-l-2",
+        evalStatusLeftBorderClasses(isPending ? "running" : computedResult),
+        isPending && "opacity-60",
+      )}
+    >
+      <div
+        className={cn(
+          "flex w-full min-w-0 items-center gap-0.5",
+          isSelected
+            ? "bg-primary/10 border-r-2 border-r-primary"
+            : "hover:bg-muted/50",
+        )}
+      >
+        <button
+          type="button"
+          onClick={onSelect}
+          title={
+            testInfo?.isNegativeTest
+              ? "Negative test — expects the tool NOT to be called"
+              : undefined
+          }
+          aria-label={iterationAriaLabel}
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer"
+        >
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="text-xs font-medium leading-snug line-clamp-2">
+              {caseTitle}
+            </span>
+            <span className="truncate text-[10px] font-mono text-muted-foreground">
+              {modelName}
+            </span>
+          </span>
+          <ChevronRight
+            className="h-3.5 w-3.5 shrink-0 text-muted-foreground opacity-70"
+            aria-hidden
+          />
+        </button>
+        {showEditLink && iteration.testCaseId ? (
+          <button
+            type="button"
+            className="mr-1.5 shrink-0 rounded-md p-1.5 text-primary transition-colors hover:bg-muted/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+            title={editLabel}
+            aria-label={editLabel}
+            onClick={(e) => {
+              e.stopPropagation();
+              onEditTestCase!(iteration.testCaseId!);
+            }}
+          >
+            <ExternalLink className="h-3.5 w-3.5 opacity-90" aria-hidden />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const ITERATION_STAGGER_CAP = 20;
+
+const iterationListVariants: Variants = {
+  hidden: {},
+  visible: { transition: { staggerChildren: 0.03, delayChildren: 0.05 } },
+};
+
+const iterationItemVariants: Variants = {
+  hidden: (i: number) =>
+    i < ITERATION_STAGGER_CAP ? { opacity: 0, x: -6 } : { opacity: 1, x: 0 },
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: { duration: 0.15, ease: [0.16, 1, 0.3, 1] },
+  },
+};
+
+function IterationListWithSections({
+  iterations,
+  sortBy,
+  selectedIterationId,
+  onSelectIteration,
+  onEditTestCase,
+  alwaysShowEditIterationRows = false,
+}: {
+  iterations: EvalIteration[];
+  sortBy: "model" | "test" | "result";
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
+  alwaysShowEditIterationRows?: boolean;
+}) {
+  const shouldReduceMotion = useReducedMotion();
+
+  const renderItems = (items: EvalIteration[]) => (
+    <motion.div
+      variants={shouldReduceMotion ? undefined : iterationListVariants}
+      initial={shouldReduceMotion ? false : "hidden"}
+      animate="visible"
+    >
+      {items.map((iteration, index) => (
+        <motion.div
+          key={iteration._id}
+          custom={index}
+          variants={shouldReduceMotion ? undefined : iterationItemVariants}
+        >
+          <IterationListItem
+            iteration={iteration}
+            isSelected={selectedIterationId === iteration._id}
+            onSelect={() => onSelectIteration(iteration._id)}
+            onEditTestCase={onEditTestCase}
+            alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+          />
+        </motion.div>
+      ))}
+    </motion.div>
+  );
+
+  if (sortBy !== "result") {
+    return renderItems(iterations);
+  }
+
+  const failing = iterations.filter(
+    (i) => computeIterationResult(i) === "failed",
+  );
+  const passing = iterations.filter(
+    (i) => computeIterationResult(i) === "passed",
+  );
+  const other = iterations.filter((i) => {
+    const r = computeIterationResult(i);
+    return r !== "failed" && r !== "passed";
+  });
+
+  const ordered = [...failing, ...passing, ...other];
+
+  return renderItems(ordered);
+}
+
+/** Iteration list + sort (composed inside run detail when the list is not inlined). */
+export function RunIterationsSidebar({
+  caseGroupsForSelectedRun,
+  runDetailSortBy,
+  onSortChange,
+  selectedIterationId,
+  onSelectIteration,
+  onEditTestCase,
+  runForOverview = null,
+  runOverviewExtra = null,
+  onOpenRunInsights,
+  runInsightsSelected = false,
+  alwaysShowEditIterationRows = false,
+}: {
+  caseGroupsForSelectedRun: EvalIteration[];
+  runDetailSortBy: "model" | "test" | "result";
+  onSortChange: (sortBy: "model" | "test" | "result") => void;
+  selectedIterationId: string | null;
+  onSelectIteration: (id: string) => void;
+  onEditTestCase?: (testCaseId: string) => void;
+  /** When set, shows Run Insights summary above the iteration list (CI sidebar + inline run detail). */
+  runForOverview?: EvalSuiteRun | null;
+  /** Optional row below Run Insights (e.g. link to full runs table). */
+  runOverviewExtra?: ReactNode;
+  /** Opens run-level insights in the main pane (no iteration). */
+  onOpenRunInsights?: () => void;
+  runInsightsSelected?: boolean;
+  alwaysShowEditIterationRows?: boolean;
+}) {
+  const overviewStatsOverride = useMemo(() => {
+    if (!runForOverview) return undefined;
+    if (caseGroupsForSelectedRun.length === 0) {
+      return (
+        runForOverview.summary ?? {
+          passed: 0,
+          failed: 0,
+          total: 0,
+          passRate: 0,
+        }
+      );
+    }
+    const passed = caseGroupsForSelectedRun.filter((i) =>
+      computeIterationPassed(i),
+    ).length;
+    const failed = caseGroupsForSelectedRun.filter(
+      (i) => !computeIterationPassed(i),
+    ).length;
+    const total = caseGroupsForSelectedRun.length;
+    const passRate = total > 0 ? passed / total : 0;
+    return { passed, failed, total, passRate };
+  }, [runForOverview, caseGroupsForSelectedRun]);
+
+  const overviewPassRateLabel = useMemo(() => {
+    if (!runForOverview) return null;
+    return getSidebarRunInsightsPassRateLabel(
+      runForOverview,
+      overviewStatsOverride,
+    );
+  }, [runForOverview, overviewStatsOverride]);
+
+  return (
+    <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
+      {runForOverview ? (
+        <div className="shrink-0 border-b bg-muted/25">
+          <RunInsightsSidebarSummary
+            onClick={onOpenRunInsights}
+            selected={runInsightsSelected}
+            trailing={overviewPassRateLabel}
+          />
+          {runOverviewExtra ? (
+            <div className="border-t px-4 pb-2 pt-2">{runOverviewExtra}</div>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="flex shrink-0 items-center justify-between border-b px-3 py-2">
+        <div className="text-xs font-semibold">Iterations</div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-7 w-7 border-border/50 text-muted-foreground hover:text-foreground"
+              aria-label={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+              title={`Sort iterations: ${runDetailSortLabel(runDetailSortBy)}`}
+            >
+              <ArrowUpDown className="size-3.5" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[8rem]">
+            <DropdownMenuRadioGroup
+              value={runDetailSortBy}
+              onValueChange={(value) =>
+                onSortChange(value as "model" | "test" | "result")
+              }
+            >
+              <DropdownMenuRadioItem value="model" className="text-xs">
+                {runDetailSortLabel("model")}
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="test" className="text-xs">
+                {runDetailSortLabel("test")}
+              </DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="result" className="text-xs">
+                {runDetailSortLabel("result")}
+              </DropdownMenuRadioItem>
+            </DropdownMenuRadioGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="divide-y">
+          {caseGroupsForSelectedRun.length === 0 ? (
+            <div className="px-3 py-8 text-center text-xs text-muted-foreground">
+              No iterations found.
+            </div>
+          ) : (
+            <IterationListWithSections
+              iterations={caseGroupsForSelectedRun}
+              sortBy={runDetailSortBy}
+              selectedIterationId={selectedIterationId}
+              onSelectIteration={onSelectIteration}
+              onEditTestCase={onEditTestCase}
+              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }
 
 export function RunDetailView({
@@ -51,13 +406,45 @@ export function RunDetailView({
   selectedRunChartData,
   runDetailSortBy,
   onSortChange,
-  showRunSummarySidebar,
-  setShowRunSummarySidebar,
   serverNames = [],
   selectedIterationId,
   onSelectIteration,
   hideCiMetadata,
+  hideReplayLineage,
+  omitIterationList = false,
+  onOpenRunInsights,
+  runInsightsSelected = false,
+  onEditTestCase: onEditTestCaseProp,
+  alwaysShowEditIterationRows = false,
 }: RunDetailViewProps) {
+  const handleEditTestCase =
+    onEditTestCaseProp ??
+    ((testCaseId: string) =>
+      navigateToEvalsRoute({
+        type: "test-edit",
+        suiteId: selectedRunDetails.suiteId,
+        testId: testCaseId,
+      }));
+  const {
+    summary: runInsightsSummary,
+    pending: runInsightsPending,
+    requested: runInsightsRequested,
+    failedGeneration: runInsightsFailedGeneration,
+    error: runInsightsError,
+    requestRunInsights,
+    unavailable: runInsightsUnavailable,
+  } = useRunInsights(selectedRunDetails, { autoRequest: true });
+
+  const {
+    summary: serverQualitySummary,
+    pending: serverQualityPending,
+    requested: serverQualityRequested,
+    failedGeneration: serverQualityFailedGeneration,
+    error: serverQualityError,
+    requestServerQuality,
+    unavailable: serverQualityUnavailable,
+  } = useServerQuality(selectedRunDetails, { autoRequest: true });
+
   // Compute accurate pass/fail stats using the same logic as suite-header
   const computedStats = useMemo(() => {
     if (caseGroupsForSelectedRun.length === 0) {
@@ -81,19 +468,70 @@ export function RunDetailView({
     return { passed, failed, total, passRate };
   }, [caseGroupsForSelectedRun, selectedRunDetails.summary]);
 
-  const hasTokenData = useMemo(
-    () => caseGroupsForSelectedRun.some((i) => (i.tokensUsed || 0) > 0),
-    [caseGroupsForSelectedRun],
-  );
-
   const isRunning = selectedRunDetails.status === "running";
   const expected = selectedRunDetails.expectedIterations;
-  const progressPercent =
-    expected && isRunning && expected > 0
-      ? Math.round((computedStats.total / expected) * 100)
-      : null;
 
   const metricLabel = source === "sdk" ? "Pass Rate" : "Accuracy";
+  const shouldReduceMotion = useReducedMotion();
+  const passRatePercent =
+    computedStats.total > 0
+      ? normalizeRunPassRatePercent(computedStats.passRate)
+      : null;
+  const durationText =
+    selectedRunDetails.completedAt && selectedRunDetails.createdAt
+      ? formatDuration(
+          selectedRunDetails.completedAt - selectedRunDetails.createdAt,
+        )
+      : "—";
+  const totalDisplay =
+    expected && isRunning
+      ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()}`
+      : computedStats.total.toLocaleString();
+  const runOutcomeSummary =
+    computedStats.total === 0
+      ? "No cases recorded yet."
+      : isRunning && expected
+        ? `${computedStats.total.toLocaleString()} of ${expected.toLocaleString()} cases completed`
+        : `${computedStats.passed.toLocaleString()} of ${computedStats.total.toLocaleString()} tests passed`;
+  const runDashboardKpis = [
+    {
+      label: metricLabel,
+      value: passRatePercent !== null ? `${passRatePercent}%` : "—",
+      detail: runOutcomeSummary,
+      valueClass: undefined as string | undefined,
+    },
+    {
+      label: "Passed",
+      value: computedStats.passed.toLocaleString(),
+      detail:
+        computedStats.passed > 0 ? "successful cases" : "no passing cases yet",
+      valueClass:
+        computedStats.passed > 0
+          ? EVAL_OUTCOME_STATUS_TEXT_CLASS.passed
+          : undefined,
+    },
+    {
+      label: "Failed",
+      value: computedStats.failed.toLocaleString(),
+      detail: computedStats.failed > 0 ? "needs review" : "nothing failed",
+      valueClass:
+        computedStats.failed > 0
+          ? EVAL_OUTCOME_STATUS_TEXT_CLASS.failed
+          : undefined,
+    },
+    {
+      label: "Total",
+      value: totalDisplay,
+      detail: expected && isRunning ? "completed / expected" : "cases in run",
+      valueClass: undefined,
+    },
+    {
+      label: "Duration",
+      value: durationText,
+      detail: durationText === "—" ? "available when complete" : "wall-clock",
+      valueClass: undefined,
+    },
+  ];
 
   const selectedIteration = useMemo(
     () =>
@@ -105,8 +543,314 @@ export function RunDetailView({
     [selectedIterationId, caseGroupsForSelectedRun],
   );
 
+  const caseInsightForSelectedIteration = useMemo(() => {
+    if (!selectedIteration) {
+      return null;
+    }
+    return findRunInsightForCase(selectedRunDetails, {
+      caseKey: selectedIteration.testCaseSnapshot?.caseKey,
+      testCaseId: selectedIteration.testCaseId,
+    });
+  }, [selectedIteration, selectedRunDetails]);
+
+  const workflowInsightForSelectedIteration = useMemo(() => {
+    if (
+      !selectedIteration ||
+      !selectedRunDetails.serverQuality?.workflowInsights
+    ) {
+      return null;
+    }
+    const list = selectedRunDetails.serverQuality.workflowInsights;
+    const snap = selectedIteration.testCaseSnapshot;
+    // Match using the same key resolution as the backend context builder
+    const caseKey = snap?.caseKey;
+    if (caseKey) {
+      const match = list.find((w) => w.caseKey === caseKey);
+      if (match) return match;
+    }
+    const testCaseId = selectedIteration.testCaseId;
+    if (testCaseId) {
+      const src = source === "sdk" ? "sdk" : "ui";
+      const match = list.find((w) => w.caseKey === `${src}:${testCaseId}`);
+      if (match) return match;
+    }
+    // Fallback: match by title
+    const title = snap?.title;
+    if (title) {
+      const match = list.find(
+        (w) => w.caseKey === `title:${title}` || w.title === title,
+      );
+      if (match) return match;
+    }
+    return null;
+  }, [selectedIteration, selectedRunDetails, source]);
+
+  const toolInsightsForSelectedIteration = useMemo(() => {
+    if (!selectedIteration || !selectedRunDetails.serverQuality?.toolInsights) {
+      return [];
+    }
+    const calledTools = new Set(
+      (selectedIteration.actualToolCalls ?? []).map((c) => c.toolName),
+    );
+    return selectedRunDetails.serverQuality.toolInsights.filter((t) =>
+      calledTools.has(t.toolName),
+    );
+  }, [selectedIteration, selectedRunDetails]);
+
+  const selectedIterationCaseInsightSlot = useMemo(() => {
+    if (!selectedIteration) {
+      return null;
+    }
+
+    // Regression insight caption (existing)
+    const showRegression = !shouldOmitRunCaseInsightCaption({
+      runStatus: selectedRunDetails.status,
+      caseInsight: caseInsightForSelectedIteration,
+      pending: runInsightsPending,
+      requested: runInsightsRequested,
+      failedGeneration: runInsightsFailedGeneration,
+      error: runInsightsError,
+    });
+    const regressionCaption = showRegression ? (
+      <RunCaseInsightTraceCaption
+        runStatus={selectedRunDetails.status}
+        caseInsight={caseInsightForSelectedIteration}
+        pending={runInsightsPending}
+        requested={runInsightsRequested}
+        failedGeneration={runInsightsFailedGeneration}
+        error={runInsightsError}
+      />
+    ) : null;
+
+    // Server quality workflow caption
+    const wf = workflowInsightForSelectedIteration;
+    const problemTools = toolInsightsForSelectedIteration.filter(
+      (t) => t.rating !== "good",
+    );
+    const isCompleted = selectedRunDetails.status === "completed";
+
+    const workflowCaption =
+      wf && isCompleted ? (
+        <div className="text-xs leading-relaxed">
+          <div className="flex items-baseline gap-1.5">
+            <span
+              className={cn(
+                "font-medium",
+                wf.efficiency === "optimal" || wf.efficiency === "acceptable"
+                  ? "text-muted-foreground"
+                  : "text-orange-500",
+              )}
+            >
+              Workflow: {wf.efficiency}
+            </span>
+            {wf.toolCallCount > 0 && (
+              <span className="text-muted-foreground">
+                · {wf.toolCallCount} call{wf.toolCallCount !== 1 ? "s" : ""}
+                {wf.optimalCallCount != null &&
+                wf.optimalCallCount !== wf.toolCallCount
+                  ? ` (optimal: ~${wf.optimalCallCount})`
+                  : ""}
+              </span>
+            )}
+          </div>
+          {wf.issues.length > 0 && (
+            <p className="mt-0.5 text-foreground">{wf.issues[0]}</p>
+          )}
+          {wf.suggestions.length > 0 && (
+            <p className="mt-0.5 text-muted-foreground">{wf.suggestions[0]}</p>
+          )}
+          {problemTools.length > 0 && (
+            <div className="mt-1 space-y-0.5">
+              {problemTools.map((t) => (
+                <p key={t.toolName} className="text-muted-foreground">
+                  <span className="font-medium text-orange-500">
+                    {t.toolName}
+                  </span>
+                  {t.suggestions.length > 0 ? `: ${t.suggestions[0]}` : ""}
+                </p>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (serverQualityPending || serverQualityRequested) && isCompleted ? (
+        <span className="flex items-center gap-2 text-xs text-muted-foreground">
+          Analyzing workflow quality…
+        </span>
+      ) : null;
+
+    if (!regressionCaption && !workflowCaption) {
+      return null;
+    }
+
+    return (
+      <div className="space-y-2">
+        {regressionCaption}
+        {workflowCaption}
+      </div>
+    );
+  }, [
+    selectedIteration,
+    selectedRunDetails.status,
+    caseInsightForSelectedIteration,
+    runInsightsPending,
+    runInsightsRequested,
+    runInsightsFailedGeneration,
+    runInsightsError,
+    workflowInsightForSelectedIteration,
+    toolInsightsForSelectedIteration,
+    serverQualityPending,
+    serverQualityRequested,
+  ]);
+
+  const hasTokenData = useMemo(
+    () =>
+      selectedRunChartData.tokensData.length > 0 &&
+      selectedRunChartData.tokensData.some((d) => d.tokens > 0),
+    [selectedRunChartData.tokensData],
+  );
+
+  const hasRunBarCharts =
+    selectedRunChartData.durationData.length > 0 || hasTokenData;
+  const hasSecondaryBreakdown =
+    selectedRunChartData.modelData.length >= 2 || hasRunBarCharts;
+
+  const runInsightsNarrative =
+    selectedRunDetails.status === "completed" && !runInsightsUnavailable ? (
+      <RunInsightsPrimaryBlock
+        embedded
+        className={hasSecondaryBreakdown ? undefined : "border-b-0 pb-0"}
+        summary={runInsightsSummary}
+        pending={runInsightsPending}
+        requested={runInsightsRequested}
+        failedGeneration={runInsightsFailedGeneration}
+        error={runInsightsError}
+        onRetry={() => requestRunInsights(true)}
+      />
+    ) : null;
+
+  const serverQualityNarrative =
+    selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
+      <InsightPrimaryBlock
+        embedded
+        title="Server quality"
+        summary={serverQualitySummary}
+        pending={serverQualityPending}
+        requested={serverQualityRequested}
+        failedGeneration={serverQualityFailedGeneration}
+        error={serverQualityError}
+        onRetry={() => requestServerQuality(true)}
+        pendingLabel="Analyzing server quality…"
+        requestingLabel="Requesting server quality analysis…"
+        emptyLabel="We will analyze your MCP server's tool quality and workflow efficiency here."
+      />
+    ) : null;
+
+  const runInsightsBody = (
+    <div className="space-y-6">
+      <div className="flex w-full min-w-0 flex-nowrap gap-3 sm:gap-4">
+        {runDashboardKpis.map((stat, index) => (
+          <motion.div
+            key={`${stat.label}-${index}`}
+            initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
+            animate={shouldReduceMotion ? undefined : { opacity: 1, y: 0 }}
+            transition={
+              shouldReduceMotion
+                ? undefined
+                : {
+                    duration: 0.2,
+                    delay: 0.04 * index,
+                    ease: [0.16, 1, 0.3, 1],
+                  }
+            }
+            className="flex min-w-0 flex-1 basis-0 flex-col rounded-xl border border-border/30 bg-gradient-to-b from-background/80 to-background/50 p-3 sm:p-4"
+          >
+            <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+              {stat.label}
+            </div>
+            <div
+              className={cn(
+                "mt-2 text-2xl font-semibold leading-none tracking-tight tabular-nums sm:mt-3 sm:text-3xl md:text-4xl",
+                stat.valueClass,
+              )}
+            >
+              {stat.value}
+            </div>
+            <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground/70">
+              {stat.detail}
+            </div>
+          </motion.div>
+        ))}
+      </div>
+
+      {runInsightsNarrative}
+      {serverQualityNarrative}
+
+      {hasSecondaryBreakdown ? (
+        <div className="space-y-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+            Breakdown
+          </div>
+
+          {selectedRunChartData.modelData.length >= 2 ? (
+            <div className="flex flex-wrap items-center gap-2.5 rounded-xl border border-border/30 bg-background/60 px-3 py-3">
+              {selectedRunChartData.modelData.map((model) => (
+                <div
+                  key={model.model}
+                  className="inline-flex items-center gap-2 rounded-full border border-border/30 bg-background/80 px-2 py-1"
+                >
+                  <div
+                    className="h-1.5 w-1.5 rounded-full"
+                    style={{
+                      backgroundColor:
+                        model.passRate >= 80
+                          ? "hsl(142.1 76.2% 36.3%)"
+                          : model.passRate >= 50
+                            ? "hsl(45.4 93.4% 47.5%)"
+                            : "hsl(0 84.2% 60.2%)",
+                    }}
+                  />
+                  <span className="text-[11px] text-foreground">
+                    {model.model}
+                  </span>
+                  <span className="text-[11px] font-mono font-medium text-foreground">
+                    {model.passRate}%
+                  </span>
+                  <span className="text-[10px] text-muted-foreground">
+                    ({model.passed}/{model.total})
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {hasRunBarCharts ? (
+            <RunMetricsBarCharts
+              durationData={selectedRunChartData.durationData}
+              tokensData={selectedRunChartData.tokensData}
+              hasTokenData={hasTokenData}
+            />
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+
+  /** Sidebar layout: only grow the detail stack when an iteration is open (needs scroll). */
+  const detailPaneFillsRemainingSpace =
+    !omitIterationList || selectedIterationId !== null;
+
   return (
-    <div className="relative flex flex-col p-4">
+    <div
+      className={cn(
+        "relative flex flex-col",
+        omitIterationList
+          ? cn(
+              "min-h-0 overflow-hidden px-3 py-3",
+              detailPaneFillsRemainingSpace && "flex-1",
+            )
+          : "p-4",
+      )}
+    >
       {/* Run Header */}
       <div className="shrink-0">
         {!hideCiMetadata &&
@@ -118,421 +862,99 @@ export function RunDetailView({
             </div>
           )}
 
-        {/* Run Metrics and Chart */}
-        <div className="rounded-xl border bg-card text-card-foreground">
-          <div className="flex items-center gap-6 p-5">
-            {/* Stats */}
-            <div className="flex-1 min-w-0">
-              <div className="flex items-baseline gap-2 mb-1">
-                <span className="text-2xl font-bold">
-                  {computedStats.total > 0
-                    ? `${Math.round(computedStats.passRate * 100)}%`
-                    : "—"}
-                </span>
-                <span className="text-sm text-muted-foreground">
-                  {metricLabel}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <span>
-                  {expected && isRunning
-                    ? `${computedStats.total.toLocaleString()} / ${expected.toLocaleString()} tests`
-                    : `${computedStats.total.toLocaleString()} tests`}
-                </span>
-                {selectedRunDetails.completedAt &&
-                  selectedRunDetails.createdAt && (
-                    <>
-                      <span className="text-muted-foreground/40">|</span>
-                      <span>
-                        {formatDuration(
-                          selectedRunDetails.completedAt -
-                            selectedRunDetails.createdAt,
-                        )}
-                      </span>
-                    </>
-                  )}
-                <span className="text-muted-foreground/40">|</span>
-                <span className="capitalize">
-                  {isRunning && progressPercent !== null
-                    ? `Running (${progressPercent}%)`
-                    : selectedRunDetails.status}
-                </span>
-              </div>
-              {/* Pass/fail progress bar */}
-              {computedStats.total > 0 && (
-                <div className="mt-3 flex items-center gap-3">
-                  <div className="flex-1 h-2 rounded-full bg-muted overflow-hidden flex">
-                    <div
-                      className="h-full rounded-l-full transition-all"
-                      style={{
-                        width: `${(computedStats.passed / computedStats.total) * 100}%`,
-                        backgroundColor: "hsl(142.1 76.2% 36.3%)",
-                      }}
-                    />
-                    <div
-                      className="h-full rounded-r-full transition-all"
-                      style={{
-                        width: `${(computedStats.failed / computedStats.total) * 100}%`,
-                        backgroundColor: "hsl(0 84.2% 60.2%)",
-                      }}
-                    />
-                  </div>
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    {computedStats.passed} passed · {computedStats.failed}{" "}
-                    failed
-                  </span>
-                </div>
-              )}
-            </div>
+        {!hideReplayLineage && selectedRunDetails.replayedFromRunId ? (
+          <p
+            className="mb-4 text-xs text-muted-foreground"
+            title={selectedRunDetails.replayedFromRunId}
+          >
+            Replay of{" "}
+            <span className="font-mono text-foreground/90">
+              Run {formatRunId(selectedRunDetails.replayedFromRunId)}
+            </span>
+          </p>
+        ) : null}
 
-            {/* Pass/Fail Badge */}
-            <PassCriteriaBadge
-              run={selectedRunDetails}
-              variant="compact"
-              metricLabel={metricLabel}
-            />
+        {/* Run-level metrics + narrative: only when no case is selected (dedicated ?insights=1 or choose a case). */}
+        {!selectedIterationId ? (
+          <div className="rounded-xl border border-border/40 bg-background/80 shadow-xs">
+            <div className="flex w-full flex-wrap items-center gap-2 border-b border-border/80 px-4 py-2.5">
+              <span className="text-xs font-semibold tracking-wide text-foreground">
+                Run insights
+              </span>
+            </div>
+            <div className="px-4 py-4">{runInsightsBody}</div>
           </div>
-
-          {/* Inline model performance (only when ≥2 models) */}
-          {selectedRunChartData.modelData.length >= 2 && (
-            <div className="border-t px-5 py-3">
-              <div className="text-[10px] text-muted-foreground mb-2">
-                Performance by Model
-              </div>
-              <div className="flex flex-wrap items-center gap-4">
-                {selectedRunChartData.modelData.map((model) => (
-                  <div key={model.model} className="flex items-center gap-1.5">
-                    <div
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{
-                        backgroundColor:
-                          model.passRate >= 80
-                            ? "hsl(142.1 76.2% 36.3%)"
-                            : model.passRate >= 50
-                              ? "hsl(45.4 93.4% 47.5%)"
-                              : "hsl(0 84.2% 60.2%)",
-                      }}
-                    />
-                    <span className="text-[11px]">{model.model}</span>
-                    <span className="text-[11px] font-mono font-medium">
-                      {model.passRate}%
-                    </span>
-                    <span className="text-[10px] text-muted-foreground">
-                      ({model.passed}/{model.total})
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
+        ) : null}
       </div>
 
-      {/* AI Triage — shown between summary and iteration panes */}
-      <AiTriagePanel
-        run={selectedRunDetails}
-        failedCount={computedStats.failed}
-      />
-
-      {/* Two-pane body */}
+      {/* Iteration list + detail (list may live in a parent sidebar when omitIterationList). */}
       <div
-        className="flex mt-4 gap-0 rounded-xl border bg-card text-card-foreground overflow-hidden"
-        style={{ height: "calc(100vh - 200px)", minHeight: "400px" }}
+        className={cn(
+          "flex gap-0 overflow-hidden",
+          omitIterationList
+            ? cn(
+                "mt-3 min-h-0 flex-col",
+                detailPaneFillsRemainingSpace && "flex-1",
+              )
+            : "mt-4",
+          !omitIterationList &&
+            "rounded-xl border bg-card text-card-foreground min-h-[400px] h-[calc(100vh-200px)] max-h-[calc(100vh-200px)]",
+        )}
+        style={
+          omitIterationList && detailPaneFillsRemainingSpace
+            ? { minHeight: 400 }
+            : undefined
+        }
       >
-        {/* Left pane: iteration list */}
-        <div className="w-[280px] shrink-0 border-r flex flex-col">
-          <div className="border-b px-3 py-2 shrink-0 flex items-center justify-between">
-            <div className="text-xs font-semibold">Iterations</div>
-            <select
-              value={runDetailSortBy}
-              onChange={(e) =>
-                onSortChange(e.target.value as "model" | "test" | "result")
-              }
-              className="text-[10px] border rounded px-1.5 py-0.5 bg-background"
-            >
-              <option value="model">Model</option>
-              <option value="test">Test</option>
-              <option value="result">Result</option>
-            </select>
+        {!omitIterationList ? (
+          <div className="flex w-[280px] shrink-0 flex-col border-r">
+            <RunIterationsSidebar
+              caseGroupsForSelectedRun={caseGroupsForSelectedRun}
+              runDetailSortBy={runDetailSortBy}
+              onSortChange={onSortChange}
+              selectedIterationId={selectedIterationId}
+              onSelectIteration={onSelectIteration}
+              runForOverview={selectedRunDetails}
+              onEditTestCase={handleEditTestCase}
+              onOpenRunInsights={onOpenRunInsights}
+              runInsightsSelected={runInsightsSelected}
+              alwaysShowEditIterationRows={alwaysShowEditIterationRows}
+            />
           </div>
-          <div className="flex-1 min-h-0 overflow-y-auto">
-            <div className="divide-y">
-              {caseGroupsForSelectedRun.length === 0 ? (
-                <div className="px-3 py-8 text-center text-xs text-muted-foreground">
-                  No iterations found.
-                </div>
-              ) : (
-                <IterationListWithSections
-                  iterations={caseGroupsForSelectedRun}
-                  sortBy={runDetailSortBy}
-                  selectedIterationId={selectedIterationId}
-                  onSelectIteration={onSelectIteration}
-                />
-              )}
-            </div>
-          </div>
-        </div>
+        ) : null}
 
-        {/* Right pane: iteration detail */}
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div
+          className={cn(
+            "flex min-h-0 min-w-0 flex-col",
+            detailPaneFillsRemainingSpace ? "flex-1" : "shrink-0",
+          )}
+        >
           {selectedIteration ? (
             <div
               key={selectedIterationId}
-              className="flex-1 min-h-0 overflow-y-auto p-4"
+              className={cn(
+                "flex min-h-0 flex-1 flex-col overflow-y-auto",
+                omitIterationList ? "space-y-3" : "space-y-4",
+                !omitIterationList && "px-4",
+              )}
             >
               <IterationDetails
                 iteration={selectedIteration}
                 testCase={null}
                 serverNames={serverNames}
                 layoutMode="full"
+                caseInsightSlot={selectedIterationCaseInsightSlot}
               />
             </div>
           ) : (
-            <div className="flex-1 flex items-center justify-center">
-              <div className="text-sm text-muted-foreground">
-                {caseGroupsForSelectedRun.length === 0
-                  ? "No iterations in this run yet."
-                  : "Select an iteration to view details"}
-              </div>
+            <div className="flex min-h-[11rem] w-full shrink-0 items-center justify-center px-4 py-8 text-center text-sm text-muted-foreground">
+              {caseGroupsForSelectedRun.length === 0
+                ? "No iterations in this run yet."
+                : "Select an iteration to view details"}
             </div>
           )}
         </div>
       </div>
     </div>
   );
-}
-
-// Iteration list with section headers when sorted by result
-function IterationListWithSections({
-  iterations,
-  sortBy,
-  selectedIterationId,
-  onSelectIteration,
-}: {
-  iterations: EvalIteration[];
-  sortBy: "model" | "test" | "result";
-  selectedIterationId: string | null;
-  onSelectIteration: (id: string) => void;
-}) {
-  if (sortBy !== "result") {
-    // No sections — just render flat list
-    return (
-      <>
-        {iterations.map((iteration, idx) => (
-          <IterationListItem
-            key={iteration._id}
-            iteration={iteration}
-            index={idx + 1}
-            isSelected={selectedIterationId === iteration._id}
-            onSelect={() => onSelectIteration(iteration._id)}
-          />
-        ))}
-      </>
-    );
-  }
-
-  // Group by result: failing first, then passing, then pending/cancelled
-  const failing = iterations.filter(
-    (i) => computeIterationResult(i) === "failed",
-  );
-  const passing = iterations.filter(
-    (i) => computeIterationResult(i) === "passed",
-  );
-  const other = iterations.filter((i) => {
-    const r = computeIterationResult(i);
-    return r !== "failed" && r !== "passed";
-  });
-
-  let globalIdx = 0;
-
-  return (
-    <>
-      {failing.length > 0 && (
-        <>
-          <div className="px-3 py-1.5 bg-red-500/10 text-[10px] font-semibold text-red-500 uppercase tracking-wide sticky top-0 z-[1]">
-            Failing ({failing.length})
-          </div>
-          {failing.map((iteration) => {
-            globalIdx++;
-            return (
-              <IterationListItem
-                key={iteration._id}
-                iteration={iteration}
-                index={globalIdx}
-                isSelected={selectedIterationId === iteration._id}
-                onSelect={() => onSelectIteration(iteration._id)}
-              />
-            );
-          })}
-        </>
-      )}
-      {passing.length > 0 && (
-        <>
-          <div className="px-3 py-1.5 bg-green-500/10 text-[10px] font-semibold text-green-500 uppercase tracking-wide sticky top-0 z-[1]">
-            Passing ({passing.length})
-          </div>
-          {passing.map((iteration) => {
-            globalIdx++;
-            return (
-              <IterationListItem
-                key={iteration._id}
-                iteration={iteration}
-                index={globalIdx}
-                isSelected={selectedIterationId === iteration._id}
-                onSelect={() => onSelectIteration(iteration._id)}
-              />
-            );
-          })}
-        </>
-      )}
-      {other.length > 0 && (
-        <>
-          <div className="px-3 py-1.5 bg-muted/50 text-[10px] font-semibold text-muted-foreground uppercase tracking-wide sticky top-0 z-[1]">
-            Pending / Cancelled ({other.length})
-          </div>
-          {other.map((iteration) => {
-            globalIdx++;
-            return (
-              <IterationListItem
-                key={iteration._id}
-                iteration={iteration}
-                index={globalIdx}
-                isSelected={selectedIterationId === iteration._id}
-                onSelect={() => onSelectIteration(iteration._id)}
-              />
-            );
-          })}
-        </>
-      )}
-    </>
-  );
-}
-
-// Compact iteration list item for the left pane
-function IterationListItem({
-  iteration,
-  index,
-  isSelected,
-  onSelect,
-}: {
-  iteration: EvalIteration;
-  index: number;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  const startedAt = iteration.startedAt ?? iteration.createdAt;
-  const completedAt = iteration.updatedAt ?? iteration.createdAt;
-  const durationMs =
-    startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : null;
-  const isPending =
-    iteration.status === "pending" || iteration.status === "running";
-
-  const testInfo = iteration.testCaseSnapshot;
-  const modelName = testInfo?.model || "—";
-
-  const computedResult = computeIterationResult(iteration);
-  const passed = computeIterationPassed(iteration);
-
-  // Extract a distinguishing detail from the query or expected tool call args
-  const distinguisher = useMemo(() => {
-    if (!testInfo) return null;
-    // Try to get key params from expected tool calls
-    const expectedArgs = testInfo.expectedToolCalls?.[0]?.arguments;
-    if (expectedArgs && Object.keys(expectedArgs).length > 0) {
-      const entries = Object.entries(expectedArgs).slice(0, 2);
-      return entries
-        .map(
-          ([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`,
-        )
-        .join(", ");
-    }
-    // Fall back to first ~60 chars of query if different from title
-    if (testInfo.query && testInfo.query !== testInfo.title) {
-      return testInfo.query.length > 60
-        ? testInfo.query.slice(0, 57) + "..."
-        : testInfo.query;
-    }
-    return null;
-  }, [testInfo]);
-
-  return (
-    <div className={`relative ${isPending ? "opacity-60" : ""}`}>
-      <div
-        className={`absolute left-0 top-0 h-full w-1 ${getIterationBorderColor(
-          computedResult,
-        )}`}
-      />
-      <button
-        onClick={onSelect}
-        className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 cursor-pointer ${
-          isSelected
-            ? "bg-primary/10 border-r-2 border-r-primary"
-            : "hover:bg-muted/50"
-        }`}
-      >
-        <div className="flex items-center gap-1.5 min-w-0">
-          {/* Sequence number */}
-          <span className="text-[10px] text-muted-foreground font-mono shrink-0 w-4 text-right">
-            {index}
-          </span>
-          {/* Pass/fail icon */}
-          {isPending ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-warning shrink-0" />
-          ) : passed ? (
-            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
-          ) : (
-            <XCircle className="h-3.5 w-3.5 text-destructive shrink-0" />
-          )}
-          <span className="text-xs font-medium truncate flex-1">
-            {testInfo?.title || "Iteration"}
-          </span>
-          {testInfo?.isNegativeTest && (
-            <span
-              className="text-[9px] font-medium px-1 py-0.5 rounded bg-orange-500/15 text-orange-500 shrink-0"
-              title="Negative test — expects the tool NOT to be called"
-            >
-              Negative
-            </span>
-          )}
-        </div>
-        {/* Distinguishing detail */}
-        {distinguisher && (
-          <div className="ml-[calc(1rem+0.375rem+0.875rem)] text-[10px] text-muted-foreground/70 truncate italic">
-            {distinguisher}
-          </div>
-        )}
-        <div className="ml-[calc(1rem+0.375rem+0.875rem)] flex items-center gap-2 text-[10px] text-muted-foreground">
-          <span className="font-mono truncate">{modelName}</span>
-          <span className="shrink-0">
-            {isPending
-              ? "—"
-              : durationMs !== null
-                ? formatDuration(durationMs)
-                : "—"}
-          </span>
-        </div>
-      </button>
-    </div>
-  );
-}
-
-function formatDuration(durationMs: number) {
-  if (durationMs < 1000) {
-    return `${durationMs}ms`;
-  }
-
-  const totalSeconds = Math.round(durationMs / 1000);
-  if (totalSeconds < 60) {
-    return `${totalSeconds}s`;
-  }
-
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) {
-    return seconds ? `${minutes}m ${seconds}s` : `${minutes}m`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 }

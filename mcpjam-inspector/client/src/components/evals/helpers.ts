@@ -11,6 +11,7 @@ import {
 import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 
 export function formatTime(ts?: number) {
   return ts ? new Date(ts).toLocaleString() : "—";
@@ -166,11 +167,57 @@ export function aggregateSuite(
 }
 
 /**
+ * Sort Explore cases: failures first, then "warning" tier (pending/running, no result yet,
+ * cancelled-only, or negative tests), then passes. Ties break by title.
+ */
+export function sortExploreCasesBySignal(
+  cases: EvalCase[],
+  aggregate: SuiteAggregate | null,
+  iterations: EvalIteration[],
+): EvalCase[] {
+  const byCaseId = new Map(
+    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? [],
+  );
+
+  const latestIterationForCase = (
+    testCaseId: string,
+  ): EvalIteration | undefined => {
+    const forCase = iterations.filter((i) => i.testCaseId === testCaseId);
+    if (forCase.length === 0) return undefined;
+    return forCase.reduce((a, b) =>
+      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b,
+    );
+  };
+
+  const signalRank = (c: EvalCase): number => {
+    const row = byCaseId.get(c._id);
+    if (row && row.failed > 0) return 0;
+
+    const latest = latestIterationForCase(c._id);
+    if (!latest) return 1;
+
+    const computed = computeIterationResult(latest);
+    if (computed === "failed") return 0;
+    if (computed === "pending") return 1;
+    if (computed === "cancelled") return 1;
+    if (c.isNegativeTest) return 1;
+    return 2;
+  };
+
+  return [...cases].sort((a, b) => {
+    const ra = signalRank(a);
+    const rb = signalRank(b);
+    if (ra !== rb) return ra - rb;
+    return (a.title || "").localeCompare(b.title || "");
+  });
+}
+
+/**
  * Centralized error handling for mutations
  */
 export function handleMutationError(error: unknown, action: string) {
   console.error(`Failed to ${action}:`, error);
-  toast.error(error instanceof Error ? error.message : `Failed to ${action}`);
+  toast.error(getBillingErrorMessage(error, `Failed to ${action}`));
 }
 
 /**
@@ -195,17 +242,229 @@ export function formatTokens(tokens: number): string {
 }
 
 /**
- * Get border color based on result status
+ * Left `border-l-2` accents — parity with pre–#1602 `getIterationBorderColor` stripes
+ * (`bg-success/50`, `bg-destructive/50`, `bg-warning/50`, …).
+ */
+export function evalStatusLeftBorderClasses(result: string): string {
+  switch (result) {
+    case RESULT_STATUS.PASSED:
+      return "border-l-success/50";
+    case RESULT_STATUS.FAILED:
+      return "border-l-destructive/50";
+    case RESULT_STATUS.PENDING:
+    case "running":
+      return "border-l-warning/50";
+    case RESULT_STATUS.CANCELLED:
+      return "border-l-muted";
+    case "mixed":
+      return "border-l-warning/50";
+    default:
+      return "border-l-muted-foreground/50";
+  }
+}
+
+/**
+ * Thin vertical strip fills — same opacity/hue as {@link evalStatusLeftBorderClasses}
+ * (`bg-success/50`, `bg-destructive/50`, `bg-warning/50`) so nested rows match parent rails.
+ */
+export function evalStatusMiniBarClasses(result: string): string {
+  switch (result) {
+    case RESULT_STATUS.PASSED:
+      return "bg-success/50";
+    case RESULT_STATUS.FAILED:
+      return "bg-destructive/50";
+    case RESULT_STATUS.PENDING:
+    case "running":
+      return "bg-warning/50 animate-pulse";
+    case RESULT_STATUS.CANCELLED:
+      return "bg-muted-foreground/40";
+    case "mixed":
+      return "bg-warning/50";
+    default:
+      return "bg-muted-foreground/40";
+  }
+}
+
+/** Left `border-l-*` for a suite overview row from `latestRun`. */
+export function evalOverviewEntryLeftBorderClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "border-l-transparent";
+  if (r.status === "running" || r.status === "pending") {
+    return evalStatusLeftBorderClasses(RESULT_STATUS.PENDING);
+  }
+  if (r.result === "passed") {
+    return evalStatusLeftBorderClasses(RESULT_STATUS.PASSED);
+  }
+  if (r.result === "failed") {
+    return evalStatusLeftBorderClasses(RESULT_STATUS.FAILED);
+  }
+  return "border-l-muted-foreground/35";
+}
+
+export function evalOverviewEntryMiniBarClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "bg-muted-foreground/25";
+  if (r.status === "running" || r.status === "pending") {
+    return "bg-warning/50 animate-pulse";
+  }
+  if (r.result === "passed") {
+    return "bg-success/50";
+  }
+  if (r.result === "failed") return "bg-destructive/50";
+  return "bg-muted-foreground/40";
+}
+
+/**
+ * Selected nested suite row — borders use the same `/50` rails as the parent
+ * {@link evalOverviewEntryLeftBorderClass}.
+ */
+/** Selected nested row: inset ring + tint so left status border stays the outcome rail. */
+export function evalOverviewEntrySelectedRowClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) {
+    return "bg-primary/10 ring-2 ring-primary/35 ring-inset";
+  }
+  if (r.status === "running" || r.status === "pending") {
+    return "bg-warning/10 ring-2 ring-warning/40 ring-inset";
+  }
+  if (r.result === "passed") {
+    return "bg-success/10 ring-2 ring-success/40 ring-inset";
+  }
+  if (r.result === "failed") {
+    return "bg-destructive/10 ring-2 ring-destructive/35 ring-inset";
+  }
+  return "bg-primary/10 ring-2 ring-primary/35 ring-inset";
+}
+
+export function evalOverviewEntryOutcomeTitle(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "No runs yet";
+  if (r.status === "running" || r.status === "pending") {
+    return "Run in progress";
+  }
+  if (r.result === "passed") return "Last run passed";
+  if (r.result === "failed") return "Last run failed";
+  return `Last run: ${r.status}`;
+}
+
+/** Short status label for compact list rows (sidebar). */
+export function evalOverviewEntryLastRunStatusLabel(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "No runs yet";
+  if (r.status === "running" || r.status === "pending") return "Running";
+  if (r.result === "passed") return "Passed";
+  if (r.result === "failed" || r.status === "failed") return "Failed";
+  if (r.result === "cancelled" || r.status === "cancelled") {
+    return "Cancelled";
+  }
+  if (r.status === "completed") return "Completed";
+  return r.status.replace(/-/g, " ");
+}
+
+/** Tailwind classes for {@link evalOverviewEntryLastRunStatusLabel}. */
+export function evalOverviewEntryLastRunStatusClass(
+  entry: EvalSuiteOverviewEntry,
+): string {
+  const r = entry.latestRun;
+  if (!r) return "text-muted-foreground";
+  if (r.status === "running" || r.status === "pending") {
+    return "text-amber-600 dark:text-amber-400";
+  }
+  if (r.result === "passed") return "text-success";
+  if (r.result === "failed" || r.status === "failed") {
+    return "text-destructive";
+  }
+  if (r.result === "cancelled" || r.status === "cancelled") {
+    return "text-muted-foreground";
+  }
+  return "text-muted-foreground";
+}
+
+/** Normalize API trend points (0–1 or 0–100) to 0–100 integers. */
+export function toPercentEvalTrend(value: number): number {
+  const normalized = value <= 1 ? value * 100 : value;
+  return Math.max(0, Math.min(100, Math.round(normalized)));
+}
+
+export const SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS = 12;
+
+/** When history is longer than this, show a “+N” badge with a tooltip of older points. */
+export const SUITE_PASS_RATE_TREND_BADGE_THRESHOLD = 16;
+
+export type SuitePassRateTrendDisplay = {
+  percents: number[];
+  olderHiddenCount: number;
+  showOlderRunsBadge: boolean;
+  summaryLabel: string;
+  olderPercentsTooltip: string | null;
+};
+
+/**
+ * Prepare pass-rate trend for sidebar sparklines: last N segments, optional overflow badge, summary text.
+ */
+export function formatSuitePassRateTrendForDisplay(
+  rawTrend: number[] | undefined | null,
+): SuitePassRateTrendDisplay | null {
+  if (!rawTrend?.length) return null;
+  const len = rawTrend.length;
+  const slice = rawTrend.slice(-SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS);
+  const percents = slice.map(toPercentEvalTrend);
+  const olderHiddenCount = Math.max(
+    0,
+    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS,
+  );
+  const showOlderRunsBadge = len > SUITE_PASS_RATE_TREND_BADGE_THRESHOLD;
+  let good = 0;
+  for (const p of percents) {
+    if (p >= 80) good += 1;
+  }
+  const worst = Math.min(...percents);
+  const summaryLabel =
+    percents.length >= 3
+      ? `${good}/${percents.length} ≥80% · min ${worst}%`
+      : "";
+  const olderSlice =
+    olderHiddenCount > 0
+      ? rawTrend
+          .slice(0, len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS)
+          .map(toPercentEvalTrend)
+      : [];
+  const olderPercentsTooltip =
+    olderSlice.length > 0
+      ? `Earlier runs (pass rate %): ${olderSlice.join(", ")}`
+      : null;
+  return {
+    percents,
+    olderHiddenCount,
+    showOlderRunsBadge,
+    summaryLabel,
+    olderPercentsTooltip,
+  };
+}
+
+/**
+ * Background class for legacy `w-1` strips (pre–#1602 iteration rows).
  */
 export function getIterationBorderColor(result: string): string {
   switch (result) {
     case RESULT_STATUS.PASSED:
       return "bg-success/50";
     case RESULT_STATUS.FAILED:
-      return "bg-red-500/50";
+      return "bg-destructive/50";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted";
     case RESULT_STATUS.PENDING:
+    case "running":
       return "bg-warning/50";
     default:
       return "bg-muted-foreground/50";
@@ -235,6 +494,32 @@ export const formatters = {
   percentage: formatPercentage,
   tokens: formatTokens,
 } as const;
+
+/**
+ * Order runs for commit drilldown: failed first, then running/pending, then
+ * passed, then other (same ordering as the former in-panel suite list).
+ */
+export function orderCommitGroupRunsByOutcome(
+  runs: EvalSuiteRun[],
+): EvalSuiteRun[] {
+  const failed: EvalSuiteRun[] = [];
+  const running: EvalSuiteRun[] = [];
+  const passed: EvalSuiteRun[] = [];
+  const notRun: EvalSuiteRun[] = [];
+
+  for (const run of runs) {
+    if (run.status === "running" || run.status === "pending") {
+      running.push(run);
+    } else if (run.result === "failed") {
+      failed.push(run);
+    } else if (run.result === "passed") {
+      passed.push(run);
+    } else {
+      notRun.push(run);
+    }
+  }
+  return [...failed, ...running, ...passed, ...notRun];
+}
 
 /**
  * Flatten recentRuns across all suites and group by commitSha.
@@ -376,4 +661,17 @@ export function groupSuitesByTag(
   });
 
   return groups;
+}
+
+/** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
+export function pickLatestCompletedRun(
+  runs: EvalSuiteRun[],
+): EvalSuiteRun | null {
+  const completed = runs.filter((r) => r.status === "completed");
+  if (completed.length === 0) {
+    return null;
+  }
+  return completed.reduce((best, r) =>
+    r.runNumber > best.runNumber ? r : best,
+  );
 }

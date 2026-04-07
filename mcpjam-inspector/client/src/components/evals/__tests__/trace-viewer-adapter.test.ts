@@ -315,6 +315,77 @@ describe("adaptTraceToUiMessages", () => {
     expect((toolPart as any).toolCallId).toBe("trace-tool-0-0-my_tool");
   });
 
+  it("maps source indices to canonical focus message ids for user, assistant, and tool messages", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "user",
+          content: "Draw me a diagram",
+        },
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "create_view",
+              input: { title: "Architecture" },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "create_view",
+              output: { ok: true },
+            },
+          ],
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Saved." }],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "orphan-1",
+              toolName: "read_me",
+              output: "orphan output",
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({ trace });
+
+    expect(result.sourceMessageIndexToUiMessageIds[0]).toEqual([
+      "trace-user-0",
+    ]);
+    expect(result.sourceMessageIndexToFocusUiMessageId[0]).toBe("trace-user-0");
+
+    expect(result.sourceMessageIndexToUiMessageIds[1]).toEqual([
+      "trace-assistant-1",
+    ]);
+    expect(result.sourceMessageIndexToFocusUiMessageId[1]).toBe(
+      "trace-assistant-1",
+    );
+    expect(result.sourceMessageIndexToFocusUiMessageId[2]).toBe(
+      "trace-assistant-1",
+    );
+    expect(result.sourceMessageIndexToFocusUiMessageId[3]).toBe(
+      "trace-assistant-3",
+    );
+    expect(result.sourceMessageIndexToFocusUiMessageId[4]).toBe(
+      "trace-assistant-orphan-4-0",
+    );
+  });
+
   // --- Test 6: Deterministic synthetic IDs ---
   it("produces identical output for identical input across calls and does not mutate input", () => {
     const trace: TraceEnvelope = {

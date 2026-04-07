@@ -2,8 +2,10 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   filterWorkspacesForOrganization,
+  normalizeWorkspaceMembersResult,
   type RemoteWorkspace,
   useWorkspaceQueries,
+  type WorkspaceMember,
 } from "../useWorkspaces";
 
 const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
@@ -83,9 +85,48 @@ describe("useWorkspaceQueries", () => {
     );
 
     expect(result.current.isLoading).toBe(true);
+    expect(result.current.allWorkspaces).toBeUndefined();
     expect(result.current.workspaces).toBeUndefined();
     expect(result.current.sortedWorkspaces).toEqual([]);
     expect(result.current.hasWorkspaces).toBe(false);
+    expect(result.current.hasAnyWorkspaces).toBe(false);
     expect(mockUseQuery).toHaveBeenCalledWith("workspaces:getMyWorkspaces", {});
+  });
+});
+
+describe("normalizeWorkspaceMembersResult", () => {
+  it("supports the current object-shaped backend response", () => {
+    const member: WorkspaceMember = {
+      _id: "member-1",
+      workspaceId: "ws-1",
+      email: "person@example.com",
+      addedBy: "user-1",
+      addedAt: 1,
+      isOwner: false,
+      isPending: false,
+      hasAccess: true,
+      accessSource: "workspace",
+      canRemove: true,
+      user: null,
+    };
+
+    expect(
+      normalizeWorkspaceMembersResult({
+        members: [member],
+        canManageMembers: true,
+      }),
+    ).toEqual({
+      members: [member],
+      canManageMembers: true,
+    });
+  });
+
+  it("falls back safely for unexpected query values", () => {
+    expect(
+      normalizeWorkspaceMembersResult("billing_limit_reached" as never),
+    ).toEqual({
+      members: [],
+      canManageMembers: false,
+    });
   });
 });

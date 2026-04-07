@@ -1,5 +1,4 @@
-import { MCPServerConfig } from "@mcpjam/sdk";
-import type { HttpServerConfig } from "@mcpjam/sdk";
+import type { HttpServerConfig, MCPServerConfig } from "@mcpjam/sdk/browser";
 import type { LoggingLevel } from "@modelcontextprotocol/sdk/types.js";
 import { authFetch } from "@/lib/session-token";
 import { HOSTED_MODE } from "@/lib/config";
@@ -7,6 +6,8 @@ import {
   validateHostedServer,
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
+import { webPost } from "@/lib/apis/web/base";
+import { buildGuestServerRequest, isGuestMode } from "@/lib/apis/web/context";
 
 /**
  * Extracts an OAuth access token from an HttpServerConfig's Authorization header.
@@ -50,9 +51,23 @@ async function safeValidateHostedServer(
   serverConfig: MCPServerConfig,
 ): Promise<HostedServerValidateResponse & { error?: string }> {
   try {
+    if (isGuestMode()) {
+      const request = buildGuestServerRequest(
+        serverConfig,
+        extractOAuthToken(serverConfig),
+        serverConfig.capabilities as Record<string, unknown> | undefined,
+      );
+
+      return await webPost<typeof request, HostedServerValidateResponse>(
+        "/api/web/servers/validate",
+        request,
+      );
+    }
+
     return await validateHostedServer(
       serverId,
       extractOAuthToken(serverConfig),
+      serverConfig.capabilities as Record<string, unknown> | undefined,
     );
   } catch (error) {
     return {

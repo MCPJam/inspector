@@ -1,5 +1,13 @@
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
+import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
+import {
+  getBillingUpsellCtaLabel,
+  getBillingUpsellTeaser,
+} from "@/lib/billing-upsell";
 import { Loader2 } from "lucide-react";
+import { BillingGateSurface } from "@/components/billing/BillingGateSurface";
+import { BILLING_GATES, useWorkspaceBillingGate } from "@/lib/billing-gates";
+import { clearBuilderSession } from "@/lib/sandbox-session";
 
 const SandboxBuilderExperience = lazy(
   () => import("@/components/sandboxes/builder/SandboxBuilderExperience"),
@@ -9,7 +17,56 @@ interface SandboxesTabProps {
   workspaceId: string | null;
 }
 
+function SandboxesLoadingState() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+/**
+ * Billing-related Convex failures from sandbox mutations use getBillingErrorMessage
+ * in CreateSandboxDialog, SandboxEditor, and SandboxBuilderView.
+ */
 export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
+  const sandboxGate = useWorkspaceBillingGate({
+    workspaceId,
+    gate: BILLING_GATES.sandboxes,
+  });
+  const sandboxCreationGate = useWorkspaceBillingGate({
+    workspaceId,
+    gate: BILLING_GATES.sandboxCreation,
+  });
+  const { planCatalog } = useOrganizationBilling(sandboxGate.organizationId, {
+    workspaceId,
+  });
+  const createSandboxUpsell =
+    sandboxCreationGate.isDenied && sandboxCreationGate.denialMessage
+      ? {
+          title: "Need more sandboxes?",
+          message: sandboxCreationGate.denialMessage,
+          teaser: getBillingUpsellTeaser({
+            planCatalog,
+            upgradePlan: sandboxCreationGate.upgradePlan,
+            intent: "sandboxes",
+          }),
+          canManageBilling: sandboxCreationGate.canManageBilling,
+          ctaLabel: getBillingUpsellCtaLabel(sandboxCreationGate.upgradePlan),
+          onNavigateToBilling: () => {
+            if (sandboxCreationGate.organizationId) {
+              window.location.hash = `organizations/${sandboxCreationGate.organizationId}/billing`;
+            }
+          },
+        }
+      : null;
+
+  useEffect(() => {
+    if (sandboxGate.isDenied) {
+      clearBuilderSession();
+    }
+  }, [sandboxGate.isDenied]);
+
   if (!workspaceId) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -21,14 +78,21 @@ export function SandboxesTab({ workspaceId }: SandboxesTabProps) {
   }
 
   return (
-    <Suspense
-      fallback={
-        <div className="flex h-full items-center justify-center">
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        </div>
-      }
+    <BillingGateSurface
+      gate={sandboxGate}
+      loadingFallback={<SandboxesLoadingState />}
+      onNavigateToBilling={(organizationId) => {
+        window.location.hash = `organizations/${organizationId}/billing`;
+      }}
     >
-      <SandboxBuilderExperience workspaceId={workspaceId} />
-    </Suspense>
+      <Suspense fallback={<SandboxesLoadingState />}>
+        <SandboxBuilderExperience
+          workspaceId={workspaceId}
+          isCreateSandboxDisabled={sandboxCreationGate.isDenied}
+          isCreateSandboxLoading={sandboxCreationGate.isLoading}
+          createSandboxUpsell={createSandboxUpsell}
+        />
+      </Suspense>
+    </BillingGateSurface>
   );
 }

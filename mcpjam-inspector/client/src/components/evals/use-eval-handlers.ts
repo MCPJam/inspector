@@ -9,17 +9,47 @@ import {
   type ProviderTokens,
 } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel } from "@/shared/types";
-import { navigateToEvalsRoute } from "@/lib/evals-router";
-import type { EvalSuite, EvalSuiteOverviewEntry } from "./types";
+import { navigateToEvalsRoute, type EvalsRoute } from "@/lib/evals-router";
+import {
+  navigateToCiEvalsRoute,
+  type CiEvalsRoute,
+} from "@/lib/ci-evals-router";
+import type {
+  EvalCase,
+  EvalSuite,
+  EvalSuiteOverviewEntry,
+  EvalSuiteRun,
+} from "./types";
+import { getSuiteReplayEligibility } from "./replay-eligibility";
 import type { useEvalMutations } from "./use-eval-mutations";
-import { API_ENDPOINTS } from "./constants";
 import { authFetch } from "@/lib/session-token";
+import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  buildEvalConvexAuthPayload,
+  getEvalApiEndpoints,
+  runEvals,
+  runEvalTestCase,
+} from "@/lib/apis/evals-api";
+import { generateAndPersistEvalTests } from "@/lib/evals/generate-and-persist-tests";
+import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
+import {
+  getDefaultTestCaseModelValue,
+  prepareSingleTestCaseRun,
+} from "./single-test-case-runner";
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
   selectedSuiteId: string | null;
   selectedTestId: string | null;
+  workspaceId?: string | null;
+  connectedServerNames?: Set<string>;
+  latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
+  /**
+   * When `ci-evals`, navigation after test-case mutations stays on CI evals
+   * routes (`#/ci-evals/...`). Defaults to main evals (`#/evals/...`).
+   */
+  evalsNavigationContext?: "evals" | "ci-evals";
 }
 
 /**
@@ -30,6 +60,10 @@ export function useEvalHandlers({
   selectedSuiteEntry,
   selectedSuiteId,
   selectedTestId,
+  workspaceId = null,
+  connectedServerNames,
+  latestRunBySuiteId,
+  evalsNavigationContext = "evals",
 }: UseEvalHandlersProps) {
   const convex = useConvex();
   const { getAccessToken } = useAuth();
@@ -37,6 +71,10 @@ export function useEvalHandlers({
 
   // Action states
   const [rerunningSuiteId, setRerunningSuiteId] = useState<string | null>(null);
+  const [runningTestCaseId, setRunningTestCaseId] = useState<string | null>(
+    null,
+  );
+  const [replayingRunId, setReplayingRunId] = useState<string | null>(null);
   const [cancellingRunId, setCancellingRunId] = useState<string | null>(null);
   const [deletingSuiteId, setDeletingSuiteId] = useState<string | null>(null);
   const [suiteToDelete, setSuiteToDelete] = useState<EvalSuite | null>(null);
@@ -58,6 +96,26 @@ export function useEvalHandlers({
   } | null>(null);
   const [isGeneratingTests, setIsGeneratingTests] = useState(false);
 
+  const navigateAfterTestCaseMutation = useCallback(
+    (
+      route:
+        | { type: "test-detail"; suiteId: string; testId: string }
+        | { type: "test-edit"; suiteId: string; testId: string }
+        | {
+            type: "suite-overview";
+            suiteId: string;
+            view?: "runs" | "test-cases";
+          },
+    ) => {
+      if (evalsNavigationContext === "ci-evals") {
+        navigateToCiEvalsRoute(route as CiEvalsRoute);
+      } else {
+        navigateToEvalsRoute(route as EvalsRoute);
+      }
+    },
+    [evalsNavigationContext],
+  );
+
   // Query to get test cases for a suite
   const getTestCasesForRerun = useCallback(
     async (suiteId: string) => {
@@ -75,30 +133,22 @@ export function useEvalHandlers({
     [convex],
   );
 
-  // Rerun handler
-  const handleRerun = useCallback(
+  const getSuiteExecutionContext = useCallback(
     async (suite: EvalSuite) => {
-      if (rerunningSuiteId) return;
-
-      const suiteServers = suite.environment?.servers || [];
-
-      // Get current test cases from database (not from stale config)
       const testCases = (await getTestCasesForRerun(suite._id)) as any[];
       if (!testCases || testCases.length === 0) {
         toast.error("No test cases found in this suite");
-        return;
+        return null;
       }
 
-      // Generate tests array by expanding each test case's models
       const tests: any[] = [];
+      const providersNeeded = new Set<string>();
 
       for (const testCase of testCases) {
-        // Skip test cases with no models
         if (!testCase.models || testCase.models.length === 0) {
           continue;
         }
 
-        // Create one test per model
         for (const modelConfig of testCase.models) {
           tests.push({
             title: testCase.title,
@@ -112,37 +162,188 @@ export function useEvalHandlers({
             advancedConfig: testCase.advancedConfig,
             testCaseId: testCase._id,
           });
+
+          if (!isMCPJamProvidedModel(modelConfig.model)) {
+            providersNeeded.add(modelConfig.provider);
+          }
         }
       }
 
       if (tests.length === 0) {
         toast.error("No tests to run. Please add models to your test cases.");
-        return;
+        return null;
       }
 
-      // Collect API keys for all providers used in the tests
       const modelApiKeys: Record<string, string> = {};
-      const providersNeeded = new Set<string>();
-
-      for (const test of tests) {
-        if (!isMCPJamProvidedModel(test.model)) {
-          providersNeeded.add(test.provider);
-        }
-      }
-
-      // Check that we have all required API keys
       for (const provider of providersNeeded) {
         const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
         if (!hasToken(tokenKey)) {
           toast.error(
             `Please add your ${provider} API key in Settings before running evals`,
           );
-          return;
+          return null;
         }
         const key = getToken(tokenKey);
         if (key) {
           modelApiKeys[provider] = key;
         }
+      }
+
+      return {
+        suiteServers: suite.environment?.servers || [],
+        testCases,
+        tests,
+        modelApiKeys,
+        providersNeeded,
+      };
+    },
+    [getTestCasesForRerun, getToken, hasToken],
+  );
+
+  const handleReplayRun = useCallback(
+    async (
+      suite: EvalSuite,
+      run: Pick<EvalSuiteRun, "_id" | "hasServerReplayConfig" | "passCriteria">,
+      options?: { minimumPassRate?: number },
+    ) => {
+      if (rerunningSuiteId || replayingRunId) return;
+
+      if (!run.hasServerReplayConfig) {
+        toast.error(
+          "This CI run can't be replayed because it doesn't have stored replay config.",
+        );
+        return;
+      }
+
+      const executionContext = await getSuiteExecutionContext(suite);
+      if (!executionContext) {
+        return;
+      }
+
+      const minimumPassRate =
+        options?.minimumPassRate ??
+        run.passCriteria?.minimumPassRate ??
+        suite.defaultPassCriteria?.minimumPassRate ??
+        selectedSuiteEntry?.latestRun?.passCriteria?.minimumPassRate ??
+        100;
+      const criteriaNote = `Replay of run ${run._id}. Pass Criteria: Min ${minimumPassRate}% Accuracy`;
+
+      setReplayingRunId(run._id);
+      const replayToastId = toast.loading("Replaying run...");
+
+      try {
+        const accessToken = await getAccessToken();
+        const endpoints = getEvalApiEndpoints();
+        const response = await authFetch(endpoints.replayRun, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            runId: run._id,
+            ...buildEvalConvexAuthPayload(accessToken),
+            modelApiKeys:
+              Object.keys(executionContext.modelApiKeys).length > 0
+                ? executionContext.modelApiKeys
+                : undefined,
+            passCriteria: {
+              minimumPassRate,
+            },
+            notes: criteriaNote,
+          }),
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(errorText || "Failed to replay eval run");
+        }
+
+        const result = await response.json().catch(() => null);
+
+        posthog.capture("eval_suite_run_started", {
+          location: "ci_evals_tab",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          num_test_cases: executionContext.testCases.length,
+          num_tests: executionContext.tests.length,
+          num_models: executionContext.providersNeeded.size,
+          minimum_pass_rate: minimumPassRate,
+          replay_source_run_id: run._id,
+          replay: true,
+        });
+
+        if (result?.suiteId && result?.runId) {
+          navigateToCiEvalsRoute({
+            type: "run-detail",
+            suiteId: result.suiteId,
+            runId: result.runId,
+            insightsFocus: true,
+          });
+        }
+
+        toast.success("Replay completed!", {
+          id: replayToastId,
+        });
+      } catch (error) {
+        console.error("Failed to replay evals:", error);
+        toast.error(
+          getBillingErrorMessage(error, "Failed to replay eval run"),
+          {
+            id: replayToastId,
+          },
+        );
+      } finally {
+        setReplayingRunId(null);
+      }
+    },
+    [
+      rerunningSuiteId,
+      replayingRunId,
+      selectedSuiteEntry,
+      getSuiteExecutionContext,
+      getAccessToken,
+    ],
+  );
+
+  // Rerun handler
+  const handleRerun = useCallback(
+    async (suite: EvalSuite) => {
+      if (rerunningSuiteId) return;
+
+      const latestRun =
+        latestRunBySuiteId?.get(suite._id) ??
+        (selectedSuiteEntry?.suite._id === suite._id
+          ? selectedSuiteEntry.latestRun
+          : null);
+      const rerunEligibility = getSuiteReplayEligibility({
+        suiteServers: suite.environment?.servers,
+        connectedServerNames,
+        latestRun,
+      });
+
+      if (
+        rerunEligibility.canReplayFallback &&
+        rerunEligibility.replayableLatestRun?._id
+      ) {
+        await handleReplayRun(suite, rerunEligibility.replayableLatestRun);
+        return;
+      }
+
+      if (!rerunEligibility.canRunLive) {
+        if (!rerunEligibility.hasServersConfigured) {
+          toast.error("No MCP servers are configured for this suite.");
+          return;
+        }
+        if (rerunEligibility.missingServers.length > 0) {
+          toast.error(
+            `Connect ${rerunEligibility.missingServers.join(", ")} to run this suite.`,
+          );
+          return;
+        }
+      }
+
+      const executionContext = await getSuiteExecutionContext(suite);
+      if (!executionContext) {
+        return;
       }
 
       setRerunningSuiteId(suite._id);
@@ -155,44 +356,37 @@ export function useEvalHandlers({
 
         // Get pass criteria from suite's defaultPassCriteria, or fall back to latest run, or default to 100%
         const suiteDefault = suite.defaultPassCriteria?.minimumPassRate;
-        const latestRun = selectedSuiteEntry?.latestRun;
         const minimumPassRate =
           suiteDefault ?? latestRun?.passCriteria?.minimumPassRate ?? 100;
         const criteriaNote = `Pass Criteria: Min ${minimumPassRate}% Accuracy`;
 
-        const response = await authFetch("/api/mcp/evals/run", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            suiteId: suite._id,
-            suiteName: suite.name,
-            suiteDescription: suite.description,
-            tests: tests.map((test) => ({
-              title: test.title,
-              query: test.query,
-              runs: test.runs ?? 1,
-              model: test.model,
-              provider: test.provider,
-              expectedToolCalls: test.expectedToolCalls,
-              isNegativeTest: test.isNegativeTest,
-              scenario: test.scenario,
-              advancedConfig: test.advancedConfig,
-            })),
-            serverIds: suiteServers,
-            modelApiKeys:
-              Object.keys(modelApiKeys).length > 0 ? modelApiKeys : undefined,
-            convexAuthToken: accessToken,
-            passCriteria: {
-              minimumPassRate: minimumPassRate,
-            },
-            notes: criteriaNote,
-          }),
+        await runEvals({
+          workspaceId,
+          suiteId: suite._id,
+          suiteName: suite.name,
+          suiteDescription: suite.description,
+          tests: executionContext.tests.map((test) => ({
+            title: test.title,
+            query: test.query,
+            runs: test.runs ?? 1,
+            model: test.model,
+            provider: test.provider,
+            expectedToolCalls: test.expectedToolCalls,
+            isNegativeTest: test.isNegativeTest,
+            scenario: test.scenario,
+            advancedConfig: test.advancedConfig,
+          })),
+          serverIds: executionContext.suiteServers,
+          modelApiKeys:
+            Object.keys(executionContext.modelApiKeys).length > 0
+              ? executionContext.modelApiKeys
+              : undefined,
+          convexAuthToken: accessToken,
+          passCriteria: {
+            minimumPassRate: minimumPassRate,
+          },
+          notes: criteriaNote,
         });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(errorText || "Failed to start eval run");
-        }
 
         // Track suite run started
         posthog.capture("eval_suite_run_started", {
@@ -200,9 +394,9 @@ export function useEvalHandlers({
           platform: detectPlatform(),
           environment: detectEnvironment(),
           suite_id: suite._id,
-          num_test_cases: testCases.length,
-          num_tests: tests.length,
-          num_models: providersNeeded.size,
+          num_test_cases: executionContext.testCases.length,
+          num_tests: executionContext.tests.length,
+          num_models: executionContext.providersNeeded.size,
           minimum_pass_rate: minimumPassRate,
         });
 
@@ -210,9 +404,7 @@ export function useEvalHandlers({
         toast.success("Eval run completed!");
       } catch (error) {
         console.error("Failed to rerun evals:", error);
-        toast.error(
-          error instanceof Error ? error.message : "Failed to start eval run",
-        );
+        toast.error(getBillingErrorMessage(error, "Failed to start eval run"));
       } finally {
         setRerunningSuiteId(null);
       }
@@ -220,10 +412,92 @@ export function useEvalHandlers({
     [
       rerunningSuiteId,
       selectedSuiteEntry,
+      latestRunBySuiteId,
+      connectedServerNames,
       getAccessToken,
-      hasToken,
+      workspaceId,
+      getSuiteExecutionContext,
+      handleReplayRun,
+    ],
+  );
+
+  const handleRunTestCase = useCallback(
+    async (
+      suite: EvalSuite,
+      testCase: EvalCase,
+      options?: { location?: string; selectedModel?: string | null },
+    ) => {
+      if (runningTestCaseId || rerunningSuiteId || replayingRunId) {
+        return null;
+      }
+
+      const modelValue = getDefaultTestCaseModelValue(testCase);
+      if (!modelValue) {
+        toast.error("Add a model first");
+        return null;
+      }
+
+      setRunningTestCaseId(testCase._id);
+
+      try {
+        const preparedRun = await prepareSingleTestCaseRun({
+          workspaceId,
+          suite,
+          testCase,
+          getAccessToken,
+          getToken,
+          hasToken,
+          selectedModel: options?.selectedModel,
+        });
+
+        posthog.capture("eval_test_case_run_started", {
+          location: options?.location ?? "test_case_list_sidebar",
+          platform: detectPlatform(),
+          environment: detectEnvironment(),
+          suite_id: suite._id,
+          test_case_id: testCase._id,
+          model: preparedRun.modelValue,
+        });
+
+        const data = await runEvalTestCase(preparedRun.request);
+        const iteration = data?.iteration;
+
+        if (iteration) {
+          const startedAt = iteration.startedAt ?? iteration.createdAt;
+          const completedAt = iteration.updatedAt ?? iteration.createdAt;
+          const durationMs =
+            startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
+
+          posthog.capture("eval_test_case_run_completed", {
+            location: options?.location ?? "test_case_list_sidebar",
+            platform: detectPlatform(),
+            environment: detectEnvironment(),
+            suite_id: suite._id,
+            test_case_id: testCase._id,
+            model: preparedRun.modelValue,
+            result: iteration.result || "unknown",
+            duration_ms: durationMs,
+          });
+        }
+
+        toast.success("Test completed successfully!");
+        return data;
+      } catch (error) {
+        console.error("Failed to run test case:", error);
+        toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+        return null;
+      } finally {
+        setRunningTestCaseId(null);
+      }
+    },
+    [
+      runningTestCaseId,
+      rerunningSuiteId,
+      replayingRunId,
+      workspaceId,
+      getAccessToken,
       getToken,
-      getTestCasesForRerun,
+      hasToken,
     ],
   );
 
@@ -254,9 +528,7 @@ export function useEvalHandlers({
       setSuiteToDelete(null);
     } catch (error) {
       console.error("Failed to delete suite:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete test suite",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete test suite"));
     } finally {
       setDeletingSuiteId(null);
     }
@@ -301,9 +573,7 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate suite:", error);
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to duplicate test suite",
+          getBillingErrorMessage(error, "Failed to duplicate test suite"),
         );
       } finally {
         setDuplicatingSuiteId(null);
@@ -324,9 +594,7 @@ export function useEvalHandlers({
         toast.success("Run cancelled successfully");
       } catch (error) {
         console.error("Failed to cancel run:", error);
-        toast.error(
-          error instanceof Error ? error.message : "Failed to cancel run",
-        );
+        toast.error(getBillingErrorMessage(error, "Failed to cancel run"));
       } finally {
         setCancellingRunId(null);
       }
@@ -368,9 +636,7 @@ export function useEvalHandlers({
       setRunToDelete(null);
     } catch (error) {
       console.error("Failed to delete run:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete run",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete run"));
     } finally {
       setDeletingRunId(null);
     }
@@ -390,39 +656,7 @@ export function useEvalHandlers({
           { suiteId },
         );
 
-        // Extract unique models from existing test cases
-        let modelsToUse: any[] = [];
-        if (testCases && Array.isArray(testCases) && testCases.length > 0) {
-          const uniqueModels = new Map<
-            string,
-            { model: string; provider: string }
-          >();
-
-          for (const testCase of testCases) {
-            if (testCase.models && Array.isArray(testCase.models)) {
-              for (const modelConfig of testCase.models) {
-                if (modelConfig.model && modelConfig.provider) {
-                  const key = `${modelConfig.provider}:${modelConfig.model}`;
-                  if (!uniqueModels.has(key)) {
-                    uniqueModels.set(key, {
-                      model: modelConfig.model,
-                      provider: modelConfig.provider,
-                    });
-                  }
-                }
-              }
-            }
-          }
-
-          modelsToUse = Array.from(uniqueModels.values());
-        }
-
-        // Default to Haiku 4.5 if no models configured
-        if (modelsToUse.length === 0) {
-          modelsToUse = [
-            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
-          ];
-        }
+        const modelsToUse = collectUniqueModelsFromTestCases(testCases);
 
         const testCaseId = await mutations.createTestCaseMutation({
           suiteId: suiteId,
@@ -444,7 +678,7 @@ export function useEvalHandlers({
         });
 
         // Navigate to the new test case
-        navigateToEvalsRoute({
+        navigateAfterTestCaseMutation({
           type: "test-detail",
           suiteId,
           testId: testCaseId,
@@ -454,14 +688,19 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to create test case:", error);
         toast.error(
-          error instanceof Error ? error.message : "Failed to create test case",
+          getBillingErrorMessage(error, "Failed to create test case"),
         );
         return null;
       } finally {
         setIsCreatingTestCase(false);
       }
     },
-    [isCreatingTestCase, mutations.createTestCaseMutation, convex],
+    [
+      isCreatingTestCase,
+      mutations.createTestCaseMutation,
+      convex,
+      navigateAfterTestCaseMutation,
+    ],
   );
 
   // Handle delete test case - opens confirmation modal
@@ -487,18 +726,24 @@ export function useEvalHandlers({
 
       // If we're viewing this test case, navigate back to suite overview
       if (selectedTestId === testCaseToDelete.id && selectedSuiteId) {
-        navigateToEvalsRoute({
-          type: "suite-overview",
-          suiteId: selectedSuiteId,
-        });
+        navigateAfterTestCaseMutation(
+          evalsNavigationContext === "ci-evals"
+            ? {
+                type: "suite-overview",
+                suiteId: selectedSuiteId,
+                view: "test-cases",
+              }
+            : {
+                type: "suite-overview",
+                suiteId: selectedSuiteId,
+              },
+        );
       }
 
       setTestCaseToDelete(null);
     } catch (error) {
       console.error("Failed to delete test case:", error);
-      toast.error(
-        error instanceof Error ? error.message : "Failed to delete test case",
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete test case"));
     } finally {
       setDeletingTestCaseId(null);
     }
@@ -508,6 +753,8 @@ export function useEvalHandlers({
     mutations.deleteTestCaseMutation,
     selectedTestId,
     selectedSuiteId,
+    evalsNavigationContext,
+    navigateAfterTestCaseMutation,
   ]);
 
   // Duplicate test case handler
@@ -537,7 +784,7 @@ export function useEvalHandlers({
 
         // Navigate to the new duplicated test case
         if (newTestCase && newTestCase._id) {
-          navigateToEvalsRoute({
+          navigateAfterTestCaseMutation({
             type: "test-edit",
             suiteId,
             testId: newTestCase._id,
@@ -548,16 +795,18 @@ export function useEvalHandlers({
       } catch (error) {
         console.error("Failed to duplicate test case:", error);
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to duplicate test case",
+          getBillingErrorMessage(error, "Failed to duplicate test case"),
         );
         return null;
       } finally {
         setDuplicatingTestCaseId(null);
       }
     },
-    [duplicatingTestCaseId, mutations.duplicateTestCaseMutation],
+    [
+      duplicatingTestCaseId,
+      mutations.duplicateTestCaseMutation,
+      navigateAfterTestCaseMutation,
+    ],
   );
 
   // Generate tests handler - calls API and creates test cases
@@ -568,114 +817,38 @@ export function useEvalHandlers({
       setIsGeneratingTests(true);
 
       try {
-        const accessToken = await getAccessToken();
-
-        // Get existing test cases to extract models
-        const existingTestCases = await convex.query(
-          "testSuites:listTestCases" as any,
-          { suiteId },
-        );
-
-        // Extract unique models from existing test cases
-        let modelsToUse: Array<{ model: string; provider: string }> = [];
-        if (
-          existingTestCases &&
-          Array.isArray(existingTestCases) &&
-          existingTestCases.length > 0
-        ) {
-          const uniqueModels = new Map<
-            string,
-            { model: string; provider: string }
-          >();
-
-          for (const testCase of existingTestCases) {
-            if (testCase.models && Array.isArray(testCase.models)) {
-              for (const modelConfig of testCase.models) {
-                if (modelConfig.model && modelConfig.provider) {
-                  const key = `${modelConfig.provider}:${modelConfig.model}`;
-                  if (!uniqueModels.has(key)) {
-                    uniqueModels.set(key, {
-                      model: modelConfig.model,
-                      provider: modelConfig.provider,
-                    });
-                  }
-                }
-              }
-            }
-          }
-
-          modelsToUse = Array.from(uniqueModels.values());
-        }
-
-        // Default to Haiku 4.5 if no models configured
-        if (modelsToUse.length === 0) {
-          modelsToUse = [
-            { model: "anthropic/claude-haiku-4.5", provider: "anthropic" },
-          ];
-        }
-
-        // Call generate tests API
-        const response = await authFetch(API_ENDPOINTS.EVALS_GENERATE_TESTS, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            serverIds,
-            convexAuthToken: accessToken,
-          }),
+        const outcome = await generateAndPersistEvalTests({
+          convex,
+          getAccessToken,
+          workspaceId,
+          suiteId,
+          serverIds,
+          createTestCase: mutations.createTestCaseMutation,
+          skipIfExistingCases: false,
         });
 
-        const result = await response.json();
-
-        if (!response.ok) {
-          throw new Error(result.error || "Failed to generate tests");
-        }
-
-        if (!result.tests || result.tests.length === 0) {
+        if (outcome.apiReturnedTests === 0) {
           toast.info("No test cases were generated");
           return;
         }
 
-        // Create test cases for each generated test
-        let createdCount = 0;
-        for (const test of result.tests) {
-          try {
-            await mutations.createTestCaseMutation({
-              suiteId,
-              title: test.title || "Generated test",
-              query: test.query || "",
-              models: modelsToUse,
-              expectedToolCalls: test.expectedToolCalls || [],
-              runs: test.runs || 1,
-              isNegativeTest: test.isNegativeTest || false,
-              scenario: test.scenario,
-              expectedOutput: test.expectedOutput,
-            });
-            createdCount++;
-          } catch (err) {
-            console.error("Failed to create test case:", err);
-          }
-        }
-
-        if (createdCount > 0) {
+        if (outcome.createdCount > 0) {
           toast.success(
-            `Generated ${createdCount} test case${createdCount > 1 ? "s" : ""}`,
+            `Generated ${outcome.createdCount} test case${outcome.createdCount > 1 ? "s" : ""}`,
           );
 
-          // Track generation
           posthog.capture("eval_tests_generated_from_sidebar", {
             location: "test_case_list_sidebar",
             platform: detectPlatform(),
             environment: detectEnvironment(),
             suite_id: suiteId,
-            generated_count: createdCount,
+            generated_count: outcome.createdCount,
           });
         }
       } catch (error) {
         console.error("Failed to generate tests:", error);
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "Failed to generate test cases",
+          getBillingErrorMessage(error, "Failed to generate test cases"),
         );
       } finally {
         setIsGeneratingTests(false);
@@ -686,12 +859,15 @@ export function useEvalHandlers({
       getAccessToken,
       convex,
       mutations.createTestCaseMutation,
+      workspaceId,
     ],
   );
 
   return {
     // Handlers
     handleRerun,
+    handleRunTestCase,
+    handleReplayRun,
     handleDelete,
     confirmDelete,
     handleDuplicateSuite,
@@ -706,6 +882,8 @@ export function useEvalHandlers({
     handleGenerateTests,
     // States
     rerunningSuiteId,
+    runningTestCaseId,
+    replayingRunId,
     cancellingRunId,
     deletingSuiteId,
     suiteToDelete,

@@ -47,6 +47,10 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+vi.mock("@/hooks/use-explore-cases-prefetch-on-connect", () => ({
+  useExploreCasesPrefetchOnConnect: vi.fn(),
+}));
+
 // Mock sonner toast
 vi.mock("sonner", () => ({
   toast: {
@@ -58,6 +62,7 @@ vi.mock("sonner", () => ({
 
 // Must import after mocks are set up
 import { ServerConnectionCard } from "../ServerConnectionCard";
+import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 
 // Mock navigator.clipboard
 const mockClipboard = {
@@ -93,6 +98,26 @@ describe("ServerConnectionCard", () => {
   });
 
   describe("rendering", () => {
+    it("calls explore prefetch hook with workspaceId and server", () => {
+      const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
+      const server = createServer();
+      render(
+        <ServerConnectionCard
+          server={server}
+          workspaceId="ws_abc"
+          {...defaultProps}
+        />,
+      );
+      expect(prefetch).toHaveBeenCalledWith("ws_abc", server, undefined);
+    });
+
+    it("calls explore prefetch hook with null workspace when prop omitted", () => {
+      const prefetch = vi.mocked(useExploreCasesPrefetchOnConnect);
+      const server = createServer();
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+      expect(prefetch).toHaveBeenCalledWith(null, server, undefined);
+    });
+
     it("renders server name", () => {
       const server = createServer({ name: "my-server" });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
@@ -150,7 +175,22 @@ describe("ServerConnectionCard", () => {
       const server = createServer({ connectionStatus: "connecting" });
       render(<ServerConnectionCard server={server} {...defaultProps} />);
 
-      expect(screen.getByText("Connecting...")).toBeInTheDocument();
+      expect(screen.getByText("Finishing setup...")).toBeInTheDocument();
+    });
+
+    it("shows oauth browser authorization state", () => {
+      const server = createServer({
+        connectionStatus: "oauth-flow",
+        useOAuth: true,
+      });
+      render(<ServerConnectionCard server={server} {...defaultProps} />);
+
+      expect(screen.getByText("Authorizing in browser...")).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          "Complete sign-in in the browser. Inspector will resume automatically.",
+        ),
+      ).toBeInTheDocument();
     });
 
     it("shows failed status with retry count", () => {

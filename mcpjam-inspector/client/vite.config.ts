@@ -8,6 +8,8 @@ import { readFileSync } from "fs";
 
 const clientDir = fileURLToPath(new URL(".", import.meta.url));
 const rootDir = path.resolve(clientDir, "..");
+// The linked local SDK package can advertise ./browser before dist/browser.* exists.
+const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
 
 // Read version from package.json
 const packageJson = JSON.parse(
@@ -38,8 +40,10 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       alias: {
+        "@repo/assets": path.resolve(clientDir, "src/assets"),
         "@/shared": path.resolve(clientDir, "../shared"),
         "@": path.resolve(clientDir, "./src"),
+        "@mcpjam/sdk/browser": sdkBrowserEntry,
         // Force React resolution to prevent conflicts with @mcp-ui/client
         react: path.resolve(clientDir, "../node_modules/react"),
         "react-dom": path.resolve(clientDir, "../node_modules/react-dom"),
@@ -65,9 +69,11 @@ export default defineConfig(({ mode }) => {
       // Listen on all interfaces so both localhost and 127.0.0.1 work
       // Required for SEP-1865 different-origin sandbox proxy
       host: true,
+      port: env.CLIENT_PORT ? parseInt(env.CLIENT_PORT, 10) : 5173,
+      strictPort: true,
       proxy: {
         "/api": {
-          target: "http://localhost:6274",
+          target: env.VITE_API_BASE_URL || "http://localhost:6274",
           changeOrigin: true,
           secure: false,
           ws: true,

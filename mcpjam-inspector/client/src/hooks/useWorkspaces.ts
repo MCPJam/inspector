@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import type { WorkspaceVisibility } from "@/state/app-types";
+import type { WorkspaceClientConfig } from "@/lib/client-config";
 
 export type WorkspaceMembershipRole = "owner" | "admin" | "member" | "guest";
 export type WorkspaceRole = "admin" | "editor";
@@ -14,7 +15,9 @@ export interface RemoteWorkspace {
   name: string;
   description?: string;
   icon?: string;
+  clientConfig?: WorkspaceClientConfig;
   servers: Record<string, any>;
+  canDeleteWorkspace?: boolean;
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   ownerId: string;
@@ -70,6 +73,38 @@ export interface WorkspaceMember {
   } | null;
 }
 
+interface WorkspaceMembersQueryResult {
+  members: WorkspaceMember[];
+  canManageMembers: boolean;
+}
+
+function isWorkspaceMembersQueryResult(
+  value: unknown,
+): value is WorkspaceMembersQueryResult {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    Array.isArray((value as WorkspaceMembersQueryResult).members)
+  );
+}
+
+export function normalizeWorkspaceMembersResult(
+  value: WorkspaceMember[] | WorkspaceMembersQueryResult | undefined,
+): WorkspaceMembersQueryResult {
+  if (Array.isArray(value)) {
+    return { members: value, canManageMembers: false };
+  }
+
+  if (isWorkspaceMembersQueryResult(value)) {
+    return {
+      members: value.members,
+      canManageMembers: value.canManageMembers,
+    };
+  }
+
+  return { members: [], canManageMembers: false };
+}
+
 export function filterWorkspacesForOrganization(
   workspaces: RemoteWorkspace[] | undefined,
   organizationId?: string,
@@ -115,10 +150,12 @@ export function useWorkspaceQueries({
   }, [workspaces]);
 
   return {
+    allWorkspaces: queriedWorkspaces,
     workspaces,
     sortedWorkspaces,
     isLoading,
     hasWorkspaces: (workspaces?.length ?? 0) > 0,
+    hasAnyWorkspaces: (queriedWorkspaces?.length ?? 0) > 0,
   };
 }
 
@@ -131,20 +168,17 @@ export function useWorkspaceMembers({
 }) {
   const enableQuery = isAuthenticated && !!workspaceId;
 
-  const raw = useQuery(
+  const membersResult = useQuery(
     "workspaces:getWorkspaceMembers" as any,
     enableQuery ? ({ workspaceId } as any) : "skip",
-  ) as
-    | { members: WorkspaceMember[]; canManageMembers: boolean }
-    | WorkspaceMember[]
-    | undefined;
+  ) as WorkspaceMember[] | WorkspaceMembersQueryResult | undefined;
 
-  // Server returns `{ members, canManageMembers }`. Legacy deployments returned a bare array.
-  const members = Array.isArray(raw) ? raw : raw?.members;
-  const canManageMembers = Array.isArray(raw)
-    ? false
-    : (raw?.canManageMembers ?? false);
-  const isLoading = enableQuery && raw === undefined;
+  const isLoading = enableQuery && membersResult === undefined;
+
+  const { members, canManageMembers } = useMemo(
+    () => normalizeWorkspaceMembersResult(membersResult),
+    [membersResult],
+  );
 
   const activeMembers = useMemo(() => {
     if (!members) return [];
@@ -168,7 +202,13 @@ export function useWorkspaceMembers({
 
 export function useWorkspaceMutations() {
   const createWorkspace = useMutation("workspaces:createWorkspace" as any);
+  const ensureDefaultWorkspace = useMutation(
+    "workspaces:ensureDefaultWorkspace" as any,
+  );
   const updateWorkspace = useMutation("workspaces:updateWorkspace" as any);
+  const updateClientConfig = useMutation(
+    "workspaces:updateClientConfig" as any,
+  );
   const deleteWorkspace = useMutation("workspaces:deleteWorkspace" as any);
   const inviteWorkspaceMember = useMutation(
     "workspaces:inviteWorkspaceMember" as any,
@@ -185,7 +225,9 @@ export function useWorkspaceMutations() {
 
   return {
     createWorkspace,
+    ensureDefaultWorkspace,
     updateWorkspace,
+    updateClientConfig,
     deleteWorkspace,
     inviteWorkspaceMember,
     removeWorkspaceMember,

@@ -1,14 +1,16 @@
 const HASH_TAB_ALIASES = {
-  registry: "servers",
   chat: "chat-v2",
 } as const;
 
 export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "servers",
+  "registry",
   "chat-v2",
   "sandboxes",
   "app-builder",
   "views",
+  "client-config",
+  "evals",
   "ci-evals",
   "tools",
   "resources",
@@ -27,7 +29,6 @@ export const HOSTED_HASH_ALLOWED_TABS = [
 ] as const;
 
 export const HOSTED_HASH_BLOCKED_TABS = [
-  "evals",
   "skills",
   "tasks",
   "tracing",

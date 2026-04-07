@@ -38,6 +38,9 @@ import { CspDebugPanel } from "../csp-debug-panel";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import { TextPart } from "./text-part";
+import { useClientConfigStore } from "@/stores/client-config-store";
+import { extractHostDisplayModes } from "@/lib/client-config";
+import { useSandboxHostTheme } from "@/contexts/sandbox-host-style-context";
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
@@ -117,8 +120,16 @@ export function ToolPart({
   const toolState = getToolStateMeta(state);
   const StatusIcon = toolState?.Icon;
   const themeMode = usePreferencesStore((s) => s.themeMode);
+  const sandboxHostTheme = useSandboxHostTheme();
+  const resolvedThemeMode = sandboxHostTheme ?? themeMode;
   const mcpIconClassName =
-    themeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
+    resolvedThemeMode === "dark" ? "h-3 w-3 filter invert" : "h-3 w-3";
+  const pendingApprovalClasses =
+    resolvedThemeMode === "dark"
+      ? "text-[11px] font-medium text-pending"
+      : "text-[11px] font-medium text-pending-foreground";
+  const approvedToolClasses =
+    "flex items-center gap-1 text-[11px] font-medium text-success";
   const needsApproval = state === "approval-requested" && !!approvalId;
   const [approvalVisualState, setApprovalVisualState] =
     useState<ApprovalVisualState>("pending");
@@ -154,6 +165,11 @@ export function ToolPart({
 
   const widgetDebugInfo = useWidgetDebugStore((s) =>
     toolCallId ? s.widgets.get(toolCallId) : undefined,
+  );
+  const hostContext = useClientConfigStore((s) => s.draftConfig?.hostContext);
+  const hostAvailableDisplayModes = useMemo(
+    () => extractHostDisplayModes(hostContext),
+    [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
   const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
@@ -275,8 +291,9 @@ export function ToolPart({
     displayModeOptions.map(({ mode, icon: Icon }) => {
       const isActive = displayMode === mode;
       const isDisabled =
-        appSupportedDisplayModes !== undefined &&
-        !appSupportedDisplayModes.includes(mode);
+        !hostAvailableDisplayModes.includes(mode) ||
+        (appSupportedDisplayModes !== undefined &&
+          !appSupportedDisplayModes.includes(mode));
       const buttonLabel =
         mode === "inline" ? "Inline" : mode === "pip" ? "PiP" : "Fullscreen";
       return (
@@ -545,12 +562,10 @@ export function ToolPart({
             </span>
           </span>
           {needsApproval && approvalVisualState === "pending" && (
-            <span className="text-[11px] font-medium text-pending-foreground dark:text-pending">
-              Approve tool call?
-            </span>
+            <span className={pendingApprovalClasses}>Approve tool call?</span>
           )}
           {needsApproval && approvalVisualState === "approved" && (
-            <span className="flex items-center gap-1 text-[11px] font-medium text-success dark:text-success">
+            <span className={approvedToolClasses}>
               <ShieldCheck className="h-3.5 w-3.5" />
               Approved
             </span>

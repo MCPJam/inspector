@@ -8,6 +8,7 @@ import type { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import type { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { RefreshTokenOAuthProvider } from "./refresh-token-auth-provider.js";
 import type {
   ElicitRequest,
   ElicitResult,
@@ -34,8 +35,13 @@ export type ClientCapabilityOptions = NonNullable<
  * Base configuration shared by all server types
  */
 export type BaseServerConfig = {
-  /** Client capabilities to advertise to this server */
+  /** Legacy merge-style client capabilities to advertise to this server */
   capabilities?: ClientCapabilityOptions;
+  /**
+   * Exact client capabilities to advertise to this server.
+   * When provided, this bypasses manager defaults and legacy capability merging.
+   */
+  clientCapabilities?: ClientCapabilityOptions;
   /** Request timeout in milliseconds */
   timeout?: number;
   /** Client version to report */
@@ -145,6 +151,7 @@ export interface ManagedClientState {
   timeout: number;
   client?: Client;
   transport?: Transport;
+  authProvider?: RefreshTokenOAuthProvider;
   promise?: Promise<Client>;
 }
 
@@ -208,6 +215,11 @@ export interface MCPClientManagerOptions {
   rpcLogger?: RpcLogger;
   /** Global progress handler */
   progressHandler?: ProgressHandler;
+  /**
+   * When true, do not connect in the constructor; callers must use connectToServer
+   * (e.g. connectReplayManagerServers) to avoid racing eager connects.
+   */
+  lazyConnect?: boolean;
 }
 
 // ============================================================================

@@ -240,15 +240,14 @@ describe("guest-session module", () => {
     });
 
     it("uses session with exactly 5 min + 1ms remaining (valid)", async () => {
-      vi.useFakeTimers();
-      const now = new Date("2026-03-20T22:37:53.000Z");
-      vi.setSystemTime(now);
+      const frozenNow = 1_700_000_000_000;
+      vi.useFakeTimers({ now: frozenNow });
 
       try {
         const session = {
           guestId: "edge-guest",
           token: "edge-token",
-          expiresAt: now.getTime() + 5 * 60 * 1000 + 1, // 5 min + 1ms buffer
+          expiresAt: frozenNow + 5 * 60 * 1000 + 1, // 5 min + 1ms past buffer threshold
         };
 
         vi.mocked(localStorage.getItem).mockReturnValue(

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { CustomProvider, CompatibleProtocol } from "@mcpjam/sdk";
+import type { CompatibleProtocol, CustomProvider } from "@mcpjam/sdk/browser";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import {

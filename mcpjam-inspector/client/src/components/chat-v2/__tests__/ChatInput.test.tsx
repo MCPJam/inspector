@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
-import { SandboxHostStyleProvider } from "@/contexts/sandbox-host-style-context";
+import {
+  SandboxHostStyleProvider,
+  SandboxHostThemeProvider,
+} from "@/contexts/sandbox-host-style-context";
 import type { ModelDefinition } from "@/shared/types";
+
+vi.mock("@/stores/preferences/preferences-provider", () => ({
+  usePreferencesStore: (selector: (state: { themeMode: "light" }) => unknown) =>
+    selector({ themeMode: "light" }),
+}));
 
 // Mock child components
 vi.mock("../chat-input/model-selector", () => ({
@@ -160,6 +168,21 @@ describe("ChatInput", () => {
         "bg-[#1f1f1f]",
       );
     });
+
+    it("keeps the textarea transparent inside a dark host-scoped composer", () => {
+      render(
+        <SandboxHostStyleProvider value="chatgpt">
+          <SandboxHostThemeProvider value="dark">
+            <ChatInput {...defaultProps} />
+          </SandboxHostThemeProvider>
+        </SandboxHostStyleProvider>,
+      );
+
+      expect(screen.getByPlaceholderText("Type your message...")).toHaveClass(
+        "bg-transparent",
+        "dark:bg-transparent",
+      );
+    });
   });
 
   describe("input handling", () => {
@@ -178,6 +201,28 @@ describe("ChatInput", () => {
 
       const textarea = screen.getByPlaceholderText("Type your message...");
       expect(textarea).toHaveValue("Test message");
+    });
+
+    it("places the caret at the end when requested", () => {
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Draw me an MCP architecture diagram"
+          moveCaretToEndTrigger={1}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText(
+        "Type your message...",
+      ) as HTMLTextAreaElement;
+
+      expect(document.activeElement).toBe(textarea);
+      expect(textarea.selectionStart).toBe(
+        "Draw me an MCP architecture diagram".length,
+      );
+      expect(textarea.selectionEnd).toBe(
+        "Draw me an MCP architecture diagram".length,
+      );
     });
   });
 
@@ -216,6 +261,70 @@ describe("ChatInput", () => {
       if (submitButton) {
         expect(submitButton).not.toBeDisabled();
       }
+    });
+
+    it("disables submit when submitDisabled is true even if value has content", () => {
+      render(
+        <ChatInput {...defaultProps} value="Hello" submitDisabled={true} />,
+      );
+
+      const buttons = screen.getAllByRole("button");
+      const submitButton = buttons.find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      expect(submitButton).toBeDefined();
+      expect(submitButton).toBeDisabled();
+    });
+
+    it("does not request form submit on Enter when submitDisabled is true", () => {
+      const requestSubmitSpy = vi
+        .spyOn(HTMLFormElement.prototype, "requestSubmit")
+        .mockImplementation(() => {});
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+          onSubmit={vi.fn((e) => e.preventDefault())}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText("Type your message...");
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+      expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      requestSubmitSpy.mockRestore();
+    });
+  });
+
+  describe("onboarding send button", () => {
+    it("applies glow animation only when pulseSubmit is true", () => {
+      const { rerender } = render(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={false} />,
+      );
+      let submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit).toBeDefined();
+      expect(submit?.className).not.toContain("animate-onboarding-pulse");
+
+      rerender(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />,
+      );
+      submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit?.className).toContain("animate-onboarding-pulse");
+    });
+
+    it("uses shadow-none so default button shadow does not read as a constant glow", () => {
+      render(<ChatInput {...defaultProps} value="Hello" />);
+      const submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit?.className).toContain("shadow-none");
     });
   });
 

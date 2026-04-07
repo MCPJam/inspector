@@ -10,33 +10,60 @@ import {
 } from "react";
 import {
   Background,
+  BackgroundVariant,
   Controls,
   Handle,
   Position,
   ReactFlow,
   SmoothStepEdge,
+  useNodesInitialized,
   useReactFlow,
-  type HandleProps,
   type Node,
   type NodeProps,
   type EdgeProps,
 } from "@xyflow/react";
-import { Bot, ChevronRight, Network, Plus, Server } from "lucide-react";
+import { Bot, CircleHelp, Network, Plus, Server } from "lucide-react";
 import "@xyflow/react/dist/style.css";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import type { RemoteServer } from "@/hooks/useWorkspaces";
+import { WorkspaceServerPickerList } from "@/components/sandboxes/builder/setup-checklist-panel";
 import { MCPIcon } from "@/components/ui/mcp-icon";
+import { getSandboxHostLogo } from "@/lib/sandbox-host-style";
 import { cn } from "@/lib/utils";
 import type {
   SandboxBuilderNodeData,
   SandboxBuilderViewModel,
+  SandboxFlowNode,
   SandboxSectionLabelData,
 } from "./types";
 import {
-  getSandboxCanvasCenter,
+  extendSandboxViewportBoundsForHostOverflow,
+  getSandboxBuilderRenderableNodeIds,
   getSandboxCanvasLayoutSignature,
+  getSandboxCanvasStaticFitBounds,
 } from "./sandbox-canvas-viewport";
 
-const SandboxCanvasContext = createContext<{ onAddServer?: () => void }>({});
+export type SandboxCanvasServerPickerProps = {
+  workspaceServers: RemoteServer[];
+  selectedServerIds: string[];
+  onToggleServer: (serverId: string, checked: boolean) => void;
+  onOpenAddWorkspaceServer: () => void;
+};
+
+const SandboxCanvasContext = createContext<{
+  canvasServerPicker?: SandboxCanvasServerPickerProps;
+}>({});
 
 const CHIP_STYLES = {
   neutral: "border-border/70 bg-muted/40 text-muted-foreground",
@@ -77,36 +104,25 @@ function hasBottomHandle(kind: SandboxBuilderNodeData["kind"]) {
   return kind === "host";
 }
 
-function ButtonHandle({
-  onClick,
-  ...handleProps
-}: Omit<HandleProps, "children"> & { onClick?: () => void }) {
-  return (
-    <>
-      <Handle {...handleProps} />
-      <div className="absolute left-1/2 bottom-0 -translate-x-1/2 translate-y-full flex flex-col items-center pointer-events-none">
-        <div className="h-10 w-px border-l border-dashed border-border/60" />
-        <button
-          type="button"
-          onClick={onClick}
-          className="nodrag nopan pointer-events-auto flex size-7 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-primary hover:text-primary-foreground hover:border-primary"
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-    </>
-  );
-}
+const plusHandleButtonClass =
+  "nodrag nopan pointer-events-auto flex size-7 items-center justify-center rounded-full border border-border/60 bg-card text-muted-foreground shadow-sm transition-colors hover:bg-primary hover:text-primary-foreground hover:border-primary";
 
 const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
   const { data, selected } = props;
+  const [canvasPickerOpen, setCanvasPickerOpen] = useState(false);
   const Icon = getNodeIcon(data.kind);
-  const { onAddServer } = useContext(SandboxCanvasContext);
+  const { canvasServerPicker } = useContext(SandboxCanvasContext);
+  const isHostPreview = data.kind === "host";
+  const hostStyle = data.hostStyle ?? "claude";
+  const hostLogoSrc = isHostPreview ? getSandboxHostLogo(hostStyle) : null;
 
   return (
     <div
       className={cn(
-        "sandbox-builder-card relative w-[220px] overflow-visible rounded-xl border border-border/60 bg-card/90 px-3.5 py-3 text-card-foreground transition-all",
+        "sandbox-builder-card relative w-[280px] overflow-visible rounded-xl border border-border/60 px-3.5 py-3 text-card-foreground transition-all",
+        isHostPreview
+          ? "bg-gradient-to-b from-muted/80 to-muted/40 shadow-sm"
+          : "bg-card/90",
         selected && "ring-2 shadow-xl",
         stateRing(data.state),
       )}
@@ -119,49 +135,168 @@ const SandboxNode = memo((props: NodeProps<Node<SandboxBuilderNodeData>>) => {
           className={handleClass}
         />
       )}
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
-            <Icon className="size-3.5" />
-          </div>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{data.title}</p>
-            {data.subtitle ? (
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
-                {data.subtitle}
-              </p>
+      {isHostPreview ? (
+        <>
+          <div className="mb-2 flex items-center justify-center gap-2">
+            {data.eyebrow ? (
+              <Badge
+                variant="secondary"
+                className="max-w-[min(100%,11rem)] whitespace-normal rounded-md px-2 py-0.5 text-center text-[10px] font-medium uppercase leading-tight tracking-wide text-muted-foreground"
+              >
+                {data.eyebrow}
+              </Badge>
             ) : null}
           </div>
-        </div>
-        {selected ? (
-          <ChevronRight className="mt-0.5 size-4 text-muted-foreground" />
-        ) : null}
-      </div>
+          <div className="flex gap-3">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-2xl border border-border/50 bg-background/80 shadow-inner">
+              <img
+                src={hostLogoSrc ?? undefined}
+                alt=""
+                className="size-7 object-contain"
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p
+                className="truncate text-sm font-semibold leading-tight"
+                title={data.title}
+              >
+                {data.title}
+              </p>
+              {data.subtitle ? (
+                <p
+                  className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                  title={data.subtitle}
+                >
+                  {data.subtitle}
+                </p>
+              ) : null}
+              {data.detailLine ? (
+                <p
+                  className="mt-1.5 text-[11px] text-muted-foreground/90"
+                  title={data.detailLine}
+                >
+                  {data.detailLine}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40">
+                <Icon className="size-3.5" />
+              </div>
+              <div className="min-w-0">
+                <p
+                  className="truncate text-sm font-semibold"
+                  title={data.title}
+                >
+                  {data.title}
+                </p>
+                {data.subtitle ? (
+                  <p
+                    className="mt-1 line-clamp-2 text-xs text-muted-foreground"
+                    title={data.subtitle}
+                  >
+                    {data.subtitle}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
 
-      {data.chips.length > 0 ? (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {data.chips.map((item) => (
-            <Badge
-              key={`${data.kind}:${item.label}`}
-              variant="outline"
-              className={cn(
-                "rounded-full text-[10px]",
-                CHIP_STYLES[item.tone ?? "neutral"],
-              )}
-            >
-              {item.label}
-            </Badge>
-          ))}
-        </div>
-      ) : null}
+          {data.chips.length > 0 ? (
+            <div className="mt-3 flex flex-wrap gap-1.5">
+              {data.chips.map((item) => (
+                <Badge
+                  key={`${data.kind}:${item.label}`}
+                  variant="outline"
+                  className={cn(
+                    "rounded-full text-[10px]",
+                    CHIP_STYLES[item.tone ?? "neutral"],
+                  )}
+                >
+                  {item.label}
+                </Badge>
+              ))}
+            </div>
+          ) : null}
+        </>
+      )}
+
       {data.kind === "host" ? (
-        <ButtonHandle
-          type="source"
-          position={Position.Bottom}
-          id="bottom"
-          className={handleClass}
-          onClick={onAddServer}
-        />
+        <>
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="bottom"
+            className={handleClass}
+          />
+          <div className="absolute left-1/2 bottom-0 -translate-x-1/2 translate-y-full flex flex-col items-center pointer-events-none">
+            <div className="h-10 w-px border-l border-dashed border-border/60" />
+            {canvasServerPicker ? (
+              <Popover
+                open={canvasPickerOpen}
+                onOpenChange={setCanvasPickerOpen}
+              >
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    aria-label="Add workspace servers to sandbox"
+                    onPointerDown={(e) => e.stopPropagation()}
+                    onClick={(e) => e.stopPropagation()}
+                    className={plusHandleButtonClass}
+                  >
+                    <Plus className="size-3.5" />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="bottom"
+                  align="center"
+                  sideOffset={8}
+                  className="w-80 p-0 z-[100]"
+                >
+                  <p className="border-b border-border/60 px-3 py-2 text-xs text-muted-foreground">
+                    Pick HTTPS servers from your workspace for this sandbox.
+                  </p>
+                  <div className="p-1">
+                    <WorkspaceServerPickerList
+                      workspaceServers={canvasServerPicker.workspaceServers}
+                      selectedServerIds={canvasServerPicker.selectedServerIds}
+                      onToggleSelection={(serverId, checked) => {
+                        canvasServerPicker.onToggleServer(serverId, checked);
+                      }}
+                    />
+                  </div>
+                  <div className="border-t border-border/60 p-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      className="h-9 w-full justify-start gap-2 rounded-md px-2 text-sm text-muted-foreground hover:text-foreground"
+                      onClick={() => {
+                        setCanvasPickerOpen(false);
+                        canvasServerPicker.onOpenAddWorkspaceServer();
+                      }}
+                    >
+                      <Plus className="size-4 shrink-0" />
+                      Add server to workspace…
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+            ) : (
+              <button
+                type="button"
+                className={plusHandleButtonClass}
+                aria-label="Add server"
+              >
+                <Plus className="size-3.5" />
+              </button>
+            )}
+          </div>
+        </>
       ) : hasBottomHandle(data.kind) ? (
         <Handle
           type="source"
@@ -217,22 +352,39 @@ const VIEWPORT_ANIMATION_DURATION = 400;
 const VIEWPORT_FIT_PADDING = 0.18;
 const VIEWPORT_SETTLE_DELAY_MS = 50;
 
+function isValidMeasuredFitBounds(bounds: {
+  width: number;
+  height: number;
+}): boolean {
+  return (
+    Number.isFinite(bounds.width) &&
+    Number.isFinite(bounds.height) &&
+    bounds.width >= 16 &&
+    bounds.height >= 16
+  );
+}
+
 interface CanvasViewportControllerProps {
   containerRef: RefObject<HTMLDivElement | null>;
   layoutSignature: string;
-  center: { x: number; y: number } | null;
+  layoutNodes: SandboxFlowNode[];
+  /** Bumps when setup canvas becomes visible again (mode / mobile sheet) so refit runs even if layout is unchanged. */
+  canvasViewportRefitNonce: number;
 }
 
 function CanvasViewportController({
   containerRef,
   layoutSignature,
-  center,
+  layoutNodes,
+  canvasViewportRefitNonce,
 }: CanvasViewportControllerProps) {
-  const reactFlow = useReactFlow();
-  const [containerWidth, setContainerWidth] = useState<number | null>(null);
-  const lastLayoutSignatureRef = useRef<string | null>(null);
-  const lastContainerWidthRef = useRef<number | null>(null);
-  const hasFitViewportRef = useRef(false);
+  const { fitBounds, getNodesBounds, viewportInitialized } = useReactFlow();
+  const nodesInitialized = useNodesInitialized();
+  const [containerBox, setContainerBox] = useState<{
+    width: number;
+    height: number;
+  }>({ width: 0, height: 0 });
+  const lastAppliedViewportInputKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -240,21 +392,29 @@ function CanvasViewportController({
       return;
     }
 
-    const updateWidth = (nextWidth: number) => {
-      setContainerWidth((currentWidth) =>
-        currentWidth !== null && Math.abs(currentWidth - nextWidth) < 1
-          ? currentWidth
-          : nextWidth,
-      );
+    const updateBox = (width: number, height: number) => {
+      setContainerBox((prev) => {
+        if (
+          Math.abs(prev.width - width) < 1 &&
+          Math.abs(prev.height - height) < 1
+        ) {
+          return prev;
+        }
+        return { width, height };
+      });
     };
 
-    updateWidth(container.getBoundingClientRect().width);
+    const rect = container.getBoundingClientRect();
+    updateBox(rect.width, rect.height);
 
     const observer = new ResizeObserver((entries) => {
-      const observedWidth =
-        entries[0]?.contentRect.width ??
-        container.getBoundingClientRect().width;
-      updateWidth(observedWidth);
+      const cr = entries[0]?.contentRect;
+      if (cr) {
+        updateBox(cr.width, cr.height);
+        return;
+      }
+      const r = container.getBoundingClientRect();
+      updateBox(r.width, r.height);
     });
 
     observer.observe(container);
@@ -263,61 +423,66 @@ function CanvasViewportController({
   }, [containerRef]);
 
   useEffect(() => {
-    if (!layoutSignature) {
+    if (!viewportInitialized || !nodesInitialized || !layoutSignature) {
+      return;
+    }
+    if (containerBox.width < 1 || containerBox.height < 1) {
       return;
     }
 
-    const layoutChanged = lastLayoutSignatureRef.current !== layoutSignature;
-    lastLayoutSignatureRef.current = layoutSignature;
-
-    if (!layoutChanged) {
+    const renderableIds = getSandboxBuilderRenderableNodeIds(layoutNodes);
+    if (renderableIds.length === 0) {
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      reactFlow.fitView({
+    const viewportInputKey = `${layoutSignature}|${Math.round(containerBox.width)}|${Math.round(containerBox.height)}|${canvasViewportRefitNonce}`;
+
+    const autoFitCanvas = () => {
+      if (viewportInputKey === lastAppliedViewportInputKeyRef.current) {
+        return;
+      }
+
+      const staticBounds = getSandboxCanvasStaticFitBounds(layoutNodes);
+      let bounds = getNodesBounds(renderableIds);
+      if (!isValidMeasuredFitBounds(bounds)) {
+        if (!staticBounds) {
+          return;
+        }
+        bounds = staticBounds;
+      } else {
+        bounds = extendSandboxViewportBoundsForHostOverflow(
+          bounds,
+          layoutNodes,
+        );
+      }
+
+      void fitBounds(bounds, {
         padding: VIEWPORT_FIT_PADDING,
         duration: VIEWPORT_ANIMATION_DURATION,
       });
-      hasFitViewportRef.current = true;
-      if (containerRef.current) {
-        lastContainerWidthRef.current =
-          containerRef.current.getBoundingClientRect().width;
-      }
-    }, VIEWPORT_SETTLE_DELAY_MS);
-
-    return () => window.clearTimeout(timer);
-  }, [containerRef, layoutSignature, reactFlow]);
-
-  useEffect(() => {
-    if (!center || containerWidth === null) {
-      return;
-    }
-
-    if (lastContainerWidthRef.current === null) {
-      lastContainerWidthRef.current = containerWidth;
-      return;
-    }
-
-    if (Math.abs(lastContainerWidthRef.current - containerWidth) < 1) {
-      return;
-    }
-
-    lastContainerWidthRef.current = containerWidth;
-
-    if (!hasFitViewportRef.current) {
-      return;
-    }
+      lastAppliedViewportInputKeyRef.current = viewportInputKey;
+    };
 
     const timer = window.setTimeout(() => {
-      reactFlow.setCenter(center.x, center.y, {
-        zoom: reactFlow.getZoom(),
-        duration: VIEWPORT_ANIMATION_DURATION,
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          autoFitCanvas();
+        });
       });
     }, VIEWPORT_SETTLE_DELAY_MS);
 
     return () => window.clearTimeout(timer);
-  }, [center, containerWidth, reactFlow]);
+  }, [
+    viewportInitialized,
+    nodesInitialized,
+    layoutSignature,
+    layoutNodes,
+    containerBox.width,
+    containerBox.height,
+    canvasViewportRefitNonce,
+    fitBounds,
+    getNodesBounds,
+  ]);
 
   return null;
 }
@@ -327,7 +492,9 @@ interface SandboxCanvasProps {
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
-  onAddServer?: () => void;
+  canvasServerPicker?: SandboxCanvasServerPickerProps;
+  /** Incremented by the builder shell when the setup canvas is shown again or mobile setup chrome changes. */
+  canvasViewportRefitNonce?: number;
 }
 
 export function SandboxCanvas({
@@ -335,7 +502,8 @@ export function SandboxCanvas({
   selectedNodeId,
   onSelectNode,
   onClearSelection,
-  onAddServer,
+  canvasServerPicker,
+  canvasViewportRefitNonce = 0,
 }: SandboxCanvasProps) {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const nodes = viewModel.nodes.map((node) =>
@@ -350,19 +518,41 @@ export function SandboxCanvas({
     () => getSandboxCanvasLayoutSignature(viewModel.nodes),
     [viewModel.nodes],
   );
-  const layoutCenter = useMemo(
-    () => getSandboxCanvasCenter(viewModel.nodes),
-    [viewModel.nodes],
+  const ctxValue = useMemo(
+    () => ({ canvasServerPicker }),
+    [canvasServerPicker],
   );
-
-  const ctxValue = useMemo(() => ({ onAddServer }), [onAddServer]);
 
   return (
     <SandboxCanvasContext.Provider value={ctxValue}>
       <div
         ref={canvasRef}
-        className="sandbox-builder-grid h-full w-full rounded-[28px] border border-border/70 bg-background"
+        className="sandbox-builder-grid relative h-full w-full rounded-[28px] border border-border/70 bg-background"
       >
+        <div className="pointer-events-none absolute right-3 top-3 z-10">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="pointer-events-auto size-10 shrink-0 text-muted-foreground"
+                aria-label="About the sandbox layout"
+              >
+                <CircleHelp className="size-5" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent
+              side="bottom"
+              align="end"
+              className="max-w-[300px] text-balance text-sm"
+            >
+              This diagram maps your sandbox: servers, tools, and the chat
+              experience. Choose a Claude-style or ChatGPT-style host and other
+              behavior in Setup. Preview shows what end users will see.
+            </TooltipContent>
+          </Tooltip>
+        </div>
         <ReactFlow
           nodes={nodes}
           edges={viewModel.edges}
@@ -383,9 +573,17 @@ export function SandboxCanvas({
           <CanvasViewportController
             containerRef={canvasRef}
             layoutSignature={layoutSignature}
-            center={layoutCenter}
+            layoutNodes={viewModel.nodes}
+            canvasViewportRefitNonce={canvasViewportRefitNonce}
           />
-          <Background />
+          <Background
+            id="sandbox-builder-dots"
+            variant={BackgroundVariant.Dots}
+            gap={30}
+            size={0.9}
+            color="oklch(0.55 0.02 250 / 0.22)"
+            patternClassName="opacity-[0.4]"
+          />
           <Controls
             showInteractive={false}
             className="!rounded-xl !border !border-border/70 !bg-card/95"
