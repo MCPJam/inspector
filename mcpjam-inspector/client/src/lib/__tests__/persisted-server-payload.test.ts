@@ -9,7 +9,7 @@ import {
 } from "../persisted-server-payload";
 
 describe("persisted-server-payload", () => {
-  it("strips Authorization while preserving non-secret headers", () => {
+  it("preserves Authorization and custom headers for normal persistence", () => {
     const payload = buildPersistedServerPayload("linear", {
       config: {
         url: "https://mcp.linear.app/mcp",
@@ -37,12 +37,35 @@ describe("persisted-server-payload", () => {
       args: undefined,
       url: "https://mcp.linear.app/mcp",
       headers: {
+        Authorization: "Bearer secret",
         "X-Custom": "1",
       },
       timeout: 30_000,
       useOAuth: true,
       oauthScopes: ["read", "write"],
       clientId: "linear-client",
+    });
+  });
+
+  it("preserves Authorization in remote persisted payloads", () => {
+    const payload = buildPersistedPayloadFromRemoteServer({
+      name: "linear",
+      enabled: true,
+      transportType: "http",
+      url: "https://mcp.linear.app/mcp",
+      headers: {
+        Authorization: "Bearer secret",
+        "X-Custom": "1",
+      },
+      timeout: 30_000,
+      useOAuth: true,
+      oauthScopes: ["read", "write"],
+      clientId: "linear-client",
+    });
+
+    expect(payload.headers).toEqual({
+      Authorization: "Bearer secret",
+      "X-Custom": "1",
     });
   });
 
@@ -94,6 +117,7 @@ describe("persisted-server-payload", () => {
       transportType: "http",
       url: "https://mcp.linear.app/mcp",
       headers: {
+        Authorization: "Bearer secret",
         "X-Custom": "1",
       },
       timeout: undefined,
@@ -130,6 +154,7 @@ describe("persisted-server-payload", () => {
           transportType: "http",
           url: "https://mcp.linear.app/mcp",
           headers: {
+            Authorization: "Bearer secret",
             "X-Custom": "1",
           },
           timeout: undefined,
@@ -228,6 +253,7 @@ describe("persisted-server-payload", () => {
       args: undefined,
       url: "https://mcp.linear.app/mcp",
       headers: {
+        Authorization: "Bearer secret",
         "X-Custom": "1",
       },
       timeout: 30_000,

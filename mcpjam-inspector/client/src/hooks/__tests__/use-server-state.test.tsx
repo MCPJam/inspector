@@ -15,6 +15,9 @@ const {
   clearOAuthDataMock,
   testConnectionMock,
   mockConvexQuery,
+  createServerMutationMock,
+  updateServerMutationMock,
+  deleteServerMutationMock,
 } = vi.hoisted(() => ({
   toastError: vi.fn(),
   toastSuccess: vi.fn(),
@@ -24,6 +27,9 @@ const {
   clearOAuthDataMock: vi.fn(),
   testConnectionMock: vi.fn(),
   mockConvexQuery: vi.fn(),
+  createServerMutationMock: vi.fn(),
+  updateServerMutationMock: vi.fn(),
+  deleteServerMutationMock: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -78,9 +84,9 @@ vi.mock("@/stores/ui-playground-store", () => ({
 
 vi.mock("../useWorkspaces", () => ({
   useServerMutations: () => ({
-    createServer: vi.fn(),
-    updateServer: vi.fn(),
-    deleteServer: vi.fn(),
+    createServer: createServerMutationMock,
+    updateServer: updateServerMutationMock,
+    deleteServer: deleteServerMutationMock,
   }),
 }));
 
@@ -139,19 +145,29 @@ function createAppState(options?: {
 function renderUseServerState(
   dispatch: (action: AppAction) => void,
   appState = createAppState(),
+  options?: {
+    isAuthenticated?: boolean;
+    isAuthLoading?: boolean;
+    isLoadingWorkspaces?: boolean;
+    useLocalFallback?: boolean;
+    effectiveWorkspaces?: AppState["workspaces"];
+    effectiveActiveWorkspaceId?: string;
+    activeWorkspaceServersFlat?: any[];
+  },
 ) {
   return renderHook(() =>
     useServerState({
       appState,
       dispatch,
       isLoading: false,
-      isAuthenticated: false,
-      isAuthLoading: false,
-      isLoadingWorkspaces: false,
-      useLocalFallback: true,
-      effectiveWorkspaces: appState.workspaces,
-      effectiveActiveWorkspaceId: appState.activeWorkspaceId,
-      activeWorkspaceServersFlat: undefined,
+      isAuthenticated: options?.isAuthenticated ?? false,
+      isAuthLoading: options?.isAuthLoading ?? false,
+      isLoadingWorkspaces: options?.isLoadingWorkspaces ?? false,
+      useLocalFallback: options?.useLocalFallback ?? true,
+      effectiveWorkspaces: options?.effectiveWorkspaces ?? appState.workspaces,
+      effectiveActiveWorkspaceId:
+        options?.effectiveActiveWorkspaceId ?? appState.activeWorkspaceId,
+      activeWorkspaceServersFlat: options?.activeWorkspaceServersFlat,
       logger: {
         info: vi.fn(),
         warn: vi.fn(),
@@ -189,6 +205,9 @@ describe("useServerState OAuth callback failures", () => {
     });
     initiateOAuthMock.mockResolvedValue({ success: true });
     mockConvexQuery.mockResolvedValue(null);
+    createServerMutationMock.mockResolvedValue("remote-server-id");
+    updateServerMutationMock.mockResolvedValue(undefined);
+    deleteServerMutationMock.mockResolvedValue(undefined);
   });
 
   it("marks the pending server as failed when authorization is denied", async () => {
@@ -389,6 +408,93 @@ describe("useServerState OAuth callback failures", () => {
       registryServerId: "registry-linear",
       useRegistryOAuthProxy: false,
       scopes: ["read", "write"],
+    });
+  });
+
+  it("preserves Authorization headers when creating a signed-in server config", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState(), {
+      isAuthenticated: true,
+      useLocalFallback: false,
+      effectiveActiveWorkspaceId: "ws_1",
+      activeWorkspaceServersFlat: [],
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "auth-server",
+        type: "http",
+        url: "https://example.com/mcp",
+        headers: {
+          Authorization: "Bearer secret",
+          "X-Custom": "1",
+        },
+      });
+    });
+
+    expect(createServerMutationMock).toHaveBeenCalledWith({
+      workspaceId: "ws_1",
+      name: "auth-server",
+      enabled: false,
+      transportType: "http",
+      command: undefined,
+      args: undefined,
+      url: "https://example.com/mcp",
+      headers: {
+        Authorization: "Bearer secret",
+        "X-Custom": "1",
+      },
+      timeout: undefined,
+      useOAuth: false,
+      oauthScopes: undefined,
+      clientId: undefined,
+    });
+  });
+
+  it("preserves Authorization headers when updating a signed-in server config", async () => {
+    const dispatch = vi.fn();
+    const { result } = renderUseServerState(dispatch, createAppState(), {
+      isAuthenticated: true,
+      useLocalFallback: false,
+      effectiveActiveWorkspaceId: "ws_1",
+      activeWorkspaceServersFlat: [
+        {
+          _id: "srv_1",
+          workspaceId: "ws_1",
+          name: "demo-server",
+        },
+      ],
+    });
+
+    await act(async () => {
+      await result.current.saveServerConfigWithoutConnecting({
+        name: "demo-server",
+        type: "http",
+        url: "https://example.com/mcp",
+        useOAuth: true,
+        headers: {
+          Authorization: "Bearer secret",
+          "X-Custom": "1",
+        },
+      });
+    });
+
+    expect(updateServerMutationMock).toHaveBeenCalledWith({
+      serverId: "srv_1",
+      name: "demo-server",
+      enabled: true,
+      transportType: "http",
+      command: undefined,
+      args: undefined,
+      url: "https://example.com/mcp",
+      headers: {
+        Authorization: "Bearer secret",
+        "X-Custom": "1",
+      },
+      timeout: undefined,
+      useOAuth: true,
+      oauthScopes: undefined,
+      clientId: undefined,
     });
   });
 

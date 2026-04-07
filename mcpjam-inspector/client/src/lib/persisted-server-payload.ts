@@ -15,23 +15,19 @@ export interface PersistedServerPayload {
   clientId?: string;
 }
 
-function stripAuthorizationHeader(
+function normalizeHeaders(
   headers: Record<string, unknown> | undefined,
 ): Record<string, string> | undefined {
   if (!headers) {
     return undefined;
   }
 
-  const sanitized: Record<string, string> = {};
+  const normalized: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (key.toLowerCase() === "authorization") {
-      continue;
-    }
-
-    sanitized[key] = String(value);
+    normalized[key] = String(value);
   }
 
-  return Object.keys(sanitized).length > 0 ? sanitized : undefined;
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 function normalizeScopes(scopes: string[] | string | undefined): string[] | undefined {
@@ -79,7 +75,7 @@ export function buildPersistedServerPayload(
         : typeof rawUrl === "string"
           ? rawUrl
           : undefined,
-    headers: stripAuthorizationHeader(rawRequestInit?.headers),
+    headers: normalizeHeaders(rawRequestInit?.headers),
     timeout: typeof config.timeout === "number" ? config.timeout : undefined,
     useOAuth: serverEntry.useOAuth,
     oauthScopes,
@@ -124,7 +120,7 @@ export function buildPersistedPayloadFromRemoteServer(
     command: remoteServer.command,
     args: remoteServer.args ? [...remoteServer.args] : undefined,
     url: remoteServer.url,
-    headers: stripAuthorizationHeader(remoteServer.headers),
+    headers: normalizeHeaders(remoteServer.headers),
     timeout: remoteServer.timeout,
     useOAuth: remoteServer.useOAuth,
     oauthScopes: normalizeScopes(remoteServer.oauthScopes),
@@ -156,7 +152,7 @@ export function buildPersistedPayloadFromCarryForwardComparableServer(
     command: remoteServer.command,
     args: remoteServer.args ? [...remoteServer.args] : undefined,
     url: remoteServer.url,
-    headers: stripAuthorizationHeader(remoteServer.headers),
+    headers: normalizeHeaders(remoteServer.headers),
     timeout: remoteServer.timeout,
     useOAuth: remoteServer.useOAuth,
     oauthScopes: normalizeScopes(remoteServer.oauthScopes),
