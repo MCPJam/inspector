@@ -5,6 +5,7 @@ import {
   ToolUIPart,
   DynamicToolUIPart,
 } from "ai";
+import type { UIMessage } from "@ai-sdk/react";
 import { isUIResource } from "@mcp-ui/client";
 import {
   AlertTriangle,
@@ -44,6 +45,38 @@ type ToolStateMeta = {
   label: string;
   className: string;
 };
+
+export function isRenderableConversationMessage(message: UIMessage): boolean {
+  if (message.id?.startsWith("widget-state-")) return false;
+  if (message.id?.startsWith("model-context-")) return false;
+  return message.role === "user" || message.role === "assistant";
+}
+
+export function getRenderableConversationMessages(
+  messages: UIMessage[],
+): UIMessage[] {
+  return messages.filter(isRenderableConversationMessage);
+}
+
+export function getLastRenderableConversationMessage(
+  messages: UIMessage[],
+): UIMessage | null {
+  return getRenderableConversationMessages(messages).at(-1) ?? null;
+}
+
+export function hasRenderableConversationContent(message: UIMessage): boolean {
+  const parts = Array.isArray(message.parts) ? message.parts : [];
+
+  if (parts.length > 0) {
+    return parts.some((part) => (part as { type?: string }).type !== "step-start");
+  }
+
+  if (typeof (message as { content?: unknown }).content === "string") {
+    return ((message as { content?: string }).content ?? "").trim().length > 0;
+  }
+
+  return false;
+}
 
 export function groupAssistantPartsIntoSteps(parts: AnyPart[]): AnyPart[][] {
   const groups: AnyPart[][] = [];

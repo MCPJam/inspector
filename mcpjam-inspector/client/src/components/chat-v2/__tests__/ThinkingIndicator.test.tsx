@@ -1,7 +1,17 @@
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { ThinkingIndicator } from "../shared/thinking-indicator";
 import type { ModelDefinition } from "@/shared/types";
+
+const mockUseReducedMotion = vi.hoisted(() => vi.fn(() => false));
+
+vi.mock("framer-motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("framer-motion")>();
+  return {
+    ...actual,
+    useReducedMotion: mockUseReducedMotion,
+  };
+});
 
 describe("ThinkingIndicator", () => {
   const defaultModel: ModelDefinition = {
@@ -14,6 +24,10 @@ describe("ThinkingIndicator", () => {
     supportsVision: false,
     supportsStreaming: true,
   };
+
+  beforeEach(() => {
+    mockUseReducedMotion.mockReturnValue(false);
+  });
 
   it("does not render a leading assistant avatar", () => {
     render(<ThinkingIndicator model={defaultModel} />);
@@ -40,10 +54,19 @@ describe("ThinkingIndicator", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders the Claude mark variant with hidden accessible text", () => {
+  it("renders the animated Claude mark variant with hidden accessible text", () => {
     render(<ThinkingIndicator model={defaultModel} variant="claude-mark" />);
 
     expect(screen.getByTestId("loading-indicator-claude")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("loading-indicator-claude-stage"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-900"),
+    ).not.toHaveAttribute("hidden");
+    expect(
+      screen.getByTestId("loading-indicator-claude-strip-800"),
+    ).not.toHaveAttribute("hidden");
     expect(
       screen.getByText("Thinking", { selector: ".sr-only" }),
     ).toBeInTheDocument();

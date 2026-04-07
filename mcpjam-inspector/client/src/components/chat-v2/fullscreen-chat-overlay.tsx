@@ -10,6 +10,8 @@ import {
   LoadingIndicatorContent,
   type LoadingIndicatorVariant,
 } from "@/components/chat-v2/shared/loading-indicator-content";
+import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
+import { getRenderableConversationMessages } from "@/components/chat-v2/thread/thread-helpers";
 
 function getMessagePreviewText(message: UIMessage): string {
   const parts = Array.isArray(message?.parts) ? message.parts : [];
@@ -29,20 +31,40 @@ function getMessagePreviewText(message: UIMessage): string {
   return "";
 }
 
-function MessageBubble({ text, isUser }: { text: string; isUser: boolean }) {
+function MessageBubble({
+  text,
+  isUser,
+  claudeFooterMode = "none",
+}: {
+  text: string;
+  isUser: boolean;
+  claudeFooterMode?: "none" | "animated" | "static";
+}) {
+  const showClaudeFooter = !isUser && claudeFooterMode !== "none";
+
   return (
     <div
       className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
     >
-      <div
-        className={cn(
-          "max-w-[85%] rounded-2xl px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
-          isUser
-            ? "bg-primary text-primary-foreground"
-            : "bg-muted text-foreground",
-        )}
-      >
-        {text}
+      <div className={cn("max-w-[85%]", showClaudeFooter && "space-y-3")}>
+        <div
+          className={cn(
+            "rounded-2xl px-3 py-2 text-sm leading-6 whitespace-pre-wrap",
+            isUser
+              ? "bg-primary text-primary-foreground"
+              : "bg-muted text-foreground",
+          )}
+        >
+          {text}
+        </div>
+        {showClaudeFooter ? (
+          <div
+            data-testid={`fullscreen-claude-footer-${claudeFooterMode}`}
+            className="pl-1"
+          >
+            <ClaudeLoadingIndicator mode={claudeFooterMode} />
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -54,7 +76,7 @@ function ThinkingRow({
   variant?: LoadingIndicatorVariant;
 }) {
   return (
-    <div className="flex w-full justify-start">
+    <div data-testid="fullscreen-thinking-row" className="flex w-full justify-start">
       <div className="inline-flex items-center gap-2 rounded-2xl bg-muted px-3 py-2 text-sm text-muted-foreground/80">
         <LoadingIndicatorContent variant={variant} />
       </div>
@@ -106,11 +128,19 @@ function MessageList({
 
   const visibleMessages = useMemo(
     () =>
-      messages
-        .filter((m) => !m.id?.startsWith("widget-state-"))
-        .filter((m) => m.role === "user" || m.role === "assistant"),
+      getRenderableConversationMessages(messages)
+        .map((message) => ({
+          message,
+          text: getMessagePreviewText(message),
+        }))
+        .filter((entry) => entry.text.length > 0),
     [messages],
   );
+  const lastVisibleMessage = visibleMessages.at(-1)?.message ?? null;
+  const shouldShowStandaloneThinkingRow =
+    loadingIndicatorVariant === "claude-mark"
+      ? isThinking && lastVisibleMessage?.role !== "assistant"
+      : isThinking;
 
   useEffect(() => {
     if (!open) return;
@@ -122,18 +152,27 @@ function MessageList({
   return (
     <div className="mb-4 overflow-hidden rounded-3xl border border-border/40 bg-background/95 shadow-2xl backdrop-blur-xl">
       <div className="max-h-[45vh] overflow-y-auto px-4 py-3 space-y-3">
-        {visibleMessages.map((m, idx) => {
-          const text = getMessagePreviewText(m);
-          if (!text) return null;
+        {visibleMessages.map(({ message, text }, idx) => {
+          const claudeFooterMode =
+            loadingIndicatorVariant === "claude-mark" &&
+            message.role === "assistant" &&
+            message.id === lastVisibleMessage?.id
+              ? isThinking
+                ? "animated"
+                : "static"
+              : "none";
           return (
             <MessageBubble
-              key={m.id ?? `${m.role}-${idx}`}
+              key={message.id ?? `${message.role}-${idx}`}
               text={text}
-              isUser={m.role === "user"}
+              isUser={message.role === "user"}
+              claudeFooterMode={claudeFooterMode}
             />
           );
         })}
-        {isThinking && <ThinkingRow variant={loadingIndicatorVariant} />}
+        {shouldShowStandaloneThinkingRow ? (
+          <ThinkingRow variant={loadingIndicatorVariant} />
+        ) : null}
         <div ref={bottomRef} />
       </div>
     </div>

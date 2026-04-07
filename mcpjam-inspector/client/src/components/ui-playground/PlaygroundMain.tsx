@@ -803,7 +803,7 @@ export function PlaygroundMain({
                 messages={messages}
                 sendFollowUpMessage={handleSendFollowUp}
                 model={selectedModel}
-                isLoading={status === "submitted"}
+                isLoading={isStreaming}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={handleWidgetStateChange}
@@ -876,7 +876,7 @@ export function PlaygroundMain({
             !submitBlocked &&
             composer.input.trim().length > 0
           }
-          isThinking={status === "submitted"}
+          isThinking={isStreaming}
           loadingIndicatorVariant={loadingIndicatorVariant}
           onSend={() => {
             sendMessage({ text: composer.input });

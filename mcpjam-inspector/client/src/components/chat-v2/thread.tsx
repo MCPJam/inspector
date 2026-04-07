@@ -17,6 +17,10 @@ import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-over
 import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
+import {
+  getLastRenderableConversationMessage,
+  hasRenderableConversationContent,
+} from "./thread/thread-helpers";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -127,6 +131,14 @@ export function Thread({
   const sandboxHostTheme = useSandboxHostTheme();
   const isChatgptDark =
     sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
+  const lastRenderableMessage = getLastRenderableConversationMessage(messages);
+  const canAttachClaudeMascot =
+    lastRenderableMessage?.role === "assistant" &&
+    hasRenderableConversationContent(lastRenderableMessage);
+  const shouldShowStandaloneThinkingIndicator =
+    loadingIndicatorVariant === "claude-mark"
+      ? isLoading && !canAttachClaudeMascot
+      : isLoading;
 
   return (
     <div
@@ -168,9 +180,11 @@ export function Thread({
         highlightedMessageIds={highlightedMessageIds}
         navigationKey={navigationKey}
         viewportRef={viewportRef}
+        isLoading={isLoading}
+        loadingIndicatorVariant={loadingIndicatorVariant}
         contentClassName="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
       />
-      {isLoading && (
+      {shouldShowStandaloneThinkingIndicator && (
         <div className="max-w-4xl mx-auto px-4">
           <ThinkingIndicator model={model} variant={loadingIndicatorVariant} />
         </div>

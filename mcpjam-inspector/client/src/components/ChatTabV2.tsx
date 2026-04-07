@@ -726,7 +726,7 @@ export function ChatTabV2({
                         sendMessage({ text })
                       }
                       model={selectedModel}
-                      isLoading={status === "submitted"}
+                      isLoading={isStreaming}
                       toolsMetadata={toolsMetadata}
                       toolServerMap={toolServerMap}
                       onWidgetStateChange={handleWidgetStateChange}

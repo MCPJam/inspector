@@ -10,6 +10,9 @@ import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
+import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
+
+type ClaudeFooterMode = "none" | "animated" | "static";
 
 export function MessageView({
   message,
@@ -34,6 +37,7 @@ export function MessageView({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  claudeFooterMode = "none",
 }: {
   message: UIMessage;
   model: ModelDefinition;
@@ -63,6 +67,7 @@ export function MessageView({
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  claudeFooterMode?: ClaudeFooterMode;
 }) {
   // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
@@ -151,6 +156,7 @@ export function MessageView({
   }
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
+  const showClaudeFooter = claudeFooterMode !== "none";
   return (
     <article className="w-full">
       <div className="flex-1 min-w-0 space-y-6 text-sm leading-6">
@@ -189,6 +195,14 @@ export function MessageView({
           </div>
         ))}
       </div>
+      {showClaudeFooter ? (
+        <div
+          data-testid={`claude-message-footer-${claudeFooterMode}`}
+          className="pt-4"
+        >
+          <ClaudeLoadingIndicator mode={claudeFooterMode} />
+        </div>
+      ) : null}
     </article>
   );
 }

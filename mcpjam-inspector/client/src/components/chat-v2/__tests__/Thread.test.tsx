@@ -268,6 +268,129 @@ describe("Thread", () => {
         }),
       );
     });
+
+    it("keeps the Claude placeholder row visible before the first assistant message streams", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "claude-mark",
+        }),
+      );
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-1" }),
+          claudeFooterMode: "none",
+        }),
+      );
+    });
+
+    it("moves the Claude mascot onto the latest assistant message while loading", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Streaming..." }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("thinking-indicator"),
+      ).not.toBeInTheDocument();
+      expect(mockThinkingIndicator).not.toHaveBeenCalled();
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-2" }),
+          claudeFooterMode: "animated",
+        }),
+      );
+    });
+
+    it("keeps the standalone Claude placeholder if the latest assistant message is still empty", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-2" }),
+          claudeFooterMode: "none",
+        }),
+      );
+    });
+
+    it("keeps only the latest assistant Claude footer and makes it static after loading", () => {
+      const messages = [
+        createMessage({
+          id: "msg-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Older answer" }],
+        }),
+        createMessage({ id: "msg-2", role: "user" }),
+        createMessage({
+          id: "msg-3",
+          role: "assistant",
+          parts: [{ type: "text", text: "Latest answer" }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={false}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-1" }),
+          claudeFooterMode: "none",
+        }),
+      );
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-3" }),
+          claudeFooterMode: "static",
+        }),
+      );
+    });
   });
 
   describe("PiP functionality", () => {

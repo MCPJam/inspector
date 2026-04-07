@@ -644,6 +644,7 @@ describe("PlaygroundMain", () => {
         { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
       ];
       mockUseChatSession.status = "submitted";
+      mockUseChatSession.isStreaming = true;
 
       render(<PlaygroundMain {...defaultProps} />);
 
