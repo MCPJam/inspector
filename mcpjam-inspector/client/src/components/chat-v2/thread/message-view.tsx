@@ -174,7 +174,9 @@ export function MessageView({
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
   const showClaudeFooter = claudeFooterMode !== "none";
   return (
-    <article className={`w-full ${shouldRenderAssistantAvatar ? "flex gap-4" : ""}`}>
+    <article
+      className={`w-full ${shouldRenderAssistantAvatar ? "flex gap-4" : ""}`}
+    >
       {shouldRenderAssistantAvatar ? (
         <div
           className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
@@ -187,7 +189,10 @@ export function MessageView({
               className="h-4 w-4 object-contain"
             />
           ) : (
-            <MessageCircle className="h-4 w-4 text-muted-foreground" aria-hidden />
+            <MessageCircle
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden
+            />
           )}
         </div>
       ) : null}

@@ -169,7 +169,9 @@ describe("MessageView", () => {
       );
 
       expect(screen.queryByRole("img")).not.toBeInTheDocument();
-      expect(screen.queryByLabelText("GPT-4 assistant")).not.toBeInTheDocument();
+      expect(
+        screen.queryByLabelText("GPT-4 assistant"),
+      ).not.toBeInTheDocument();
     });
   });
 
