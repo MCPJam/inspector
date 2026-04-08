@@ -82,3 +82,35 @@ export function TraceViewModeTabs({
     </div>
   );
 }
+
+/**
+ * Full-width Trace / Chat / Raw strip used in {@link ChatTabV2} and compare cards —
+ * matches `bg-background/80 … border-b` + `px-4 py-2.5` + {@link TraceViewModeTabs} `layout="fullWidth"`.
+ */
+export function ChatTraceViewModeHeaderBar({
+  mode,
+  onModeChange,
+  className,
+}: {
+  mode: TraceViewMode;
+  onModeChange: (mode: TraceViewMode) => void;
+  className?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "bg-background/80 backdrop-blur-sm border-b border-border shrink-0",
+        className,
+      )}
+    >
+      <div className="px-4 py-2.5">
+        <TraceViewModeTabs
+          layout="fullWidth"
+          mode={mode}
+          onModeChange={onModeChange}
+          showToolsTab={false}
+        />
+      </div>
+    </div>
+  );
+}

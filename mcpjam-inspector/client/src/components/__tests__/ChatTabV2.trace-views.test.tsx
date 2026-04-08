@@ -183,6 +183,19 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
       <button onClick={() => onModeChange("raw")}>Raw</button>
     </div>
   ),
+  ChatTraceViewModeHeaderBar: ({
+    mode,
+    onModeChange,
+  }: {
+    mode: "chat" | "timeline" | "raw";
+    onModeChange: (mode: "chat" | "timeline" | "raw") => void;
+  }) => (
+    <div data-testid="trace-view-tabs" data-mode={mode}>
+      <button onClick={() => onModeChange("chat")}>Chat</button>
+      <button onClick={() => onModeChange("timeline")}>Trace</button>
+      <button onClick={() => onModeChange("raw")}>Raw</button>
+    </div>
+  ),
 }));
 
 const mockUseChatSession = {
@@ -442,6 +455,7 @@ describe("ChatTabV2 trace views", () => {
       "anthropic/claude-sonnet-4-5",
     ];
     mockUseChatSession.multiModelEnabled = true;
+    mockUseChatSession.traceViewsSupported = true;
 
     render(
       <ChatTabV2
@@ -452,6 +466,6 @@ describe("ChatTabV2 trace views", () => {
     );
 
     expect(screen.getAllByTestId("multi-model-card")).toHaveLength(2);
-    expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+    expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
   });
 });

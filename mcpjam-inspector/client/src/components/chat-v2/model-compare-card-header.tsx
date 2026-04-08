@@ -1,5 +1,8 @@
 import type { ModelDefinition } from "@/shared/types";
-import { TraceViewModeTabs } from "@/components/evals/trace-view-mode-tabs";
+import {
+  ChatTraceViewModeHeaderBar,
+  type TraceViewMode,
+} from "@/components/evals/trace-view-mode-tabs";
 import { cn } from "@/lib/utils";
 
 export type MultiModelCardStatus = "idle" | "ready" | "running" | "error";
@@ -32,6 +35,9 @@ export function ModelCompareCardHeader({
   mode,
   onModeChange,
   showTraceTabs,
+  showComparisonChrome = true,
+  /** When true (default), hides the status dot and Tools row — latency/tokens only. Set false for full compare metrics. */
+  compactCompareHeader = true,
   className,
 }: {
   model: ModelDefinition;
@@ -40,8 +46,15 @@ export function ModelCompareCardHeader({
   mode: "chat" | "timeline" | "raw";
   onModeChange: (mode: "chat" | "timeline" | "raw") => void;
   showTraceTabs: boolean;
+  /** When false, hides model title and Latency/Tokens/Tools rows (single-model-in-compare mode). */
+  showComparisonChrome?: boolean;
+  compactCompareHeader?: boolean;
   className?: string;
 }) {
+  if (!showComparisonChrome && !showTraceTabs) {
+    return null;
+  }
+
   const completedSummaries = allSummaries.filter(
     (item) => item.durationMs != null && item.durationMs > 0,
   );
@@ -98,121 +111,130 @@ export function ModelCompareCardHeader({
     currentToolCount === 1 ? "1 tool call" : `${currentToolCount} tool calls`;
 
   return (
-    <div
-      className={cn(
-        "shrink-0 border-b border-border/60 px-3 py-2",
-        className,
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-semibold leading-tight">
-            {model.name}
+    <>
+      {showComparisonChrome ? (
+        <div
+          className={cn(
+            "shrink-0 border-b border-border/60 px-3 py-2",
+            showTraceTabs && "border-b-0",
+            className,
+          )}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="truncate text-sm font-semibold leading-tight">
+                {model.name}
+              </div>
+            </div>
+            {!compactCompareHeader ? (
+              <span
+                role="img"
+                className={cn(
+                  "inline-flex shrink-0 rounded-full",
+                  statusIndicatorClass,
+                )}
+                aria-label={statusLabel}
+                title={statusLabel}
+              />
+            ) : null}
           </div>
-        </div>
-        <span
-          role="img"
-          className={cn("inline-flex shrink-0 rounded-full", statusIndicatorClass)}
-          aria-label={statusLabel}
-          title={statusLabel}
-        />
-      </div>
 
-      <div className="mt-2 space-y-1.5">
-        <div className="flex items-center gap-2">
-          <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-            Latency
-          </span>
-          <div className="relative flex min-w-0 flex-1 items-center">
-            <div className="h-[14px] w-full overflow-hidden rounded-sm bg-muted/40">
-              {currentDuration > 0 ? (
-                <div
+          <div className="mt-2 space-y-1.5">
+            <div className="flex items-center gap-2">
+              <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
+                Latency
+              </span>
+              <div className="relative flex min-w-0 flex-1 items-center">
+                <div className="h-[14px] w-full overflow-hidden rounded-sm bg-muted/40">
+                  {currentDuration > 0 ? (
+                    <div
+                      className={cn(
+                        "h-full rounded-sm transition-all duration-300",
+                        isFastest
+                          ? "bg-emerald-500/25 dark:bg-emerald-400/20"
+                          : "bg-primary/10",
+                      )}
+                      style={{ width: `${hasComparison ? durationBarPct : 100}%` }}
+                    />
+                  ) : null}
+                </div>
+                <span
                   className={cn(
-                    "h-full rounded-sm transition-all duration-300",
+                    "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
                     isFastest
-                      ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                      : "bg-primary/10",
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : "text-foreground",
                   )}
-                  style={{ width: `${hasComparison ? durationBarPct : 100}%` }}
-                />
-              ) : null}
+                >
+                  {formatCardDuration(summary?.durationMs ?? null)}
+                </span>
+              </div>
             </div>
-            <span
-              className={cn(
-                "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
-                isFastest
-                  ? "text-emerald-700 dark:text-emerald-400"
-                  : "text-foreground",
-              )}
-            >
-              {formatCardDuration(summary?.durationMs ?? null)}
-            </span>
-          </div>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-            Tokens
-          </span>
-          <div className="relative flex min-w-0 flex-1 items-center">
-            <div className="h-[14px] w-full overflow-hidden rounded-sm bg-muted/40">
-              {currentTokens > 0 ? (
-                <div
+            <div className="flex items-center gap-2">
+              <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
+                Tokens
+              </span>
+              <div className="relative flex min-w-0 flex-1 items-center">
+                <div className="h-[14px] w-full overflow-hidden rounded-sm bg-muted/40">
+                  {currentTokens > 0 ? (
+                    <div
+                      className={cn(
+                        "h-full rounded-sm transition-all duration-300",
+                        isFewestTokens
+                          ? "bg-emerald-500/25 dark:bg-emerald-400/20"
+                          : "bg-primary/10",
+                      )}
+                      style={{ width: `${hasComparison ? tokensBarPct : 100}%` }}
+                    />
+                  ) : null}
+                </div>
+                <span
                   className={cn(
-                    "h-full rounded-sm transition-all duration-300",
+                    "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
                     isFewestTokens
-                      ? "bg-emerald-500/25 dark:bg-emerald-400/20"
-                      : "bg-primary/10",
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : "text-foreground",
                   )}
-                  style={{ width: `${hasComparison ? tokensBarPct : 100}%` }}
-                />
-              ) : null}
+                >
+                  {currentTokens > 0 ? currentTokens.toLocaleString() : "—"}
+                </span>
+              </div>
             </div>
-            <span
-              className={cn(
-                "absolute inset-0 flex items-center px-1.5 text-[10px] font-medium tabular-nums",
-                isFewestTokens
-                  ? "text-emerald-700 dark:text-emerald-400"
-                  : "text-foreground",
-              )}
-            >
-              {currentTokens > 0 ? currentTokens.toLocaleString() : "—"}
-            </span>
+
+            {!compactCompareHeader ? (
+              <div className="flex items-center gap-2">
+                <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
+                  Tools
+                </span>
+                <span
+                  className={cn(
+                    "px-1.5 text-[10px] font-medium tabular-nums",
+                    isFewestTools
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : "text-foreground",
+                  )}
+                >
+                  {summary?.hasMessages ? toolCallLabel : "—"}
+                </span>
+              </div>
+            ) : null}
           </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-            Tools
-          </span>
-          <span
-            className={cn(
-              "px-1.5 text-[10px] font-medium tabular-nums",
-              isFewestTools
-                ? "text-emerald-700 dark:text-emerald-400"
-                : "text-foreground",
-            )}
-          >
-            {summary?.hasMessages ? toolCallLabel : "—"}
-          </span>
-        </div>
-      </div>
-
-      {showTraceTabs ? (
-        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-          <TraceViewModeTabs
-            mode={mode}
-            onModeChange={(nextMode) => {
-              if (nextMode === "tools") {
-                return;
-              }
-              onModeChange(nextMode);
-            }}
-            showToolsTab={false}
-            className="[&_button]:px-1.5 [&_button]:py-0.5 [&_button]:text-[11px] [&_svg]:h-3 [&_svg]:w-3"
-          />
         </div>
       ) : null}
-    </div>
+
+      {showTraceTabs ? (
+        <ChatTraceViewModeHeaderBar
+          mode={mode as TraceViewMode}
+          onModeChange={(nextMode) => {
+            if (nextMode === "tools") {
+              return;
+            }
+            onModeChange(nextMode as typeof mode);
+          }}
+          className={!showComparisonChrome ? className : undefined}
+        />
+      ) : null}
+    </>
   );
 }

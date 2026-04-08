@@ -73,6 +73,8 @@ interface MultiModelChatCardProps {
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
+  /** When false, hides per-card model title and Latency/Tokens/Tools (single selected model in compare mode). */
+  showComparisonChrome?: boolean;
 }
 
 export function MultiModelChatCard({
@@ -96,6 +98,7 @@ export function MultiModelChatCard({
   onSummaryChange,
   onHasMessagesChange,
   onOAuthRequired,
+  showComparisonChrome = true,
 }: MultiModelChatCardProps) {
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
@@ -451,6 +454,7 @@ export function MultiModelChatCard({
         mode={activeTraceViewMode}
         onModeChange={setTraceViewMode}
         showTraceTabs={showTraceTabs}
+        showComparisonChrome={showComparisonChrome}
       />
 
       <div

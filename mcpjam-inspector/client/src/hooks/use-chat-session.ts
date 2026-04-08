@@ -628,8 +628,18 @@ export function useChatSession({
     liveTraceState.activeTurnHasSnapshot,
     liveTraceState.events,
   ]);
+  const committedLiveSpanCount = useMemo(() => {
+    let n = 0;
+    for (const turnId of liveTraceState.turnOrder) {
+      const spans = liveTraceState.turns[turnId]?.spans;
+      if (Array.isArray(spans)) {
+        n += spans.length;
+      }
+    }
+    return n;
+  }, [liveTraceState.turnOrder, liveTraceState.turns]);
   const hasLiveTimelineContent =
-    hasTraceSnapshot || livePreviewSpanCount > 0;
+    livePreviewSpanCount > 0 || committedLiveSpanCount > 0;
   const handleTraceDataPart = useCallback((part: unknown) => {
     if (!isTraceEventDataPart(part)) {
       return;

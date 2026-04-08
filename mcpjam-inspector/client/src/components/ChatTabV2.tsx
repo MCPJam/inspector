@@ -47,6 +47,7 @@ import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
+import { cn } from "@/lib/utils";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
@@ -56,7 +57,7 @@ import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
-import { TraceViewModeTabs } from "@/components/evals/trace-view-mode-tabs";
+import { ChatTraceViewModeHeaderBar } from "@/components/evals/trace-view-mode-tabs";
 import {
   type BroadcastChatTurnRequest,
   MultiModelChatCard,
@@ -320,12 +321,12 @@ export function ChatTabV2({
   const effectiveHasMessages = isMultiModelMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
-  const showTraceViewTabs =
+  const showTopTraceViewTabs =
     enableTraceViews &&
     traceViewsSupported &&
-    !isMultiModelMode &&
-    !minimalMode;
-  const activeTraceViewMode: ChatTraceViewMode = showTraceViewTabs
+    !minimalMode &&
+    (!isMultiModelMode || !effectiveHasMessages);
+  const activeTraceViewMode: ChatTraceViewMode = showTopTraceViewTabs
     ? traceViewMode
     : "chat";
   const showLiveTraceDiagnostics = activeTraceViewMode !== "chat";
@@ -1064,12 +1065,136 @@ export function ChatTabV2({
           >
             {isMultiModelMode ? (
               <div className="flex flex-1 min-h-0 flex-col overflow-hidden">
-                <div className="flex-1 min-h-0 overflow-auto px-4 py-4">
-                  <div className="mx-auto flex min-h-full w-full max-w-7xl flex-col">
-                    {!effectiveHasMessages && (isAuthLoading || showDisabledCallout) ? (
-                      <div className="mb-4 rounded-2xl border border-border/60 bg-card/40 p-6 text-center">
+                {showTopTraceViewTabs ? (
+                  <ChatTraceViewModeHeaderBar
+                    mode={activeTraceViewMode}
+                    onModeChange={(mode) => {
+                      if (mode === "tools") {
+                        return;
+                      }
+                      setTraceViewMode(mode);
+                      setRevealedInChat(false);
+                    }}
+                  />
+                ) : null}
+
+                {!effectiveHasMessages &&
+                showLiveTraceDiagnostics &&
+                !minimalMode ? (
+                  <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
+                    {activeTraceViewMode === "raw" ? (
+                      <StickToBottom
+                        className="flex flex-1 min-h-0 flex-col overflow-hidden"
+                        resize="smooth"
+                        initial="smooth"
+                      >
+                        <div className="relative flex flex-1 min-h-0 overflow-hidden">
+                          <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
+                            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
+                              {!effectiveHasMessages ? (
+                                <LiveTraceRawEmptyState testId="chat-live-raw-pending" />
+                              ) : (
+                                <TraceViewer
+                                  trace={traceViewerTrace}
+                                  model={selectedModel}
+                                  toolsMetadata={toolsMetadata}
+                                  toolServerMap={toolServerMap}
+                                  traceStartedAtMs={
+                                    liveTraceEnvelope?.traceStartedAtMs ?? null
+                                  }
+                                  traceEndedAtMs={
+                                    liveTraceEnvelope?.traceEndedAtMs ?? null
+                                  }
+                                  forcedViewMode={activeTraceViewMode}
+                                  hideToolbar
+                                  fillContent
+                                  onRevealNavigateToChat={() => {
+                                    setTraceViewMode("chat");
+                                    setRevealedInChat(true);
+                                  }}
+                                  rawGrowWithContent
+                                  rawXRayMirror={{
+                                    payload: rawTraceXRayMirror.payload,
+                                    loading: rawTraceXRayMirror.loading,
+                                    error: rawTraceXRayMirror.error,
+                                    refetch: rawTraceXRayMirror.refetch,
+                                    hasUiMessages: rawTraceXRayMirror.hasMessages,
+                                  }}
+                                />
+                              )}
+                            </div>
+                          </StickToBottom.Content>
+                          <ScrollToBottomButton />
+                        </div>
+                      </StickToBottom>
+                    ) : (
+                      <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
+                        <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+                          {activeTraceViewMode === "timeline" &&
+                          !hasLiveTimelineContent ? (
+                            <LiveTraceTimelineEmptyState testId="chat-live-trace-pending" />
+                          ) : (
+                            <TraceViewer
+                              trace={traceViewerTrace}
+                              model={selectedModel}
+                              toolsMetadata={toolsMetadata}
+                              toolServerMap={toolServerMap}
+                              traceStartedAtMs={
+                                liveTraceEnvelope?.traceStartedAtMs ?? null
+                              }
+                              traceEndedAtMs={
+                                liveTraceEnvelope?.traceEndedAtMs ?? null
+                              }
+                              forcedViewMode={activeTraceViewMode}
+                              hideToolbar
+                              fillContent
+                              onRevealNavigateToChat={() => {
+                                setTraceViewMode("chat");
+                                setRevealedInChat(true);
+                              }}
+                              rawXRayMirror={{
+                                payload: rawTraceXRayMirror.payload,
+                                loading: rawTraceXRayMirror.loading,
+                                error: rawTraceXRayMirror.error,
+                                refetch: rawTraceXRayMirror.refetch,
+                                hasUiMessages: rawTraceXRayMirror.hasMessages,
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="bg-background/80 backdrop-blur-sm border-t border-border shrink-0">
+                      {errorMessage ? (
+                        <div className="max-w-4xl mx-auto px-4 pt-4">
+                          <ErrorBox
+                            message={errorMessage.message}
+                            errorDetails={errorMessage.details}
+                            code={errorMessage.code}
+                            statusCode={errorMessage.statusCode}
+                            isRetryable={errorMessage.isRetryable}
+                            isMCPJamPlatformError={
+                              errorMessage.isMCPJamPlatformError
+                            }
+                            onResetChat={handleResetAllChats}
+                          />
+                        </div>
+                      ) : null}
+                      <div className="max-w-4xl mx-auto p-4">
+                        <ChatInput
+                          {...sharedChatInputProps}
+                          hasMessages={false}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : !effectiveHasMessages ? (
+                  minimalMode ? (
+                    <div className="flex flex-1 flex-col min-h-0">
+                      <div className="flex flex-1 flex-col items-center justify-center px-4">
                         {isAuthLoading ? (
-                          <div className="space-y-4">
+                          <div className="text-center space-y-4">
                             <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
                             <p className="text-sm text-muted-foreground">
                               Loading...
@@ -1079,16 +1204,107 @@ export function ChatTabV2({
                           <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
                         ) : null}
                       </div>
-                    ) : null}
 
-                    <div className="grid min-h-0 grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+                      {showStarterPrompts && (
+                        <div className="flex flex-wrap justify-center gap-2 px-4 pb-4">
+                          {STARTER_PROMPTS.map((prompt) => (
+                            <button
+                              key={prompt.text}
+                              type="button"
+                              onClick={() => handleStarterPrompt(prompt.text)}
+                              className="rounded-full border border-border/40 bg-transparent px-3 py-1.5 text-xs text-muted-foreground transition hover:border-foreground/40 hover:bg-accent cursor-pointer font-light"
+                            >
+                              {prompt.label}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="bg-background/80 backdrop-blur-sm border-t border-border shrink-0">
+                        {!isAuthLoading && (
+                          <div className="max-w-4xl mx-auto p-4">
+                            <ChatInput
+                              {...sharedChatInputProps}
+                              hasMessages={false}
+                            />
+                          </div>
+                        )}
+                        <p className="text-center text-xs text-muted-foreground/60 pb-3 -mt-2">
+                          AI can make mistakes. Please double-check responses.
+                        </p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center overflow-y-auto px-4">
+                      <div className="w-full max-w-3xl space-y-6 py-8">
+                        {isAuthLoading ? (
+                          <div className="text-center space-y-4">
+                            <div className="mx-auto h-8 w-8 animate-spin rounded-full border-b-2 border-primary" />
+                            <p className="text-sm text-muted-foreground">
+                              Loading...
+                            </p>
+                          </div>
+                        ) : showDisabledCallout ? (
+                          <div className="space-y-4">
+                            <MCPJamFreeModelsPrompt onSignUp={handleSignUp} />
+                          </div>
+                        ) : null}
+
+                        <div className="space-y-4">
+                          {showStarterPrompts && (
+                            <div className="text-center">
+                              <p className="text-sm text-muted-foreground mb-3">
+                                Try one of these to get started
+                              </p>
+                              <div className="flex flex-wrap justify-center gap-2">
+                                {STARTER_PROMPTS.map((prompt) => (
+                                  <button
+                                    key={prompt.text}
+                                    type="button"
+                                    onClick={() =>
+                                      handleStarterPrompt(prompt.text)
+                                    }
+                                    className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
+                                  >
+                                    {prompt.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
+                          {!isAuthLoading && (
+                            <ChatInput
+                              {...sharedChatInputProps}
+                              hasMessages={false}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )
+                ) : null}
+
+                <div
+                  className={cn(
+                    "flex flex-1 min-h-0 flex-col overflow-hidden",
+                    !effectiveHasMessages && "hidden",
+                  )}
+                  aria-hidden={!effectiveHasMessages}
+                >
+                  <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
+                    <div className="mx-auto grid h-full min-h-0 w-full max-w-7xl grid-cols-1 gap-4 auto-rows-[minmax(0,1fr)] xl:grid-cols-2 2xl:grid-cols-3 [&>*]:min-h-0">
                       {resolvedSelectedModels.map((model) => (
                         <MultiModelChatCard
                           key={`${multiModelSessionGeneration}:${String(model.id)}`}
                           model={model}
-                          comparisonSummaries={Object.values(multiModelSummaries)}
+                          comparisonSummaries={Object.values(
+                            multiModelSummaries,
+                          )}
                           selectedServers={selectedConnectedServerNames}
-                          selectedServerInstructions={selectedServerInstructions}
+                          selectedServerInstructions={
+                            selectedServerInstructions
+                          }
                           broadcastRequest={broadcastRequest}
                           stopRequestId={stopBroadcastRequestId}
                           placeholder={placeholder}
@@ -1097,65 +1313,52 @@ export function ChatTabV2({
                           initialTemperature={temperature}
                           initialRequireToolApproval={requireToolApproval}
                           hostedWorkspaceId={effectiveHostedWorkspaceId}
-                          hostedSelectedServerIds={effectiveHostedSelectedServerIds}
+                          hostedSelectedServerIds={
+                            effectiveHostedSelectedServerIds
+                          }
                           hostedOAuthTokens={effectiveHostedOAuthTokens}
                           hostedShareToken={hostedShareToken}
                           hostedSandboxToken={hostedSandboxToken}
                           hostedSandboxSurface={hostedSandboxSurface}
                           onOAuthRequired={onOAuthRequired}
                           onSummaryChange={handleMultiModelSummaryChange}
-                          onHasMessagesChange={handleMultiModelHasMessagesChange}
+                          onHasMessagesChange={
+                            handleMultiModelHasMessagesChange
+                          }
+                          showComparisonChrome={
+                            resolvedSelectedModels.length > 1
+                          }
                         />
                       ))}
                     </div>
                   </div>
-                </div>
 
-                <div className="border-t border-border bg-background/80 backdrop-blur-sm">
-                  {showStarterPrompts && (
-                    <div className="flex flex-wrap justify-center gap-2 px-4 pt-4">
-                      {STARTER_PROMPTS.map((prompt) => (
-                        <button
-                          key={prompt.text}
-                          type="button"
-                          onClick={() => handleStarterPrompt(prompt.text)}
-                          className="cursor-pointer rounded-full border border-border bg-background px-4 py-2 text-sm font-light text-foreground transition hover:border-foreground hover:bg-accent"
-                        >
-                          {prompt.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {!isAuthLoading ? (
-                    <div className="mx-auto w-full max-w-6xl p-4">
-                      <ChatInput
-                        {...sharedChatInputProps}
-                        hasMessages={effectiveHasMessages}
-                      />
-                    </div>
-                  ) : null}
+                  <div className="border-t border-border bg-background/80 backdrop-blur-sm">
+                    {!isAuthLoading ? (
+                      <div className="mx-auto w-full max-w-6xl p-4">
+                        <ChatInput
+                          {...sharedChatInputProps}
+                          hasMessages={effectiveHasMessages}
+                        />
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             ) : (
               <>
-                {showTraceViewTabs && (
-                  <div className="bg-background/80 backdrop-blur-sm border-b border-border flex-shrink-0">
-                    <div className="px-4 py-2.5">
-                      <TraceViewModeTabs
-                        layout="fullWidth"
-                        mode={activeTraceViewMode}
-                        onModeChange={(mode) => {
-                          if (mode === "tools") {
-                            return;
-                          }
-                          setTraceViewMode(mode);
-                          setRevealedInChat(false);
-                        }}
-                        showToolsTab={false}
-                      />
-                    </div>
-                  </div>
-                )}
+                {showTopTraceViewTabs ? (
+                  <ChatTraceViewModeHeaderBar
+                    mode={activeTraceViewMode}
+                    onModeChange={(mode) => {
+                      if (mode === "tools") {
+                        return;
+                      }
+                      setTraceViewMode(mode);
+                      setRevealedInChat(false);
+                    }}
+                  />
+                ) : null}
 
                 {(showLiveTraceDiagnostics || revealedInChat) && !minimalMode && (
                   <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">

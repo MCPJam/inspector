@@ -408,6 +408,52 @@ describe("useChatSession live trace state", () => {
     });
   });
 
+  it("does not report live timeline content when snapshot has no spans", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "turn_start",
+          turnId: "turn-1",
+          promptIndex: 0,
+          startedAtMs: 1000,
+        }),
+      );
+      mockState.chatOnData?.(
+        tracePart({
+          type: "trace_snapshot",
+          turnId: "turn-1",
+          promptIndex: 0,
+          snapshot: {
+            traceVersion: 1,
+            promptIndex: 0,
+            messages: [
+              { role: "user", content: "Hi" },
+              { role: "assistant", content: "Hello" },
+            ],
+            spans: [],
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasTraceSnapshot).toBe(true);
+    });
+
+    expect(result.current.hasLiveTimelineContent).toBe(false);
+  });
+
   it("clears live trace state when the chat session resets", async () => {
     const { result } = renderHook(() =>
       useChatSession({
