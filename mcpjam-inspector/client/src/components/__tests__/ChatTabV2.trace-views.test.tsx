@@ -97,13 +97,19 @@ vi.mock("@/components/chat-v2/error", () => ({
   ),
 }));
 
-vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
-  STARTER_PROMPTS: [],
-  formatErrorMessage: (error: Error | null) =>
-    error ? { message: error.message } : null,
-  buildMcpPromptMessages: () => [],
-  buildSkillToolMessages: () => [],
-}));
+vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/components/chat-v2/shared/chat-helpers")
+  >();
+  return {
+    ...actual,
+    STARTER_PROMPTS: [],
+    formatErrorMessage: (error: Error | null) =>
+      error ? { message: error.message } : null,
+    buildMcpPromptMessages: () => [],
+    buildSkillToolMessages: () => [],
+  };
+});
 
 vi.mock("@/components/chat-v2/chat-input/attachments/file-utils", () => ({
   attachmentsToFileUIParts: vi.fn(async () => []),

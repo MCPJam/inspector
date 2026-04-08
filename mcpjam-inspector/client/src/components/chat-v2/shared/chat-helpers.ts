@@ -137,6 +137,12 @@ export const getProviderColorForTheme = (
 export const DEFAULT_SYSTEM_PROMPT =
   "You are a helpful assistant with access to MCP tools.";
 
+/** Match ChatTabV2 non-minimal composer placeholder (hosted / full chat UI). */
+export const DEFAULT_CHAT_COMPOSER_PLACEHOLDER = `Ask something… Use Slash "/" commands for Skills & MCP prompts`;
+
+/** Match ChatTabV2 minimalMode / compact composer (e.g. overlays, narrow NUX). */
+export const MINIMAL_CHAT_COMPOSER_PLACEHOLDER = "Message…";
+
 export const STARTER_PROMPTS: Array<{ label: string; text: string }> = [
   {
     label: "Show me connected tools",

@@ -172,4 +172,32 @@ describe("MultiModelPlaygroundCard", () => {
 
     expect(screen.queryByTestId("compare-card-header")).not.toBeInTheDocument();
   });
+
+  it("hides shared-message empty hint when suppressThreadEmptyHint is true", () => {
+    render(
+      <MultiModelPlaygroundCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        broadcastRequest={null}
+        deterministicExecutionRequest={null}
+        stopRequestId={0}
+        initialSystemPrompt=""
+        initialTemperature={0.7}
+        initialRequireToolApproval={false}
+        displayMode="inline"
+        onDisplayModeChange={vi.fn()}
+        hostStyle="chatgpt"
+        effectiveThreadTheme="light"
+        deviceType="mobile"
+        selectedProtocol={null}
+        onSummaryChange={vi.fn()}
+        suppressThreadEmptyHint
+      />,
+    );
+
+    expect(
+      screen.queryByText("Send a shared message to start this model’s thread."),
+    ).not.toBeInTheDocument();
+  });
 });

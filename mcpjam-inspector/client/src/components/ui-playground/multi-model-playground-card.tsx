@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, Braces, Loader2 } from "lucide-react";
-import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+import { Braces, Loader2 } from "lucide-react";
+import { StickToBottom } from "use-stick-to-bottom";
+import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
@@ -49,25 +50,6 @@ export interface PlaygroundDeterministicExecutionRequest {
   replaceExisting?: boolean;
 }
 
-function ScrollToBottomButton() {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
-
-  if (isAtBottom) {
-    return null;
-  }
-
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-12 flex justify-center animate-in slide-in-from-bottom fade-in duration-200">
-      <button
-        type="button"
-        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-2 text-xs font-medium shadow-sm transition hover:bg-accent"
-        onClick={() => scrollToBottom({ animation: "smooth" })}
-      >
-        <ArrowDown className="h-4 w-4" />
-      </button>
-    </div>
-  );
-}
 
 function InvokingIndicator({
   toolName,
@@ -124,6 +106,8 @@ interface MultiModelPlaygroundCardProps {
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
   /** When false, hides per-card model title and Latency/Tokens/Tools (single selected model in compare mode). */
   showComparisonChrome?: boolean;
+  /** Hide in-card “send a shared message” empty hint when the parent shows the shared starter strip + footer composer. */
+  suppressThreadEmptyHint?: boolean;
 }
 
 export function MultiModelPlaygroundCard({
@@ -155,6 +139,7 @@ export function MultiModelPlaygroundCard({
   onSummaryChange,
   onHasMessagesChange,
   showComparisonChrome = true,
+  suppressThreadEmptyHint = false,
 }: MultiModelPlaygroundCardProps) {
   const [modelContextQueue, setModelContextQueue] = useState<
     {
@@ -625,9 +610,16 @@ export function MultiModelPlaygroundCard({
                 }}
               >
                 {isThreadEmpty ? (
-                  <div className="flex flex-1 items-center justify-center px-6 py-8 text-center text-sm text-muted-foreground">
-                    Send a shared message to start this model’s thread.
-                  </div>
+                  suppressThreadEmptyHint ? (
+                    <div
+                      className="min-h-[8rem] flex-1"
+                      aria-hidden
+                    />
+                  ) : (
+                    <div className="flex flex-1 items-center justify-center px-6 py-8 text-center text-sm text-muted-foreground">
+                      Send a shared message to start this model’s thread.
+                    </div>
+                  )
                 ) : (
                   <StickToBottom
                     className="relative flex flex-1 flex-col min-h-0"

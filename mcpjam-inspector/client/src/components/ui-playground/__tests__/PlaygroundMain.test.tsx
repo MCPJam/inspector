@@ -8,6 +8,7 @@ import {
   within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
+import { DEFAULT_CHAT_COMPOSER_PLACEHOLDER } from "@/components/chat-v2/shared/chat-helpers";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -499,12 +500,18 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => mockSharedAppState,
 }));
 
-// Mock chat-helpers
-vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
-  formatErrorMessage: (error: any) =>
-    error ? { message: error.message || "Error", details: null } : null,
-  STARTER_PROMPTS: [],
-}));
+// Mock chat-helpers (keep real placeholders; stub formatError + empty starters for stable tests)
+vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/components/chat-v2/shared/chat-helpers")
+  >();
+  return {
+    ...actual,
+    formatErrorMessage: (error: any) =>
+      error ? { message: error.message || "Error", details: null } : null,
+    STARTER_PROMPTS: [],
+  };
+});
 
 // Mock utils
 vi.mock("@/lib/utils", () => ({
@@ -886,7 +893,7 @@ describe("PlaygroundMain", () => {
   });
 
   describe("multi-model chat", () => {
-    it("shows the chat-style multi-model empty state, mounts compare cards hidden, and keeps top-level trace tabs when trace views are enabled", () => {
+    it("shows centered starter layout, hidden compare grid, and composer like Chat tab when multi-model Chat is empty", () => {
       mockUseChatSession.availableModels = [
         {
           id: "gpt-4",
@@ -917,7 +924,59 @@ describe("PlaygroundMain", () => {
       expect(screen.getAllByTestId("multi-model-playground-card")).toHaveLength(
         2,
       );
+      expect(
+        screen.getByTestId("playground-multi-model-compare-section"),
+      ).toHaveClass("hidden");
+      const grid = screen.getByTestId("playground-multi-model-grid");
+      expect(grid.className.includes("hidden")).toBe(false);
       expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+      expect(screen.getAllByTestId("chat-input")).not.toHaveLength(0);
+      expect(
+        screen.queryByText(
+          "Send a shared message to start this model’s thread.",
+        ),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getAllByPlaceholderText(DEFAULT_CHAT_COMPOSER_PLACEHOLDER),
+      ).not.toHaveLength(0);
+    });
+
+    it("shows trace empty diagnostics and hides compare grid when Trace is selected before first message", () => {
+      mockUseChatSession.availableModels = [
+        {
+          id: "gpt-4",
+          name: "GPT-4",
+          provider: "openai",
+        },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+      mockUseChatSession.traceViewsSupported = true;
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          enableMultiModelChat={true}
+          enableTraceViews={true}
+        />,
+      );
+
+      fireEvent.click(screen.getByText("Trace"));
+
+      expect(
+        screen.getByTestId("playground-multi-empty-trace-pending"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-multi-model-compare-section"),
+      ).toHaveClass("hidden");
+      expect(
+        screen.queryByText("Try one of these to get started"),
+      ).not.toBeInTheDocument();
     });
   });
 
@@ -1209,6 +1268,28 @@ describe("PlaygroundMain", () => {
       expect(
         screen.getByPlaceholderText("Sign in to use chat"),
       ).toBeInTheDocument();
+    });
+
+    it("shows free-chat sign-in placeholder in multi-model mode when auth required", () => {
+      mockUseChatSession.disableForAuthentication = true;
+      mockUseChatSession.availableModels = [
+        { id: "gpt-4", name: "GPT-4", provider: "openai" },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(
+        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
+      );
+
+      expect(
+        screen.getAllByPlaceholderText("Sign in to use free chat").length,
+      ).toBeGreaterThan(0);
     });
   });
 

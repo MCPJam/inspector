@@ -7,7 +7,7 @@ import {
   useRef,
 } from "react";
 import type { UIMessage } from "ai";
-import { ArrowDown } from "lucide-react";
+import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -29,7 +29,7 @@ import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-
 import { usePostHog } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
-import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
+import { StickToBottom } from "use-stick-to-bottom";
 import { type MCPPromptResult } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import {
@@ -42,6 +42,8 @@ import {
   formatErrorMessage,
   buildMcpPromptMessages,
   buildSkillToolMessages,
+  DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
+  MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
@@ -103,23 +105,6 @@ interface ChatTabProps {
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
-function ScrollToBottomButton() {
-  const { isAtBottom, scrollToBottom } = useStickToBottomContext();
-
-  if (isAtBottom) return null;
-
-  return (
-    <div className="pointer-events-none absolute inset-x-0 flex bottom-12 justify-center animate-in slide-in-from-bottom fade-in duration-200">
-      <button
-        type="button"
-        className="pointer-events-auto inline-flex items-center gap-2 rounded-full border border-border bg-background/90 px-2 py-2 text-xs font-medium shadow-sm transition hover:bg-accent"
-        onClick={() => scrollToBottom({ animation: "smooth" })}
-      >
-        <ArrowDown className="h-4 w-4" />
-      </button>
-    </div>
-  );
-}
 
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
@@ -394,6 +379,7 @@ export function ChatTabV2({
 
   useEffect(() => {
     setTraceViewMode("chat");
+    setRevealedInChat(false);
   }, [chatSessionId]);
 
   useEffect(() => {
@@ -700,8 +686,8 @@ export function ChatTabV2({
     : status !== "ready" || submitBlocked || sandboxComposerBlocked;
 
   let placeholder = minimalMode
-    ? "Message…"
-    : 'Ask something… Use Slash "/" commands for Skills & MCP prompts';
+    ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
+    : DEFAULT_CHAT_COMPOSER_PLACEHOLDER;
   if (sandboxComposerBlocked && sandboxComposerBlockedReason) {
     placeholder = sandboxComposerBlockedReason;
   } else if (isAuthLoading) {
