@@ -22,9 +22,11 @@ import {
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
+  convertToModelMessages,
   DefaultChatTransport,
   generateId,
   lastAssistantMessageIsCompleteWithApprovalResponses,
+  type ModelMessage,
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
@@ -57,6 +59,21 @@ import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
 import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { buildHostedServerRequest } from "@/lib/apis/web/context";
+import type { EvalTraceSpan } from "@/shared/eval-trace";
+import {
+  getTraceSpansDurationMs,
+  mergeLiveChatTraceUsage,
+  rebaseTraceSpans,
+  type LiveChatTraceEnvelope,
+  type LiveChatTraceEvent,
+  type LiveChatTraceToolCall,
+  type LiveChatTraceUsage,
+} from "@/shared/live-chat-trace";
+import {
+  applyPreviewSpansUserMessageIndices,
+  buildLiveChatPreviewSpans,
+  pickTranscriptForLiveTracePreview,
+} from "@/shared/live-chat-trace-preview";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -114,6 +131,10 @@ export interface UseChatSessionReturn {
   // Model state
   selectedModel: ModelDefinition;
   setSelectedModel: (model: ModelDefinition) => void;
+  selectedModelIds: string[];
+  setSelectedModelIds: (modelIds: string[]) => void;
+  multiModelEnabled: boolean;
+  setMultiModelEnabled: (enabled: boolean) => void;
   availableModels: ModelDefinition[];
   isMcpJamModel: boolean;
 
@@ -168,11 +189,323 @@ export interface UseChatSessionReturn {
   // Resumed thread version (for optimistic concurrency)
   resumedVersion: number | null;
 
+  // Live trace state
+  liveTraceEnvelope: LiveChatTraceEnvelope | null;
+  hasTraceSnapshot: boolean;
+  /** True when Timeline can show recorded and/or preview waterfall rows. */
+  hasLiveTimelineContent: boolean;
+  traceViewsSupported: boolean;
+
   // Computed state for UI
   isStreaming: boolean;
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
+}
+
+interface LiveTraceTurnState {
+  turnId: string;
+  promptIndex: number;
+  spans: EvalTraceSpan[];
+  usage?: LiveChatTraceUsage;
+  actualToolCalls: LiveChatTraceToolCall[];
+  /** From `turn_start.startedAtMs` — anchors wall-clock times in TraceTimeline. */
+  startedAtMs?: number;
+}
+
+interface LiveTraceAccumulatorState {
+  turnOrder: string[];
+  turns: Record<string, LiveTraceTurnState>;
+  messages: ModelMessage[];
+  events: LiveChatTraceEvent[];
+  activeTurnId: string | null;
+  activeTurnHasSnapshot: boolean;
+  anySnapshotSeen: boolean;
+}
+
+const MAX_LIVE_TRACE_EVENTS = 400;
+
+function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
+  return {
+    turnOrder: [],
+    turns: {},
+    messages: [],
+    events: [],
+    activeTurnId: null,
+    activeTurnHasSnapshot: false,
+    anySnapshotSeen: false,
+  };
+}
+
+function isTraceEventDataPart(
+  value: unknown,
+): value is { type: "data-trace-event"; data: LiveChatTraceEvent } {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+
+  const part = value as { type?: unknown; data?: unknown };
+  return part.type === "data-trace-event" && !!part.data;
+}
+
+function dedupeTraceToolCalls(
+  toolCalls: LiveChatTraceToolCall[] | null | undefined,
+): LiveChatTraceToolCall[] {
+  if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
+    return [];
+  }
+
+  const deduped: LiveChatTraceToolCall[] = [];
+  const seen = new Set<string>();
+
+  for (const toolCall of toolCalls) {
+    const serializedArguments = (() => {
+      try {
+        return JSON.stringify(toolCall.arguments ?? {});
+      } catch {
+        return String(toolCall.toolCallId ?? toolCall.toolName);
+      }
+    })();
+    const dedupeKey =
+      toolCall.toolCallId ??
+      `${toolCall.toolName}:${toolCall.serverId ?? ""}:${serializedArguments}`;
+    if (seen.has(dedupeKey)) {
+      continue;
+    }
+    seen.add(dedupeKey);
+    deduped.push(toolCall);
+  }
+
+  return deduped;
+}
+
+function applyLiveTraceEvent(
+  state: LiveTraceAccumulatorState,
+  event: LiveChatTraceEvent,
+): LiveTraceAccumulatorState {
+  const nextEvents = [...state.events, event];
+  const baseState: LiveTraceAccumulatorState = {
+    ...state,
+    events:
+      nextEvents.length > MAX_LIVE_TRACE_EVENTS
+        ? nextEvents.slice(-MAX_LIVE_TRACE_EVENTS)
+        : nextEvents,
+  };
+
+  const ensureTurnState = (
+    turnId: string,
+    promptIndex: number,
+  ): LiveTraceTurnState =>
+    baseState.turns[turnId] ?? {
+      turnId,
+      promptIndex,
+      spans: [],
+      actualToolCalls: [],
+    };
+
+  switch (event.type) {
+    case "turn_start": {
+      const turnExists = baseState.turnOrder.includes(event.turnId);
+      const prev = baseState.turns[event.turnId];
+      return {
+        ...baseState,
+        turnOrder: turnExists
+          ? baseState.turnOrder
+          : [...baseState.turnOrder, event.turnId],
+        turns: {
+          ...baseState.turns,
+          [event.turnId]: {
+            turnId: event.turnId,
+            promptIndex: event.promptIndex,
+            spans: prev?.spans ?? [],
+            actualToolCalls: prev?.actualToolCalls ?? [],
+            usage: prev?.usage,
+            startedAtMs: event.startedAtMs,
+          },
+        },
+        activeTurnId: event.turnId,
+        activeTurnHasSnapshot: false,
+      };
+    }
+    case "trace_snapshot": {
+      const turnState = ensureTurnState(
+        event.turnId,
+        event.snapshot.promptIndex,
+      );
+      const turnExists = baseState.turnOrder.includes(event.turnId);
+      return {
+        ...baseState,
+        turnOrder: turnExists
+          ? baseState.turnOrder
+          : [...baseState.turnOrder, event.turnId],
+        turns: {
+          ...baseState.turns,
+          [event.turnId]: {
+            ...turnState,
+            promptIndex: event.snapshot.promptIndex,
+            spans: Array.isArray(event.snapshot.spans)
+              ? event.snapshot.spans
+              : [],
+            usage: event.snapshot.usage,
+            actualToolCalls: dedupeTraceToolCalls(
+              event.snapshot.actualToolCalls,
+            ),
+          },
+        },
+        messages: Array.isArray(event.snapshot.messages)
+          ? event.snapshot.messages
+          : baseState.messages,
+        activeTurnId:
+          baseState.activeTurnId === null
+            ? event.turnId
+            : baseState.activeTurnId,
+        activeTurnHasSnapshot:
+          baseState.activeTurnId === event.turnId ||
+          baseState.activeTurnId === null,
+        anySnapshotSeen: true,
+      };
+    }
+    case "turn_finish": {
+      const turnState = ensureTurnState(event.turnId, event.promptIndex);
+      const turnExists = baseState.turnOrder.includes(event.turnId);
+      return {
+        ...baseState,
+        turnOrder: turnExists
+          ? baseState.turnOrder
+          : [...baseState.turnOrder, event.turnId],
+        turns: {
+          ...baseState.turns,
+          [event.turnId]: {
+            ...turnState,
+            usage: event.usage ?? turnState.usage,
+          },
+        },
+        activeTurnId:
+          baseState.activeTurnId === event.turnId
+            ? null
+            : baseState.activeTurnId,
+        activeTurnHasSnapshot:
+          baseState.activeTurnId === event.turnId
+            ? false
+            : baseState.activeTurnHasSnapshot,
+      };
+    }
+    default:
+      return baseState;
+  }
+}
+
+function buildLiveTraceEnvelope(
+  state: LiveTraceAccumulatorState,
+): LiveChatTraceEnvelope | null {
+  if (state.events.length === 0 && !state.anySnapshotSeen) {
+    return null;
+  }
+
+  const spans: EvalTraceSpan[] = [];
+  const turns: LiveChatTraceEnvelope["turns"] = [];
+  let usage: LiveChatTraceUsage | undefined;
+  const actualToolCalls: LiveChatTraceToolCall[] = [];
+  let nextOffsetMs = 0;
+  let traceStartedAtMs: number | undefined;
+
+  for (const turnId of state.turnOrder) {
+    const turn = state.turns[turnId];
+    if (!turn) {
+      continue;
+    }
+
+    if (
+      typeof turn.startedAtMs === "number" &&
+      Number.isFinite(turn.startedAtMs) &&
+      traceStartedAtMs === undefined
+    ) {
+      traceStartedAtMs = turn.startedAtMs;
+    }
+
+    const durationMs = getTraceSpansDurationMs(turn.spans);
+    if (turn.spans.length > 0) {
+      spans.push(...rebaseTraceSpans(turn.spans, nextOffsetMs));
+    }
+    usage = mergeLiveChatTraceUsage(usage, turn.usage);
+    actualToolCalls.push(...turn.actualToolCalls);
+    turns.push({
+      turnId,
+      promptIndex: turn.promptIndex,
+      durationMs,
+      usage: turn.usage,
+      actualToolCalls: turn.actualToolCalls,
+    });
+    nextOffsetMs += durationMs;
+  }
+
+  const envelope: LiveChatTraceEnvelope = {
+    traceVersion: 1,
+    messages: state.messages,
+    spans: spans.length > 0 ? spans : undefined,
+    usage,
+    actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
+    events: state.events,
+    turns,
+  };
+
+  if (
+    typeof traceStartedAtMs === "number" &&
+    Number.isFinite(traceStartedAtMs)
+  ) {
+    envelope.traceStartedAtMs = traceStartedAtMs;
+    envelope.traceEndedAtMs = traceStartedAtMs + nextOffsetMs;
+  }
+
+  return envelope;
+}
+
+function mergePreviewSpansIntoLiveEnvelope(
+  envelope: LiveChatTraceEnvelope,
+  state: LiveTraceAccumulatorState,
+  previewWallElapsedMs: number | undefined,
+  transcriptFromUi: ModelMessage[] | null,
+): LiveChatTraceEnvelope {
+  if (!state.activeTurnId || state.activeTurnHasSnapshot) {
+    return envelope;
+  }
+
+  const preview = buildLiveChatPreviewSpans({
+    events: state.events,
+    activeTurnId: state.activeTurnId,
+    previewWallElapsedMs,
+  });
+  if (preview.length === 0) {
+    return envelope;
+  }
+
+  const transcript = pickTranscriptForLiveTracePreview({
+    snapshotMessages: envelope.messages,
+    transcriptFromUi,
+  });
+  const previewIndexed = applyPreviewSpansUserMessageIndices(
+    preview,
+    transcript,
+  );
+
+  const existing = envelope.spans ?? [];
+  const baseOffset =
+    existing.length > 0 ? Math.max(...existing.map((s) => s.endMs)) : 0;
+  const rebased = rebaseTraceSpans(previewIndexed, baseOffset);
+  const merged = [...existing, ...rebased];
+  const previewDur = getTraceSpansDurationMs(previewIndexed);
+  const extent = baseOffset + previewDur;
+
+  return {
+    ...envelope,
+    messages: transcript,
+    spans: merged,
+    traceEndedAtMs:
+      typeof envelope.traceStartedAtMs === "number" &&
+      Number.isFinite(envelope.traceStartedAtMs)
+        ? envelope.traceStartedAtMs + extent
+        : envelope.traceEndedAtMs,
+  };
 }
 
 function isTransientMessage(message: UIMessage): boolean {
@@ -223,7 +556,7 @@ export function useChatSession({
   hostedShareToken,
   hostedSandboxToken,
   hostedSandboxSurface,
-  minimalMode = false,
+  minimalMode: _minimalMode = false,
   initialModelId,
   initialSystemPrompt = DEFAULT_SYSTEM_PROMPT,
   initialTemperature = 0.7,
@@ -259,6 +592,8 @@ export function useChatSession({
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
+  const [liveTraceState, setLiveTraceState] =
+    useState<LiveTraceAccumulatorState>(() => createEmptyLiveTraceState());
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -299,6 +634,33 @@ export function useChatSession({
     () => selectedServers.join("\u0000"),
     [selectedServers],
   );
+  const liveTraceEnvelopeBase = useMemo(
+    () => buildLiveTraceEnvelope(liveTraceState),
+    [liveTraceState],
+  );
+  const hasTraceSnapshot = liveTraceState.activeTurnId
+    ? liveTraceState.activeTurnHasSnapshot
+    : liveTraceState.anySnapshotSeen;
+  const livePreviewSpanCount = useMemo(() => {
+    if (!liveTraceState.activeTurnId || liveTraceState.activeTurnHasSnapshot) {
+      return 0;
+    }
+    return buildLiveChatPreviewSpans({
+      events: liveTraceState.events,
+      activeTurnId: liveTraceState.activeTurnId,
+    }).length;
+  }, [
+    liveTraceState.activeTurnId,
+    liveTraceState.activeTurnHasSnapshot,
+    liveTraceState.events,
+  ]);
+  const handleTraceDataPart = useCallback((part: unknown) => {
+    if (!isTraceEventDataPart(part)) {
+      return;
+    }
+
+    setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
+  }, []);
 
   // Build available models
   const availableModels = useMemo(() => {
@@ -345,7 +707,14 @@ export function useChatSession({
   ]);
 
   // Model selection with persistence
-  const { selectedModelId, setSelectedModelId } = usePersistedModel();
+  const {
+    selectedModelId,
+    setSelectedModelId,
+    selectedModelIds,
+    setSelectedModelIds,
+    multiModelEnabled,
+    setMultiModelEnabled,
+  } = usePersistedModel();
   const selectedModel = useMemo<ModelDefinition>(() => {
     const fallback = getDefaultModel(availableModels);
     if (initialModelId) {
@@ -374,6 +743,7 @@ export function useChatSession({
       ? isMCPJamProvidedModel(String(selectedModel.id))
       : false;
   }, [selectedModel]);
+  const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
 
   // Create transport
   const transport = useMemo(() => {
@@ -493,10 +863,100 @@ export function useChatSession({
   } = useChat({
     id: chatSessionId,
     transport: transport!,
+    onData: handleTraceDataPart,
     sendAutomaticallyWhen: requireToolApproval
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
   });
+
+  const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
+    ModelMessage[] | null
+  >(null);
+
+  useEffect(() => {
+    const persistent = messages.filter(
+      (message) => !isTransientMessage(message),
+    );
+    if (persistent.length === 0) {
+      setTraceTranscriptFromUi(null);
+      return;
+    }
+    let cancelled = false;
+    void convertToModelMessages(
+      persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
+        typeof convertToModelMessages
+      >[0],
+      { ignoreIncompleteToolCalls: true },
+    ).then((modelMessages) => {
+      if (!cancelled) {
+        setTraceTranscriptFromUi(modelMessages);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [messages]);
+
+  const [previewWallTick, setPreviewWallTick] = useState(0);
+
+  useEffect(() => {
+    const previewing =
+      liveTraceState.activeTurnId && !liveTraceState.activeTurnHasSnapshot;
+    const streaming = status === "streaming" || status === "submitted";
+    if (!previewing || !streaming) {
+      return;
+    }
+    const id = window.setInterval(
+      () => setPreviewWallTick((previous) => previous + 1),
+      400,
+    );
+    return () => clearInterval(id);
+  }, [
+    liveTraceState.activeTurnId,
+    liveTraceState.activeTurnHasSnapshot,
+    status,
+  ]);
+
+  const previewWallElapsedMs = useMemo(() => {
+    if (!liveTraceState.activeTurnId || liveTraceState.activeTurnHasSnapshot) {
+      return undefined;
+    }
+    const turn = liveTraceState.turns[liveTraceState.activeTurnId];
+    const started = turn?.startedAtMs;
+    if (typeof started !== "number" || !Number.isFinite(started)) {
+      return undefined;
+    }
+    void previewWallTick;
+    return Math.max(0, Date.now() - started);
+  }, [
+    liveTraceState.activeTurnId,
+    liveTraceState.activeTurnHasSnapshot,
+    liveTraceState.turns,
+    previewWallTick,
+  ]);
+
+  const liveTraceEnvelope = useMemo(() => {
+    if (!liveTraceEnvelopeBase) {
+      return null;
+    }
+    return mergePreviewSpansIntoLiveEnvelope(
+      liveTraceEnvelopeBase,
+      liveTraceState,
+      previewWallElapsedMs,
+      traceTranscriptFromUi,
+    );
+  }, [
+    liveTraceEnvelopeBase,
+    liveTraceState,
+    previewWallElapsedMs,
+    traceTranscriptFromUi,
+  ]);
+  const hasLiveTimelineContent =
+    livePreviewSpanCount > 0 || (liveTraceEnvelope?.spans?.length ?? 0) > 0;
+
+  useEffect(() => {
+    setLiveTraceState(createEmptyLiveTraceState());
+  }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
     enabled:
@@ -937,6 +1397,10 @@ export function useChatSession({
     // Model state
     selectedModel,
     setSelectedModel,
+    selectedModelIds,
+    setSelectedModelIds,
+    multiModelEnabled,
+    setMultiModelEnabled,
     availableModels,
     isMcpJamModel,
 
@@ -976,6 +1440,12 @@ export function useChatSession({
 
     // Resumed thread version
     resumedVersion,
+
+    // Live trace state
+    liveTraceEnvelope,
+    hasTraceSnapshot,
+    hasLiveTimelineContent,
+    traceViewsSupported,
 
     // Computed state
     isStreaming,

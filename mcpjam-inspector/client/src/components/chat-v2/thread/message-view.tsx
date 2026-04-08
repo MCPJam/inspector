@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { UIMessage } from "@ai-sdk/react";
 import { MessageCircle } from "lucide-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -21,31 +22,7 @@ import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assist
 
 type ClaudeFooterMode = "none" | "animated" | "static";
 
-export function MessageView({
-  message,
-  model,
-  onSendFollowUp,
-  toolsMetadata,
-  toolServerMap,
-  onWidgetStateChange,
-  onModelContextUpdate,
-  pipWidgetId,
-  fullscreenWidgetId,
-  onRequestPip,
-  onExitPip,
-  onRequestFullscreen,
-  onExitFullscreen,
-  displayMode,
-  onDisplayModeChange,
-  selectedProtocolOverrideIfBothExists,
-  onToolApprovalResponse,
-  toolRenderOverrides,
-  showSaveViewButton = true,
-  minimalMode = false,
-  interactive = true,
-  reasoningDisplayMode = "inline",
-  claudeFooterMode = "none",
-}: {
+interface MessageViewProps {
   message: UIMessage;
   model: ModelDefinition;
   onSendFollowUp: (text: string) => void;
@@ -75,7 +52,74 @@ export function MessageView({
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
   claudeFooterMode?: ClaudeFooterMode;
-}) {
+}
+
+function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
+  return !(
+    prevMessage === nextMessage ||
+    (prevMessage.id === nextMessage.id &&
+      prevMessage.role === nextMessage.role &&
+      prevMessage.parts === nextMessage.parts)
+  );
+}
+
+function areMessageViewPropsEqual(
+  prev: Readonly<MessageViewProps>,
+  next: Readonly<MessageViewProps>,
+) {
+  return (
+    !shouldRerenderMessage(prev.message, next.message) &&
+    prev.model === next.model &&
+    prev.onSendFollowUp === next.onSendFollowUp &&
+    prev.toolsMetadata === next.toolsMetadata &&
+    prev.toolServerMap === next.toolServerMap &&
+    prev.onWidgetStateChange === next.onWidgetStateChange &&
+    prev.onModelContextUpdate === next.onModelContextUpdate &&
+    prev.pipWidgetId === next.pipWidgetId &&
+    prev.fullscreenWidgetId === next.fullscreenWidgetId &&
+    prev.onRequestPip === next.onRequestPip &&
+    prev.onExitPip === next.onExitPip &&
+    prev.onRequestFullscreen === next.onRequestFullscreen &&
+    prev.onExitFullscreen === next.onExitFullscreen &&
+    prev.displayMode === next.displayMode &&
+    prev.onDisplayModeChange === next.onDisplayModeChange &&
+    prev.selectedProtocolOverrideIfBothExists ===
+      next.selectedProtocolOverrideIfBothExists &&
+    prev.onToolApprovalResponse === next.onToolApprovalResponse &&
+    prev.toolRenderOverrides === next.toolRenderOverrides &&
+    prev.showSaveViewButton === next.showSaveViewButton &&
+    prev.minimalMode === next.minimalMode &&
+    prev.interactive === next.interactive &&
+    prev.reasoningDisplayMode === next.reasoningDisplayMode &&
+    prev.claudeFooterMode === next.claudeFooterMode
+  );
+}
+
+function MessageViewImpl({
+  message,
+  model,
+  onSendFollowUp,
+  toolsMetadata,
+  toolServerMap,
+  onWidgetStateChange,
+  onModelContextUpdate,
+  pipWidgetId,
+  fullscreenWidgetId,
+  onRequestPip,
+  onExitPip,
+  onRequestFullscreen,
+  onExitFullscreen,
+  displayMode,
+  onDisplayModeChange,
+  selectedProtocolOverrideIfBothExists,
+  onToolApprovalResponse,
+  toolRenderOverrides,
+  showSaveViewButton = true,
+  minimalMode = false,
+  interactive = true,
+  reasoningDisplayMode = "inline",
+  claudeFooterMode = "none",
+}: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
@@ -250,3 +294,7 @@ export function MessageView({
     </article>
   );
 }
+
+export const MessageView = memo(MessageViewImpl, areMessageViewPropsEqual);
+
+MessageView.displayName = "MessageView";
