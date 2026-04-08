@@ -737,7 +737,7 @@ export default function App() {
     ? "Sign in to create more workspaces"
     : (workspaceCreationGate.denialMessage ?? undefined);
   const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] =
-    React.useState<string | null>(null);
+    useState<string | null>(null);
   const trialModalDismissed =
     trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
