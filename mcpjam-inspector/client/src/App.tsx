@@ -9,7 +9,7 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -33,6 +33,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { EmptyState } from "./components/ui/empty-state";
 import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
@@ -263,6 +264,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const {
     getAccessToken,
     signIn,
@@ -1515,18 +1517,25 @@ export default function App() {
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
-          {activeTab === "app-builder" && (
-            <AppBuilderTab
-              serverConfig={selectedMCPConfig}
-              serverName={appState.selectedServer}
-              servers={workspaceServers}
-              isAuthenticated={isAuthenticated}
-              isAuthLoading={isAuthLoading}
-              onConnect={handleConnect}
-              onOnboardingChange={setAppBuilderOnboarding}
-              playgroundServerSelectorProps={playgroundServerSelectorProps}
-            />
-          )}
+          {activeTab === "app-builder" &&
+            (playgroundEnabled ? (
+              <AppBuilderTab
+                serverConfig={selectedMCPConfig}
+                serverName={appState.selectedServer}
+                servers={workspaceServers}
+                isAuthenticated={isAuthenticated}
+                isAuthLoading={isAuthLoading}
+                onConnect={handleConnect}
+                onOnboardingChange={setAppBuilderOnboarding}
+                playgroundServerSelectorProps={playgroundServerSelectorProps}
+              />
+            ) : (
+              <EmptyState
+                icon={Construction}
+                title="Playground Coming Soon"
+                description="The Playground is under construction. Stay tuned!"
+              />
+            ))}
           {activeTab === "client-config" && (
             <ClientConfigTab
               activeWorkspaceId={activeWorkspaceId}
