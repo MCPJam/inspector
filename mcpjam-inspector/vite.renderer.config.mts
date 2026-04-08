@@ -31,10 +31,7 @@ export default defineConfig(({ mode }) => {
     },
     server: {
       fs: {
-        allow: [
-          resolve(__dirname, "./client"),
-          resolve(__dirname, "./shared"),
-        ],
+        allow: [resolve(__dirname, "./client"), resolve(__dirname, "./shared")],
       },
       proxy: {
         "/api": {
