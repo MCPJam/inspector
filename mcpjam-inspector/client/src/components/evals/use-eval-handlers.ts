@@ -37,6 +37,22 @@ import {
   prepareSingleTestCaseRun,
 } from "./single-test-case-runner";
 
+function getConfiguredTestCaseModelValues(
+  testCase: Pick<EvalCase, "models">,
+): string[] {
+  const modelValues = new Set<string>();
+
+  for (const modelConfig of testCase.models ?? []) {
+    if (!modelConfig?.provider || !modelConfig.model) {
+      continue;
+    }
+
+    modelValues.add(`${modelConfig.provider}/${modelConfig.model}`);
+  }
+
+  return Array.from(modelValues);
+}
+
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
@@ -159,6 +175,8 @@ export function useEvalHandlers({
             expectedToolCalls: testCase.expectedToolCalls || [],
             isNegativeTest: testCase.isNegativeTest,
             scenario: testCase.scenario,
+            expectedOutput: testCase.expectedOutput,
+            promptTurns: testCase.promptTurns,
             advancedConfig: testCase.advancedConfig,
             testCaseId: testCase._id,
           });
@@ -374,6 +392,8 @@ export function useEvalHandlers({
             expectedToolCalls: test.expectedToolCalls,
             isNegativeTest: test.isNegativeTest,
             scenario: test.scenario,
+            expectedOutput: test.expectedOutput,
+            promptTurns: test.promptTurns,
             advancedConfig: test.advancedConfig,
           })),
           serverIds: executionContext.suiteServers,
@@ -431,57 +451,186 @@ export function useEvalHandlers({
         return null;
       }
 
-      const modelValue = getDefaultTestCaseModelValue(testCase);
-      if (!modelValue) {
+      const modelValuesToRun = options?.selectedModel
+        ? [options.selectedModel]
+        : getConfiguredTestCaseModelValues(testCase);
+      if (
+        modelValuesToRun.length === 0 ||
+        !getDefaultTestCaseModelValue(testCase)
+      ) {
         toast.error("Add a model first");
         return null;
       }
 
+      const isMultiModelRun =
+        !options?.selectedModel && modelValuesToRun.length > 1;
+
       setRunningTestCaseId(testCase._id);
 
       try {
-        const preparedRun = await prepareSingleTestCaseRun({
-          workspaceId,
-          suite,
-          testCase,
-          getAccessToken,
-          getToken,
-          hasToken,
-          selectedModel: options?.selectedModel,
-        });
+        const preparedResults = await Promise.allSettled(
+          modelValuesToRun.map((selectedModel) =>
+            prepareSingleTestCaseRun({
+              workspaceId,
+              suite,
+              testCase,
+              getAccessToken,
+              getToken,
+              hasToken,
+              selectedModel,
+            }),
+          ),
+        );
+        const preparedRuns = preparedResults.flatMap((result) =>
+          result.status === "fulfilled" ? [result.value] : [],
+        );
+        const preparationFailures = preparedResults.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [
+                {
+                  modelValue: modelValuesToRun[index]!,
+                  error: result.reason,
+                },
+              ]
+            : [],
+        );
 
-        posthog.capture("eval_test_case_run_started", {
-          location: options?.location ?? "test_case_list_sidebar",
-          platform: detectPlatform(),
-          environment: detectEnvironment(),
-          suite_id: suite._id,
-          test_case_id: testCase._id,
-          model: preparedRun.modelValue,
-        });
-
-        const data = await runEvalTestCase(preparedRun.request);
-        const iteration = data?.iteration;
-
-        if (iteration) {
-          const startedAt = iteration.startedAt ?? iteration.createdAt;
-          const completedAt = iteration.updatedAt ?? iteration.createdAt;
-          const durationMs =
-            startedAt && completedAt ? Math.max(completedAt - startedAt, 0) : 0;
-
-          posthog.capture("eval_test_case_run_completed", {
-            location: options?.location ?? "test_case_list_sidebar",
-            platform: detectPlatform(),
-            environment: detectEnvironment(),
-            suite_id: suite._id,
-            test_case_id: testCase._id,
-            model: preparedRun.modelValue,
-            result: iteration.result || "unknown",
-            duration_ms: durationMs,
-          });
+        for (const failure of preparationFailures) {
+          console.error(
+            `Failed to prepare test case for model ${failure.modelValue}:`,
+            failure.error,
+          );
         }
 
-        toast.success("Test completed successfully!");
-        return data;
+        if (preparedRuns.length === 0) {
+          toast.error(
+            getBillingErrorMessage(
+              preparationFailures[0]?.error,
+              "Failed to run test case",
+            ),
+          );
+          return null;
+        }
+
+        const runResults = await Promise.all(
+          preparedRuns.map(async (preparedRun) => {
+            posthog.capture("eval_test_case_run_started", {
+              location: options?.location ?? "test_case_list_sidebar",
+              platform: detectPlatform(),
+              environment: detectEnvironment(),
+              suite_id: suite._id,
+              test_case_id: testCase._id,
+              model: preparedRun.modelValue,
+            });
+
+            try {
+              const data = await runEvalTestCase({
+                ...preparedRun.request,
+                skipLastMessageRunUpdate: isMultiModelRun || undefined,
+              });
+              const iteration = data?.iteration;
+
+              if (iteration) {
+                const startedAt = iteration.startedAt ?? iteration.createdAt;
+                const completedAt = iteration.updatedAt ?? iteration.createdAt;
+                const durationMs =
+                  startedAt && completedAt
+                    ? Math.max(completedAt - startedAt, 0)
+                    : 0;
+
+                posthog.capture("eval_test_case_run_completed", {
+                  location: options?.location ?? "test_case_list_sidebar",
+                  platform: detectPlatform(),
+                  environment: detectEnvironment(),
+                  suite_id: suite._id,
+                  test_case_id: testCase._id,
+                  model: preparedRun.modelValue,
+                  result: iteration.result || "unknown",
+                  duration_ms: durationMs,
+                });
+              }
+
+              return {
+                ok: true as const,
+                modelValue: preparedRun.modelValue,
+                data,
+              };
+            } catch (error) {
+              console.error(
+                `Failed to run test case for model ${preparedRun.modelValue}:`,
+                error,
+              );
+              return {
+                ok: false as const,
+                modelValue: preparedRun.modelValue,
+                error,
+              };
+            }
+          }),
+        );
+
+        const successfulRuns = runResults.filter(
+          (
+            result,
+          ): result is {
+            ok: true;
+            modelValue: string;
+            data: any;
+          } => result.ok,
+        );
+        const failedRuns = runResults.filter(
+          (
+            result,
+          ): result is {
+            ok: false;
+            modelValue: string;
+            error: unknown;
+          } => !result.ok,
+        );
+        const totalModelsRequested = modelValuesToRun.length;
+        const totalFailedRuns = [
+          ...preparationFailures.map(({ modelValue, error }) => ({
+            ok: false as const,
+            modelValue,
+            error,
+          })),
+          ...failedRuns,
+        ];
+
+        if (successfulRuns.length === totalModelsRequested) {
+          toast.success(
+            isMultiModelRun
+              ? `Test completed across ${totalModelsRequested} models!`
+              : "Test completed successfully!",
+          );
+        } else if (successfulRuns.length > 0) {
+          toast.error(
+            `${successfulRuns.length}/${totalModelsRequested} model${
+              totalModelsRequested === 1 ? "" : "s"
+            } completed successfully.`,
+          );
+        } else {
+          toast.error(
+            getBillingErrorMessage(
+              totalFailedRuns[0]?.error,
+              "Failed to run test case",
+            ),
+          );
+        }
+
+        if (isMultiModelRun) {
+          const firstSuccessfulIteration =
+            successfulRuns.find((result) => result.data?.iteration?._id)?.data
+              ?.iteration ??
+            successfulRuns[0]?.data?.iteration ??
+            null;
+          return {
+            iteration: firstSuccessfulIteration,
+            runs: successfulRuns.map((result) => result.data),
+          };
+        }
+
+        return successfulRuns[0]?.data ?? null;
       } catch (error) {
         console.error("Failed to run test case:", error);
         toast.error(getBillingErrorMessage(error, "Failed to run test case"));
@@ -677,9 +826,9 @@ export function useEvalHandlers({
           num_models: modelsToUse.length,
         });
 
-        // Navigate to the new test case
+        // Open the editor so the new case is configurable (test-detail is iterations-only).
         navigateAfterTestCaseMutation({
-          type: "test-detail",
+          type: "test-edit",
           suiteId,
           testId: testCaseId,
         });
@@ -710,6 +859,14 @@ export function useEvalHandlers({
       setTestCaseToDelete({ id: testCaseId, title: testCaseTitle });
     },
     [deletingTestCaseId],
+  );
+
+  /** Perform deletion only (no modal). Used for playground batch delete. */
+  const directDeleteTestCase = useCallback(
+    async (testCaseId: string) => {
+      await mutations.deleteTestCaseMutation({ testCaseId });
+    },
+    [mutations.deleteTestCaseMutation],
   );
 
   // Confirm test case deletion
@@ -877,6 +1034,7 @@ export function useEvalHandlers({
     confirmDeleteRun,
     handleCreateTestCase,
     handleDeleteTestCase,
+    directDeleteTestCase,
     confirmDeleteTestCase,
     handleDuplicateTestCase,
     handleGenerateTests,

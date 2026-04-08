@@ -222,6 +222,7 @@ const navigationSections: NavSection[] = [
         icon: FlaskConical,
         billingFeature: "evals",
         evalsSubnav: true,
+        featureFlag: "evals-enabled",
       },
     ],
   },
@@ -515,6 +516,7 @@ export function MCPSidebar({
   const sandboxesEnabled = useFeatureFlagEnabled("sandboxes-enabled");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
@@ -622,12 +624,14 @@ export function MCPSidebar({
       "sandboxes-enabled": !!sandboxesEnabled && isAuthenticated,
       "client-config-enabled": !!clientConfigEnabled && isAuthenticated,
       "registry-enabled": registryEnabled === true,
+      "evals-enabled": !!evalsEnabled,
     }),
     [
       learningEnabled,
       sandboxesEnabled,
       clientConfigEnabled,
       registryEnabled,
+      evalsEnabled,
       isAuthenticated,
     ],
   );

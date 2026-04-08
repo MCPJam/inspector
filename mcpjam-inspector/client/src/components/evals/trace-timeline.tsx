@@ -1507,6 +1507,8 @@ export interface TraceTimelineProps {
   onExpandedStepIdsChange?: (next: Set<string>) => void;
   /** Timeline axis ends at this many ms (≥ max span end); used for zoom. */
   viewportMaxMs?: number;
+  /** When true, timeline fills a flex parent (e.g. run detail) instead of using viewport-based max height alone. */
+  fillContent?: boolean;
 }
 
 export function TraceTimeline({
@@ -1525,6 +1527,7 @@ export function TraceTimeline({
   expandedStepIds: expandedStepIdsProp,
   onExpandedStepIdsChange,
   viewportMaxMs: viewportMaxMsProp,
+  fillContent = false,
 }: TraceTimelineProps) {
   const shouldReduceMotion = useReducedMotion();
   const mode =
@@ -1893,38 +1896,58 @@ export function TraceTimeline({
     ) : null;
 
   return (
-    <div className="space-y-2">
+    <div
+      className={cn("space-y-2", fillContent && "flex min-h-0 flex-1 flex-col")}
+    >
       {!hideToolbar ? (
-        <RecordedTraceToolbar
-          filter={filter}
-          onFilterChange={setFilter}
-          isFullyExpanded={isFullyExpanded}
-          expandDisabled={groups.length === 0}
-          zoomControls={internalZoomCluster}
-          onToggleExpandAll={() => {
-            if (isFullyExpanded) {
-              setExpandedPromptIds(new Set());
-              setExpandedStepIds(new Set());
-            } else {
-              setExpandedPromptIds(new Set(groups.map((group) => group.key)));
-              setExpandedStepIds(new Set(fullyExpandedStepIds));
-            }
-          }}
-        />
+        <div className={fillContent ? "shrink-0" : undefined}>
+          <RecordedTraceToolbar
+            filter={filter}
+            onFilterChange={setFilter}
+            isFullyExpanded={isFullyExpanded}
+            expandDisabled={groups.length === 0}
+            zoomControls={internalZoomCluster}
+            onToggleExpandAll={() => {
+              if (isFullyExpanded) {
+                setExpandedPromptIds(new Set());
+                setExpandedStepIds(new Set());
+              } else {
+                setExpandedPromptIds(new Set(groups.map((group) => group.key)));
+                setExpandedStepIds(new Set(fullyExpandedStepIds));
+              }
+            }}
+          />
+        </div>
       ) : null}
 
-      <div className="@container/trace-timeline min-w-0">
+      <div
+        className={cn(
+          "@container/trace-timeline min-w-0",
+          fillContent && "flex min-h-0 flex-1 flex-col",
+        )}
+      >
         <ResizablePanelGroup
           direction="horizontal"
-          className="rounded-lg border border-border/50 bg-background"
-          style={{ height: "auto", minHeight: 400 }}
+          className={cn(
+            "rounded-lg border border-border/50 bg-background",
+            fillContent
+              ? "min-h-0 flex-1 overflow-hidden"
+              : "min-h-[min(25rem,calc(100dvh-8rem))]",
+          )}
+          style={fillContent ? undefined : { height: "auto" }}
         >
           <ResizablePanel
             defaultSize={65}
             minSize={40}
             className="min-h-0 min-w-0 overflow-hidden"
           >
-            <ScrollArea className="max-h-[calc(100vh-8rem)] min-h-0">
+            <ScrollArea
+              className={cn(
+                fillContent
+                  ? "h-full min-h-0 overflow-hidden"
+                  : "max-h-[calc(100vh-8rem)] min-h-0",
+              )}
+            >
               <div
                 tabIndex={0}
                 role="region"
@@ -1961,10 +1984,10 @@ export function TraceTimeline({
                         return (
                           <div
                             key={tick}
-                            className="absolute inset-y-0"
+                            className="pointer-events-none absolute inset-y-0"
                             style={{ left }}
                           >
-                            <div className="absolute -translate-x-1/2 text-[10px] text-muted-foreground">
+                            <div className="absolute top-0 left-1/2 -translate-x-1/2 text-[10px] text-muted-foreground">
                               {formatAxisLabel((axisMaxMs * tick) / 100)}
                             </div>
                           </div>
@@ -2090,7 +2113,7 @@ export function TraceTimeline({
                               gridTemplateColumns: "subgrid",
                             }}
                             className={cn(
-                              "group min-w-0",
+                              "group min-h-0 min-w-0 items-stretch",
                               isSelected &&
                                 "trace-waterfall-row-selected ring-1 ring-inset ring-ring/40",
                             )}
@@ -2184,7 +2207,7 @@ export function TraceTimeline({
                               data-testid="trace-row-bar-hit"
                               data-state={isSelected ? "selected" : undefined}
                               className={cn(
-                                "relative z-[1] h-full min-h-[48px] w-full overflow-hidden border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
+                                "relative z-[1] flex min-h-[48px] w-full items-center overflow-hidden border-b border-border/40 border-l-2 border-l-transparent px-4 py-2 text-left transition-all duration-150",
                                 sharedCellClass,
                               )}
                               aria-label={`Select on timeline (${formatDuration(durationMs)})`}
@@ -2211,7 +2234,7 @@ export function TraceTimeline({
                               data-testid="trace-row-duration-hit"
                               data-state={isSelected ? "selected" : undefined}
                               className={cn(
-                                "flex h-full min-h-[48px] items-center justify-start gap-1.5 whitespace-nowrap border-b border-l border-border/40 px-3 py-2 pl-4 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
+                                "flex min-h-[48px] items-center justify-start gap-1.5 whitespace-nowrap border-b border-l border-border/40 px-3 py-2 pl-4 text-[11px] tabular-nums text-muted-foreground transition-all duration-150",
                                 sharedCellClass,
                               )}
                               aria-label={`Select row duration (${durationLabel})`}
@@ -2304,7 +2327,12 @@ export function TraceTimeline({
           >
             <div
               data-testid="trace-timeline-detail-sticky"
-              className="min-h-0 min-w-0 overflow-y-auto lg:sticky lg:top-3 lg:max-h-[calc(100vh-8rem)]"
+              className={cn(
+                "min-h-0 min-w-0 overflow-y-auto lg:sticky lg:top-3",
+                fillContent
+                  ? "max-h-full lg:max-h-full"
+                  : "lg:max-h-[calc(100vh-8rem)]",
+              )}
             >
               <TimelineDetailPane
                 row={selectedRow}

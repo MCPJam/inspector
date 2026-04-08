@@ -139,6 +139,8 @@ describe("startSuiteRunWithRecorder", () => {
                 },
               ],
               isNegativeTest: undefined,
+              expectedOutput: undefined,
+              promptTurns: undefined,
               advancedConfig: undefined,
               testCaseId: "tc-1",
             },

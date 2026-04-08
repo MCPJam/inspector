@@ -75,6 +75,16 @@ export function TestsStep({
         )}
       </div>
 
+      {template.promptTurns && template.promptTurns.length > 1 ? (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <Badge variant="outline">{template.promptTurns.length} turns</Badge>
+          <span>
+            Additional follow-up turns are preserved and will be available in
+            the test case editor after creation.
+          </span>
+        </div>
+      ) : null}
+
       <div className="space-y-2">
         <Label className="text-xs uppercase text-muted-foreground">Query</Label>
         <Textarea

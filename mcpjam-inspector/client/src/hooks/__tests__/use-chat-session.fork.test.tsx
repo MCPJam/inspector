@@ -311,4 +311,57 @@ describe("useChatSession fork preservation", () => {
     });
     expect(result.current.messages).toEqual([]);
   });
+
+  it("starts a fresh session with seeded messages for handoff flows", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: [],
+      }),
+    );
+    const initialChatSessionId = result.current.chatSessionId;
+
+    act(() => {
+      result.current.setMessages([
+        {
+          id: "old-user",
+          role: "user",
+          parts: [{ type: "text", text: "old" }],
+        } as any,
+      ]);
+    });
+
+    act(() => {
+      result.current.startChatWithMessages([
+        {
+          id: "seed-user",
+          role: "user",
+          parts: [{ type: "text", text: "seeded prompt" }],
+        } as any,
+        {
+          id: "seed-assistant",
+          role: "assistant",
+          parts: [{ type: "text", text: "seeded reply" }],
+        } as any,
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(result.current.chatSessionId).not.toBe(initialChatSessionId);
+    });
+
+    expect(result.current.messages).toEqual([
+      {
+        id: "seed-user",
+        role: "user",
+        parts: [{ type: "text", text: "seeded prompt" }],
+      },
+      {
+        id: "seed-assistant",
+        role: "assistant",
+        parts: [{ type: "text", text: "seeded reply" }],
+      },
+    ]);
+  });
 });

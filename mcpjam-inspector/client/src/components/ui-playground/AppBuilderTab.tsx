@@ -46,6 +46,9 @@ import { AppBuilderSkeleton } from "@/components/app-builder/AppBuilderSkeleton"
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { useSidebar } from "@/components/ui/sidebar";
+import { toast } from "sonner";
+import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
+
 interface AppBuilderTabProps {
   serverConfig?: MCPServerConfig;
   serverName?: string;
@@ -54,6 +57,7 @@ interface AppBuilderTabProps {
   isAuthLoading?: boolean;
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
+  playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
 }
 
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
@@ -68,6 +72,7 @@ export function AppBuilderTab({
   isAuthLoading = false,
   onConnect,
   onOnboardingChange,
+  playgroundServerSelectorProps,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
   const prefersReducedMotion = useReducedMotion();
@@ -369,6 +374,7 @@ export function AppBuilderTab({
             onWidgetStateChange={(_toolCallId, state) => setWidgetState(state)}
             deviceType={deviceType}
             onDeviceTypeChange={setDeviceType}
+            playgroundServerSelectorProps={playgroundServerSelectorProps}
             initialInput={
               firstRunComposerSeed ? APP_BUILDER_FIRST_RUN_PROMPT : undefined
             }

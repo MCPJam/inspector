@@ -11,6 +11,7 @@ import { TestTemplateEditor } from "./test-template-editor";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
+import { EvalExportModal } from "./eval-export-modal";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import type {
   EvalCase,
@@ -21,6 +22,7 @@ import type {
 } from "./types";
 import type { EvalRoute } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { useSharedAppState } from "@/state/app-state-context";
 import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   useAiProviderKeys,
@@ -28,6 +30,14 @@ import {
 } from "@/hooks/use-ai-provider-keys";
 import { Button } from "@/components/ui/button";
 import { Loader2, Trash2 } from "lucide-react";
+import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import {
+  normalizeDraftEvalCaseForExport,
+  normalizeEvalCaseForExport,
+  pickSuiteExportCases,
+  type EvalExportCaseInput,
+  type EvalExportDraftInput,
+} from "@/lib/evals/eval-export";
 
 export interface SuiteNavigation {
   toSuiteOverview: (suiteId: string, view?: "runs" | "test-cases") => void;
@@ -38,7 +48,11 @@ export interface SuiteNavigation {
     options?: { insightsFocus?: boolean; replace?: boolean },
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
-  toTestEdit: (suiteId: string, testId: string) => void;
+  toTestEdit: (
+    suiteId: string,
+    testId: string,
+    options?: { openCompare?: boolean; replace?: boolean; iteration?: string },
+  ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
 
@@ -54,20 +68,24 @@ export function SuiteIterationsView({
   onReplayRun,
   onCancelRun,
   onDelete,
-  onDeleteRun,
+  onDeleteRun: _onDeleteRun,
   onDirectDeleteRun,
   connectedServerNames,
   rerunningSuiteId,
   replayingRunId,
   cancellingRunId,
   deletingSuiteId,
-  deletingRunId,
+  deletingRunId: _deletingRunId,
   availableModels,
   route,
   userMap,
   workspaceId = null,
   navigation,
   onSetupCi,
+  onCreateTestCase,
+  onGenerateTestCases,
+  canGenerateTestCases = false,
+  isGeneratingTestCases = false,
   caseListInSidebar = false,
   runDetailSortByOverride,
   onRunDetailSortByChange,
@@ -81,6 +99,10 @@ export function SuiteIterationsView({
   omitSuiteHeader = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
+  onDeleteTestCasesBatch,
+  onRunTestCase,
+  runningTestCaseId = null,
+  onContinueInChat,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -107,6 +129,10 @@ export function SuiteIterationsView({
   workspaceId?: string | null;
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
+  onCreateTestCase?: () => void;
+  onGenerateTestCases?: () => void;
+  canGenerateTestCases?: boolean;
+  isGeneratingTestCases?: boolean;
   /** When true, the case list lives in a parent sidebar; omit the duplicate cases table on suite overview. */
   caseListInSidebar?: boolean;
   /** When set with onRunDetailSortByChange, controls iteration sort (e.g. CI Runs parent sidebar). */
@@ -130,7 +156,14 @@ export function SuiteIterationsView({
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
   onEditTestCase?: (testCaseId: string) => void;
+  /** Playground: batch delete test cases from the cases table (no runs UI). */
+  onDeleteTestCasesBatch?: (testCaseIds: string[]) => Promise<void>;
+  /** Per-case run from the cases overview table (Explore / CI). */
+  onRunTestCase?: (testCase: EvalCase) => void;
+  runningTestCaseId?: string | null;
+  onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
 }) {
+  const appState = useSharedAppState();
   // Derive view state from route
   const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
   const selectedTestId =
@@ -165,6 +198,10 @@ export function SuiteIterationsView({
     suite.description || "",
   );
   const [isEditingDescription, setIsEditingDescription] = useState(false);
+  const [exportState, setExportState] = useState<{
+    scope: "suite" | "test-case";
+    cases: EvalExportCaseInput[];
+  } | null>(null);
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
   const updateSuiteModels = useMutation("testSuites:updateSuiteModels" as any);
@@ -318,6 +355,37 @@ export function SuiteIterationsView({
     navigation.toSuiteOverview(suite._id);
   };
 
+  const handleOpenSuiteExport = useCallback(() => {
+    setExportState({
+      scope: "suite",
+      cases: pickSuiteExportCases(cases, runs),
+    });
+  }, [cases, runs]);
+
+  const handleOpenTestCaseExport = useCallback((testCase: EvalCase) => {
+    setExportState({
+      scope: "test-case",
+      cases: [normalizeEvalCaseForExport(testCase)],
+    });
+  }, []);
+
+  const handleOpenDraftExport = useCallback((draft: EvalExportDraftInput) => {
+    setExportState({
+      scope: "test-case",
+      cases: [normalizeDraftEvalCaseForExport(draft)],
+    });
+  }, []);
+
+  const handleClearOpenCompareRoute = useCallback(() => {
+    if (route.type !== "test-edit") {
+      return;
+    }
+    navigation.toTestEdit(suite._id, route.testId, {
+      replace: true,
+      ...(route.iteration ? { iteration: route.iteration } : {}),
+    });
+  }, [navigation, route, suite._id]);
+
   const { hasToken } = useAiProviderKeys();
   const missingReplayProviderKeys = useMemo(() => {
     if (!cases || cases.length === 0) return [];
@@ -378,37 +446,34 @@ export function SuiteIterationsView({
             isEditMode={isEditMode}
             onRerun={onRerun}
             onReplayRun={onReplayRun}
-            onDelete={onDelete}
             onCancelRun={onCancelRun}
-            onDeleteRun={onDeleteRun}
             onViewModeChange={handleBackToOverview}
             connectedServerNames={connectedServerNames}
-            canDeleteSuite={canDeleteSuite}
             rerunningSuiteId={rerunningSuiteId}
             replayingRunId={replayingRunId}
             cancellingRunId={cancellingRunId}
-            deletingSuiteId={deletingSuiteId}
-            deletingRunId={deletingRunId}
             runsViewMode={runsViewMode}
             runs={runs}
             allIterations={allIterations}
             aggregate={aggregate}
             testCases={cases}
-            availableModels={availableModels}
-            onUpdateModels={handleUpdateTests}
-            onEditSuite={() => navigation.toSuiteEdit(suite._id)}
             onSetupCi={onSetupCi}
+            onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
             hideRunActions={hideRunActions}
             casesSidebarHidden={casesSidebarHidden}
             onShowCasesSidebar={onShowCasesSidebar}
+            onCreateTestCase={onCreateTestCase}
+            onGenerateTestCases={onGenerateTestCases}
+            canGenerateTestCases={canGenerateTestCases}
+            isGeneratingTestCases={isGeneratingTestCases}
           />
         </div>
       ) : null}
 
       {/* Content */}
       {!isEditMode && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <AnimatePresence mode="wait">
             {viewMode === "test-edit" && selectedTestId ? (
               <motion.div
@@ -419,7 +484,7 @@ export function SuiteIterationsView({
                 transition={
                   shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                 }
-                className="h-full min-h-0 overflow-y-auto"
+                className="h-full min-h-0 min-w-0 overflow-hidden"
               >
                 <TestTemplateEditor
                   suiteId={suite._id}
@@ -427,6 +492,30 @@ export function SuiteIterationsView({
                   connectedServerNames={connectedServerNames}
                   workspaceId={workspaceId}
                   availableModels={availableModels}
+                  onExportDraft={handleOpenDraftExport}
+                  openCompareFromRoute={
+                    route.type === "test-edit" && Boolean(route.openCompare)
+                  }
+                  openCompareIterationId={
+                    route.type === "test-edit"
+                      ? (route.iteration ?? null)
+                      : null
+                  }
+                  onClearOpenCompareRoute={handleClearOpenCompareRoute}
+                  onBackToList={() =>
+                    navigation.toSuiteOverview(suite._id, "test-cases")
+                  }
+                  onContinueInChat={onContinueInChat}
+                  onOpenLastRun={(iteration) => {
+                    if (!iteration.suiteRunId) {
+                      return;
+                    }
+                    navigation.toRunDetail(
+                      suite._id,
+                      iteration.suiteRunId,
+                      iteration._id,
+                    );
+                  }}
                 />
               </motion.div>
             ) : viewMode === "test-detail" && selectedTestId ? (
@@ -455,6 +544,9 @@ export function SuiteIterationsView({
                       testCase={selectedCase}
                       runs={runs}
                       iterations={caseIterations}
+                      onOpenExportCase={() =>
+                        handleOpenTestCaseExport(selectedCase)
+                      }
                       serverNames={(suite.environment?.servers || []).filter(
                         (name) => connectedServerNames.has(name),
                       )}
@@ -484,7 +576,7 @@ export function SuiteIterationsView({
                   transition={
                     shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
                   }
-                  className="flex min-h-0 flex-1 flex-col overflow-hidden p-0.5"
+                  className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-0.5"
                 >
                   <RunOverview
                     suite={suite}
@@ -500,7 +592,11 @@ export function SuiteIterationsView({
                       navigation.toSuiteOverview(suite._id, value)
                     }
                     userMap={userMap}
-                    canDeleteRuns={canDeleteRuns}
+                    canDeleteRuns={canDeleteRuns && !hideRunActions}
+                    canDeleteSuite={canDeleteSuite && !hideRunActions}
+                    onDeleteSuite={() => onDelete(suite)}
+                    deletingSuiteId={deletingSuiteId}
+                    hideViewModeSelect={hideRunActions}
                   />
                 </motion.div>
               ) : (
@@ -569,12 +665,33 @@ export function SuiteIterationsView({
                         navigation.toSuiteOverview(suite._id, value)
                       }
                       onTestCaseClick={(testCaseId) =>
-                        navigation.toTestDetail(suite._id, testCaseId)
+                        hideRunActions
+                          ? navigation.toTestEdit(suite._id, testCaseId)
+                          : navigation.toTestDetail(suite._id, testCaseId)
+                      }
+                      clickHint={
+                        hideRunActions
+                          ? "Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
+                          : undefined
                       }
                       runTrendData={runTrendData}
                       modelStats={modelStats}
                       runsLoading={runsLoading}
                       onRunClick={handleRunClick}
+                      hideViewModeSelect={hideRunActions}
+                      onOpenLastRun={(testCaseId, iterationId) =>
+                        navigation.toTestEdit(suite._id, testCaseId, {
+                          openCompare: true,
+                          iteration: iterationId,
+                        })
+                      }
+                      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                      onRunTestCase={onRunTestCase}
+                      runningTestCaseId={runningTestCaseId}
+                      blockTestCaseRuns={Boolean(
+                        rerunningSuiteId || replayingRunId,
+                      )}
+                      connectedServerNames={connectedServerNames}
                     />
                   )}
                 </motion.div>
@@ -748,6 +865,18 @@ export function SuiteIterationsView({
           </div>
         </div>
       )}
+      <EvalExportModal
+        open={exportState !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            setExportState(null);
+          }
+        }}
+        scope={exportState?.scope ?? "suite"}
+        suite={suite}
+        cases={exportState?.cases ?? []}
+        serverEntries={appState.servers}
+      />
     </div>
   );
 }

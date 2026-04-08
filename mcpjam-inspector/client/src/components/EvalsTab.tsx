@@ -2,14 +2,8 @@ import { useMemo, useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import { FlaskConical, Loader2 } from "lucide-react";
-import posthog from "posthog-js";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/ui/empty-state";
-import {
-  ResizableHandle,
-  ResizablePanel,
-  ResizablePanelGroup,
-} from "@/components/ui/resizable";
 import { useEvalsRoute } from "@/lib/evals-router";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { aggregateSuite } from "./evals/helpers";
@@ -18,31 +12,22 @@ import {
   createPlaygroundSuiteNavigation,
   navigatePlaygroundEvalsRoute,
 } from "./evals/create-suite-navigation";
-import { RunIterationsSidebar } from "./evals/run-detail-view";
-import { useRunDetailData } from "./evals/use-suite-data";
 import { SuiteIterationsView } from "./evals/suite-iterations-view";
-import { TestCaseListSidebar } from "./evals/TestCaseListSidebar";
 import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
 import { useSharedAppState } from "@/state/app-state-context";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
-import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
-import { exportServerApi } from "@/lib/apis/mcp-export-api";
-import {
-  generateAgentBrief,
-  mapEvalCasesToAgentBriefExploreCases,
-} from "@/lib/generate-agent-brief";
-import { getServerUrl } from "@/components/connection/server-card-utils";
-import type { MCPServerConfig } from "@mcpjam/sdk/browser";
+import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EvalCase } from "./evals/types";
 import { EXPLORE_SUITE_TAG, isExploreSuite } from "./evals/constants";
-import { getPersistedTestCaseModelValue } from "./evals/single-test-case-runner";
+import { shouldAutoOpenPlaygroundCasesView } from "./evals/playground-route-preferences";
 
 interface EvalsTabProps {
   selectedServer?: string;
   workspaceId?: string | null;
+  onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
 }
 
 const EMPTY_CASES: EvalCase[] = [];
@@ -50,7 +35,11 @@ const EMPTY_CASES: EvalCase[] = [];
 /** Module-level guard so fast tab-switches (unmount/remount) don't duplicate suite creation. */
 const globalInitializedExplore = new Set<string>();
 
-export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
+export function EvalsTab({
+  selectedServer,
+  workspaceId,
+  onContinueInChat,
+}: EvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
   const route = useEvalsRoute();
@@ -69,12 +58,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const mutations = useEvalMutations();
 
   const [isPreparingExplore, setIsPreparingExplore] = useState(false);
-  const [isCopyingExploreSdkBrief, setIsCopyingExploreSdkBrief] =
-    useState(false);
-  const [runDetailSidebarSortBy, setRunDetailSidebarSortBy] = useState<
-    "model" | "test" | "result"
-  >("result");
-  const playgroundAutoNavForSuiteRef = useRef<string | null>(null);
 
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
@@ -84,6 +67,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     selectedServer &&
     selectedServer !== "none" &&
     appState.servers[selectedServer]?.connectionStatus === "connected";
+
+  const hasPlaygroundServerTab =
+    Boolean(selectedServer) && selectedServer !== "none";
 
   const overviewQueries = useEvalQueries({
     isAuthenticated: isAuthenticated && Boolean(workspaceId),
@@ -103,7 +89,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   );
 
   const exploreSuiteEntry = useMemo(() => {
-    if (!selectedServer || !isServerConnected) return null;
+    if (!hasPlaygroundServerTab) return null;
     return (
       manualSuiteEntries.find(
         (entry) =>
@@ -111,7 +97,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           entry.suite.environment?.servers?.[0] === selectedServer,
       ) ?? null
     );
-  }, [manualSuiteEntries, selectedServer, isServerConnected]);
+  }, [manualSuiteEntries, selectedServer, hasPlaygroundServerTab]);
 
   const selectedSuiteId = exploreSuiteEntry?.suite._id ?? null;
 
@@ -141,19 +127,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const sortedIterations = queries.sortedIterations;
   const runsForSelectedSuite = queries.runsForSelectedSuite;
 
-  const isRunDetailView = route.type === "run-detail";
-  const selectedRunIdForSidebar =
-    route.type === "run-detail" ? route.runId : null;
-  const { caseGroupsForSelectedRun } = useRunDetailData(
-    selectedRunIdForSidebar,
-    sortedIterations,
-    runDetailSidebarSortBy,
-  );
-  const selectedRunForSidebar = useMemo(() => {
-    if (route.type !== "run-detail") return null;
-    return runsForSelectedSuite.find((r) => r._id === route.runId) ?? null;
-  }, [route, runsForSelectedSuite]);
-
   const suiteAggregate = useMemo(() => {
     if (!selectedSuite || !suiteDetails) return null;
     return aggregateSuite(
@@ -165,45 +138,6 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   const exploreSuite = selectedSuite;
   const exploreCases = suiteDetails?.testCases ?? EMPTY_CASES;
 
-  /** Runs dashboard only: no Explore case sidebar. */
-  const isPlaygroundRunsTableOnly =
-    exploreSuite != null &&
-    route.type === "suite-overview" &&
-    route.suiteId === exploreSuite._id &&
-    route.view !== "test-cases";
-
-  const handleCopyExploreSdkEvalBrief = useCallback(async () => {
-    if (!selectedServer || exploreCases.length === 0) return;
-    setIsCopyingExploreSdkBrief(true);
-    try {
-      const data = await exportServerApi(selectedServer);
-      const serverUrl = getServerUrl(
-        appState.servers[selectedServer]?.config ?? ({} as MCPServerConfig),
-      );
-      const exploreTestCases =
-        mapEvalCasesToAgentBriefExploreCases(exploreCases);
-      const markdown = generateAgentBrief(data, {
-        serverUrl,
-        exploreTestCases,
-      });
-      await navigator.clipboard.writeText(markdown);
-      toast.success("SDK eval brief copied to clipboard");
-      posthog.capture("explore_copy_sdk_eval_brief_clicked", {
-        location: "test_case_list_sidebar",
-        platform: detectPlatform(),
-        environment: detectEnvironment(),
-        server_id: selectedServer,
-        case_count: exploreCases.length,
-      });
-    } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to copy SDK eval brief: ${errorMessage}`);
-    } finally {
-      setIsCopyingExploreSdkBrief(false);
-    }
-  }, [appState.servers, exploreCases, selectedServer]);
-
   useEffect(() => {
     if (
       !selectedServer ||
@@ -211,6 +145,11 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
       !workspaceId ||
       !isAuthenticated
     ) {
+      return;
+    }
+    // Wait until the overview query has loaded before deciding to create.
+    // Otherwise we might not find the existing suite and create a duplicate.
+    if (overviewQueries.isOverviewLoading) {
       return;
     }
     if (exploreSuiteEntry) {
@@ -237,6 +176,9 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
             suiteId: createdSuite._id,
             tags: [EXPLORE_SUITE_TAG],
           });
+
+          // Auto-generate test cases for the newly created suite
+          handlers.handleGenerateTests(createdSuite._id, [selectedServer]);
         }
       } catch (error) {
         globalInitializedExplore.delete(selectedServer);
@@ -253,11 +195,39 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   }, [
     isAuthenticated,
     exploreSuiteEntry,
+    handlers,
     isServerConnected,
     mutations.createTestSuiteMutation,
+    overviewQueries.isOverviewLoading,
     selectedServer,
     updateSuiteMutation,
     workspaceId,
+  ]);
+
+  // Auto-generate when an explore suite exists but has no cases (e.g. previous generation failed)
+  const hasAutoGeneratedRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (
+      !exploreSuite ||
+      !selectedServer ||
+      !isServerConnected ||
+      handlers.isGeneratingTests
+    ) {
+      return;
+    }
+    if (queries.isSuiteDetailsLoading) return;
+    if (exploreCases.length > 0) return;
+    if (hasAutoGeneratedRef.current.has(exploreSuite._id)) return;
+
+    hasAutoGeneratedRef.current.add(exploreSuite._id);
+    handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
+  }, [
+    exploreSuite,
+    exploreCases.length,
+    selectedServer,
+    isServerConnected,
+    handlers,
+    queries.isSuiteDetailsLoading,
   ]);
 
   const playgroundNavigation = useMemo(
@@ -266,40 +236,32 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
   );
 
   useEffect(() => {
-    if (route.type !== "run-detail") {
-      setRunDetailSidebarSortBy("result");
-    }
-  }, [route.type]);
-
-  useEffect(() => {
-    playgroundAutoNavForSuiteRef.current = null;
-  }, [exploreSuite?._id, selectedServer]);
-
-  useEffect(() => {
     if (!exploreSuite) return;
-    if (route.type !== "list") return;
-    if (queries.isSuiteDetailsLoading) return;
-    if (playgroundAutoNavForSuiteRef.current === exploreSuite._id) return;
-
-    playgroundAutoNavForSuiteRef.current = exploreSuite._id;
-    const firstExploreCase = exploreCases[0];
-
-    if (firstExploreCase) {
-      playgroundNavigation.toTestEdit(exploreSuite._id, firstExploreCase._id);
+    if (
+      !shouldAutoOpenPlaygroundCasesView({
+        route,
+        exploreSuiteId: exploreSuite._id,
+        isSuiteDetailsLoading: queries.isSuiteDetailsLoading,
+        runsCount: runsForSelectedSuite.length,
+      })
+    ) {
       return;
     }
 
-    navigatePlaygroundEvalsRoute({
-      type: "suite-overview",
-      suiteId: exploreSuite._id,
-      view: "test-cases",
-    });
+    navigatePlaygroundEvalsRoute(
+      {
+        type: "suite-overview",
+        suiteId: exploreSuite._id,
+        view: "test-cases",
+      },
+      { replace: route.type !== "test-detail" && route.type !== "test-edit" },
+    );
   }, [
-    exploreCases,
+    exploreCases.length,
     exploreSuite,
-    playgroundNavigation,
     queries.isSuiteDetailsLoading,
-    route.type,
+    route,
+    runsForSelectedSuite.length,
   ]);
 
   const handleGenerateMore = useCallback(async () => {
@@ -307,16 +269,45 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     await handlers.handleGenerateTests(exploreSuite._id, [selectedServer]);
   }, [exploreSuite, handlers, selectedServer]);
 
-  const handleRunSelectedExploreCase = useCallback(
-    async (testCase: EvalCase) => {
-      if (!exploreSuite) return;
-      const selectedModel = getPersistedTestCaseModelValue(testCase._id);
-      await handlers.handleRunTestCase(exploreSuite, testCase, {
-        location: "test_case_list_sidebar",
-        selectedModel,
-      });
+  const handleDeleteTestCasesBatch = useCallback(
+    async (testCaseIds: string[]) => {
+      const settledDeletes = await Promise.allSettled(
+        testCaseIds.map(async (id) => {
+          await handlers.directDeleteTestCase(id);
+          return id;
+        }),
+      );
+      const deletedIds = new Set(
+        settledDeletes.flatMap((result) =>
+          result.status === "fulfilled" ? [result.value] : [],
+        ),
+      );
+      const failedDeletes = settledDeletes.filter(
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
+      );
+
+      if (failedDeletes.length > 0) {
+        console.error("Failed to delete some test cases:", failedDeletes);
+        toast.error(
+          `Failed to delete ${failedDeletes.length} test case${
+            failedDeletes.length === 1 ? "" : "s"
+          }.`,
+        );
+      }
+
+      if (exploreSuite && selectedTestId && deletedIds.has(selectedTestId)) {
+        navigatePlaygroundEvalsRoute(
+          {
+            type: "suite-overview",
+            suiteId: exploreSuite._id,
+            view: "test-cases",
+          },
+          { replace: true },
+        );
+      }
     },
-    [exploreSuite, handlers],
+    [exploreSuite, handlers, selectedTestId],
   );
 
   const showExploreLoading =
@@ -350,19 +341,18 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           runs={runsForSelectedSuite}
           runsLoading={queries.isSuiteRunsLoading}
           aggregate={suiteAggregate}
-          caseListInSidebar
-          omitRunIterationList={isRunDetailView}
-          runDetailSortByOverride={
-            isRunDetailView ? runDetailSidebarSortBy : undefined
-          }
-          onRunDetailSortByChange={
-            isRunDetailView ? setRunDetailSidebarSortBy : undefined
-          }
-          omitSuiteHeader={isRunDetailView}
           alwaysShowEditIterationRows
           onEditTestCase={(testCaseId) =>
-            playgroundNavigation.toTestEdit(exploreSuite._id, testCaseId)
+            playgroundNavigation.toTestEdit(exploreSuite._id, testCaseId, {
+              openCompare: true,
+            })
           }
+          onCreateTestCase={async () =>
+            handlers.handleCreateTestCase(exploreSuite._id)
+          }
+          onGenerateTestCases={() => void handleGenerateMore()}
+          canGenerateTestCases={Boolean(selectedServer && isServerConnected)}
+          isGeneratingTestCases={handlers.isGeneratingTests}
           onRerun={handlers.handleRerun}
           onCancelRun={handlers.handleCancelRun}
           onDelete={handlers.handleDelete}
@@ -378,9 +368,41 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
           route={route}
           userMap={userMap}
           workspaceId={workspaceId}
+          onContinueInChat={onContinueInChat}
           navigation={playgroundNavigation}
           canDeleteRuns={canDeleteRuns}
           hideRunActions
+          onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
+          onRunTestCase={
+            exploreSuite
+              ? (tc) => {
+                  void (async () => {
+                    const data = await handlers.handleRunTestCase(
+                      exploreSuite,
+                      tc,
+                      {
+                        location: "test_cases_overview",
+                      },
+                    );
+                    const firstIterationId =
+                      data?.iteration?._id ??
+                      data?.runs?.find((run: any) => run?.iteration?._id)
+                        ?.iteration?._id;
+                    if (firstIterationId) {
+                      playgroundNavigation.toTestEdit(
+                        exploreSuite._id,
+                        tc._id,
+                        {
+                          openCompare: true,
+                          iteration: firstIterationId,
+                        },
+                      );
+                    }
+                  })();
+                }
+              : undefined
+          }
+          runningTestCaseId={handlers.runningTestCaseId}
         />
       </div>
     );
@@ -396,12 +418,12 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
     >
       <div className="h-full flex flex-col overflow-hidden">
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-          {!isServerConnected ? (
+          {!hasPlaygroundServerTab ? (
             <div className="flex flex-1 items-center justify-center px-4 py-10 sm:px-6">
               <EmptyState
                 icon={FlaskConical}
-                title="Connect a server to start exploring"
-                description="MCPJam generates explore cases after you connect."
+                title="Select a server to explore"
+                description="Pick a server from the header to view Explore cases. Connect it to run tests or generate new cases."
                 className="h-auto min-h-[240px]"
               />
             </div>
@@ -423,103 +445,7 @@ export function EvalsTab({ selectedServer, workspaceId }: EvalsTabProps) {
             </div>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              {isPlaygroundRunsTableOnly ? (
-                <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                  {renderExploreMainPanel()}
-                </div>
-              ) : (
-                <ResizablePanelGroup
-                  direction="horizontal"
-                  className="min-h-0 flex-1"
-                >
-                  <ResizablePanel
-                    defaultSize={28}
-                    minSize={18}
-                    maxSize={40}
-                    className="flex min-h-0 flex-col border-r bg-muted/30"
-                  >
-                    {route.type === "run-detail" ? (
-                      <RunIterationsSidebar
-                        caseGroupsForSelectedRun={caseGroupsForSelectedRun}
-                        runDetailSortBy={runDetailSidebarSortBy}
-                        onSortChange={setRunDetailSidebarSortBy}
-                        selectedIterationId={route.iteration ?? null}
-                        onSelectIteration={(iterationId) => {
-                          navigatePlaygroundEvalsRoute({
-                            type: "run-detail",
-                            suiteId: route.suiteId,
-                            runId: route.runId,
-                            iteration: iterationId,
-                          });
-                        }}
-                        runForOverview={selectedRunForSidebar}
-                        onOpenRunInsights={() =>
-                          navigatePlaygroundEvalsRoute({
-                            type: "run-detail",
-                            suiteId: route.suiteId,
-                            runId: route.runId,
-                            insightsFocus: true,
-                          })
-                        }
-                        runInsightsSelected={Boolean(
-                          route.insightsFocus && !route.iteration,
-                        )}
-                        onEditTestCase={(testCaseId) =>
-                          playgroundNavigation.toTestEdit(
-                            route.suiteId,
-                            testCaseId,
-                          )
-                        }
-                        alwaysShowEditIterationRows
-                      />
-                    ) : (
-                      <TestCaseListSidebar
-                        heading="Explore"
-                        emptyLabel="No cases yet"
-                        testCases={exploreCases}
-                        suiteId={exploreSuite._id}
-                        selectedTestId={selectedTestId}
-                        isLoading={queries.isSuiteDetailsLoading}
-                        onCreateTestCase={async () =>
-                          handlers.handleCreateTestCase(exploreSuite._id)
-                        }
-                        onDeleteTestCase={handlers.handleDeleteTestCase}
-                        onDuplicateTestCase={(testCaseId) =>
-                          handlers.handleDuplicateTestCase(
-                            testCaseId,
-                            exploreSuite._id,
-                          )
-                        }
-                        onGenerateTests={() => void handleGenerateMore()}
-                        onCopySdkEvalBrief={() =>
-                          void handleCopyExploreSdkEvalBrief()
-                        }
-                        isCopyingSdkEvalBrief={isCopyingExploreSdkBrief}
-                        deletingTestCaseId={handlers.deletingTestCaseId}
-                        duplicatingTestCaseId={handlers.duplicatingTestCaseId}
-                        isGeneratingTests={handlers.isGeneratingTests}
-                        showingOverview={!selectedTestId}
-                        noServerSelected={!isServerConnected}
-                        selectedServer={selectedServer}
-                        suite={exploreSuite}
-                        connectedServerNames={connectedServerNames}
-                        onRunTestCase={handleRunSelectedExploreCase}
-                        runningTestCaseId={handlers.runningTestCaseId}
-                        showSelection={false}
-                        hideRunInsightsRow
-                      />
-                    )}
-                  </ResizablePanel>
-                  <ResizableHandle withHandle />
-                  <ResizablePanel
-                    defaultSize={72}
-                    minSize={isRunDetailView ? 42 : 15}
-                    className="flex min-h-0 flex-col overflow-hidden"
-                  >
-                    {renderExploreMainPanel()}
-                  </ResizablePanel>
-                </ResizablePanelGroup>
-              )}
+              {renderExploreMainPanel()}
             </div>
           )}
         </div>

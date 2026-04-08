@@ -7,6 +7,8 @@ import {
 } from "@/lib/apis/web/context";
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
+import type { EvalStreamEvent } from "@/shared/eval-stream-events";
+import type { PromptTurn } from "@/shared/prompt-turns";
 
 export const EVALS_API_ENDPOINTS = {
   local: {
@@ -14,6 +16,7 @@ export const EVALS_API_ENDPOINTS = {
     generateTests: "/api/mcp/evals/generate-tests",
     generateNegativeTests: "/api/mcp/evals/generate-negative-tests",
     runTestCase: "/api/mcp/evals/run-test-case",
+    streamTestCase: "/api/mcp/evals/stream-test-case",
     replayRun: "/api/mcp/evals/replay-run",
     traceRepairStart: "/api/mcp/evals/trace-repair/start",
     traceRepairStop: "/api/mcp/evals/trace-repair/stop",
@@ -23,6 +26,7 @@ export const EVALS_API_ENDPOINTS = {
     generateTests: "/api/web/evals/generate-tests",
     generateNegativeTests: "/api/web/evals/generate-negative-tests",
     runTestCase: "/api/web/evals/run-test-case",
+    streamTestCase: "/api/web/evals/stream-test-case",
     replayRun: "/api/web/evals/replay-run",
     traceRepairStart: "/api/web/evals/trace-repair/start",
     traceRepairStop: "/api/web/evals/trace-repair/stop",
@@ -63,6 +67,8 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   testCaseId: string;
   model: string;
   provider: string;
+  compareRunId?: string;
+  skipLastMessageRunUpdate?: boolean;
   modelApiKeys?: Record<string, string>;
   convexAuthToken?: string | null;
   testCaseOverrides?: {
@@ -70,11 +76,42 @@ type RunTestCaseRequest = EvalRequestWithServers & {
     expectedToolCalls?: Array<unknown>;
     isNegativeTest?: boolean;
     runs?: number;
+    expectedOutput?: string;
+    promptTurns?: Array<{
+      id: string;
+      prompt: string;
+      expectedToolCalls: Array<{
+        toolName: string;
+        arguments: Record<string, unknown>;
+      }>;
+      expectedOutput?: string;
+    }>;
+    advancedConfig?: Record<string, unknown>;
   };
 };
 
 type GenerateTestsRequest = EvalRequestWithServers & {
   convexAuthToken?: string | null;
+};
+
+export type GeneratedEvalTestCase = {
+  title: string;
+  query: string;
+  runs: number;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }>;
+  isNegativeTest?: boolean;
+  scenario?: string;
+  expectedOutput?: string;
+  promptTurns?: PromptTurn[];
+};
+
+export type GenerateEvalTestsResponse = {
+  success: boolean;
+  tests: GeneratedEvalTestCase[];
+  evalTests?: GeneratedEvalTestCase[];
 };
 
 export function getEvalApiEndpoints() {
@@ -107,6 +144,7 @@ function mergeHostedServerBatch<
   const hostedBatch = buildHostedServerBatchRequest(request.serverIds);
   const {
     convexAuthToken: _convexAuthToken,
+    serverIds: _serverIds,
     ...requestWithoutConvexAuthToken
   } = request;
 
@@ -216,7 +254,7 @@ export async function runEvalTestCase(
 
 export async function generateEvalTests(
   request: GenerateTestsRequest,
-): Promise<any> {
+): Promise<GenerateEvalTestsResponse> {
   return runByMode({
     local: () =>
       postEvalRequest(
@@ -233,7 +271,7 @@ export async function generateEvalTests(
 
 export async function generateNegativeEvalTests(
   request: GenerateTestsRequest,
-): Promise<any> {
+): Promise<GenerateEvalTestsResponse> {
   return runByMode({
     local: () =>
       postEvalRequest(
@@ -292,4 +330,89 @@ export async function stopTraceRepair(jobId: string): Promise<void> {
         jobId,
       } as JsonRecord),
   });
+}
+
+export async function streamEvalTestCase(
+  request: RunTestCaseRequest,
+  onEvent: (event: EvalStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const endpoint = isHostedMode()
+    ? EVALS_API_ENDPOINTS.hosted.streamTestCase
+    : EVALS_API_ENDPOINTS.local.streamTestCase;
+
+  const payload = isHostedMode()
+    ? (mergeHostedServerBatch(request) as JsonRecord)
+    : (request as JsonRecord);
+
+  const response = await authFetch(endpoint, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+
+  if (!response.ok) {
+    let errorMessage = `Request failed (${response.status})`;
+    try {
+      const body = await response.json();
+      if (typeof body?.error === "string") errorMessage = body.error;
+      else if (typeof body?.message === "string") errorMessage = body.message;
+    } catch {
+      // ignore parse errors
+    }
+    throw new Error(errorMessage);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new Error("No response body for streaming");
+  }
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const emitSseLine = (line: string) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine.startsWith("data: ")) {
+      return;
+    }
+    const data = trimmedLine.slice(6).trim();
+    if (!data || data === "[DONE]") {
+      return;
+    }
+    try {
+      const event = JSON.parse(data) as EvalStreamEvent;
+      onEvent(event);
+    } catch {
+      // ignore malformed lines
+    }
+  };
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        break;
+      }
+
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        emitSseLine(line);
+      }
+    }
+
+    buffer += decoder.decode();
+    for (const line of buffer.split("\n")) {
+      emitSseLine(line);
+    }
+  } finally {
+    try {
+      reader.releaseLock?.();
+    } catch {
+      // ignore
+    }
+  }
 }
