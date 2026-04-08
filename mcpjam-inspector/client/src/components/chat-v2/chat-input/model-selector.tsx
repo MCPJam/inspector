@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Check, Crown, X } from "lucide-react";
+import { Check, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@/components/ui/button";
 import {
@@ -221,8 +221,11 @@ export function ModelSelector({
       nextChange.enabled === multiModelEnabled &&
       sameModelOrder(nextChange.selectedModels, selectedModelsData);
 
-    if (isSingleNoOp || isMultiNoOp) {
+    if (isSingleNoOp) {
       setIsOpen(false);
+      return;
+    }
+    if (isMultiNoOp) {
       return;
     }
 
@@ -235,12 +238,11 @@ export function ModelSelector({
 
     if (nextChange.type === "single") {
       onModelChange(nextChange.nextModel);
+      setIsOpen(false);
     } else {
       onSelectedModelsChange?.(nextChange.selectedModels);
       onMultiModelEnabledChange?.(nextChange.enabled);
     }
-
-    setIsOpen(false);
   };
 
   const handleConfirmSelectionChange = () => {
@@ -340,10 +342,6 @@ export function ModelSelector({
             ? `You can compare up to ${maxSelectedModels} models at once`
             : model.disabledReason;
       const isSelected = selectedIds.has(String(model.id));
-      const isLead =
-        multiModelEnabled &&
-        isSelected &&
-        String(model.id) === String(leadModel.id);
 
       const row = (
         <CommandItem
@@ -371,18 +369,21 @@ export function ModelSelector({
             {compactModelLabel(model.name)}
           </span>
           {multiModelEnabled ? (
-            <div className="flex shrink-0 items-center gap-1">
-              {isLead ? <Crown className="size-3 text-primary" /> : null}
-              <div
-                className={cn(
-                  "flex size-4 items-center justify-center rounded-sm border",
-                  isSelected
-                    ? "border-primary bg-primary text-primary-foreground"
-                    : "border-border/60 bg-transparent text-transparent",
-                )}
-              >
-                <Check className="size-2.5" />
-              </div>
+            <div
+              className={cn(
+                "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
+                isSelected
+                  ? "border-primary bg-primary shadow-sm"
+                  : "border-border/60 bg-transparent hover:border-border",
+              )}
+              aria-hidden
+            >
+              {isSelected ? (
+                <Check
+                  strokeWidth={3}
+                  className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+                />
+              ) : null}
             </div>
           ) : String(model.id) === String(currentModel.id) ? (
             <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
@@ -472,9 +473,6 @@ export function ModelSelector({
                           )}
                           onClick={() => handlePromoteLeadModel(model)}
                         >
-                          {isLead ? (
-                            <Crown className="h-2.5 w-2.5 shrink-0 text-primary" />
-                          ) : null}
                           <ProviderLogo
                             provider={model.provider}
                             customProviderName={model.customProviderName}

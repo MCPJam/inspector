@@ -187,6 +187,7 @@ export function ChatTabV2({
 
   const [traceViewMode, setTraceViewMode] =
     useState<ChatTraceViewMode>("chat");
+  const [revealedInChat, setRevealedInChat] = useState(false);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -1148,6 +1149,7 @@ export function ChatTabV2({
                             return;
                           }
                           setTraceViewMode(mode);
+                          setRevealedInChat(false);
                         }}
                         showToolsTab={false}
                       />
@@ -1155,7 +1157,7 @@ export function ChatTabV2({
                   </div>
                 )}
 
-                {showLiveTraceDiagnostics && !minimalMode && (
+                {(showLiveTraceDiagnostics || revealedInChat) && !minimalMode && (
                   <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
                     {activeTraceViewMode === "raw" ? (
                       <StickToBottom
@@ -1183,9 +1185,10 @@ export function ChatTabV2({
                                   forcedViewMode={activeTraceViewMode}
                                   hideToolbar
                                   fillContent
-                                  onRevealNavigateToChat={() =>
-                                    setTraceViewMode("chat")
-                                  }
+                                  onRevealNavigateToChat={() => {
+                                    setTraceViewMode("chat");
+                                    setRevealedInChat(true);
+                                  }}
                                   rawGrowWithContent
                                   rawXRayMirror={{
                                     payload: rawTraceXRayMirror.payload,
@@ -1223,9 +1226,10 @@ export function ChatTabV2({
                               forcedViewMode={activeTraceViewMode}
                               hideToolbar
                               fillContent
-                              onRevealNavigateToChat={() =>
-                                setTraceViewMode("chat")
-                              }
+                              onRevealNavigateToChat={() => {
+                                setTraceViewMode("chat");
+                                setRevealedInChat(true);
+                              }}
                               rawXRayMirror={{
                                 payload: rawTraceXRayMirror.payload,
                                 loading: rawTraceXRayMirror.loading,
@@ -1270,7 +1274,7 @@ export function ChatTabV2({
                   <StickToBottom
                     className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
                     style={
-                      showLiveTraceDiagnostics
+                      showLiveTraceDiagnostics || revealedInChat
                         ? { display: "none" }
                         : undefined
                     }
@@ -1332,6 +1336,7 @@ export function ChatTabV2({
 
                 {isThreadEmpty &&
                   !showLiveTraceDiagnostics &&
+                  !revealedInChat &&
                   (minimalMode ? (
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="flex-1 flex flex-col items-center justify-center px-4">
