@@ -225,6 +225,32 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("marks session bootstrap complete only after auth setup finishes", async () => {
+    let resolveAccessToken: (value: string | null) => void = () => {};
+    mockState.getAccessToken.mockImplementation(
+      () =>
+        new Promise<string | null>((resolve) => {
+          resolveAccessToken = resolve;
+        }),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+      }),
+    );
+
+    expect(result.current.isSessionBootstrapComplete).toBe(false);
+
+    resolveAccessToken("access-token");
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+  });
+
   it("includes the selected direct-guest server in hosted chat bodies", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.buildHostedServerRequest.mockReturnValue({

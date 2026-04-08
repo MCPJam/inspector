@@ -1,3 +1,5 @@
+import type { PromptTurn } from "@/shared/prompt-turns";
+
 export interface ExpectedToolCall {
   toolName: string;
   arguments: Record<string, any>;
@@ -11,6 +13,7 @@ export interface TestTemplate {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  promptTurns?: PromptTurn[];
 }
 
 export interface AvailableTool {

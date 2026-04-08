@@ -23,9 +23,10 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from "@/components/ui/tooltip";
-import { cn } from "@/lib/utils";
 import { copyToClipboard } from "@/lib/clipboard";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
+import { cn } from "@/lib/utils";
+import { CopyableCodeBlock } from "./copyable-code-block";
 
 const LEARN_MCP_URL = "https://learn.mcpjam.com/mcp";
 
@@ -68,11 +69,7 @@ export const SDK_EVAL_QUICKSTART_INSTALL = "npm install @mcpjam/sdk";
 export const SDK_EVAL_QUICKSTART_ENV = buildShellEnvSnippet(null);
 
 export const SDK_EVAL_QUICKSTART_RUN = `import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import {
-  MCPClientManager,
-  TestAgent,
-  createEvalRunReporter,
-} from "@mcpjam/sdk";
+import { MCPClientManager, TestAgent, EvalTest } from "@mcpjam/sdk";
 
 // MCPJam hosted learning server (tools: greet, display-mcp-app — see Learn in the app)
 const SERVER_ID = "learn";
@@ -82,12 +79,10 @@ const MCP_SERVER_URL =
 const LLM_API_KEY = process.env.LLM_API_KEY!;
 // provider/model-id — must match an allowed TestAgent provider (see Configure environment in the app or SDK README).
 const MODEL = process.env.EVAL_MODEL!;
-const MCPJAM_API_KEY = process.env.MCPJAM_API_KEY!;
 
 describe("MCP eval quickstart", () => {
   let manager: MCPClientManager;
   let agent: TestAgent;
-  let reporter: ReturnType<typeof createEvalRunReporter> | undefined;
 
   beforeAll(async () => {
     manager = new MCPClientManager();
@@ -101,127 +96,33 @@ describe("MCP eval quickstart", () => {
       maxSteps: 8,
       mcpClientManager: manager,
     });
-    reporter = createEvalRunReporter({
-      suiteName: "Quickstart suite",
-      apiKey: MCPJAM_API_KEY,
-      strict: true,
-      mcpClientManager: manager,
-      serverNames: [SERVER_ID],
-      expectedIterations: 1,
-    });
   }, 120_000);
 
   afterAll(async () => {
-    if (reporter?.getAddedCount()) {
-      try {
-        await reporter.finalize();
-      } catch (e) {
-        console.warn("MCPJam reporter finalize failed (non-fatal):", e);
-      }
-    }
     await manager.disconnectAllServers();
   }, 120_000);
 
   it(
-    "agent calls greet on the learning server",
+    "agent calls greet across a two-turn case",
     async () => {
-      const result = await agent.prompt(
-        "Use the greet tool to say hello to Ada.",
-      );
-      const passed = result.hasToolCall("greet");
-      expect(passed).toBe(true);
-      await reporter!.recordFromPrompt(result, {
-        caseTitle: "learning-server-greet",
-        passed,
+      const evalTest = new EvalTest({
+        name: "learning-server-greet-multi-turn",
         expectedToolCalls: [{ toolName: "greet" }],
+        test: async (agent) => {
+          const r1 = await agent.prompt("Use the greet tool to say hello to Ada.");
+          const r2 = await agent.prompt("Now greet Grace too.", { context: [r1] });
+          return r1.hasToolCall("greet") && r2.hasToolCall("greet");
+        },
       });
+      await evalTest.run(agent, {
+        iterations: 1,
+        mcpjam: { suiteName: "Quickstart suite", serverNames: [SERVER_ID] },
+      });
+      expect(evalTest.accuracy()).toBe(1);
     },
     90_000,
   );
 });`;
-
-/* ------------------------------------------------------------------ */
-/*  Shared helpers                                                     */
-/* ------------------------------------------------------------------ */
-
-function QuickstartCodeBlock({
-  code,
-  copyLabel,
-  className,
-  toolbarLabel,
-}: {
-  code: string;
-  copyLabel: string;
-  className?: string;
-  toolbarLabel?: string;
-}) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = useCallback(async () => {
-    const ok = await copyToClipboard(code);
-    if (ok) {
-      toast.success("Copied to clipboard");
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } else {
-      toast.error("Could not copy");
-    }
-  }, [code]);
-
-  return (
-    <div
-      className={cn(
-        "overflow-hidden rounded-lg border border-border bg-muted/30",
-        className,
-      )}
-    >
-      {toolbarLabel ? (
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/50 px-3 py-2">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            {toolbarLabel}
-          </span>
-          <button
-            type="button"
-            onClick={handleCopy}
-            aria-label={copyLabel}
-            className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {copied ? (
-              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </button>
-        </div>
-      ) : null}
-      <div className="relative">
-        <pre
-          className={cn(
-            "max-h-[min(320px,45vh)] overflow-auto px-4 py-3.5 text-left font-mono text-[13px] leading-relaxed text-foreground",
-            toolbarLabel ? "pr-4" : "pr-12",
-          )}
-          tabIndex={0}
-        >
-          <code>{code}</code>
-        </pre>
-        {!toolbarLabel ? (
-          <button
-            type="button"
-            onClick={handleCopy}
-            aria-label={copyLabel}
-            className="absolute right-2 top-2 rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          >
-            {copied ? (
-              <Check className="h-4 w-4 text-green-600 dark:text-green-500" />
-            ) : (
-              <Copy className="h-4 w-4" />
-            )}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
 
 /* ------------------------------------------------------------------ */
 /*  StepCard                                                           */
@@ -543,7 +444,7 @@ export function SdkEvalQuickstart({
     <div className="w-full max-w-4xl space-y-3">
       {/* Step 1: Set up project */}
       <StepCard step={1} title="Create a project and install the SDK">
-        <QuickstartCodeBlock
+        <CopyableCodeBlock
           code={SDK_EVAL_QUICKSTART_INSTALL}
           copyLabel="Copy install command"
           toolbarLabel="Terminal"
@@ -574,7 +475,7 @@ export function SdkEvalQuickstart({
           onCopyKey={() => void handleCopyHeaderKey()}
           headerCopied={headerCopied}
         />
-        <QuickstartCodeBlock
+        <CopyableCodeBlock
           code={dotenvEnv}
           copyLabel="Copy .env"
           toolbarLabel=".env"
@@ -597,7 +498,7 @@ export function SdkEvalQuickstart({
         step={3}
         title="Add mcp-eval.quickstart.test.ts to your project"
       >
-        <QuickstartCodeBlock
+        <CopyableCodeBlock
           code={SDK_EVAL_QUICKSTART_RUN}
           copyLabel="Copy quickstart test file"
           toolbarLabel="mcp-eval.quickstart.test.ts"
@@ -606,7 +507,7 @@ export function SdkEvalQuickstart({
 
       {/* Step 4: Run the demo test */}
       <StepCard step={4} title="Run the demo test">
-        <QuickstartCodeBlock
+        <CopyableCodeBlock
           code="npx vitest mcp-eval.quickstart.test.ts"
           copyLabel="Copy run command"
           toolbarLabel="Terminal"

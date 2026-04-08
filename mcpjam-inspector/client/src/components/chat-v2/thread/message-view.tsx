@@ -94,10 +94,10 @@ export function MessageView({
       message.parts?.filter((part) => part.type !== "file") ?? [];
 
     return (
-      <div className="flex flex-col items-end gap-2">
+      <div className="flex w-full min-w-0 flex-col items-end gap-2">
         {/* File attachments above the bubble */}
         {fileParts.length > 0 && (
-          <div className="flex flex-wrap justify-end gap-2 max-w-3xl">
+          <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
             {fileParts.map((part, i) => (
               <PartSwitch
                 key={`file-${i}`}
@@ -167,7 +167,7 @@ export function MessageView({
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
   return (
-    <article className="flex gap-4 w-full">
+    <article className="flex w-full min-w-0 gap-4">
       <div
         className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
         aria-label={assistantAvatar.ariaLabel}

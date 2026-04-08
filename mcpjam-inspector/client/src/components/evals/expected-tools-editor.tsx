@@ -163,16 +163,16 @@ export function ExpectedToolsEditor({
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       {toolCalls.map((toolCall, toolIndex) => (
         <div
           key={toolIndex}
-          className="rounded-md border border-border/40 bg-muted/10 p-4 space-y-3"
+          className="space-y-3 rounded-lg border border-border/45 bg-muted/5 p-4 shadow-sm ring-1 ring-black/[0.02] dark:ring-white/[0.04]"
         >
           <div className="flex items-center gap-2">
             <div className="flex-1">
-              <label className="text-xs font-medium text-muted-foreground mb-1 block">
-                Tool name
+              <label className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                Tool
               </label>
 
               {availableTools.length > 0 ? (
@@ -191,7 +191,7 @@ export function ExpectedToolsEditor({
                   className={cn(
                     "w-full justify-between font-mono text-sm h-9",
                     isToolNameInvalid(toolCall.toolName) &&
-                      "border-destructive focus-visible:ring-destructive",
+                      "border-destructive/45 focus-visible:ring-destructive/25 dark:border-destructive/55",
                   )}
                 />
               ) : (
@@ -202,7 +202,7 @@ export function ExpectedToolsEditor({
                   className={cn(
                     "font-mono text-sm",
                     isToolNameInvalid(toolCall.toolName) &&
-                      "border-destructive focus-visible:ring-destructive",
+                      "border-destructive/45 focus-visible:ring-destructive/25 dark:border-destructive/55",
                   )}
                 />
               )}
@@ -217,9 +217,9 @@ export function ExpectedToolsEditor({
             </Button>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-xs font-medium text-muted-foreground">
-              Arguments
+          <div className="space-y-2 border-t border-border/35 pt-3">
+            <label className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              Parameters
             </label>
 
             <div className="space-y-2">
@@ -252,8 +252,11 @@ export function ExpectedToolsEditor({
                 });
 
                 return (
-                  <div key={key} className="flex items-start gap-2">
-                    <div className="flex-1">
+                  <div
+                    key={key}
+                    className="flex items-start gap-2 rounded-md bg-background/60 p-2 ring-1 ring-border/30"
+                  >
+                    <div className="min-w-0 flex-1">
                       <Combobox
                         items={comboboxItems}
                         value={isPlaceholderKey ? "" : key}
@@ -270,7 +273,7 @@ export function ExpectedToolsEditor({
                         </p>
                       )}
                     </div>
-                    <div className="flex-[2]">
+                    <div className="min-w-0 flex-[2]">
                       <Textarea
                         value={
                           typeof value === "string"
@@ -286,7 +289,7 @@ export function ExpectedToolsEditor({
                         className={cn(
                           "font-mono text-sm resize-none min-h-[36px]",
                           isArgumentValueInvalid(value) &&
-                            "border-destructive focus-visible:ring-destructive",
+                            "border-destructive/45 focus-visible:ring-destructive/25 dark:border-destructive/55",
                         )}
                         rows={1}
                       />
@@ -308,19 +311,23 @@ export function ExpectedToolsEditor({
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 text-xs"
+                className="h-7 text-xs text-muted-foreground hover:text-foreground"
                 onClick={() => addArgument(toolIndex)}
               >
-                <Plus className="h-3 w-3 mr-1" />
-                Add argument
+                <Plus className="mr-1 h-3 w-3" />
+                Add parameter
               </Button>
             )}
           </div>
         </div>
       ))}
 
-      <Button variant="outline" onClick={addToolCall} className="w-full">
-        <Plus className="h-4 w-4 mr-2" />
+      <Button
+        variant="outline"
+        onClick={addToolCall}
+        className="w-full border-dashed text-muted-foreground hover:text-foreground"
+      >
+        <Plus className="mr-2 h-4 w-4" />
         Add expected tool call
       </Button>
     </div>

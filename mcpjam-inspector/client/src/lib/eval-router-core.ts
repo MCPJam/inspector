@@ -77,7 +77,19 @@ export function createEvalRouter(prefix: EvalRouterPrefix) {
       const testEditMatch = rest?.match(/^test\/([^/?]+)\/edit$/);
       if (testEditMatch) {
         const [, testId] = testEditMatch;
-        return { type: "test-edit", suiteId, testId };
+        const params = new URLSearchParams(queryString || "");
+        const compareRaw = params.get("compare");
+        const openCompare =
+          compareRaw === "1" || compareRaw === "true" || compareRaw === "yes";
+        return {
+          type: "test-edit",
+          suiteId,
+          testId,
+          ...(openCompare ? { openCompare: true } : {}),
+          ...(params.get("iteration")
+            ? { iteration: params.get("iteration") || undefined }
+            : {}),
+        };
       }
 
       const testMatch = rest?.match(/^test\/([^/?]+)$/);
@@ -151,9 +163,18 @@ export function createEvalRouter(prefix: EvalRouterPrefix) {
         hash = `#${prefix}/suite/${route.suiteId}/test/${route.testId}${query ? `?${query}` : ""}`;
         break;
       }
-      case "test-edit":
-        hash = `#${prefix}/suite/${route.suiteId}/test/${route.testId}/edit`;
+      case "test-edit": {
+        const params = new URLSearchParams();
+        if (route.openCompare) {
+          params.set("compare", "1");
+        }
+        if (route.iteration) {
+          params.set("iteration", route.iteration);
+        }
+        const query = params.toString();
+        hash = `#${prefix}/suite/${route.suiteId}/test/${route.testId}/edit${query ? `?${query}` : ""}`;
         break;
+      }
       case "suite-edit":
         hash = `#${prefix}/suite/${route.suiteId}/edit`;
         break;

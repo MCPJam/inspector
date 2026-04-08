@@ -49,16 +49,11 @@ describe("SuiteHeader", () => {
     isEditMode: false,
     onRerun: vi.fn(),
     onReplayRun: vi.fn(),
-    onDelete: vi.fn(),
     onCancelRun: vi.fn(),
-    onDeleteRun: vi.fn(),
     onViewModeChange: vi.fn(),
     connectedServerNames: new Set<string>(),
-    canDeleteSuite: false,
     rerunningSuiteId: null,
     cancellingRunId: null,
-    deletingSuiteId: null,
-    deletingRunId: null,
     runs: [baseRun],
     allIterations: [],
     aggregate: null,
@@ -174,35 +169,40 @@ describe("SuiteHeader", () => {
     expect(onShowCasesSidebar).toHaveBeenCalled();
   });
 
-  it("shows Delete suite in read-only overview when canDeleteSuite is true", async () => {
+  it("fires the export callback when Export is clicked", async () => {
     const user = userEvent.setup();
-    const onDelete = vi.fn();
+    const onOpenExportSuite = vi.fn();
 
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-        canDeleteSuite
-        onDelete={onDelete}
+        onOpenExportSuite={onOpenExportSuite}
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Delete suite" }));
+    await user.click(screen.getByRole("button", { name: "Export" }));
 
-    expect(onDelete).toHaveBeenCalledWith(baseSuite);
+    expect(onOpenExportSuite).toHaveBeenCalledTimes(1);
   });
 
-  it("hides Delete suite in read-only overview when canDeleteSuite is false", () => {
+  it("shows a loading state on Generate in test-cases overview while generating", () => {
     renderWithProviders(
       <SuiteHeader
         {...baseProps}
         viewMode="overview"
         selectedRunDetails={null}
-        canDeleteSuite={false}
+        runsViewMode="test-cases"
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        isGeneratingTestCases
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Delete suite" })).toBeNull();
+    const generateBtn = screen.getByRole("button", { name: /generate/i });
+    expect(generateBtn).toHaveAttribute("aria-busy", "true");
+    expect(generateBtn).toBeDisabled();
+    expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
   });
 });

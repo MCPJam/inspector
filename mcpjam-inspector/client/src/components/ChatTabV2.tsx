@@ -1,4 +1,11 @@
-import { FormEvent, useMemo, useState, useEffect, useCallback } from "react";
+import {
+  FormEvent,
+  useMemo,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from "react";
 import { ArrowDown } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
@@ -44,6 +51,7 @@ import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
+import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -72,6 +80,8 @@ interface ChatTabProps {
     useOAuth: boolean;
   }>;
   onEnableSandboxOptionalServer?: (serverId: string) => void;
+  evalChatHandoff?: EvalChatHandoff | null;
+  onEvalChatHandoffConsumed?: (id: string) => void;
 }
 
 function ScrollToBottomButton() {
@@ -113,6 +123,8 @@ export function ChatTabV2({
   sandboxComposerBlockedReason,
   sandboxOptionalInventory,
   onEnableSandboxOptionalServer,
+  evalChatHandoff,
+  onEvalChatHandoffConsumed,
 }: ChatTabProps) {
   const { signUp } = useElectronHostedAuth();
   const { isAuthenticated: isConvexAuthenticated } = useConvexAuth();
@@ -201,6 +213,7 @@ export function ChatTabV2({
     setSelectedModel,
     availableModels,
     isAuthLoading,
+    isSessionBootstrapComplete,
     systemPrompt,
     setSystemPrompt,
     temperature,
@@ -213,6 +226,7 @@ export function ChatTabV2({
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
     resetChat: baseResetChat,
+    startChatWithMessages,
     isStreaming,
     disableForAuthentication,
     submitBlocked: baseSubmitBlocked,
@@ -242,6 +256,58 @@ export function ChatTabV2({
   const isThreadEmpty = !messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
+  const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!evalChatHandoff) {
+      return;
+    }
+
+    if (!isSessionBootstrapComplete) {
+      return;
+    }
+
+    if (appliedEvalChatHandoffIdRef.current === evalChatHandoff.id) {
+      return;
+    }
+
+    let matchingModel = null;
+    if (evalChatHandoff.modelId) {
+      matchingModel = availableModels.find(
+        (model) => String(model.id) === evalChatHandoff.modelId,
+      );
+      if (!matchingModel && availableModels.length === 0) {
+        return;
+      }
+    }
+
+    if (matchingModel) {
+      setSelectedModel(matchingModel);
+    }
+
+    startChatWithMessages(evalChatHandoff.messages);
+    appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
+
+    if (typeof evalChatHandoff.systemPrompt === "string") {
+      setSystemPrompt(evalChatHandoff.systemPrompt);
+    }
+
+    if (typeof evalChatHandoff.temperature === "number") {
+      setTemperature(evalChatHandoff.temperature);
+    }
+
+    setInput("");
+    onEvalChatHandoffConsumed?.(evalChatHandoff.id);
+  }, [
+    availableModels,
+    evalChatHandoff,
+    isSessionBootstrapComplete,
+    onEvalChatHandoffConsumed,
+    setSelectedModel,
+    setSystemPrompt,
+    setTemperature,
+    startChatWithMessages,
+  ]);
 
   // Server instructions
   const selectedServerInstructions = useMemo(() => {

@@ -24,7 +24,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
-import { useSharedAppState } from "@/state/app-state-context";
 import { useCiEvalsRoute, navigateToCiEvalsRoute } from "@/lib/ci-evals-router";
 import { buildEvalsHash } from "@/lib/evals-router";
 import { withTestingSurface } from "@/lib/testing-surface";
@@ -65,7 +64,6 @@ interface CiEvalsTabProps {
 export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
   const { isAuthenticated, isLoading } = useConvexAuth();
   const { user } = useAuth();
-  const appState = useSharedAppState();
   const route = useCiEvalsRoute();
   const mutations = useEvalMutations();
 
@@ -397,27 +395,6 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
     [deletingRunId, handlers, route, selectedSuiteId],
   );
 
-  const handleCreateTestCase = useCallback(async () => {
-    if (!selectedSuiteId) return;
-    await handlers.handleCreateTestCase(selectedSuiteId);
-  }, [handlers, selectedSuiteId]);
-
-  const handleDuplicateTestCase = useCallback(
-    (testCaseId: string) => {
-      if (!selectedSuiteId) return;
-      handlers.handleDuplicateTestCase(testCaseId, selectedSuiteId);
-    },
-    [handlers, selectedSuiteId],
-  );
-
-  const handleGenerateTests = useCallback(async () => {
-    if (!selectedSuiteId || !selectedSuite) return;
-    await handlers.handleGenerateTests(
-      selectedSuiteId,
-      selectedSuite.environment?.servers || [],
-    );
-  }, [handlers, selectedSuite, selectedSuiteId]);
-
   const handleCiBreadcrumbToSuiteList = useCallback(() => {
     navigateToCiEvalsRoute({ type: "list" });
   }, []);
@@ -713,6 +690,33 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                     canDeleteRuns={canDeleteRuns}
                     readOnlyConfig
                     omitSuiteHeader
+                    onRunTestCase={
+                      selectedSuite
+                        ? (tc) => {
+                            void (async () => {
+                              const data = await handlers.handleRunTestCase(
+                                selectedSuite,
+                                tc,
+                                {
+                                  location: "test_cases_overview",
+                                },
+                              );
+                              const iterationId = (data?.iteration?._id ??
+                                data?.runs?.find(
+                                  (run: any) => run?.iteration?._id,
+                                )?.iteration?._id) as string | undefined;
+                              if (iterationId) {
+                                ciNavigation.toTestDetail(
+                                  selectedSuite._id,
+                                  tc._id,
+                                  iterationId,
+                                );
+                              }
+                            })();
+                          }
+                        : undefined
+                    }
+                    runningTestCaseId={handlers.runningTestCaseId}
                   />
                 </div>
               )}

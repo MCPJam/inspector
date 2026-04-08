@@ -8,7 +8,7 @@ import {
   useState,
   type ComponentProps,
 } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Construction, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -18,6 +18,7 @@ import { SkillsTab } from "./components/SkillsTab";
 import { LearningTab } from "./components/LearningTab";
 import { TasksTab } from "./components/TasksTab";
 import { ChatTabV2 } from "./components/ChatTabV2";
+import type { EvalChatHandoff } from "./lib/eval-chat-handoff";
 import { EvalsTab } from "./components/EvalsTab";
 import { CiEvalsTab } from "./components/CiEvalsTab";
 import { ViewsTab } from "./components/ViewsTab";
@@ -31,6 +32,7 @@ import { AuthTab } from "./components/AuthTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ErrorBoundary } from "./components/evals/ErrorBoundary";
 import { AppBuilderTab } from "./components/ui-playground/AppBuilderTab";
+import { EmptyState } from "./components/ui/empty-state";
 import { isFirstRunEligible } from "./lib/onboarding-state";
 import { ProfileTab } from "./components/ProfileTab";
 import { BillingUpsellGate } from "./components/billing/BillingUpsellGate";
@@ -77,7 +79,10 @@ import CompletingSignInLoading from "./components/CompletingSignInLoading";
 import LoadingScreen from "./components/LoadingScreen";
 import { Header } from "./components/Header";
 import { ThemePreset } from "./types/preferences/theme";
-import type { ActiveServerSelectorProps } from "./components/ActiveServerSelector";
+import type {
+  ActiveServerSelectorProps,
+  PlaygroundServerSelectorProps,
+} from "./components/ActiveServerSelector";
 import { useViewQueries, useWorkspaceServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
@@ -247,6 +252,8 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("servers");
+  const [evalChatHandoff, setEvalChatHandoff] =
+    useState<EvalChatHandoff | null>(null);
   const [activeOrganizationSection, setActiveOrganizationSection] =
     useState<OrganizationRouteSection>("overview");
   const [chatHasMessages, setChatHasMessages] = useState(false);
@@ -269,6 +276,7 @@ export default function App() {
   const learningEnabled = useFeatureFlagEnabled("mcpjam-learning");
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
+  const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const {
     getAccessToken,
@@ -504,6 +512,7 @@ export default function App() {
     handleUpdate,
     handleRemoveServer,
     setSelectedServer,
+    setSelectedMCPConfigs,
     toggleServerSelection,
     setSelectedMultipleServersToAllServers,
     workspaces,
@@ -1092,6 +1101,18 @@ export default function App() {
     applyNavigation(section, { updateHash: true });
   };
 
+  const handleContinueEvalInChat = useCallback(
+    (handoff: Omit<EvalChatHandoff, "id">) => {
+      setSelectedMCPConfigs(handoff.serverNames);
+      setEvalChatHandoff({
+        ...handoff,
+        id: `eval-chat-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      });
+      applyNavigation("chat-v2", { updateHash: true });
+    },
+    [applyNavigation, setSelectedMCPConfigs],
+  );
+
   useEffect(() => {
     if (!isAuthenticated) {
       return;
@@ -1172,6 +1193,33 @@ export default function App() {
       pendingCheckoutIntent?.plan,
     ]);
 
+  const playgroundServerSelectorProps = useMemo(():
+    | PlaygroundServerSelectorProps
+    | undefined => {
+    if (activeTab !== "app-builder") return undefined;
+    return {
+      serverConfigs: workspaceServers,
+      selectedServer: appState.selectedServer,
+      selectedMultipleServers: appState.selectedMultipleServers,
+      isMultiSelectEnabled: false,
+      onServerChange: setSelectedServer,
+      onMultiServerToggle: toggleServerSelection,
+      onConnect: handleConnect,
+      onReconnect: handleReconnect,
+      showOnlyOAuthServers: false,
+      showOnlyServersWithViews: false,
+    };
+  }, [
+    activeTab,
+    workspaceServers,
+    appState.selectedServer,
+    appState.selectedMultipleServers,
+    setSelectedServer,
+    toggleServerSelection,
+    handleConnect,
+    handleReconnect,
+  ]);
+
   if (isDebugCallback) {
     return <OAuthDebugCallback />;
   }
@@ -1245,7 +1293,6 @@ export default function App() {
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
-    activeTab === "app-builder" ||
     activeTab === "evals" ||
     activeTab === "views";
 
@@ -1253,11 +1300,7 @@ export default function App() {
     shouldShowActiveServerSelector
       ? {
           serverConfigs:
-            activeTab === "oauth-flow"
-              ? appState.servers
-              : activeTab === "views"
-                ? workspaceServers
-                : connectedOrConnectingServerConfigs,
+            activeTab === "oauth-flow" ? appState.servers : workspaceServers,
           selectedServer: appState.selectedServer,
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
@@ -1351,9 +1394,15 @@ export default function App() {
             </div>
           )}
           {activeTab === "evals" &&
-            (billingUiEnabled &&
-            activeTabBillingLocked &&
-            activeTabBillingFeature ? (
+            (playgroundEnabled === false ? (
+              <EmptyState
+                icon={Construction}
+                title="Playground Coming Soon"
+                description="The Playground is under construction. Stay tuned!"
+              />
+            ) : billingUiEnabled &&
+              activeTabBillingLocked &&
+              activeTabBillingFeature ? (
               <BillingUpsellGate
                 feature={activeTabBillingFeature}
                 currentPlan={
@@ -1376,6 +1425,7 @@ export default function App() {
               <EvalsTab
                 selectedServer={appState.selectedServer}
                 workspaceId={convexWorkspaceId}
+                onContinueInChat={handleContinueEvalInChat}
               />
             ))}
           {activeTab === "ci-evals" &&
@@ -1512,6 +1562,12 @@ export default function App() {
               }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
+              evalChatHandoff={evalChatHandoff}
+              onEvalChatHandoffConsumed={(id) =>
+                setEvalChatHandoff((current) =>
+                  current?.id === id ? null : current,
+                )
+              }
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
@@ -1524,6 +1580,7 @@ export default function App() {
               isAuthLoading={isAuthLoading}
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
             />
           )}
           {activeTab === "client-config" && (
