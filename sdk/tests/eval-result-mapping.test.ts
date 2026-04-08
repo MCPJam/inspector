@@ -7,6 +7,7 @@ import {
   suiteRunToEvalResults,
   iterationsToEvalResultInputs,
   suiteTestResultsToEvalResultInputs,
+  promptsToEvalResult,
 } from "../src/eval-result-mapping";
 
 // ---------------------------------------------------------------------------
@@ -175,6 +176,51 @@ describe("iterationToEvalResult", () => {
     expect(messages).toHaveLength(4);
     expect(messages[0]).toEqual({ role: "user", content: "turn 1" });
     expect(messages[3]).toEqual({ role: "assistant", content: "reply 2" });
+  });
+
+  it("includes per-prompt trace summaries when advancedConfig.promptTurns is provided", () => {
+    const p1 = makePrompt({
+      prompt: "turn 1",
+      toolCalls: [{ toolName: "tool_a", arguments: { x: 1 } }],
+    });
+    const p2 = makePrompt({
+      prompt: "turn 2",
+      toolCalls: [{ toolName: "tool_b", arguments: { y: 2 } }],
+    });
+
+    const result = promptsToEvalResult([p1, p2], {
+      caseTitle: "multi-turn",
+      passed: true,
+      advancedConfig: {
+        promptTurns: [
+          {
+            id: "turn-1",
+            prompt: "turn 1",
+            expectedToolCalls: [{ toolName: "tool_a", arguments: { x: 1 } }],
+          },
+          {
+            id: "turn-2",
+            prompt: "turn 2",
+            expectedToolCalls: [{ toolName: "tool_b", arguments: { y: 2 } }],
+          },
+        ],
+      },
+    });
+
+    expect((result.trace as any).prompts).toEqual([
+      expect.objectContaining({
+        promptIndex: 0,
+        prompt: "turn 1",
+        passed: true,
+        actualToolCalls: [{ toolName: "tool_a", arguments: { x: 1 } }],
+      }),
+      expect.objectContaining({
+        promptIndex: 1,
+        prompt: "turn 2",
+        passed: true,
+        actualToolCalls: [{ toolName: "tool_b", arguments: { y: 2 } }],
+      }),
+    ]);
   });
 
   it("merges spans from multi-prompt iteration with e2e offsets", () => {

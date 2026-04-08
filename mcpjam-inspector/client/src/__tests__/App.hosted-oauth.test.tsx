@@ -1203,6 +1203,9 @@ describe("App hosted OAuth callback handling", () => {
     clearSandboxSession();
     window.history.replaceState({}, "", "/#app-builder");
     mockHandleOAuthCallback.mockReset();
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "playground-enabled",
+    );
 
     render(<App />);
 
@@ -1230,6 +1233,9 @@ describe("App hosted OAuth callback handling", () => {
     clearSandboxSession();
     window.history.replaceState({}, "", "/#app-builder");
     mockHandleOAuthCallback.mockReset();
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "playground-enabled",
+    );
 
     render(<App />);
 
@@ -1530,12 +1536,15 @@ describe("App hosted OAuth callback handling", () => {
     expect(screen.queryByTestId("evals-tab")).not.toBeInTheDocument();
   });
 
-  it("still auto-routes a true hosted guest into App Builder onboarding once startup is ready", async () => {
+  it("still auto-routes a true hosted guest into App Builder onboarding once startup is ready when Playground is enabled", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
     window.history.replaceState({}, "", "/#servers");
     mockHandleOAuthCallback.mockReset();
     mockConvexAuthState.isAuthenticated = false;
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "playground-enabled",
+    );
 
     render(<App />);
 
@@ -1546,13 +1555,33 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#app-builder");
   });
 
-  it("goes from hosted loading straight to App Builder onboarding for a true guest", async () => {
+  it("does not auto-route a true hosted guest into App Builder onboarding when Playground is disabled", async () => {
+    clearHostedOAuthPendingState();
+    clearSandboxSession();
+    window.history.replaceState({}, "", "/#servers");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = false;
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+    });
+
+    expect(window.location.hash).toBe("#servers");
+    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+  });
+
+  it("goes from hosted loading straight to App Builder onboarding for a true guest when Playground is enabled", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
     window.history.replaceState({}, "", "/#servers");
     mockHandleOAuthCallback.mockReset();
     mockConvexAuthState.isAuthenticated = false;
     mockHostedShellGateState.value = "auth-loading";
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "playground-enabled",
+    );
 
     const { rerender } = render(<App />);
 

@@ -1,5 +1,6 @@
 import type { ModelMessage } from "ai";
 import { z } from "zod";
+import type { PromptTurnToolCall } from "./prompt-turns";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
 export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
@@ -28,11 +29,28 @@ export type EvalTraceSpan = {
   messageEndIndex?: number;
 };
 
+export type PromptTraceSummary = {
+  promptIndex: number;
+  prompt: string;
+  expectedToolCalls: PromptTurnToolCall[];
+  actualToolCalls: PromptTurnToolCall[];
+  expectedOutput?: string;
+  passed: boolean;
+  missing: PromptTurnToolCall[];
+  unexpected: PromptTurnToolCall[];
+  argumentMismatches: Array<{
+    expected: PromptTurnToolCall;
+    actual: PromptTurnToolCall;
+    mismatchedArguments: string[];
+  }>;
+};
+
 /** Versioned blob written by `testSuites:updateTestIteration` when messages are stored. */
 export type EvalTraceBlobV1 = {
   traceVersion: 1;
   messages: ModelMessage[];
   spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
 };
 
 /** Zod mirror of Convex `traceSpanValidator` for client/server tests and optional runtime checks. */
@@ -57,10 +75,34 @@ export const evalTraceSpanZ = z.object({
   messageEndIndex: z.number().optional(),
 });
 
+const traceToolCallZ = z.object({
+  toolName: z.string(),
+  arguments: z.record(z.string(), z.any()),
+});
+
+const promptTraceSummaryZ = z.object({
+  promptIndex: z.number(),
+  prompt: z.string(),
+  expectedToolCalls: z.array(traceToolCallZ),
+  actualToolCalls: z.array(traceToolCallZ),
+  expectedOutput: z.string().optional(),
+  passed: z.boolean(),
+  missing: z.array(traceToolCallZ),
+  unexpected: z.array(traceToolCallZ),
+  argumentMismatches: z.array(
+    z.object({
+      expected: traceToolCallZ,
+      actual: traceToolCallZ,
+      mismatchedArguments: z.array(z.string()),
+    }),
+  ),
+});
+
 export const evalTraceBlobV1Z = z.object({
   traceVersion: z.literal(1),
   messages: z.array(z.any()),
   spans: z.array(evalTraceSpanZ).optional(),
+  prompts: z.array(promptTraceSummaryZ).optional(),
 });
 
 export function msOffsetFromRunStart(

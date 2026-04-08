@@ -21,7 +21,15 @@ export type EvalRoute =
       insightsFocus?: boolean;
     }
   | { type: "test-detail"; suiteId: string; testId: string; iteration?: string }
-  | { type: "test-edit"; suiteId: string; testId: string }
+  | {
+      type: "test-edit";
+      suiteId: string;
+      testId: string;
+      /** Deep-link: open compare run surface (same as View results) when iterations exist. */
+      openCompare?: boolean;
+      /** Deep-link: prefer the clicked iteration/session when hydrating compare results. */
+      iteration?: string;
+    }
   | { type: "suite-edit"; suiteId: string }
   | {
       type: "commit-detail";

@@ -465,9 +465,32 @@ describe("TraceViewer", () => {
     openChatTab();
     expect(screen.getAllByTestId("message-view").length).toBeGreaterThan(0);
     fireEvent.click(screen.getByTitle("Raw JSON"));
+    expect(screen.getByTestId("trace-viewer-raw-json")).toBeInTheDocument();
     expect(screen.getByTestId("json-editor")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Timeline"));
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+  });
+
+  it("leaves Raw on Escape", async () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+    fireEvent.click(screen.getByTitle("Raw JSON"));
+    expect(screen.getByTestId("trace-viewer-raw-json")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape", bubbles: true });
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("trace-viewer-raw-json"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("leaves Chat on Escape", async () => {
+    render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+    openChatTab();
+    expect(screen.getByTestId("trace-viewer-chat")).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: "Escape", bubbles: true });
+    expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
+    expect(screen.queryByTestId("trace-viewer-chat")).not.toBeInTheDocument();
   });
 
   it("shows Tools tab when eval tool calls are provided and renders compare view", async () => {
@@ -673,6 +696,22 @@ describe("TraceViewer", () => {
         behavior: "smooth",
       }),
     );
+  });
+
+  it("calls onRevealNavigateToChat when forced view mode blocks switching to chat", async () => {
+    const onRevealNavigateToChat = vi.fn();
+    render(
+      <TraceViewer
+        trace={waterfallTrace}
+        forcedViewMode="timeline"
+        onRevealNavigateToChat={onRevealNavigateToChat}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Reveal in Chat" }));
+
+    expect(onRevealNavigateToChat).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId("trace-viewer-chat")).not.toBeInTheDocument();
   });
 
   it("reveals a selected timeline row in chat view", async () => {

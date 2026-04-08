@@ -35,11 +35,18 @@ export type AiSdkEvalTraceContext = {
       startAt: number;
       firstToolStartAt?: number;
       modelId?: string;
+      promptIndex: number;
     }
   >;
   openTools: Map<
     string,
-    { toolName: string; stepNumber: number; startAt: number; serverId?: string }
+    {
+      toolName: string;
+      stepNumber: number;
+      startAt: number;
+      serverId?: string;
+      promptIndex: number;
+    }
   >;
   lastPrepareStepNumber: number;
   prepareStepEverCalled: boolean;
@@ -57,6 +64,20 @@ type BackendStepToolPhase = {
 function formatRecordedLlmSpanName(modelId?: string): string {
   const id = typeof modelId === "string" ? modelId.trim() : "";
   return id.length > 0 ? `${id} · response` : "LLM";
+}
+
+function formatAiSdkStepSpanId(
+  promptIndex: number,
+  stepNumber: number,
+): string {
+  return `prompt-${promptIndex}-step-${stepNumber}`;
+}
+
+function formatBackendStepSpanId(
+  promptIndex: number,
+  stepIndex: number,
+): string {
+  return `eval-backend-prompt-${promptIndex}-step-${stepIndex}`;
 }
 
 function applyStepMeta(span: EvalTraceSpan, meta?: StepSpanMeta): void {
@@ -135,14 +156,16 @@ export function createAiSdkEvalTraceContext(
 export function registerAiSdkPrepareStep(
   ctx: AiSdkEvalTraceContext,
   stepNumber: number,
-  meta?: Pick<StepSpanMeta, "modelId">,
+  meta?: Pick<StepSpanMeta, "modelId"> & { promptIndex?: number },
 ): void {
   ctx.lastPrepareStepNumber = stepNumber;
   ctx.prepareStepEverCalled = true;
+  const promptIndex = meta?.promptIndex ?? 0;
   ctx.openSteps.set(stepNumber, {
-    spanId: `step-${stepNumber}`,
+    spanId: formatAiSdkStepSpanId(promptIndex, stepNumber),
     startAt: Date.now(),
     modelId: meta?.modelId,
+    promptIndex,
   });
 }
 
@@ -152,6 +175,7 @@ export function registerAiSdkPrepareStep(
 export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
   tools: T,
   ctx: AiSdkEvalTraceContext,
+  promptIndex = 0,
 ): T {
   const out: Record<string, unknown> = { ...tools };
   for (const name of Object.keys(out)) {
@@ -187,7 +211,10 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
         const stepNumber = ctx.lastPrepareStepNumber;
         const toolStartedAt = Date.now();
         const stepMeta = ctx.openSteps.get(stepNumber);
-        const stepSpanId = stepMeta?.spanId ?? `step-${stepNumber}`;
+        const resolvedPromptIndex = stepMeta?.promptIndex ?? promptIndex;
+        const stepSpanId =
+          stepMeta?.spanId ??
+          formatAiSdkStepSpanId(resolvedPromptIndex, stepNumber);
         if (stepMeta && stepMeta.firstToolStartAt == null) {
           stepMeta.firstToolStartAt = toolStartedAt;
         }
@@ -196,6 +223,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
           stepNumber,
           startAt: toolStartedAt,
           serverId,
+          promptIndex: resolvedPromptIndex,
         });
         let success = true;
         try {
@@ -215,7 +243,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
             name,
             category: "tool",
             parentId: stepSpanId,
-            promptIndex: 0,
+            promptIndex: resolvedPromptIndex,
             stepIndex: stepNumber,
             toolCallId,
             toolName: name,
@@ -233,7 +261,7 @@ export function wrapToolSetForEvalTrace<T extends Record<string, unknown>>(
               name: `${name} error`,
               category: "error",
               parentId: stepSpanId,
-              promptIndex: 0,
+              promptIndex: resolvedPromptIndex,
               stepIndex: stepNumber,
               toolCallId,
               toolName: name,
@@ -274,7 +302,7 @@ export function emitAiSdkOnStepFinish(
     parentId: stepSpanId,
     name: formatRecordedLlmSpanName(resolvedModelId),
     category: "llm",
-    promptIndex: 0,
+    promptIndex: stepMeta.promptIndex,
     stepIndex: sn,
     status: spanMeta?.status ?? "ok",
     ...createOffsetInterval(ctx.runStartedAt, stepMeta.startAt, llmEnd),
@@ -294,7 +322,7 @@ export function emitAiSdkOnStepFinish(
     id: stepSpanId,
     name: `Step ${sn + 1}`,
     category: "step",
-    promptIndex: 0,
+    promptIndex: stepMeta.promptIndex,
     stepIndex: sn,
     status: spanMeta?.status ?? "ok",
     ...createOffsetInterval(ctx.runStartedAt, stepMeta.startAt, stepFinishedAt),
@@ -337,6 +365,7 @@ export function patchAiSdkRecordedSpansMessageRangesFromSteps(
   steps:
     | ReadonlyArray<{ response?: { messages?: ModelMessage[] } } | undefined>
     | undefined,
+  promptIndex = 0,
 ): void {
   if (!steps || steps.length === 0) {
     return;
@@ -354,10 +383,13 @@ export function patchAiSdkRecordedSpansMessageRangesFromSteps(
 
     const start = baseMessagesLength + beforeLen;
     const end = baseMessagesLength + afterLen - 1;
-    const stepSpanId = `step-${stepIndex}`;
+    const stepSpanId = formatAiSdkStepSpanId(promptIndex, stepIndex);
 
     for (const span of spans) {
-      if (span.stepIndex !== stepIndex) {
+      if (
+        span.stepIndex !== stepIndex ||
+        (span.promptIndex ?? 0) !== promptIndex
+      ) {
         continue;
       }
       if (
@@ -396,6 +428,7 @@ export function finalizeAiSdkTraceOnFailure(
     completedStepCount: number;
     lastStepEndedAt: number;
     modelId?: string;
+    promptIndex?: number;
   },
 ): void {
   const { runStartedAt, recordedSpans, openTools, openSteps } = ctx;
@@ -410,13 +443,13 @@ export function finalizeAiSdkTraceOnFailure(
   }
 
   for (const [toolCallId, t] of [...openTools.entries()]) {
-    const stepSpanId = `step-${t.stepNumber}`;
+    const stepSpanId = formatAiSdkStepSpanId(t.promptIndex, t.stepNumber);
     recordedSpans.push({
       id: `tool-${toolCallId}`,
       name: t.toolName,
       category: "tool",
       parentId: stepSpanId,
-      promptIndex: 0,
+      promptIndex: t.promptIndex,
       stepIndex: t.stepNumber,
       toolCallId,
       toolName: t.toolName,
@@ -429,7 +462,7 @@ export function finalizeAiSdkTraceOnFailure(
       name: `${t.toolName} error`,
       category: "error",
       parentId: stepSpanId,
-      promptIndex: 0,
+      promptIndex: t.promptIndex,
       stepIndex: t.stepNumber,
       toolCallId,
       toolName: t.toolName,
@@ -450,7 +483,7 @@ export function finalizeAiSdkTraceOnFailure(
         parentId: stepSpanId,
         name: formatRecordedLlmSpanName(failModelId),
         category: "llm",
-        promptIndex: 0,
+        promptIndex: meta.promptIndex,
         stepIndex: sn,
         status: "error",
         modelId: failModelId,
@@ -462,7 +495,7 @@ export function finalizeAiSdkTraceOnFailure(
         parentId: stepSpanId,
         name: formatRecordedLlmSpanName(failModelId),
         category: "llm",
-        promptIndex: 0,
+        promptIndex: meta.promptIndex,
         stepIndex: sn,
         status: "ok",
         modelId: failModelId,
@@ -473,7 +506,7 @@ export function finalizeAiSdkTraceOnFailure(
       id: stepSpanId,
       name: `Step ${sn + 1}`,
       category: "step",
-      promptIndex: 0,
+      promptIndex: meta.promptIndex,
       stepIndex: sn,
       status: "error",
       modelId: meta.modelId ?? options.modelId,
@@ -487,26 +520,28 @@ export function finalizeAiSdkTraceOnFailure(
     runStartedAt,
     topLevelErrorStartAbs,
     failAt,
+    options.promptIndex ?? 0,
   );
 }
 
 export function pushBackendStepSuccessSpans(
   spans: EvalTraceSpan[],
   runStartedAt: number,
+  promptIndex: number,
   stepIndex: number,
   stepStartAbs: number,
   llm: { startAbs: number; endAbs: number },
   tools?: BackendStepToolPhase,
   meta?: StepSpanMeta,
 ): void {
-  const stepParentId = `eval-backend-step-${stepIndex}`;
+  const stepParentId = formatBackendStepSpanId(promptIndex, stepIndex);
   const label = `Step ${stepIndex + 1}`;
   const stepEndAbs = tools ? tools.endAbs : llm.endAbs;
   const stepSpan: EvalTraceSpan = {
     id: stepParentId,
     name: label,
     category: "step",
-    promptIndex: 0,
+    promptIndex,
     stepIndex,
     status: meta?.status ?? "ok",
     ...createOffsetInterval(runStartedAt, stepStartAbs, stepEndAbs),
@@ -519,7 +554,7 @@ export function pushBackendStepSuccessSpans(
     parentId: stepParentId,
     name: formatRecordedLlmSpanName(meta?.modelId),
     category: "llm",
-    promptIndex: 0,
+    promptIndex,
     stepIndex,
     status: meta?.status ?? "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
@@ -533,7 +568,7 @@ export function pushBackendStepSuccessSpans(
       parentId: stepParentId,
       name: "Tools (aggregate)",
       category: "tool",
-      promptIndex: 0,
+      promptIndex,
       stepIndex,
       status: meta?.status ?? "ok",
       ...createOffsetInterval(runStartedAt, tools.startAbs, tools.endAbs),
@@ -544,19 +579,20 @@ export function pushBackendStepSuccessSpans(
 export function pushBackendStepLlmFailureSpans(
   spans: EvalTraceSpan[],
   runStartedAt: number,
+  promptIndex: number,
   stepIndex: number,
   stepStartAbs: number,
   llmPhaseStartAbs: number,
   failAbs: number,
   meta?: StepSpanMeta,
 ): void {
-  const stepParentId = `eval-backend-step-${stepIndex}`;
+  const stepParentId = formatBackendStepSpanId(promptIndex, stepIndex);
   const label = `Step ${stepIndex + 1}`;
   const stepSpan: EvalTraceSpan = {
     id: stepParentId,
     name: label,
     category: "step",
-    promptIndex: 0,
+    promptIndex,
     stepIndex,
     status: "error",
     ...createOffsetInterval(runStartedAt, stepStartAbs, failAbs),
@@ -568,7 +604,7 @@ export function pushBackendStepLlmFailureSpans(
     parentId: stepParentId,
     name: "Error",
     category: "error",
-    promptIndex: 0,
+    promptIndex,
     stepIndex,
     status: "error",
     ...createOffsetInterval(runStartedAt, llmPhaseStartAbs, failAbs),
@@ -578,6 +614,7 @@ export function pushBackendStepLlmFailureSpans(
 export function pushBackendStepToolFailureSpans(
   spans: EvalTraceSpan[],
   runStartedAt: number,
+  promptIndex: number,
   stepIndex: number,
   stepStartAbs: number,
   llm: { startAbs: number; endAbs: number },
@@ -585,13 +622,13 @@ export function pushBackendStepToolFailureSpans(
   failAbs: number,
   meta?: StepSpanMeta & { pushAggregateSpan?: boolean },
 ): void {
-  const stepParentId = `eval-backend-step-${stepIndex}`;
+  const stepParentId = formatBackendStepSpanId(promptIndex, stepIndex);
   const label = `Step ${stepIndex + 1}`;
   const stepSpan: EvalTraceSpan = {
     id: stepParentId,
     name: label,
     category: "step",
-    promptIndex: 0,
+    promptIndex,
     stepIndex,
     status: "error",
     ...createOffsetInterval(runStartedAt, stepStartAbs, failAbs),
@@ -604,7 +641,7 @@ export function pushBackendStepToolFailureSpans(
     parentId: stepParentId,
     name: formatRecordedLlmSpanName(meta?.modelId),
     category: "llm",
-    promptIndex: 0,
+    promptIndex,
     stepIndex,
     status: "ok",
     ...createOffsetInterval(runStartedAt, llm.startAbs, llm.endAbs),
@@ -618,7 +655,7 @@ export function pushBackendStepToolFailureSpans(
       parentId: stepParentId,
       name: "Error",
       category: "error",
-      promptIndex: 0,
+      promptIndex,
       stepIndex,
       status: "error",
       ...createOffsetInterval(runStartedAt, toolsPhaseStartAbs, failAbs),
@@ -631,12 +668,13 @@ export function pushAiSdkTrailingErrorSpan(
   runStartedAt: number,
   errorPhaseStartAbs: number,
   failAbs: number,
+  promptIndex = 0,
 ): void {
   spans.push({
     id: `eval-ai-err-${failAbs}`,
     name: "Generation error",
     category: "error",
-    promptIndex: 0,
+    promptIndex,
     status: "error",
     ...createOffsetInterval(runStartedAt, errorPhaseStartAbs, failAbs),
   });
@@ -646,6 +684,7 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
   tools: T,
   params: {
     runStartedAt: number;
+    promptIndex: number;
     stepIndex: number;
     spans: EvalTraceSpan[];
   },
@@ -697,10 +736,13 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
           const finishedAt = Date.now();
           params.spans.push({
             id: `backend-tool-${toolCallId}`,
-            parentId: `eval-backend-step-${params.stepIndex}`,
+            parentId: formatBackendStepSpanId(
+              params.promptIndex,
+              params.stepIndex,
+            ),
             name,
             category: "tool",
-            promptIndex: 0,
+            promptIndex: params.promptIndex,
             stepIndex: params.stepIndex,
             toolCallId,
             toolName: name,
@@ -711,10 +753,13 @@ export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
           if (!success) {
             params.spans.push({
               id: `backend-tool-err-${toolCallId}`,
-              parentId: `eval-backend-step-${params.stepIndex}`,
+              parentId: formatBackendStepSpanId(
+                params.promptIndex,
+                params.stepIndex,
+              ),
               name: `${name} error`,
               category: "error",
-              promptIndex: 0,
+              promptIndex: params.promptIndex,
               stepIndex: params.stepIndex,
               toolCallId,
               toolName: name,

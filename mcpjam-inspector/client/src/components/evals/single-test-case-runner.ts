@@ -1,11 +1,20 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import { isMCPJamProvidedModel, type ModelDefinition } from "@/shared/types";
 import type { EvalCase, EvalSuite } from "./types";
+import type { PromptTurn } from "@/shared/prompt-turns";
 
 type TestCaseRunOverrides = Pick<
   EvalCase,
-  "query" | "expectedToolCalls" | "runs"
+  | "query"
+  | "expectedToolCalls"
+  | "isNegativeTest"
+  | "runs"
+  | "expectedOutput"
+  | "advancedConfig"
 >;
+type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
+  promptTurns?: PromptTurn[];
+};
 
 interface PrepareSingleTestCaseRunParams {
   workspaceId: string | null;
@@ -15,7 +24,7 @@ interface PrepareSingleTestCaseRunParams {
   getToken: (provider: keyof ProviderTokens) => string | null | undefined;
   hasToken: (provider: keyof ProviderTokens) => boolean;
   selectedModel?: string | null;
-  testCaseOverrides?: TestCaseRunOverrides;
+  testCaseOverrides?: TestCaseRunOverridesWithTurns;
 }
 
 export interface TestCaseModelOption {
@@ -127,7 +136,7 @@ export function resolveSelectedTestCaseModelValue(params: {
   return (
     preferredValues.find(
       (candidate): candidate is string =>
-        Boolean(candidate) && optionValues.has(candidate),
+        typeof candidate === "string" && optionValues.has(candidate),
     ) ?? null
   );
 }

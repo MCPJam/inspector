@@ -1,6 +1,8 @@
 import type { ModelMessage } from "ai";
 import type { ConvexHttpClient } from "convex/browser";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { PromptTraceSummary } from "@/shared/eval-trace";
+import type { PromptTurn } from "@/shared/prompt-turns";
 import type { UsageTotals } from "./types";
 import { logger } from "../../utils/logger";
 import type { ServerToolSnapshot } from "../../utils/export-helpers.js";
@@ -24,6 +26,8 @@ export type SuiteRunRecorder = {
         arguments: Record<string, any>;
       }>;
       isNegativeTest?: boolean; // When true, test passes if NO tools are called
+      expectedOutput?: string;
+      promptTurns?: PromptTurn[];
       advancedConfig?: Record<string, unknown>;
     };
     iterationNumber: number;
@@ -39,10 +43,13 @@ export type SuiteRunRecorder = {
     usage: UsageTotals;
     messages: ModelMessage[];
     spans?: EvalTraceSpan[];
+    prompts?: PromptTraceSummary[];
     status?: IterationStatus;
     startedAt?: number;
     error?: string;
     errorDetails?: string;
+    resultSource?: "reported" | "derived";
+    metadata?: Record<string, string | number | boolean>;
   }): Promise<void>;
   finalize(args: {
     status: "completed" | "failed" | "cancelled";
@@ -162,10 +169,13 @@ export const createSuiteRunRecorder = ({
       usage,
       messages,
       spans,
+      prompts,
       status,
       startedAt,
       error,
       errorDetails,
+      resultSource,
+      metadata,
     }) {
       if (!iterationId || runDeleted) {
         return;
@@ -204,8 +214,13 @@ export const createSuiteRunRecorder = ({
           ...(spans?.length
             ? { spans: sanitizeForConvexTransport(spans) }
             : {}),
+          ...(prompts?.length
+            ? { prompts: sanitizeForConvexTransport(prompts) }
+            : {}),
           error,
           errorDetails,
+          resultSource,
+          metadata,
         });
       } catch (error) {
         const errorMessage =
@@ -339,6 +354,8 @@ export const startSuiteRunWithRecorder = async ({
           runs: tc.runs || 1,
           expectedToolCalls: tc.expectedToolCalls || [],
           isNegativeTest: tc.isNegativeTest,
+          expectedOutput: tc.expectedOutput,
+          promptTurns: tc.promptTurns,
           advancedConfig: tc.advancedConfig,
           testCaseId: tc._id,
         }));
@@ -354,6 +371,8 @@ export const startSuiteRunWithRecorder = async ({
             runs: tc.runs || 1,
             expectedToolCalls: tc.expectedToolCalls || [],
             isNegativeTest: tc.isNegativeTest,
+            expectedOutput: tc.expectedOutput,
+            promptTurns: tc.promptTurns,
             advancedConfig: tc.advancedConfig,
             testCaseId: tc.testCaseId ?? tc._id,
           },

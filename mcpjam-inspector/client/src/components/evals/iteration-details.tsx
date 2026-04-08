@@ -27,6 +27,10 @@ import { cn } from "@/lib/utils";
 import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  resolveIterationDisplayExpectedToolCalls,
+  resolvePromptTurns,
+} from "@/shared/prompt-turns";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
 const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
@@ -318,49 +322,56 @@ export function IterationDetails({
 
     serverNames.forEach((serverId) => {
       void listTools({ serverId })
-        .then((result) => {
-          if (cancelled) return;
+        .then(
+          (
+            result: ToolServerMap & {
+              tools?: Array<{ name: string; inputSchema?: any }>;
+              toolsMetadata?: Record<string, unknown>;
+            },
+          ) => {
+            if (cancelled) return;
 
-          setConnectedServerIds((prev) =>
-            prev.includes(serverId) ? prev : [...prev, serverId],
-          );
+            setConnectedServerIds((prev) =>
+              prev.includes(serverId) ? prev : [...prev, serverId],
+            );
 
-          if (result.tools?.length) {
-            setToolsWithSchema((prev) => {
-              const next = { ...prev };
-              for (const tool of result.tools ?? []) {
-                next[tool.name] = {
-                  name: tool.name,
-                  inputSchema: tool.inputSchema,
-                };
-              }
-              return next;
-            });
+            if (result.tools?.length) {
+              setToolsWithSchema((prev) => {
+                const next = { ...prev };
+                for (const tool of result.tools ?? []) {
+                  next[tool.name] = {
+                    name: tool.name,
+                    inputSchema: tool.inputSchema,
+                  };
+                }
+                return next;
+              });
 
-            setToolServerMap((prev) => {
-              const next = { ...prev };
-              for (const tool of result.tools ?? []) {
-                next[tool.name] = serverId;
-              }
-              return next;
-            });
-          }
+              setToolServerMap((prev: ToolServerMap) => {
+                const next = { ...prev };
+                for (const tool of result.tools ?? []) {
+                  next[tool.name] = serverId;
+                }
+                return next;
+              });
+            }
 
-          if (result.toolsMetadata) {
-            setToolsMetadata((prev) => ({
-              ...prev,
-              ...Object.fromEntries(
-                Object.entries(result.toolsMetadata ?? {}).map(
-                  ([toolName, meta]) => [
-                    toolName,
-                    meta as Record<string, unknown>,
-                  ],
+            if (result.toolsMetadata) {
+              setToolsMetadata((prev) => ({
+                ...prev,
+                ...Object.fromEntries(
+                  Object.entries(result.toolsMetadata ?? {}).map(
+                    ([toolName, meta]) => [
+                      toolName,
+                      meta as Record<string, unknown>,
+                    ],
+                  ),
                 ),
-              ),
-            }));
-          }
-        })
-        .catch((loadError) => {
+              }));
+            }
+          },
+        )
+        .catch((loadError: unknown) => {
           if (cancelled) return;
 
           console.warn(
@@ -391,12 +402,68 @@ export function IterationDetails({
   const traceStartedAtMs = iteration.startedAt ?? iteration.createdAt;
   const traceEndedAtMs = iteration.updatedAt;
 
-  // Use snapshot values first (reflects what was actually tested, including unsaved edits)
-  const expectedToolCalls =
-    iteration.testCaseSnapshot?.expectedToolCalls ??
-    testCase?.expectedToolCalls ??
-    [];
+  // Aggregate expected tools across turns for display (snapshot wins over draft case).
+  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
+    iteration.testCaseSnapshot,
+    testCase,
+  );
   const actualToolCalls = iteration.actualToolCalls || [];
+  const promptSummaries = useMemo(() => {
+    if (Array.isArray(blob?.prompts) && blob.prompts.length > 0) {
+      return blob.prompts as Array<{
+        promptIndex: number;
+        prompt: string;
+        expectedToolCalls: Array<{
+          toolName: string;
+          arguments: Record<string, any>;
+        }>;
+        actualToolCalls: Array<{
+          toolName: string;
+          arguments: Record<string, any>;
+        }>;
+        expectedOutput?: string;
+        passed: boolean;
+        missing: Array<{ toolName: string; arguments: Record<string, any> }>;
+        unexpected: Array<{ toolName: string; arguments: Record<string, any> }>;
+        argumentMismatches: Array<{
+          toolName: string;
+          expectedArgs: Record<string, any>;
+          actualArgs: Record<string, any>;
+        }>;
+      }>;
+    }
+
+    const promptTurns = resolvePromptTurns({
+      promptTurns: iteration.testCaseSnapshot?.promptTurns,
+      query: iteration.testCaseSnapshot?.query,
+      expectedToolCalls: iteration.testCaseSnapshot?.expectedToolCalls,
+      expectedOutput: iteration.testCaseSnapshot?.expectedOutput,
+    });
+
+    return promptTurns.map((turn, promptIndex) => ({
+      promptIndex,
+      prompt: turn.prompt,
+      expectedToolCalls: turn.expectedToolCalls,
+      actualToolCalls: promptIndex === 0 ? actualToolCalls : [],
+      expectedOutput: turn.expectedOutput,
+      passed: iteration.result === "passed",
+      missing: [],
+      unexpected: [],
+      argumentMismatches: [],
+    }));
+  }, [
+    actualToolCalls,
+    blob?.prompts,
+    iteration.result,
+    iteration.testCaseSnapshot?.expectedOutput,
+    iteration.testCaseSnapshot?.expectedToolCalls,
+    iteration.testCaseSnapshot?.promptTurns,
+    iteration.testCaseSnapshot?.query,
+  ]);
+  const firstFailedTurnIndex =
+    typeof iteration.metadata?.firstFailedTurnIndex === "number"
+      ? iteration.metadata.firstFailedTurnIndex
+      : promptSummaries.findIndex((summary) => !summary.passed);
 
   // Helper to format type information
   const formatType = (type: any): string => {
@@ -700,8 +767,7 @@ export function IterationDetails({
       ) : null}
       <div
         className={cn(
-          layoutMode === "compact" &&
-            "rounded-md bg-muted/20 p-3 max-h-[480px] overflow-y-auto",
+          layoutMode === "compact" && "rounded-md bg-muted/20 p-3",
           layoutMode === "full" &&
             iteration.blob &&
             !error &&
@@ -748,6 +814,61 @@ export function IterationDetails({
     caseInsightSlot && !iteration.blob ? (
       <div className="min-w-0" data-testid="iteration-case-insight-fallback">
         {caseInsightSlot}
+      </div>
+    ) : null;
+  const promptSummarySection =
+    promptSummaries.length > 0 ? (
+      <div className="space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="text-xs font-semibold">Turn Breakdown</div>
+          <div className="text-[10px] text-muted-foreground">
+            {promptSummaries.length} turn
+            {promptSummaries.length === 1 ? "" : "s"}
+            {firstFailedTurnIndex >= 0
+              ? ` · first failure on turn ${firstFailedTurnIndex + 1}`
+              : ""}
+          </div>
+        </div>
+        <div className="grid gap-2 md:grid-cols-2">
+          {promptSummaries.map((summary) => (
+            <div
+              key={`prompt-summary-${summary.promptIndex}`}
+              className="rounded-md border border-border/50 bg-muted/10 p-3 space-y-2"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs font-medium">
+                  Turn {summary.promptIndex + 1}
+                </div>
+                <div
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                    summary.passed
+                      ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+                      : "bg-rose-500/10 text-rose-700 dark:text-rose-400",
+                  )}
+                >
+                  {summary.passed ? "Passed" : "Failed"}
+                </div>
+              </div>
+              <div className="text-xs text-muted-foreground whitespace-pre-wrap">
+                {summary.prompt || "No prompt recorded"}
+              </div>
+              <div className="text-[10px] text-muted-foreground">
+                Expected {summary.expectedToolCalls.length} · Actual{" "}
+                {summary.actualToolCalls.length}
+              </div>
+              {!summary.passed ? (
+                <div className="text-[10px] text-rose-700 dark:text-rose-400">
+                  {formatToolCallsSummary(
+                    summary.expectedToolCalls,
+                    summary.actualToolCalls,
+                    120,
+                  )}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
       </div>
     ) : null;
 
@@ -803,6 +924,7 @@ export function IterationDetails({
       )}
 
       {caseInsightFallback}
+      {promptSummarySection}
 
       {traceFirst ? (
         <>

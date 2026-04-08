@@ -41,6 +41,12 @@ export interface ActiveServerSelectorProps {
   className?: string;
 }
 
+/** Props supplied by the shell; `hasMessages` and `className` are set in PlaygroundMain. */
+export type PlaygroundServerSelectorProps = Omit<
+  ActiveServerSelectorProps,
+  "hasMessages" | "className"
+>;
+
 function getStatusColor(status: string): string {
   switch (status) {
     case "connected":

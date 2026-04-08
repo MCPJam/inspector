@@ -121,6 +121,7 @@ export interface UseChatSessionReturn {
   isAuthLoading: boolean;
   authHeaders: Record<string, string> | undefined;
   isAuthReady: boolean;
+  isSessionBootstrapComplete: boolean;
 
   // Config
   systemPrompt: string;
@@ -150,6 +151,7 @@ export interface UseChatSessionReturn {
 
   // Actions
   resetChat: () => void;
+  startChatWithMessages: (messages: UIMessage[]) => void;
 
   // Computed state for UI
   isStreaming: boolean;
@@ -236,6 +238,8 @@ export function useChatSession({
   const [authHeaders, setAuthHeaders] = useState<
     Record<string, string> | undefined
   >(undefined);
+  const [isSessionBootstrapComplete, setIsSessionBootstrapComplete] =
+    useState(false);
   const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
@@ -558,6 +562,15 @@ export function useChatSession({
     onResetRef.current?.();
   }, [setMessages]);
 
+  const startChatWithMessages = useCallback((messages: UIMessage[]) => {
+    skipNextForkDetectionRef.current = true;
+    const nextSessionId = generateId();
+    pendingForkSessionIdRef.current = nextSessionId;
+    pendingForkMessagesRef.current = messages;
+    setChatSessionId(nextSessionId);
+    onResetRef.current?.();
+  }, []);
+
   useEffect(() => {
     setSystemPrompt(initialSystemPrompt);
   }, [initialSystemPrompt]);
@@ -573,6 +586,7 @@ export function useChatSession({
   // Auth headers setup - reset chat after auth changes to ensure transport has correct headers
   useEffect(() => {
     let active = true;
+    setIsSessionBootstrapComplete(false);
     (async () => {
       let resolved = false;
 
@@ -616,6 +630,7 @@ export function useChatSession({
         setChatSessionId(generateId());
         setMessages([]);
         onResetRef.current?.();
+        setIsSessionBootstrapComplete(true);
       }
     })();
     return () => {
@@ -867,6 +882,7 @@ export function useChatSession({
     isAuthLoading,
     authHeaders,
     isAuthReady,
+    isSessionBootstrapComplete,
 
     // Config
     systemPrompt,
@@ -892,6 +908,7 @@ export function useChatSession({
 
     // Actions
     resetChat,
+    startChatWithMessages,
 
     // Computed state
     isStreaming,

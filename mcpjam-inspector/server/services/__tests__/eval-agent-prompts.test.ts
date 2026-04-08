@@ -16,6 +16,12 @@ describe("eval prompt policy", () => {
     expect(EVAL_AGENT_SYSTEM_PROMPT).toContain(
       "replace it with a substantially different but still relevant case",
     );
+    expect(EVAL_AGENT_SYSTEM_PROMPT).toContain(
+      "At least 2 normal tests must use promptTurns with 2-3 user turns",
+    );
+    expect(EVAL_AGENT_SYSTEM_PROMPT).toContain(
+      "the first turn should already trigger at least one tool",
+    );
   });
 
   it("keeps negative test generation short and clearly no-tool", () => {
