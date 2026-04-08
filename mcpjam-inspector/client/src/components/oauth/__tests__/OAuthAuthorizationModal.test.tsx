@@ -51,9 +51,9 @@ describe("OAuthAuthorizationModal", () => {
     const consoleErrorSpy = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
-    const openSpy = vi.spyOn(window, "open").mockImplementation(
-      () => popupWindow,
-    );
+    const openSpy = vi
+      .spyOn(window, "open")
+      .mockImplementation(() => popupWindow);
 
     openExternal.mockRejectedValue(new Error("system browser unavailable"));
 

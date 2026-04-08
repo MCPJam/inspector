@@ -4,14 +4,19 @@ type WorkosClientOptions = NonNullable<Parameters<typeof createClient>[1]>;
 const ELECTRON_HOSTED_AUTH_STATE_FLAG = "electronHostedAuth";
 
 function createElectronHostedAuthNonce() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return crypto.randomUUID();
   }
 
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function parseWorkosState(rawState: string | null): Record<string, unknown> | null {
+function parseWorkosState(
+  rawState: string | null,
+): Record<string, unknown> | null {
   if (!rawState) {
     return null;
   }
