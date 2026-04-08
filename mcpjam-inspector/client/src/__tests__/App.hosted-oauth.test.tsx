@@ -1381,9 +1381,7 @@ describe("App hosted OAuth callback handling", () => {
 
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs"
-        ? undefined
-        : flag === "playground-enabled",
+      flag === "evaluate-runs" ? undefined : flag === "playground-enabled",
     );
 
     render(<App />);
@@ -1410,9 +1408,7 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
 
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs"
-        ? undefined
-        : flag === "playground-enabled",
+      flag === "evaluate-runs" ? undefined : flag === "playground-enabled",
     );
 
     render(<App />);
