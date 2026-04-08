@@ -21,6 +21,7 @@ export interface RemoteWorkspace {
   organizationId?: string;
   visibility?: WorkspaceVisibility;
   ownerId: string;
+  isOwnedFallbackCandidate: boolean;
   createdAt: number;
   updatedAt: number;
 }

@@ -382,6 +382,140 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
+  it("prefers the newest owned fallback candidate when the saved workspace is invalid", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Older owned workspace",
+        servers: {},
+        ownerId: "user-1",
+        isOwnedFallbackCandidate: true,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "remote-2",
+        name: "Newest owned workspace",
+        servers: {},
+        ownerId: "user-1",
+        isOwnedFallbackCandidate: true,
+        createdAt: 2,
+        updatedAt: 2,
+      },
+      {
+        _id: "remote-3",
+        name: "Invited workspace",
+        servers: {},
+        ownerId: "other-user",
+        isOwnedFallbackCandidate: false,
+        createdAt: 3,
+        updatedAt: 3,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-missing");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-2");
+    await waitFor(() => {
+      expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+        "remote-2",
+      );
+    });
+  });
+
+  it("falls back to the first remote workspace when no owned fallback candidate exists", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "First workspace",
+        servers: {},
+        ownerId: "other-user",
+        isOwnedFallbackCandidate: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        _id: "remote-2",
+        name: "Second workspace",
+        servers: {},
+        ownerId: "other-user",
+        isOwnedFallbackCandidate: false,
+        createdAt: 2,
+        updatedAt: 2,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    localStorage.setItem("convex-active-workspace-id", "remote-missing");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({ appState });
+
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-1");
+    await waitFor(() => {
+      expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+        "remote-1",
+      );
+    });
+  });
+
+  it("keeps fallback selection scoped to the current organization's remote workspaces", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-global",
+        name: "Owned workspace in another org",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-other",
+        isOwnedFallbackCandidate: true,
+        createdAt: 10,
+        updatedAt: 10,
+      },
+      {
+        _id: "remote-scoped",
+        name: "Scoped workspace",
+        servers: {},
+        ownerId: "other-user",
+        organizationId: "org-scope",
+        isOwnedFallbackCandidate: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [
+      {
+        _id: "remote-scoped",
+        name: "Scoped workspace",
+        servers: {},
+        ownerId: "other-user",
+        organizationId: "org-scope",
+        isOwnedFallbackCandidate: false,
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    localStorage.setItem("convex-active-workspace-id", "remote-missing");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+    const { result } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-scope",
+    });
+
+    expect(result.current.effectiveActiveWorkspaceId).toBe("remote-scoped");
+    expect(localStorage.getItem("convex-active-workspace-id")).toBe(
+      "remote-scoped",
+    );
+  });
+
   it("bootstraps the active local workspace servers into the signed-in workspace", async () => {
     const appState = createAppState({
       default: createLocalWorkspace("default", {
@@ -1426,7 +1560,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
-  it("stops workspace bootstrap loading if the bootstrap import mutation fails", async () => {
+  it("stops workspace bootstrap loading if the guest server carry-forward mutation fails", async () => {
     workspaceQueryState.allWorkspaces = [];
     workspaceQueryState.workspaces = [];
     bootstrapGuestServerImportMock.mockRejectedValueOnce(
@@ -1646,7 +1780,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
-  it("ignores a stale bootstrap import result that resolves after sign-out", async () => {
+  it("ignores a stale guest server carry-forward result that resolves after sign-out", async () => {
     workspaceQueryState.allWorkspaces = [
       {
         _id: "remote-1",
@@ -1725,7 +1859,7 @@ describe("useWorkspaceState automatic workspace creation", () => {
     );
   });
 
-  it("ignores a stale bootstrap result after sign-out and allows a new sign-in pass", async () => {
+  it("ignores a stale guest server carry-forward result after sign-out and allows a new sign-in pass", async () => {
     workspaceQueryState.allWorkspaces = [
       {
         _id: "remote-1",
