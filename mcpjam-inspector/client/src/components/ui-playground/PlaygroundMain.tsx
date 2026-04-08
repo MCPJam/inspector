@@ -1301,7 +1301,7 @@ export function PlaygroundMain({
         {isMultiModelMode ? (
           <div className="flex h-full min-h-0 flex-col overflow-hidden">
             <div className="flex-1 min-h-0 overflow-auto px-4 py-4">
-              <div className="mx-auto flex min-h-full w-full max-w-7xl flex-col">
+              <div className="flex min-h-full w-full min-w-0 flex-col">
                 {!effectiveHasMessages && (isAuthLoading || shouldShowUpsell) ? (
                   <div className="mb-4 rounded-2xl border border-border/60 bg-card/40 p-6 text-center">
                     {isAuthLoading ? (
@@ -1317,7 +1317,16 @@ export function PlaygroundMain({
                   </div>
                 ) : null}
 
-                <div className="grid min-h-0 grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+                <div
+                  className={cn(
+                    "grid min-h-0 min-w-0 gap-4",
+                    resolvedSelectedModels.length <= 1 && "grid-cols-1",
+                    resolvedSelectedModels.length === 2 &&
+                      "grid-cols-1 xl:grid-cols-2",
+                    resolvedSelectedModels.length >= 3 &&
+                      "grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3",
+                  )}
+                >
                   {resolvedSelectedModels.map((model) => (
                     <MultiModelPlaygroundCard
                       key={`${multiModelSessionGeneration}:${String(model.id)}`}
@@ -1354,7 +1363,7 @@ export function PlaygroundMain({
             </div>
 
             <div className="shrink-0 border-t border-border bg-background/70">
-              <div className="mx-auto w-full max-w-6xl p-3">
+              <div className="w-full p-3">
                 <ChatInput
                   {...sharedChatInputProps}
                   hasMessages={effectiveHasMessages}

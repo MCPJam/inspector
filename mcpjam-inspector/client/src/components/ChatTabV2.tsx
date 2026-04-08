@@ -1081,7 +1081,7 @@ export function ChatTabV2({
                 {!effectiveHasMessages &&
                 showLiveTraceDiagnostics &&
                 !minimalMode ? (
-                  <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
+                  <div className="flex flex-1 min-h-0 flex-col">
                     {activeTraceViewMode === "raw" ? (
                       <StickToBottom
                         className="flex flex-1 min-h-0 flex-col overflow-hidden"
@@ -1128,7 +1128,7 @@ export function ChatTabV2({
                         </div>
                       </StickToBottom>
                     ) : (
-                      <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
+                      <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
                         <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
                           {activeTraceViewMode === "timeline" &&
                           !hasLiveTimelineContent ? (
@@ -1292,8 +1292,17 @@ export function ChatTabV2({
                   )}
                   aria-hidden={!effectiveHasMessages}
                 >
-                  <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
-                    <div className="mx-auto grid h-full min-h-0 w-full max-w-7xl grid-cols-1 gap-4 auto-rows-[minmax(0,1fr)] xl:grid-cols-2 2xl:grid-cols-3 [&>*]:min-h-0">
+                  <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
+                    <div
+                      className={cn(
+                        "grid h-full min-h-0 w-full min-w-0 gap-4 auto-rows-[minmax(0,1fr)] [&>*]:min-h-0",
+                        resolvedSelectedModels.length <= 1 && "grid-cols-1",
+                        resolvedSelectedModels.length === 2 &&
+                          "grid-cols-1 xl:grid-cols-2",
+                        resolvedSelectedModels.length >= 3 &&
+                          "grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3",
+                      )}
+                    >
                       {resolvedSelectedModels.map((model) => (
                         <MultiModelChatCard
                           key={`${multiModelSessionGeneration}:${String(model.id)}`}
@@ -1335,7 +1344,7 @@ export function ChatTabV2({
 
                   <div className="border-t border-border bg-background/80 backdrop-blur-sm">
                     {!isAuthLoading ? (
-                      <div className="mx-auto w-full max-w-6xl p-4">
+                      <div className="w-full p-4">
                         <ChatInput
                           {...sharedChatInputProps}
                           hasMessages={effectiveHasMessages}
@@ -1361,7 +1370,7 @@ export function ChatTabV2({
                 ) : null}
 
                 {(showLiveTraceDiagnostics || revealedInChat) && !minimalMode && (
-                  <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
+                  <div className="flex flex-1 min-h-0 flex-col">
                     {activeTraceViewMode === "raw" ? (
                       <StickToBottom
                         className="flex flex-1 min-h-0 flex-col overflow-hidden"
@@ -1409,7 +1418,7 @@ export function ChatTabV2({
                         </div>
                       </StickToBottom>
                     ) : (
-                      <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
+                      <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
                         <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
                           {activeTraceViewMode === "timeline" &&
                           !hasLiveTimelineContent ? (

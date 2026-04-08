@@ -672,6 +672,10 @@ describe("TraceTimeline detail pane", () => {
     expect(hoverContent).toHaveAttribute("data-side", "left");
 
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
+    expect(within(hoverCard).getByText("Time")).toBeTruthy();
+    expect(within(hoverCard).getByText("Start")).toBeTruthy();
+    expect(within(hoverCard).getByText("Tokens")).toBeTruthy();
+    expect(within(hoverCard).getByText("Input")).toBeTruthy();
     expect(
       within(hoverCard).getByTestId("trace-row-hover-start"),
     ).toHaveTextContent(new Date(traceStartedAtMs).toLocaleString());

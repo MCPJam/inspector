@@ -2441,55 +2441,75 @@ export function TraceTimeline({
                             className="space-y-3"
                           >
                             <div className="space-y-1.5">
-                              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
                                 Time
                               </div>
-                              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                                <dt className="text-muted-foreground">Start</dt>
-                                <dd
-                                  data-testid="trace-row-hover-start"
-                                  className="text-right font-medium text-foreground"
-                                >
-                                  {formatWallClockTimestamp(rowStartTimestamp)}
-                                </dd>
-                                <dt className="text-muted-foreground">End</dt>
-                                <dd
-                                  data-testid="trace-row-hover-end"
-                                  className="text-right font-medium text-foreground"
-                                >
-                                  {formatWallClockTimestamp(rowEndTimestamp)}
-                                </dd>
-                              </dl>
+                              <div className="space-y-1 text-xs">
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Start
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-start"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatWallClockTimestamp(
+                                      rowStartTimestamp,
+                                    )}
+                                  </span>
+                                </div>
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    End
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-end"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatWallClockTimestamp(rowEndTimestamp)}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                             <div className="space-y-1.5">
-                              <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                              <div className="text-[10px] font-semibold uppercase tracking-wide text-popover-foreground/65">
                                 Tokens
                               </div>
-                              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                                <dt className="text-muted-foreground">Input</dt>
-                                <dd
-                                  data-testid="trace-row-hover-input-tokens"
-                                  className="text-right font-medium tabular-nums text-foreground"
-                                >
-                                  {formatTokenCount(tokenStats.inputTokens)}
-                                </dd>
-                                <dt className="text-muted-foreground">
-                                  Output
-                                </dt>
-                                <dd
-                                  data-testid="trace-row-hover-output-tokens"
-                                  className="text-right font-medium tabular-nums text-foreground"
-                                >
-                                  {formatTokenCount(tokenStats.outputTokens)}
-                                </dd>
-                                <dt className="text-muted-foreground">Total</dt>
-                                <dd
-                                  data-testid="trace-row-hover-total-tokens"
-                                  className="text-right font-medium tabular-nums text-foreground"
-                                >
-                                  {formatTokenCount(tokenStats.totalTokens)}
-                                </dd>
-                              </dl>
+                              <div className="space-y-1 text-xs">
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Input
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-input-tokens"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatTokenCount(tokenStats.inputTokens)}
+                                  </span>
+                                </div>
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Output
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-output-tokens"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatTokenCount(tokenStats.outputTokens)}
+                                  </span>
+                                </div>
+                                <div className="flex min-w-0 items-baseline justify-between gap-3">
+                                  <span className="shrink-0 text-popover-foreground/70">
+                                    Total
+                                  </span>
+                                  <span
+                                    data-testid="trace-row-hover-total-tokens"
+                                    className="min-w-0 text-right font-medium text-popover-foreground tabular-nums"
+                                  >
+                                    {formatTokenCount(tokenStats.totalTokens)}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </HoverCardContent>

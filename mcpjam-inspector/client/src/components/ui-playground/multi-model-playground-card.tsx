@@ -164,6 +164,7 @@ export function MultiModelPlaygroundCard({
   >([]);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
+  const [revealedInChat, setRevealedInChat] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [preludeTraceExecutions, setPreludeTraceExecutions] = useState<
     PreludeTraceExecution[]
@@ -223,6 +224,19 @@ export function MultiModelPlaygroundCard({
     ? traceViewMode
     : "chat";
   const showLiveTraceDiagnostics = activeTraceViewMode !== "chat";
+  const showTraceDiagnosticsShell =
+    showLiveTraceDiagnostics || revealedInChat;
+
+  const navigateTraceRevealToChat = useCallback(() => {
+    setTraceViewMode("chat");
+    setRevealedInChat(true);
+  }, []);
+
+  const handleTraceViewModeChange = useCallback((mode: PlaygroundTraceViewMode) => {
+    setTraceViewMode(mode);
+    setRevealedInChat(false);
+  }, []);
+
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
     !hasLiveTimelineContent &&
@@ -297,11 +311,13 @@ export function MultiModelPlaygroundCard({
   useEffect(() => {
     if (!traceViewsSupported) {
       setTraceViewMode("chat");
+      setRevealedInChat(false);
     }
   }, [traceViewsSupported]);
 
   useEffect(() => {
     setTraceViewMode("chat");
+    setRevealedInChat(false);
     setPreludeTraceExecutions([]);
     setInjectedToolRenderOverrides({});
   }, [chatSessionId]);
@@ -497,7 +513,7 @@ export function MultiModelPlaygroundCard({
         summary={summary}
         allSummaries={comparisonSummaries}
         mode={activeTraceViewMode}
-        onModeChange={setTraceViewMode}
+        onModeChange={handleTraceViewModeChange}
         showTraceTabs={showTraceTabs}
       />
 
@@ -520,10 +536,45 @@ export function MultiModelPlaygroundCard({
           </div>
         ) : null}
 
-        {showLiveTraceDiagnostics ? (
-          <div className="flex min-h-0 flex-1 flex-col animate-in fade-in duration-300">
-            <div className="flex-1 min-h-0 overflow-hidden p-3">
-              {showLiveTracePending ? (
+        {showTraceDiagnosticsShell ? (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
+              {activeTraceViewMode === "chat" && revealedInChat ? (
+                <TraceViewer
+                  trace={traceViewerTrace}
+                  model={model}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
+                  traceStartedAtMs={
+                    effectiveLiveTraceEnvelope?.traceStartedAtMs ?? null
+                  }
+                  traceEndedAtMs={
+                    effectiveLiveTraceEnvelope?.traceEndedAtMs ?? null
+                  }
+                  forcedViewMode="chat"
+                  hideToolbar
+                  fillContent
+                  onRevealNavigateToChat={navigateTraceRevealToChat}
+                  sendFollowUpMessage={handleSendFollowUp}
+                  displayMode={displayMode}
+                  onDisplayModeChange={onDisplayModeChange}
+                  selectedProtocolOverrideIfBothExists={
+                    selectedProtocol ?? undefined
+                  }
+                  onWidgetStateChange={onWidgetStateChange}
+                  onModelContextUpdate={handleModelContextUpdate}
+                  enableFullscreenChatOverlay
+                  fullscreenChatPlaceholder="Message…"
+                  onToolApprovalResponse={addToolApprovalResponse}
+                  rawXRayMirror={{
+                    payload: playgroundCardRawXRay.payload,
+                    loading: playgroundCardRawXRay.loading,
+                    error: playgroundCardRawXRay.error,
+                    refetch: playgroundCardRawXRay.refetch,
+                    hasUiMessages: playgroundCardRawXRay.hasMessages,
+                  }}
+                />
+              ) : showLiveTracePending ? (
                 <LiveTraceTimelineEmptyState
                   testId={`playground-live-trace-pending-${String(model.id)}`}
                 />
@@ -533,10 +584,16 @@ export function MultiModelPlaygroundCard({
                   model={model}
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}
+                  traceStartedAtMs={
+                    effectiveLiveTraceEnvelope?.traceStartedAtMs ?? null
+                  }
+                  traceEndedAtMs={
+                    effectiveLiveTraceEnvelope?.traceEndedAtMs ?? null
+                  }
                   forcedViewMode={activeTraceViewMode}
                   hideToolbar
                   fillContent
-                  hideTranscriptRevealControls
+                  onRevealNavigateToChat={navigateTraceRevealToChat}
                   rawXRayMirror={{
                     payload: playgroundCardRawXRay.payload,
                     loading: playgroundCardRawXRay.loading,

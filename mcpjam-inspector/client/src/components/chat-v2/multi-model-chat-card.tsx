@@ -114,6 +114,7 @@ export function MultiModelChatCard({
   >([]);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
+  const [revealedInChat, setRevealedInChat] = useState(false);
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
@@ -160,6 +161,18 @@ export function MultiModelChatCard({
     ? traceViewMode
     : "chat";
   const showLiveTraceDiagnostics = activeTraceViewMode !== "chat";
+  const showTraceDiagnosticsShell =
+    showLiveTraceDiagnostics || revealedInChat;
+
+  const navigateTraceRevealToChat = useCallback(() => {
+    setTraceViewMode("chat");
+    setRevealedInChat(true);
+  }, []);
+
+  const handleTraceViewModeChange = useCallback((mode: ChatTraceViewMode) => {
+    setTraceViewMode(mode);
+    setRevealedInChat(false);
+  }, []);
   const traceViewerTrace = liveTraceEnvelope ?? {
     traceVersion: 1 as const,
     messages: [],
@@ -210,11 +223,13 @@ export function MultiModelChatCard({
   useEffect(() => {
     if (!traceViewsSupported) {
       setTraceViewMode("chat");
+      setRevealedInChat(false);
     }
   }, [traceViewsSupported]);
 
   useEffect(() => {
     setTraceViewMode("chat");
+    setRevealedInChat(false);
   }, [chatSessionId]);
 
   useEffect(() => {
@@ -452,7 +467,7 @@ export function MultiModelChatCard({
         summary={summary}
         allSummaries={comparisonSummaries}
         mode={activeTraceViewMode}
-        onModeChange={setTraceViewMode}
+        onModeChange={handleTraceViewModeChange}
         showTraceTabs={showTraceTabs}
         showComparisonChrome={showComparisonChrome}
       />
@@ -476,14 +491,14 @@ export function MultiModelChatCard({
           </div>
         ) : null}
 
-        {showLiveTraceDiagnostics ? (
+        {showTraceDiagnosticsShell ? (
           activeTraceViewMode === "raw" ? (
             <StickToBottom
-              className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300 overflow-hidden"
+              className="flex flex-1 min-h-0 flex-col overflow-hidden"
               resize="smooth"
               initial="smooth"
             >
-              <div className="relative flex flex-1 min-h-0 overflow-hidden p-3">
+              <div className="relative flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                   <TraceViewer
                     trace={traceViewerTrace}
@@ -497,7 +512,7 @@ export function MultiModelChatCard({
                     forcedViewMode={activeTraceViewMode}
                     hideToolbar
                     fillContent
-                    hideTranscriptRevealControls
+                    onRevealNavigateToChat={navigateTraceRevealToChat}
                     rawGrowWithContent
                     rawXRayMirror={{
                       payload: cardRawXRayMirror.payload,
@@ -511,9 +526,39 @@ export function MultiModelChatCard({
                 <ScrollToBottomButton />
               </div>
             </StickToBottom>
+          ) : activeTraceViewMode === "chat" && revealedInChat ? (
+            <div className="flex flex-1 min-h-0 flex-col">
+              <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
+                <TraceViewer
+                  trace={traceViewerTrace}
+                  model={model}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
+                  traceStartedAtMs={
+                    liveTraceEnvelope?.traceStartedAtMs ?? null
+                  }
+                  traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
+                  forcedViewMode="chat"
+                  hideToolbar
+                  fillContent
+                  onRevealNavigateToChat={navigateTraceRevealToChat}
+                  sendFollowUpMessage={handleSendFollowUp}
+                  enableFullscreenChatOverlay
+                  fullscreenChatPlaceholder={placeholder}
+                  onToolApprovalResponse={addToolApprovalResponse}
+                  rawXRayMirror={{
+                    payload: cardRawXRayMirror.payload,
+                    loading: cardRawXRayMirror.loading,
+                    error: cardRawXRayMirror.error,
+                    refetch: cardRawXRayMirror.refetch,
+                    hasUiMessages: cardRawXRayMirror.hasMessages,
+                  }}
+                />
+              </div>
+            </div>
           ) : (
-            <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
-              <div className="flex-1 min-h-0 overflow-hidden p-3">
+            <div className="flex flex-1 min-h-0 flex-col">
+              <div className="flex min-h-64 flex-1 flex-col overflow-hidden p-3">
                 {activeTraceViewMode === "timeline" &&
                 !hasLiveTimelineContent ? (
                   <LiveTraceTimelineEmptyState
@@ -532,7 +577,7 @@ export function MultiModelChatCard({
                     forcedViewMode={activeTraceViewMode}
                     hideToolbar
                     fillContent
-                    hideTranscriptRevealControls
+                    onRevealNavigateToChat={navigateTraceRevealToChat}
                     rawXRayMirror={{
                       payload: cardRawXRayMirror.payload,
                       loading: cardRawXRayMirror.loading,
