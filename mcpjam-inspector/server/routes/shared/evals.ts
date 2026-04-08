@@ -18,6 +18,10 @@ import {
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
+import {
+  resolveOrgModelConfig,
+  buildModelApiKeysFromOrgConfig,
+} from "../../utils/org-model-config";
 import { flattenServerToolSnapshotTools } from "../../utils/export-helpers.js";
 import { sanitizeForConvexTransport } from "../../services/evals/convex-sanitize.js";
 import { type PromptTurn } from "@/shared/prompt-turns";
@@ -531,11 +535,25 @@ export async function runEvalsWithManager(
     }
   }
 
+  // Resolve model API keys: prefer client-sent keys, fall back to org config
+  let resolvedModelApiKeys = modelApiKeys;
+  if (!resolvedModelApiKeys && workspaceId) {
+    try {
+      const orgConfig = await resolveOrgModelConfig({ workspaceId });
+      resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
+    } catch (error) {
+      logger.warn("[evals] Failed to resolve org model config", {
+        workspaceId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   await runEvalSuiteWithAiSdk({
     suiteId: resolvedSuiteId,
     runId,
     config,
-    modelApiKeys: modelApiKeys ?? undefined,
+    modelApiKeys: resolvedModelApiKeys ?? undefined,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -604,6 +622,22 @@ export async function runEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
+  // Resolve model API keys: prefer client-sent keys, fall back to org config
+  let resolvedModelApiKeys = modelApiKeys;
+  if (!resolvedModelApiKeys && testCase.workspaceId) {
+    try {
+      const orgConfig = await resolveOrgModelConfig({
+        workspaceId: testCase.workspaceId,
+      });
+      resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
+    } catch (error) {
+      logger.warn("[evals] Failed to resolve org model config for test case", {
+        testCaseId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const quickResult = await runEvalSuiteWithAiSdk({
     suiteId: testCase.evalTestSuiteId,
     runId: null,
@@ -611,7 +645,7 @@ export async function runEvalTestCaseWithManager(
       tests: [test],
       environment: { servers: resolvedServerIds },
     },
-    modelApiKeys: modelApiKeys ?? undefined,
+    modelApiKeys: resolvedModelApiKeys ?? undefined,
     convexClient,
     convexHttpUrl,
     convexAuthToken,
@@ -793,6 +827,25 @@ export async function streamEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
+  // Resolve model API keys: prefer client-sent keys, fall back to org config
+  let resolvedStreamModelApiKeys = modelApiKeys;
+  if (!resolvedStreamModelApiKeys && testCase.workspaceId) {
+    try {
+      const orgConfig = await resolveOrgModelConfig({
+        workspaceId: testCase.workspaceId,
+      });
+      resolvedStreamModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
+    } catch (error) {
+      logger.warn(
+        "[evals] Failed to resolve org model config for stream test case",
+        {
+          testCaseId,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+    }
+  }
+
   const tools = (await clientManager.getToolsForAiSdk(
     resolvedServerIds,
   )) as Record<string, any>;
@@ -809,7 +862,7 @@ export async function streamEvalTestCaseWithManager(
           tools,
           mcpClientManager: clientManager,
           recorder: null,
-          modelApiKeys: modelApiKeys ?? undefined,
+          modelApiKeys: resolvedStreamModelApiKeys ?? undefined,
           convexHttpUrl,
           convexAuthToken,
           convexClient,

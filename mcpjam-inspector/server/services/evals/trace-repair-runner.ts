@@ -14,6 +14,10 @@ import {
 } from "./route-helpers.js";
 import { executeSuiteReplayFromRun } from "./replay-suite-run.js";
 import { sanitizeForConvexTransport } from "./convex-sanitize.js";
+import {
+  resolveOrgModelConfig,
+  buildModelApiKeysFromOrgConfig,
+} from "../../utils/org-model-config.js";
 
 const LEASE_MS = 30_000;
 const HEARTBEAT_MS = 10_000;
@@ -301,7 +305,29 @@ export async function runTraceRepairJob(
   params: TraceRepairRunnerParams,
 ): Promise<void> {
   const { convexClient, convexAuthToken, jobId } = params;
-  const modelApiKeys = params.modelApiKeys;
+  let modelApiKeys = params.modelApiKeys;
+
+  // Resolve model API keys from org config if not provided
+  if (!modelApiKeys) {
+    try {
+      const job = await convexClient.query(
+        "traceRepair:getTraceRepairJob" as any,
+        { jobId },
+      );
+      if (job?.workspaceId) {
+        const orgConfig = await resolveOrgModelConfig({
+          workspaceId: job.workspaceId,
+        });
+        modelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
+      }
+    } catch (error) {
+      logger.warn("[trace-repair] Failed to resolve org model config", {
+        jobId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
   const leaseOwner = crypto.randomUUID();
 
   await convexClient.mutation("traceRepair:claimTraceRepairJobLease" as any, {
