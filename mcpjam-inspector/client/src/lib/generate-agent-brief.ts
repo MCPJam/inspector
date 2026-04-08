@@ -7,6 +7,7 @@ import {
   EXPLORE_TO_SDK_EVALS_SKILL_MD,
   SKILL_MD,
 } from "@mcpjam/sdk/skill-reference";
+import { resolvePromptTurns, type PromptTurn } from "@/shared/prompt-turns";
 
 export interface ExportedTool {
   name: string;
@@ -50,6 +51,7 @@ export interface AgentBriefExploreCase {
   isNegativeTest?: boolean;
   scenario?: string;
   expectedOutput?: string;
+  promptTurns?: PromptTurn[];
   expectedToolCalls?: Array<{
     toolName: string;
     arguments: Record<string, unknown>;
@@ -63,6 +65,8 @@ export interface EvalCaseForAgentBrief {
   isNegativeTest?: boolean;
   scenario?: string;
   expectedOutput?: string;
+  promptTurns?: PromptTurn[];
+  advancedConfig?: Record<string, unknown>;
   expectedToolCalls: Array<{
     toolName: string;
     arguments: Record<string, any>;
@@ -73,6 +77,7 @@ export function mapEvalCasesToAgentBriefExploreCases(
   cases: EvalCaseForAgentBrief[],
 ): AgentBriefExploreCase[] {
   return cases.map((c) => {
+    const promptTurns = resolvePromptTurns(c);
     const slice: AgentBriefExploreCase = {
       title: c.title,
       query: c.query,
@@ -86,7 +91,17 @@ export function mapEvalCasesToAgentBriefExploreCases(
     if (c.expectedOutput !== undefined && c.expectedOutput.trim() !== "") {
       slice.expectedOutput = c.expectedOutput;
     }
-    if (c.expectedToolCalls.length > 0) {
+    if (promptTurns.length > 1) {
+      slice.promptTurns = promptTurns.map((turn) => ({
+        ...turn,
+        expectedToolCalls: turn.expectedToolCalls.map((toolCall) => ({
+          toolName: toolCall.toolName,
+          arguments: { ...toolCall.arguments } as Record<string, unknown>,
+        })),
+      }));
+      slice.query = promptTurns[0]?.prompt ?? c.query;
+    }
+    if (c.expectedToolCalls.length > 0 && promptTurns.length <= 1) {
       slice.expectedToolCalls = c.expectedToolCalls.map((t) => ({
         toolName: t.toolName,
         arguments: { ...t.arguments } as Record<string, unknown>,
@@ -276,12 +291,41 @@ export function generateAgentBrief(
     for (const c of exploreTestCases) {
       lines.push(`### ${escapeHeadingText(c.title)}`);
       lines.push("");
-      lines.push("**User prompt:**");
-      lines.push("");
-      lines.push("```");
-      lines.push(c.query);
-      lines.push("```");
-      lines.push("");
+      if (c.promptTurns && c.promptTurns.length > 1) {
+        lines.push("**Conversation turns:**");
+        lines.push("");
+        c.promptTurns.forEach((turn, index) => {
+          lines.push(`#### Turn ${index + 1}`);
+          lines.push("");
+          lines.push("```");
+          lines.push(turn.prompt);
+          lines.push("```");
+          lines.push("");
+          if (turn.expectedOutput?.trim()) {
+            lines.push(
+              `**Expected output / experience:** ${escapeCell(turn.expectedOutput.trim())}`,
+            );
+            lines.push("");
+          }
+          if (turn.expectedToolCalls.length > 0) {
+            lines.push("**Expected tool calls (shape):**");
+            lines.push("");
+            for (const call of turn.expectedToolCalls) {
+              lines.push(
+                `- \`${formatCompactToolCall(call.toolName, call.arguments)}\``,
+              );
+            }
+            lines.push("");
+          }
+        });
+      } else {
+        lines.push("**User prompt:**");
+        lines.push("");
+        lines.push("```");
+        lines.push(c.query);
+        lines.push("```");
+        lines.push("");
+      }
       if (c.isNegativeTest) {
         lines.push("- **Negative test:** expect no tool calls.");
         if (c.scenario) {
@@ -289,13 +333,20 @@ export function generateAgentBrief(
         }
         lines.push("");
       }
-      if (c.expectedOutput?.trim()) {
+      if (
+        c.expectedOutput?.trim() &&
+        !(c.promptTurns && c.promptTurns.length > 1)
+      ) {
         lines.push(
           `**Expected output / experience:** ${escapeCell(c.expectedOutput.trim())}`,
         );
         lines.push("");
       }
-      if (c.expectedToolCalls && c.expectedToolCalls.length > 0) {
+      if (
+        c.expectedToolCalls &&
+        c.expectedToolCalls.length > 0 &&
+        !(c.promptTurns && c.promptTurns.length > 1)
+      ) {
         lines.push("**Expected tool calls (shape):**");
         lines.push("");
         for (const call of c.expectedToolCalls) {

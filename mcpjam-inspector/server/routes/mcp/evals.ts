@@ -15,6 +15,7 @@ import {
   generateNegativeEvalTestsWithManager,
   runEvalsWithManager,
   runEvalTestCaseWithManager,
+  streamEvalTestCaseWithManager,
 } from "../shared/evals.js";
 
 const evals = new Hono();
@@ -235,6 +236,38 @@ evals.post("/run-test-case", async (c) => {
     );
   } catch (error) {
     logger.error("[Error running test case]", error);
+    return jsonRouteError(c, error);
+  }
+});
+
+evals.post("/stream-test-case", async (c) => {
+  try {
+    const body = await c.req.json();
+    const validationResult = RunTestCaseRequestSchema.safeParse(body);
+    if (!validationResult.success) {
+      return c.json(
+        {
+          error: "Invalid request body",
+          details: validationResult.error.issues,
+        },
+        400,
+      );
+    }
+
+    const stream = await streamEvalTestCaseWithManager(
+      c.mcpClientManager,
+      validationResult.data,
+    );
+
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  } catch (error) {
+    logger.error("[Error streaming test case]", error);
     return jsonRouteError(c, error);
   }
 });

@@ -337,7 +337,7 @@ export function TranscriptThread({
         contentRef.current = node;
         assignRef(transcriptRef, node);
       }}
-      className={contentClassName}
+      className={cn("min-w-0", contentClassName)}
     >
       {messages.map((message) => {
         const isFocused = message.id === focusMessageId;

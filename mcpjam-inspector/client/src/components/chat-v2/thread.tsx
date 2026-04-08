@@ -6,6 +6,7 @@ import {
 } from "@/contexts/sandbox-host-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { TranscriptThreadProps } from "./thread/transcript-thread";
 
 import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
@@ -55,6 +56,8 @@ interface ThreadProps {
   highlightedMessageIds?: string[];
   navigationKey?: string | number | null;
   viewportRef?: RefObject<HTMLElement | null>;
+  contentClassName?: string;
+  getMessageWrapperProps?: TranscriptThreadProps["getMessageWrapperProps"];
 }
 
 export function Thread({
@@ -84,6 +87,8 @@ export function Thread({
   highlightedMessageIds = [],
   navigationKey = null,
   viewportRef,
+  contentClassName,
+  getMessageWrapperProps,
 }: ThreadProps) {
   const [pipWidgetId, setPipWidgetId] = useState<string | null>(null);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(
@@ -150,7 +155,7 @@ export function Thread({
   return (
     <div
       className={cn(
-        "flex-1 min-h-0 pb-4",
+        "flex-1 min-h-0 min-w-0 pb-4",
         isChatgptDark && "bg-[#212121] text-[#DFDFDF]",
       )}
     >
@@ -190,10 +195,14 @@ export function Thread({
         isLoading={isLoading}
         loadingIndicatorVariant={loadingIndicatorVariant}
         lastRenderableMessageId={lastRenderableMessageId}
-        contentClassName="max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+        contentClassName={
+          contentClassName ??
+          "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
+        }
+        getMessageWrapperProps={getMessageWrapperProps}
       />
       {shouldShowStandaloneThinkingIndicator && (
-        <div className="max-w-4xl mx-auto px-4">
+        <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
           <ThinkingIndicator model={model} variant={loadingIndicatorVariant} />
         </div>
       )}

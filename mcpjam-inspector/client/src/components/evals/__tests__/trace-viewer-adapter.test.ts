@@ -851,4 +851,64 @@ describe("adaptTraceToUiMessages", () => {
       expect(uiResources).toHaveLength(0);
     }
   });
+
+  it("keeps streamed widget resources when embedded metadata and server id are enough for live replay", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-stream-widget",
+              toolName: "create_view",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-stream-widget",
+              toolName: "create_view",
+              output: {
+                type: "json",
+                value: {
+                  _serverId: "server-1",
+                  _meta: {
+                    ui: { resourceUri: "ui://test/widget.html" },
+                  },
+                  content: [
+                    {
+                      type: "resource",
+                      resource: { uri: "ui://test/widget.html", text: "html" },
+                    },
+                  ],
+                },
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      connectedServerIds: ["server-1"],
+    });
+
+    expect(result.toolRenderOverrides["call-stream-widget"]).toBeUndefined();
+    const toolPart = result.messages[0].parts.find(
+      (part) => part.type === "dynamic-tool",
+    ) as any;
+    const outputContent = toolPart.output?.content;
+    expect(Array.isArray(outputContent)).toBe(true);
+    expect(
+      outputContent?.some(
+        (item: any) => item?.resource?.uri === "ui://test/widget.html",
+      ),
+    ).toBe(true);
+  });
 });

@@ -68,6 +68,12 @@ interface RunOverviewProps {
   userMap?: Map<string, { name: string; imageUrl?: string }>;
   /** When false, hides run selection and batch delete (workspace members without admin). */
   canDeleteRuns?: boolean;
+  /** Show suite delete using the same toolbar pattern as run batch delete. */
+  canDeleteSuite?: boolean;
+  onDeleteSuite?: () => void;
+  deletingSuiteId?: string | null;
+  /** Hide Runs/Cases toggle (e.g. playground). */
+  hideViewModeSelect?: boolean;
 }
 
 type CiMetadataCompactMode = "full" | "chip";
@@ -201,6 +207,10 @@ export function RunOverview({
   onViewModeChange,
   userMap,
   canDeleteRuns = true,
+  canDeleteSuite = false,
+  onDeleteSuite,
+  deletingSuiteId = null,
+  hideViewModeSelect = false,
 }: RunOverviewProps) {
   const shouldReduceMotion = useReducedMotion();
   const runRowWhileTap = shouldReduceMotion
@@ -258,6 +268,7 @@ export function RunOverview({
   const [selectedRunIds, setSelectedRunIds] = useState<Set<string>>(new Set());
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [deletingRunId, setDeletingRunId] = useState<string | null>(null);
+  const [suiteDeleteArmed, setSuiteDeleteArmed] = useState(false);
 
   useEffect(() => {
     if (!canDeleteRuns) {
@@ -265,6 +276,18 @@ export function RunOverview({
       setShowBatchDeleteModal(false);
     }
   }, [canDeleteRuns]);
+
+  useEffect(() => {
+    if (!canDeleteSuite) {
+      setSuiteDeleteArmed(false);
+    }
+  }, [canDeleteSuite]);
+
+  useEffect(() => {
+    if (selectedRunIds.size > 0) {
+      setSuiteDeleteArmed(false);
+    }
+  }, [selectedRunIds.size]);
 
   const responsiveLayout = useMemo(
     () =>
@@ -404,23 +427,74 @@ export function RunOverview({
               </Button>
             </div>
           </div>
+        ) : canDeleteSuite && suiteDeleteArmed && onDeleteSuite ? (
+          <div className="border-b px-4 py-2 shrink-0 bg-muted/50 flex items-center justify-between gap-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <Trash2
+                className="h-4 w-4 shrink-0 text-destructive"
+                aria-hidden
+              />
+              <span className="text-xs font-medium truncate">
+                Delete suite &quot;{suite.name}&quot;
+              </span>
+            </div>
+            <div className="flex shrink-0 items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setSuiteDeleteArmed(false)}
+                disabled={deletingSuiteId === suite._id}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  onDeleteSuite();
+                  setSuiteDeleteArmed(false);
+                }}
+                disabled={deletingSuiteId === suite._id}
+              >
+                {deletingSuiteId === suite._id ? "Deleting..." : "Delete"}
+              </Button>
+            </div>
+          </div>
         ) : (
-          <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between">
+          <div className="border-b px-4 py-2 shrink-0 flex items-center justify-between gap-4">
             <div>
               <p className="text-xs text-muted-foreground">
                 Click on a run to view its case breakdown and results.
               </p>
             </div>
-            <select
-              value={runsViewMode}
-              onChange={(e) =>
-                onViewModeChange(e.target.value as "runs" | "test-cases")
-              }
-              className="text-xs border rounded px-2 py-1 bg-background"
-            >
-              <option value="runs">Runs</option>
-              <option value="test-cases">Cases</option>
-            </select>
+            <div className="flex shrink-0 items-center gap-2">
+              {canDeleteSuite && onDeleteSuite ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 text-xs text-muted-foreground hover:text-destructive"
+                  onClick={() => {
+                    setSelectedRunIds(new Set());
+                    setSuiteDeleteArmed(true);
+                  }}
+                >
+                  Delete suite
+                </Button>
+              ) : null}
+              {!hideViewModeSelect ? (
+                <select
+                  value={runsViewMode}
+                  onChange={(e) =>
+                    onViewModeChange(e.target.value as "runs" | "test-cases")
+                  }
+                  className="text-xs border rounded px-2 py-1 bg-background"
+                >
+                  <option value="runs">Runs</option>
+                  <option value="test-cases">Cases</option>
+                </select>
+              ) : null}
+            </div>
           </div>
         )}
 

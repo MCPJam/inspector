@@ -80,6 +80,32 @@ describe("TestCaseListSidebar", () => {
     ).toBeDisabled();
   });
 
+  it("hides the selected-case run shortcut when hideRunAction is true", () => {
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[baseCase]}
+        suiteId="suite-1"
+        selectedTestId="case-1"
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        suite={baseSuite}
+        onRunTestCase={vi.fn()}
+        runningTestCaseId={null}
+        connectedServerNames={new Set(["asana"])}
+        hideRunAction
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Run selected case" }),
+    ).toBeNull();
+  });
+
   it("disables selected-case run when the suite server is disconnected", () => {
     renderWithProviders(
       <TestCaseListSidebar
@@ -103,6 +129,33 @@ describe("TestCaseListSidebar", () => {
     expect(
       screen.getByRole("button", { name: "Run selected case" }),
     ).toBeDisabled();
+  });
+
+  it("still lists cases when the suite server is disconnected (noServerSelected false)", () => {
+    renderWithProviders(
+      <TestCaseListSidebar
+        testCases={[baseCase]}
+        suiteId="suite-1"
+        selectedTestId="case-1"
+        isLoading={false}
+        onCreateTestCase={vi.fn()}
+        onDeleteTestCase={vi.fn()}
+        onDuplicateTestCase={vi.fn()}
+        deletingTestCaseId={null}
+        duplicatingTestCaseId={null}
+        showingOverview
+        noServerSelected={false}
+        suite={baseSuite}
+        onRunTestCase={vi.fn()}
+        runningTestCaseId={null}
+        connectedServerNames={new Set()}
+      />,
+    );
+
+    expect(
+      screen.queryByText("Select a server to view cases."),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("Test case")).toBeVisible();
   });
 
   it("calls onCopySdkEvalBrief when Copy SDK eval agent brief is clicked", async () => {

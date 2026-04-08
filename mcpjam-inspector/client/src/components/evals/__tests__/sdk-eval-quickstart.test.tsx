@@ -72,8 +72,9 @@ describe("SdkEvalQuickstart", () => {
     ).toBeGreaterThanOrEqual(1);
 
     expect(SDK_EVAL_QUICKSTART_ENV).toMatch(/MCPJAM_API_KEY/);
-    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/createEvalRunReporter/);
-    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/greet/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/EvalTest/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/evalTest\.run/);
+    expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/evalTest\.accuracy/);
   });
 
   it("shows the SDK docs link", () => {

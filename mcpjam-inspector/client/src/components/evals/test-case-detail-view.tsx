@@ -1,14 +1,10 @@
 import { useMemo, useState } from "react";
-import { X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { Code2, X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
-import {
-  evalStatusLeftBorderClasses,
-  formatRunId,
-  pickLatestCompletedRun,
-} from "./helpers";
+import { evalStatusLeftBorderClasses, pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { IterationDetails } from "./iteration-details";
@@ -23,6 +19,7 @@ interface TestCaseDetailViewProps {
   suiteName?: string;
   onNavigateToSuite?: () => void;
   runs?: EvalSuiteRun[];
+  onOpenExportCase?: () => void;
 }
 
 export function TestCaseDetailView({
@@ -34,6 +31,7 @@ export function TestCaseDetailView({
   suiteName,
   onNavigateToSuite,
   runs = [],
+  onOpenExportCase,
 }: TestCaseDetailViewProps) {
   const [openIterationId, setOpenIterationId] = useState<string | null>(null);
 
@@ -170,6 +168,12 @@ export function TestCaseDetailView({
           )}
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {onOpenExportCase ? (
+            <Button variant="outline" size="sm" onClick={onOpenExportCase}>
+              <Code2 className="mr-2 h-4 w-4" />
+              Export
+            </Button>
+          ) : null}
           <Button variant="ghost" size="icon" onClick={onBack}>
             <X className="h-4 w-4" />
           </Button>

@@ -13,6 +13,203 @@ import type {
 import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
 
+type PromptTurnLike = {
+  prompt: string;
+  expectedToolCalls: EvalExpectedToolCall[];
+  expectedOutput?: string;
+};
+
+type PromptTraceSummaryLike = {
+  promptIndex: number;
+  prompt: string;
+  expectedToolCalls: EvalExpectedToolCall[];
+  actualToolCalls: EvalExpectedToolCall[];
+  expectedOutput?: string;
+  passed: boolean;
+  missing: EvalExpectedToolCall[];
+  unexpected: EvalExpectedToolCall[];
+  argumentMismatches: Array<{
+    toolName: string;
+    expectedArgs: Record<string, unknown>;
+    actualArgs: Record<string, unknown>;
+  }>;
+};
+
+function normalizeExpectedToolCalls(
+  value: unknown
+): EvalExpectedToolCall[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter(
+      (item) =>
+        item &&
+        typeof item === "object" &&
+        typeof (item as { toolName?: unknown }).toolName === "string"
+    )
+    .map((item) => {
+      const call = item as {
+        toolName: string;
+        arguments?: Record<string, unknown>;
+      };
+      return {
+        toolName: call.toolName,
+        arguments:
+          call.arguments && typeof call.arguments === "object"
+            ? call.arguments
+            : {},
+      };
+    });
+}
+
+function extractPromptTurns(
+  overrides: PromptsToEvalResultOverrides
+): PromptTurnLike[] {
+  const rawTurns = (overrides.advancedConfig as { promptTurns?: unknown } | undefined)
+    ?.promptTurns;
+  if (Array.isArray(rawTurns) && rawTurns.length > 0) {
+    return rawTurns
+      .filter((turn) => turn && typeof turn === "object")
+      .map((turn, index) => {
+        const raw = turn as {
+          prompt?: unknown;
+          expectedToolCalls?: unknown;
+          expectedOutput?: unknown;
+        };
+        return {
+          prompt:
+            typeof raw.prompt === "string"
+              ? raw.prompt
+              : index === 0
+                ? overrides.query ?? ""
+                : "",
+          expectedToolCalls: normalizeExpectedToolCalls(raw.expectedToolCalls),
+          expectedOutput:
+            typeof raw.expectedOutput === "string"
+              ? raw.expectedOutput
+              : undefined,
+        };
+      });
+  }
+
+  return [
+    {
+      prompt: overrides.query ?? "",
+      expectedToolCalls: normalizeExpectedToolCalls(overrides.expectedToolCalls),
+      expectedOutput: undefined,
+    },
+  ];
+}
+
+function argumentsMatch(
+  expectedArgs: Record<string, unknown>,
+  actualArgs: Record<string, unknown>
+): boolean {
+  return Object.entries(expectedArgs).every(([key, value]) => {
+    return JSON.stringify(actualArgs?.[key]) === JSON.stringify(value);
+  });
+}
+
+function evaluatePromptSummary(params: {
+  promptIndex: number;
+  prompt: string;
+  expectedToolCalls: EvalExpectedToolCall[];
+  actualToolCalls: EvalExpectedToolCall[];
+  expectedOutput?: string;
+  isNegativeTest?: boolean;
+}): PromptTraceSummaryLike {
+  const {
+    promptIndex,
+    prompt,
+    expectedToolCalls,
+    actualToolCalls,
+    expectedOutput,
+    isNegativeTest,
+  } = params;
+
+  if (isNegativeTest) {
+    return {
+      promptIndex,
+      prompt,
+      expectedToolCalls: [],
+      actualToolCalls,
+      expectedOutput,
+      missing: [],
+      unexpected: actualToolCalls,
+      argumentMismatches: [],
+      passed: actualToolCalls.length === 0,
+    };
+  }
+
+  if (expectedToolCalls.length === 0) {
+    return {
+      promptIndex,
+      prompt,
+      expectedToolCalls,
+      actualToolCalls,
+      expectedOutput,
+      missing: [],
+      unexpected: [],
+      argumentMismatches: [],
+      passed: true,
+    };
+  }
+
+  const matchedActual = new Set<number>();
+  const missing: EvalExpectedToolCall[] = [];
+  const argumentMismatches: PromptTraceSummaryLike["argumentMismatches"] = [];
+
+  for (const expectedCall of expectedToolCalls) {
+    const exactMatchIndex = actualToolCalls.findIndex((actualCall, index) => {
+      if (matchedActual.has(index)) {
+        return false;
+      }
+      return (
+        actualCall.toolName === expectedCall.toolName &&
+        argumentsMatch(expectedCall.arguments ?? {}, actualCall.arguments ?? {})
+      );
+    });
+
+    if (exactMatchIndex >= 0) {
+      matchedActual.add(exactMatchIndex);
+      continue;
+    }
+
+    const toolOnlyMatchIndex = actualToolCalls.findIndex((actualCall, index) => {
+      if (matchedActual.has(index)) {
+        return false;
+      }
+      return actualCall.toolName === expectedCall.toolName;
+    });
+
+    if (toolOnlyMatchIndex >= 0) {
+      matchedActual.add(toolOnlyMatchIndex);
+      argumentMismatches.push({
+        toolName: expectedCall.toolName,
+        expectedArgs: expectedCall.arguments ?? {},
+        actualArgs: actualToolCalls[toolOnlyMatchIndex]?.arguments ?? {},
+      });
+      continue;
+    }
+
+    missing.push(expectedCall);
+  }
+
+  return {
+    promptIndex,
+    prompt,
+    expectedToolCalls,
+    actualToolCalls,
+    expectedOutput,
+    missing,
+    unexpected: actualToolCalls.filter((_, index) => !matchedActual.has(index)),
+    argumentMismatches,
+    passed: missing.length === 0 && argumentMismatches.length === 0,
+  };
+}
+
 /**
  * Options for {@link promptsToEvalResult}. Pass/fail from your test assertion
  * (`passed`) is combined with trace/errors via {@link finalizePassedForEval}.
@@ -56,7 +253,25 @@ export function promptsToEvalResult(
   const widgetSnapshots = prompts.flatMap((prompt) =>
     prompt.getWidgetSnapshots()
   );
-  const trace = iterationTraceFromPrompts(prompts, traceMessages);
+  const promptTurns = extractPromptTurns(overrides);
+  const promptSummaries = prompts.map((prompt, promptIndex) =>
+    evaluatePromptSummary({
+      promptIndex,
+      prompt: promptTurns[promptIndex]?.prompt ?? prompt.getPrompt(),
+      expectedToolCalls:
+        promptTurns[promptIndex]?.expectedToolCalls ??
+        (promptIndex === 0
+          ? normalizeExpectedToolCalls(overrides.expectedToolCalls)
+          : []),
+      actualToolCalls: prompt.getToolCalls().map((toolCall) => ({
+        toolName: toolCall.toolName,
+        arguments: toolCall.arguments,
+      })),
+      expectedOutput: promptTurns[promptIndex]?.expectedOutput,
+      isNegativeTest: overrides.isNegativeTest,
+    })
+  );
+  const trace = iterationTraceFromPrompts(prompts, traceMessages, promptSummaries);
 
   const inputTokens = prompts.reduce((sum, p) => sum + p.inputTokens(), 0);
   const outputTokens = prompts.reduce((sum, p) => sum + p.outputTokens(), 0);
@@ -151,15 +366,23 @@ function mergePromptSpansForIteration(
 
 function iterationTraceFromPrompts(
   prompts: PromptResult[],
-  traceMessages: Array<{ role: string; content: unknown }>
+  traceMessages: Array<{ role: string; content: unknown }>,
+  promptSummaries?: PromptTraceSummaryLike[]
 ): EvalResultInput["trace"] | undefined {
   const mergedSpans = mergePromptSpansForIteration(prompts);
-  if (traceMessages.length === 0 && mergedSpans.length === 0) {
+  if (
+    traceMessages.length === 0 &&
+    mergedSpans.length === 0 &&
+    (!promptSummaries || promptSummaries.length === 0)
+  ) {
     return undefined;
   }
   return {
     messages: traceMessages,
     ...(mergedSpans.length > 0 ? { spans: mergedSpans } : {}),
+    ...(promptSummaries && promptSummaries.length > 0
+      ? { prompts: promptSummaries }
+      : {}),
   };
 }
 
