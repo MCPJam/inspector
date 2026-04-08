@@ -301,7 +301,7 @@ function openChatTab() {
 
 async function getTraceWaterfallRegion() {
   return screen.findByRole("region", {
-    name: /Trace waterfall/i,
+    name: /Trace timeline/i,
   });
 }
 

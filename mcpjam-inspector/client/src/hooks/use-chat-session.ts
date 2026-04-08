@@ -22,6 +22,7 @@ import {
 } from "react";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
+  convertToModelMessages,
   DefaultChatTransport,
   generateId,
   lastAssistantMessageIsCompleteWithApprovalResponses,
@@ -67,6 +68,11 @@ import {
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
+import {
+  applyPreviewSpansUserMessageIndices,
+  buildLiveChatPreviewSpans,
+  pickTranscriptForLiveTracePreview,
+} from "@/shared/live-chat-trace-preview";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -171,6 +177,8 @@ export interface UseChatSessionReturn {
   // Live trace state
   liveTraceEnvelope: LiveChatTraceEnvelope | null;
   hasTraceSnapshot: boolean;
+  /** True when Timeline can show recorded and/or preview waterfall rows. */
+  hasLiveTimelineContent: boolean;
   traceViewsSupported: boolean;
 
   // Computed state for UI
@@ -186,6 +194,8 @@ interface LiveTraceTurnState {
   spans: EvalTraceSpan[];
   usage?: LiveChatTraceUsage;
   actualToolCalls: LiveChatTraceToolCall[];
+  /** From `turn_start.startedAtMs` — anchors wall-clock times in TraceTimeline. */
+  startedAtMs?: number;
 }
 
 interface LiveTraceAccumulatorState {
@@ -281,6 +291,7 @@ function applyLiveTraceEvent(
   switch (event.type) {
     case "turn_start": {
       const turnExists = baseState.turnOrder.includes(event.turnId);
+      const prev = baseState.turns[event.turnId];
       return {
         ...baseState,
         turnOrder: turnExists
@@ -288,7 +299,14 @@ function applyLiveTraceEvent(
           : [...baseState.turnOrder, event.turnId],
         turns: {
           ...baseState.turns,
-          [event.turnId]: ensureTurnState(event.turnId, event.promptIndex),
+          [event.turnId]: {
+            turnId: event.turnId,
+            promptIndex: event.promptIndex,
+            spans: prev?.spans ?? [],
+            actualToolCalls: prev?.actualToolCalls ?? [],
+            usage: prev?.usage,
+            startedAtMs: event.startedAtMs,
+          },
         },
         activeTurnId: event.turnId,
         activeTurnHasSnapshot: false,
@@ -369,11 +387,20 @@ function buildLiveTraceEnvelope(
   let usage: LiveChatTraceUsage | undefined;
   const actualToolCalls: LiveChatTraceToolCall[] = [];
   let nextOffsetMs = 0;
+  let traceStartedAtMs: number | undefined;
 
   for (const turnId of state.turnOrder) {
     const turn = state.turns[turnId];
     if (!turn) {
       continue;
+    }
+
+    if (
+      typeof turn.startedAtMs === "number" &&
+      Number.isFinite(turn.startedAtMs) &&
+      traceStartedAtMs === undefined
+    ) {
+      traceStartedAtMs = turn.startedAtMs;
     }
 
     const durationMs = getTraceSpansDurationMs(turn.spans);
@@ -392,7 +419,7 @@ function buildLiveTraceEnvelope(
     nextOffsetMs += durationMs;
   }
 
-  return {
+  const envelope: LiveChatTraceEnvelope = {
     traceVersion: 1,
     messages: state.messages,
     spans: spans.length > 0 ? spans : undefined,
@@ -400,6 +427,58 @@ function buildLiveTraceEnvelope(
     actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
     events: state.events,
     turns,
+  };
+
+  if (typeof traceStartedAtMs === "number" && Number.isFinite(traceStartedAtMs)) {
+    envelope.traceStartedAtMs = traceStartedAtMs;
+    envelope.traceEndedAtMs = traceStartedAtMs + nextOffsetMs;
+  }
+
+  return envelope;
+}
+
+function mergePreviewSpansIntoLiveEnvelope(
+  envelope: LiveChatTraceEnvelope,
+  state: LiveTraceAccumulatorState,
+  previewWallElapsedMs: number | undefined,
+  transcriptFromUi: ModelMessage[] | null,
+): LiveChatTraceEnvelope {
+  if (!state.activeTurnId || state.activeTurnHasSnapshot) {
+    return envelope;
+  }
+
+  const preview = buildLiveChatPreviewSpans({
+    events: state.events,
+    activeTurnId: state.activeTurnId,
+    previewWallElapsedMs,
+  });
+  if (preview.length === 0) {
+    return envelope;
+  }
+
+  const transcript = pickTranscriptForLiveTracePreview({
+    snapshotMessages: envelope.messages,
+    transcriptFromUi,
+  });
+  const previewIndexed = applyPreviewSpansUserMessageIndices(preview, transcript);
+
+  const existing = envelope.spans ?? [];
+  const baseOffset =
+    existing.length > 0 ? Math.max(...existing.map((s) => s.endMs)) : 0;
+  const rebased = rebaseTraceSpans(previewIndexed, baseOffset);
+  const merged = [...existing, ...rebased];
+  const previewDur = getTraceSpansDurationMs(previewIndexed);
+  const extent = baseOffset + previewDur;
+
+  return {
+    ...envelope,
+    messages: transcript,
+    spans: merged,
+    traceEndedAtMs:
+      typeof envelope.traceStartedAtMs === "number" &&
+      Number.isFinite(envelope.traceStartedAtMs)
+        ? envelope.traceStartedAtMs + extent
+        : envelope.traceEndedAtMs,
   };
 }
 
@@ -529,13 +608,28 @@ export function useChatSession({
     () => selectedServers.join("\u0000"),
     [selectedServers],
   );
-  const liveTraceEnvelope = useMemo(
+  const liveTraceEnvelopeBase = useMemo(
     () => buildLiveTraceEnvelope(liveTraceState),
     [liveTraceState],
   );
   const hasTraceSnapshot = liveTraceState.activeTurnId
     ? liveTraceState.activeTurnHasSnapshot
     : liveTraceState.anySnapshotSeen;
+  const livePreviewSpanCount = useMemo(() => {
+    if (!liveTraceState.activeTurnId || liveTraceState.activeTurnHasSnapshot) {
+      return 0;
+    }
+    return buildLiveChatPreviewSpans({
+      events: liveTraceState.events,
+      activeTurnId: liveTraceState.activeTurnId,
+    }).length;
+  }, [
+    liveTraceState.activeTurnId,
+    liveTraceState.activeTurnHasSnapshot,
+    liveTraceState.events,
+  ]);
+  const hasLiveTimelineContent =
+    hasTraceSnapshot || livePreviewSpanCount > 0;
   const handleTraceDataPart = useCallback((part: unknown) => {
     if (!isTraceEventDataPart(part)) {
       return;
@@ -743,6 +837,86 @@ export function useChatSession({
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
   });
+
+  const [traceTranscriptFromUi, setTraceTranscriptFromUi] =
+    useState<ModelMessage[] | null>(null);
+
+  useEffect(() => {
+    const persistent = messages.filter((message) => !isTransientMessage(message));
+    if (persistent.length === 0) {
+      setTraceTranscriptFromUi(null);
+      return;
+    }
+    let cancelled = false;
+    void convertToModelMessages(
+      persistent.map(
+        ({ id: _omitId, ...rest }) => rest,
+      ) as Parameters<typeof convertToModelMessages>[0],
+      { ignoreIncompleteToolCalls: true },
+    ).then((modelMessages) => {
+      if (!cancelled) {
+        setTraceTranscriptFromUi(modelMessages);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [messages]);
+
+  const [previewWallTick, setPreviewWallTick] = useState(0);
+
+  useEffect(() => {
+    const previewing =
+      liveTraceState.activeTurnId && !liveTraceState.activeTurnHasSnapshot;
+    const streaming = status === "streaming" || status === "submitted";
+    if (!previewing || !streaming) {
+      return;
+    }
+    const id = window.setInterval(
+      () => setPreviewWallTick((previous) => previous + 1),
+      400,
+    );
+    return () => clearInterval(id);
+  }, [
+    liveTraceState.activeTurnId,
+    liveTraceState.activeTurnHasSnapshot,
+    status,
+  ]);
+
+  const previewWallElapsedMs = useMemo(() => {
+    if (!liveTraceState.activeTurnId || liveTraceState.activeTurnHasSnapshot) {
+      return undefined;
+    }
+    const turn = liveTraceState.turns[liveTraceState.activeTurnId];
+    const started = turn?.startedAtMs;
+    if (typeof started !== "number" || !Number.isFinite(started)) {
+      return undefined;
+    }
+    void previewWallTick;
+    return Math.max(0, Date.now() - started);
+  }, [
+    liveTraceState.activeTurnId,
+    liveTraceState.activeTurnHasSnapshot,
+    liveTraceState.turns,
+    previewWallTick,
+  ]);
+
+  const liveTraceEnvelope = useMemo(() => {
+    if (!liveTraceEnvelopeBase) {
+      return null;
+    }
+    return mergePreviewSpansIntoLiveEnvelope(
+      liveTraceEnvelopeBase,
+      liveTraceState,
+      previewWallElapsedMs,
+      traceTranscriptFromUi,
+    );
+  }, [
+    liveTraceEnvelopeBase,
+    liveTraceState,
+    previewWallElapsedMs,
+    traceTranscriptFromUi,
+  ]);
 
   useEffect(() => {
     setLiveTraceState(createEmptyLiveTraceState());
@@ -1190,6 +1364,7 @@ export function useChatSession({
     // Live trace state
     liveTraceEnvelope,
     hasTraceSnapshot,
+    hasLiveTimelineContent,
     traceViewsSupported,
 
     // Computed state

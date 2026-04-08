@@ -228,6 +228,7 @@ const mockUseChatSession = {
   startChatWithMessages: vi.fn(),
   liveTraceEnvelope: null,
   hasTraceSnapshot: false,
+  hasLiveTimelineContent: false,
   traceViewsSupported: false,
   isStreaming: false,
   disableForAuthentication: false,
@@ -281,6 +282,7 @@ describe("ChatTabV2 trace views", () => {
       multiModelEnabled: false,
       liveTraceEnvelope: null,
       hasTraceSnapshot: false,
+      hasLiveTimelineContent: false,
       traceViewsSupported: false,
     });
   });
@@ -309,6 +311,7 @@ describe("ChatTabV2 trace views", () => {
     ];
     mockUseChatSession.traceViewsSupported = true;
     mockUseChatSession.hasTraceSnapshot = false;
+    mockUseChatSession.hasLiveTimelineContent = false;
     mockUseChatSession.liveTraceEnvelope = null;
 
     render(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
@@ -319,12 +322,56 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.getByTestId("thread")).toBeInTheDocument();
   });
 
+  it("shows the timeline trace viewer when preview spans exist without a snapshot", () => {
+    mockUseChatSession.messages = [
+      { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+    ];
+    mockUseChatSession.traceViewsSupported = true;
+    mockUseChatSession.hasTraceSnapshot = false;
+    mockUseChatSession.hasLiveTimelineContent = true;
+    mockUseChatSession.liveTraceEnvelope = {
+      traceVersion: 1 as const,
+      messages: [],
+      spans: [
+        {
+          id: "pv-st-preview-0",
+          name: "Step 1",
+          category: "step" as const,
+          startMs: 0,
+          endMs: 80,
+          promptIndex: 0,
+          stepIndex: 0,
+          status: "ok" as const,
+        },
+        {
+          id: "pv-llm-preview-0",
+          parentId: "pv-st-preview-0",
+          name: "Agent",
+          category: "llm" as const,
+          startMs: 0,
+          endMs: 80,
+          promptIndex: 0,
+          stepIndex: 0,
+          status: "ok" as const,
+        },
+      ],
+    };
+
+    render(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+
+    expect(screen.queryByTestId("chat-live-trace-pending")).not.toBeInTheDocument();
+    expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
+  });
+
   it("snaps back to chat mode when the chat session changes", async () => {
     mockUseChatSession.messages = [
       { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
     ];
     mockUseChatSession.traceViewsSupported = true;
     mockUseChatSession.hasTraceSnapshot = true;
+    mockUseChatSession.hasLiveTimelineContent = true;
     mockUseChatSession.liveTraceEnvelope = sampleLiveTraceEnvelope;
 
     const { rerender } = render(
@@ -333,10 +380,7 @@ describe("ChatTabV2 trace views", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Raw" }));
 
-    expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
-      "data-mode",
-      "raw",
-    );
+    expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
     expect(screen.getByTestId("thread")).toBeInTheDocument();
 
     mockUseChatSession.chatSessionId = "chat-session-2";

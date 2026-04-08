@@ -281,6 +281,7 @@ export function ChatTabV2({
     startChatWithMessages,
     liveTraceEnvelope,
     hasTraceSnapshot,
+    hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
     disableForAuthentication,
@@ -1191,6 +1192,12 @@ export function ChatTabV2({
                                 model={selectedModel}
                                 toolsMetadata={toolsMetadata}
                                 toolServerMap={toolServerMap}
+                                traceStartedAtMs={
+                                  liveTraceEnvelope?.traceStartedAtMs ?? null
+                                }
+                                traceEndedAtMs={
+                                  liveTraceEnvelope?.traceEndedAtMs ?? null
+                                }
                                 forcedViewMode={activeTraceViewMode}
                                 hideToolbar
                                 fillContent
@@ -1214,7 +1221,7 @@ export function ChatTabV2({
                       <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
                         <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
                           {activeTraceViewMode === "timeline" &&
-                          !hasTraceSnapshot ? (
+                          !hasLiveTimelineContent ? (
                             <LiveTracePendingState testId="chat-live-trace-pending" />
                           ) : (
                             <TraceViewer
@@ -1222,6 +1229,12 @@ export function ChatTabV2({
                               model={selectedModel}
                               toolsMetadata={toolsMetadata}
                               toolServerMap={toolServerMap}
+                              traceStartedAtMs={
+                                liveTraceEnvelope?.traceStartedAtMs ?? null
+                              }
+                              traceEndedAtMs={
+                                liveTraceEnvelope?.traceEndedAtMs ?? null
+                              }
                               forcedViewMode={activeTraceViewMode}
                               hideToolbar
                               fillContent

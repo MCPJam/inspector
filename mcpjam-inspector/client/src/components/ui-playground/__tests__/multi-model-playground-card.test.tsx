@@ -38,6 +38,7 @@ vi.mock("@/hooks/use-chat-session", () => ({
     toolServerMap: {},
     liveTraceEnvelope: null,
     hasTraceSnapshot: false,
+    hasLiveTimelineContent: false,
     traceViewsSupported: true,
     isStreaming: false,
     addToolApprovalResponse: vi.fn(),

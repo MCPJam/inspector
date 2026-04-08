@@ -180,6 +180,7 @@ const mockUseChatSession = {
   chatSessionId: "chat-session-1",
   liveTraceEnvelope: null,
   hasTraceSnapshot: false,
+  hasLiveTimelineContent: false,
   traceViewsSupported: false,
   requireToolApproval: false,
   setRequireToolApproval: vi.fn(),
@@ -532,6 +533,7 @@ describe("PlaygroundMain", () => {
       multiModelEnabled: false,
       liveTraceEnvelope: null,
       hasTraceSnapshot: false,
+      hasLiveTimelineContent: false,
       traceViewsSupported: false,
     });
   });
@@ -722,6 +724,7 @@ describe("PlaygroundMain", () => {
       ];
       mockUseChatSession.traceViewsSupported = true;
       mockUseChatSession.hasTraceSnapshot = false;
+      mockUseChatSession.hasLiveTimelineContent = false;
       mockUseChatSession.liveTraceEnvelope = null;
 
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
@@ -752,6 +755,7 @@ describe("PlaygroundMain", () => {
       ];
       mockUseChatSession.traceViewsSupported = true;
       mockUseChatSession.hasTraceSnapshot = false;
+      mockUseChatSession.hasLiveTimelineContent = false;
       mockUseChatSession.liveTraceEnvelope = null;
 
       const { rerender } = render(
@@ -774,6 +778,7 @@ describe("PlaygroundMain", () => {
       );
 
       mockUseChatSession.hasTraceSnapshot = true;
+      mockUseChatSession.hasLiveTimelineContent = true;
       mockUseChatSession.liveTraceEnvelope = sampleLiveTraceEnvelope;
 
       rerender(

@@ -286,6 +286,8 @@ describe("useChatSession live trace state", () => {
     expect(envelope?.usage).toMatchObject({
       totalTokens: 8,
     });
+    expect(envelope?.traceStartedAtMs).toBe(1000);
+    expect(envelope?.traceEndedAtMs).toBe(1150);
     await waitFor(() => {
       expect(result.current.hasTraceSnapshot).toBe(true);
     });
@@ -359,13 +361,15 @@ describe("useChatSession live trace state", () => {
     let envelope = result.current.liveTraceEnvelope;
     await waitFor(() => {
       envelope = result.current.liveTraceEnvelope;
-      expect(envelope?.spans).toHaveLength(1);
+      expect(envelope?.spans?.length).toBeGreaterThanOrEqual(3);
     });
 
     expect(result.current.hasTraceSnapshot).toBe(false);
+    expect(result.current.hasLiveTimelineContent).toBe(true);
     expect(envelope?.spans?.[0]).toMatchObject({
       id: "turn-1-step-0",
     });
+    expect(envelope?.spans?.some((s) => s.id.startsWith("pv-"))).toBe(true);
 
     act(() => {
       mockState.chatOnData?.(
@@ -468,6 +472,58 @@ describe("useChatSession live trace state", () => {
       expect(result.current.chatSessionId).not.toBe(initialSessionId);
       expect(result.current.liveTraceEnvelope).toBeNull();
       expect(result.current.hasTraceSnapshot).toBe(false);
+      expect(result.current.hasLiveTimelineContent).toBe(false);
+    });
+  });
+
+  it("exposes preview waterfall spans before the first trace_snapshot", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(mockState.chatOnData).not.toBeNull();
+    });
+
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "turn_start",
+          turnId: "turn-pre",
+          promptIndex: 0,
+          startedAtMs: 5000,
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(result.current.hasLiveTimelineContent).toBe(true);
+      expect(result.current.hasTraceSnapshot).toBe(false);
+    });
+
+    const env = result.current.liveTraceEnvelope;
+    expect(env?.spans?.length).toBeGreaterThanOrEqual(2);
+    expect(env?.spans?.some((s) => s.category === "llm")).toBe(true);
+
+    act(() => {
+      mockState.chatOnData?.(
+        tracePart({
+          type: "text_delta",
+          turnId: "turn-pre",
+          promptIndex: 0,
+          stepIndex: 0,
+          delta: "hello",
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      const llm = result.current.liveTraceEnvelope?.spans?.find(
+        (s) => s.category === "llm" && s.id.startsWith("pv-"),
+      );
+      expect(llm && llm.endMs > llm.startMs).toBe(true);
     });
   });
 });

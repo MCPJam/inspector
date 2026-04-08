@@ -208,6 +208,7 @@ export function MultiModelPlaygroundCard({
     toolServerMap,
     liveTraceEnvelope,
     hasTraceSnapshot,
+    hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
     addToolApprovalResponse,
@@ -245,7 +246,7 @@ export function MultiModelPlaygroundCard({
   const showLiveTraceDiagnostics = activeTraceViewMode !== "chat";
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
-    !hasTraceSnapshot &&
+    !hasLiveTimelineContent &&
     !preludeTraceEnvelope?.spans?.length;
   const traceViewerTrace = effectiveLiveTraceEnvelope ?? {
     traceVersion: 1 as const,

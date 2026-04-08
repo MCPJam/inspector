@@ -382,6 +382,7 @@ export function PlaygroundMain({
     resetChat,
     liveTraceEnvelope,
     hasTraceSnapshot,
+    hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
     disableForAuthentication,
@@ -973,7 +974,7 @@ export function PlaygroundMain({
   });
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
-    !hasTraceSnapshot &&
+    !hasLiveTimelineContent &&
     !preludeTraceEnvelope?.spans?.length;
 
   // Shared chat input props

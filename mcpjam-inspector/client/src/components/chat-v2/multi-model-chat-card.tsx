@@ -147,7 +147,7 @@ export function MultiModelChatCard({
     toolsMetadata,
     toolServerMap,
     liveTraceEnvelope,
-    hasTraceSnapshot,
+    hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
     addToolApprovalResponse,
@@ -507,6 +507,10 @@ export function MultiModelChatCard({
                     model={model}
                     toolsMetadata={toolsMetadata}
                     toolServerMap={toolServerMap}
+                    traceStartedAtMs={
+                      liveTraceEnvelope?.traceStartedAtMs ?? null
+                    }
+                    traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
                     forcedViewMode={activeTraceViewMode}
                     hideToolbar
                     fillContent
@@ -527,7 +531,8 @@ export function MultiModelChatCard({
           ) : (
             <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
               <div className="flex-1 min-h-0 overflow-hidden p-3">
-                {activeTraceViewMode === "timeline" && !hasTraceSnapshot ? (
+                {activeTraceViewMode === "timeline" &&
+                !hasLiveTimelineContent ? (
                   <LiveTracePendingState
                     testId={`multi-model-live-trace-pending-${String(model.id)}`}
                   />
@@ -537,6 +542,10 @@ export function MultiModelChatCard({
                     model={model}
                     toolsMetadata={toolsMetadata}
                     toolServerMap={toolServerMap}
+                    traceStartedAtMs={
+                      liveTraceEnvelope?.traceStartedAtMs ?? null
+                    }
+                    traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
                     forcedViewMode={activeTraceViewMode}
                     hideToolbar
                     fillContent

@@ -36,6 +36,12 @@ export type LiveChatTraceEnvelope = EvalTraceBlobV1 & {
   actualToolCalls?: LiveChatTraceToolCall[];
   events?: LiveChatTraceEvent[];
   turns?: LiveChatTraceTurnSummary[];
+  /**
+   * Wall-clock bounds for the merged timeline (first turn_start through last span offset).
+   * Used by TraceTimeline the same way as eval iteration timestamps.
+   */
+  traceStartedAtMs?: number;
+  traceEndedAtMs?: number;
 };
 
 export type LiveChatTraceEvent =
