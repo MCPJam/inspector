@@ -736,7 +736,10 @@ export default function App() {
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
     : (workspaceCreationGate.denialMessage ?? undefined);
-  const [trialModalDismissed, setTrialModalDismissed] = React.useState(false);
+  const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] =
+    React.useState<string | null>(null);
+  const trialModalDismissed =
+    trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
@@ -1639,7 +1642,7 @@ export default function App() {
       <Dialog
         open={showTrialDecisionModal}
         onOpenChange={(open) => {
-          if (!open) setTrialModalDismissed(true);
+          if (!open) setTrialModalDismissedForOrg(billingOrganizationId ?? null);
         }}
       >
         <DialogContent
@@ -1675,7 +1678,7 @@ export default function App() {
             <Button
               type="button"
               onClick={() => {
-                setTrialModalDismissed(true);
+                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
                 if (billingOrganizationId) {
                   applyNavigation(
                     `organizations/${billingOrganizationId}/billing`,
