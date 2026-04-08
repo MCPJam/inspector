@@ -1,10 +1,27 @@
+import { useEffect } from "react";
+
 interface OAuthDesktopReturnNoticeProps {
   returnToElectronUrl: string;
+}
+
+export function redirectBrowserCallbackToElectron(
+  returnToElectronUrl: string,
+  navigate: Pick<Location, "replace"> = window.location,
+) {
+  if (window.isElectron) {
+    return;
+  }
+
+  navigate.replace(returnToElectronUrl);
 }
 
 export default function OAuthDesktopReturnNotice({
   returnToElectronUrl,
 }: OAuthDesktopReturnNoticeProps) {
+  useEffect(() => {
+    redirectBrowserCallbackToElectron(returnToElectronUrl);
+  }, [returnToElectronUrl]);
+
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <div className="w-full max-w-md rounded-md border bg-secondary p-4">

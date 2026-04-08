@@ -11,7 +11,9 @@ import { initSentry } from "./lib/sentry.js";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
 import { HOSTED_MODE } from "./lib/config";
+import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import {
+  buildElectronHostedAuthCallbackUrl,
   getWorkosClientId,
   getWorkosClientOptions,
   getWorkosDevMode,
@@ -89,108 +91,127 @@ if (isInIframe) {
     </StrictMode>,
   );
 } else {
-  const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
-  const workosClientId = getWorkosClientId();
-  const workosDevMode = getWorkosDevMode();
-  const workosRedirectUri = getWorkosRedirectUri();
-
-  // Warn if critical env vars are missing
-  if (!convexUrl) {
-    console.warn(
-      "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
-    );
-  }
-  if (!workosClientId) {
-    console.warn(
-      "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work.",
-    );
-  }
-
-  const workosClientOptions = getWorkosClientOptions();
-
-  const convex = new ConvexReactClient(convexUrl);
-
-  // Async bootstrap to initialize session token before rendering
-  async function bootstrap() {
+  const electronHostedCallbackUrl = buildElectronHostedAuthCallbackUrl();
+  if (electronHostedCallbackUrl) {
     const root = createRoot(document.getElementById("root")!);
-
-    try {
-      if (!HOSTED_MODE) {
-        // Initialize session token BEFORE rendering in local mode.
-        await initializeSessionToken();
-        console.log("[Auth] Session token initialized");
-      } else {
-        console.log(
-          "[Auth] Hosted mode active, skipping session token bootstrap",
-        );
-      }
-    } catch (error) {
-      console.error("[Auth] Failed to initialize session token:", error);
-      // Show error UI instead of crashing
-      root.render(
-        <StrictMode>
-          <div
-            style={{
-              padding: "2rem",
-              textAlign: "center",
-              fontFamily: "system-ui",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: "100vh",
-            }}
-          >
-            <img
-              src="/mcp_jam.svg"
-              alt="MCPJam Logo"
-              style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
-            />
-            <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
-              Authentication Error
-            </h1>
-            <p style={{ marginBottom: "0.25rem" }}>
-              Failed to establish secure session.
-            </p>
-            <p style={{ color: "#666", fontSize: "0.875rem" }}>
-              If accessing via network, use localhost instead.
-            </p>
-            <button
-              onClick={() => location.reload()}
-              style={{
-                marginTop: "1.5rem",
-                padding: "0.75rem 1.5rem",
-                cursor: "pointer",
-                backgroundColor: "#18181b",
-                color: "#fff",
-                border: "none",
-                borderRadius: "0.5rem",
-                fontSize: "1rem",
-                fontWeight: 500,
-              }}
-            >
-              Restart App
-            </button>
-          </div>
-        </StrictMode>,
-      );
-      return;
-    }
-
     root.render(
       <StrictMode>
-        <PostHogProvider apiKey={getPostHogKey()} options={getPostHogOptions()}>
-          <RootProviders
-            convex={convex}
-            workosClientId={workosClientId}
-            workosRedirectUri={workosRedirectUri}
-            workosDevMode={workosDevMode}
-            workosClientOptions={workosClientOptions}
-          />
-        </PostHogProvider>
+        <OAuthDesktopReturnNotice
+          returnToElectronUrl={electronHostedCallbackUrl}
+        />
       </StrictMode>,
     );
-  }
+  } else {
+    const convexUrl = import.meta.env.VITE_CONVEX_URL as string;
+    const workosClientId = getWorkosClientId();
+    const workosDevMode = getWorkosDevMode();
+    const workosRedirectUri = getWorkosRedirectUri();
 
-  bootstrap();
+    // Warn if critical env vars are missing
+    if (!convexUrl) {
+      console.warn(
+        "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
+      );
+    }
+    if (!workosClientId) {
+      console.warn(
+        "[main] VITE_WORKOS_CLIENT_ID is not set; authentication will not work.",
+      );
+    }
+
+    const workosClientOptions = getWorkosClientOptions();
+
+    const convex = new ConvexReactClient(convexUrl);
+
+    // Async bootstrap to initialize session token before rendering
+    async function bootstrap() {
+      const root = createRoot(document.getElementById("root")!);
+
+      try {
+        if (!HOSTED_MODE) {
+          // Initialize session token BEFORE rendering in local mode.
+          await initializeSessionToken();
+          console.log("[Auth] Session token initialized");
+        } else {
+          console.log(
+            "[Auth] Hosted mode active, skipping session token bootstrap",
+          );
+        }
+      } catch (error) {
+        console.error("[Auth] Failed to initialize session token:", error);
+        // Show error UI instead of crashing
+        root.render(
+          <StrictMode>
+            <div
+              style={{
+                padding: "2rem",
+                textAlign: "center",
+                fontFamily: "system-ui",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "center",
+                justifyContent: "center",
+                minHeight: "100vh",
+              }}
+            >
+              <img
+                src="/mcp_jam.svg"
+                alt="MCPJam Logo"
+                style={{
+                  width: "120px",
+                  height: "auto",
+                  marginBottom: "1.5rem",
+                }}
+              />
+              <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
+                Authentication Error
+              </h1>
+              <p style={{ marginBottom: "0.25rem" }}>
+                Failed to establish secure session.
+              </p>
+              <p style={{ color: "#666", fontSize: "0.875rem" }}>
+                If accessing via network, use localhost instead.
+              </p>
+              <button
+                onClick={() => location.reload()}
+                style={{
+                  marginTop: "1.5rem",
+                  padding: "0.75rem 1.5rem",
+                  cursor: "pointer",
+                  backgroundColor: "#18181b",
+                  color: "#fff",
+                  border: "none",
+                  borderRadius: "0.5rem",
+                  fontSize: "1rem",
+                  fontWeight: 500,
+                }}
+              >
+                Restart App
+              </button>
+            </div>
+          </StrictMode>,
+        );
+        return;
+      }
+
+      root.render(
+        <StrictMode>
+          <PostHogProvider
+            apiKey={getPostHogKey()}
+            options={getPostHogOptions()}
+          >
+            <RootProviders
+              convex={convex}
+              workosClientId={workosClientId}
+              workosRedirectUri={workosRedirectUri}
+              workosDevMode={workosDevMode}
+              workosClientOptions={workosClientOptions}
+            />
+          </PostHogProvider>
+        </StrictMode>,
+      );
+    }
+
+    bootstrap();
+  }
 }

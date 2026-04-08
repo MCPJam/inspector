@@ -2,6 +2,7 @@ import { useCallback } from "react";
 import { createClient } from "@workos-inc/authkit-js";
 import { useAuth } from "@workos-inc/authkit-react";
 import {
+  createElectronHostedAuthState,
   getWorkosClientId,
   getWorkosClientOptions,
   getWorkosDevMode,
@@ -65,19 +66,31 @@ export function useElectronHostedAuth() {
       });
 
       try {
+        const redirectOpts = {
+          ...opts,
+          state: createElectronHostedAuthState(opts?.state),
+        };
         const url =
           mode === "signIn"
-            ? await client.getSignInUrl(opts)
-            : await client.getSignUpUrl(opts);
+            ? await client.getSignInUrl(redirectOpts)
+            : await client.getSignUpUrl(redirectOpts);
 
         if (window.electronAPI?.app?.openExternal) {
-          await window.electronAPI.app.openExternal(url);
-          return;
+          try {
+            await window.electronAPI.app.openExternal(url);
+            return;
+          } catch (error) {
+            console.error(
+              "[auth] Failed to open system browser; falling back to in-app navigation guard.",
+              error,
+            );
+          }
+        } else {
+          console.warn(
+            "[auth] Electron openExternal bridge unavailable; falling back to in-app navigation guard.",
+          );
         }
 
-        console.warn(
-          "[auth] Electron openExternal bridge unavailable; falling back to in-app navigation guard.",
-        );
         window.location.assign(url);
       } finally {
         client.dispose();

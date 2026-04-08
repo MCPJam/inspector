@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   useAuthMock,
   createClientMock,
+  createElectronHostedAuthStateMock,
   getWorkosClientIdMock,
   getWorkosClientOptionsMock,
   getWorkosDevModeMock,
@@ -11,6 +12,10 @@ const {
 } = vi.hoisted(() => ({
   useAuthMock: vi.fn(),
   createClientMock: vi.fn(),
+  createElectronHostedAuthStateMock: vi.fn((state?: unknown) => ({
+    electronHostedAuth: true,
+    ...(state !== undefined ? { originalState: state } : {}),
+  })),
   getWorkosClientIdMock: vi.fn(),
   getWorkosClientOptionsMock: vi.fn(),
   getWorkosDevModeMock: vi.fn(),
@@ -26,6 +31,7 @@ vi.mock("@workos-inc/authkit-js", () => ({
 }));
 
 vi.mock("@/lib/workos-config", () => ({
+  createElectronHostedAuthState: createElectronHostedAuthStateMock,
   getWorkosClientId: getWorkosClientIdMock,
   getWorkosClientOptions: getWorkosClientOptionsMock,
   getWorkosDevMode: getWorkosDevModeMock,
@@ -63,7 +69,9 @@ describe("useElectronHostedAuth", () => {
       apiHostname: "api.workos.test",
     });
     getWorkosDevModeMock.mockReturnValue(true);
-    getWorkosRedirectUriMock.mockReturnValue("mcpjam://oauth/callback");
+    getWorkosRedirectUriMock.mockReturnValue(
+      `${window.location.origin}/callback`,
+    );
   });
 
   it("falls back to the default AuthKit signIn outside Electron", async () => {
@@ -95,14 +103,57 @@ describe("useElectronHostedAuth", () => {
     });
 
     expect(createClientMock).toHaveBeenCalledWith("workos-client-id", {
-      redirectUri: "mcpjam://oauth/callback",
+      redirectUri: `${window.location.origin}/callback`,
       devMode: true,
       apiHostname: "api.workos.test",
     });
-    expect(getSignInUrl).toHaveBeenCalledWith({ screenHint: "sign-in" });
+    expect(getSignInUrl).toHaveBeenCalledWith(
+      expect.objectContaining({
+        screenHint: "sign-in",
+        state: expect.objectContaining({
+          electronHostedAuth: true,
+        }),
+      }),
+    );
     expect(openExternal).toHaveBeenCalledWith("https://auth.example.com");
     expect(dispose).toHaveBeenCalled();
     expect(defaultSignIn).not.toHaveBeenCalled();
+  });
+
+  it("falls back to in-app navigation when opening the system browser fails", async () => {
+    const dispose = vi.fn();
+    const getSignInUrl = vi
+      .fn()
+      .mockResolvedValue(`${window.location.origin}/#oauth-fallback`);
+    const consoleErrorSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    createClientMock.mockResolvedValue({
+      getSignInUrl,
+      getSignUpUrl: vi.fn(),
+      dispose,
+    });
+    openExternal.mockRejectedValue(new Error("system browser unavailable"));
+    window.isElectron = true;
+
+    try {
+      const { result } = renderHook(() => useElectronHostedAuth());
+
+      await act(async () => {
+        await result.current.signIn({ screenHint: "sign-in" } as any);
+      });
+
+      expect(openExternal).toHaveBeenCalledWith(
+        `${window.location.origin}/#oauth-fallback`,
+      );
+      expect(window.location.hash).toBe("#oauth-fallback");
+      expect(consoleErrorSpy).toHaveBeenCalled();
+      expect(dispose).toHaveBeenCalled();
+      expect(defaultSignIn).not.toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
   });
 
   it("falls back to default AuthKit navigation when the client ID is missing", async () => {
@@ -144,7 +195,7 @@ describe("useElectronHostedAuth", () => {
       });
 
       expect(createClientMock).toHaveBeenCalledWith("workos-client-id", {
-        redirectUri: "mcpjam://oauth/callback",
+        redirectUri: `${window.location.origin}/callback`,
         devMode: true,
         apiHostname: "api.workos.test",
       });

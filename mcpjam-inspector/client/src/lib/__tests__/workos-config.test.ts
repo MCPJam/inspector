@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getWorkosDevMode, getWorkosRedirectUri } from "../workos-config";
+import {
+  buildElectronHostedAuthCallbackUrl,
+  createElectronHostedAuthState,
+  getWorkosDevMode,
+  getWorkosRedirectUri,
+} from "../workos-config";
 
 describe("workos-config", () => {
   beforeEach(() => {
@@ -12,22 +17,40 @@ describe("workos-config", () => {
     expect(getWorkosRedirectUri()).toBe(`${window.location.origin}/callback`);
   });
 
-  it("prefers the Electron deep link callback inside Electron", () => {
+  it("prefers the browser callback inside Electron", () => {
     window.isElectron = true;
 
-    expect(getWorkosRedirectUri()).toBe("mcpjam://oauth/callback");
+    expect(getWorkosRedirectUri()).toBe(`${window.location.origin}/callback`);
   });
 
-  it("allows an explicit redirect URI override in Electron", () => {
-    vi.stubEnv(
-      "VITE_WORKOS_REDIRECT_URI",
-      "https://override.example.com/callback",
+  it("marks hosted sign-in state for the Electron browser bridge", () => {
+    expect(createElectronHostedAuthState({ returnTo: "/chat" })).toEqual(
+      expect.objectContaining({
+        electronHostedAuth: true,
+        originalState: { returnTo: "/chat" },
+      }),
     );
+  });
+
+  it("builds the Electron deep link from a hosted browser callback", () => {
+    const state = createElectronHostedAuthState({ returnTo: "/chat" });
+    const callbackUrl = new URL("http://localhost:5173/callback");
+    callbackUrl.searchParams.set("code", "oauth-code");
+    callbackUrl.searchParams.set("state", JSON.stringify(state));
+
+    expect(buildElectronHostedAuthCallbackUrl(callbackUrl)).toBe(
+      `mcpjam://oauth/callback?code=oauth-code&state=${encodeURIComponent(JSON.stringify(state))}`,
+    );
+  });
+
+  it("does not show the hosted browser bridge after the callback returns to Electron", () => {
+    const state = createElectronHostedAuthState();
+    const callbackUrl = new URL("http://localhost:5173/callback");
+    callbackUrl.searchParams.set("code", "oauth-code");
+    callbackUrl.searchParams.set("state", JSON.stringify(state));
     window.isElectron = true;
 
-    expect(getWorkosRedirectUri()).toBe(
-      "https://override.example.com/callback",
-    );
+    expect(buildElectronHostedAuthCallbackUrl(callbackUrl)).toBeNull();
   });
 
   it("respects explicit devMode environment overrides", () => {
