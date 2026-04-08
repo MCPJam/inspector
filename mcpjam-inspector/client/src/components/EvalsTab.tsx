@@ -283,7 +283,8 @@ export function EvalsTab({
         ),
       );
       const failedDeletes = settledDeletes.filter(
-        (result): result is PromiseRejectedResult => result.status === "rejected",
+        (result): result is PromiseRejectedResult =>
+          result.status === "rejected",
       );
 
       if (failedDeletes.length > 0) {
@@ -295,11 +296,7 @@ export function EvalsTab({
         );
       }
 
-      if (
-        exploreSuite &&
-        selectedTestId &&
-        deletedIds.has(selectedTestId)
-      ) {
+      if (exploreSuite && selectedTestId && deletedIds.has(selectedTestId)) {
         navigatePlaygroundEvalsRoute(
           {
             type: "suite-overview",
@@ -392,10 +389,14 @@ export function EvalsTab({
                       data?.runs?.find((run: any) => run?.iteration?._id)
                         ?.iteration?._id;
                     if (firstIterationId) {
-                      playgroundNavigation.toTestEdit(exploreSuite._id, tc._id, {
-                        openCompare: true,
-                        iteration: firstIterationId,
-                      });
+                      playgroundNavigation.toTestEdit(
+                        exploreSuite._id,
+                        tc._id,
+                        {
+                          openCompare: true,
+                          iteration: firstIterationId,
+                        },
+                      );
                     }
                   })();
                 }
