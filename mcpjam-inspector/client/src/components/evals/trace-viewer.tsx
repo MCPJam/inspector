@@ -475,6 +475,8 @@ export function TraceViewer({
             <JsonEditor
               height="auto"
               viewOnly
+              collapsible
+              collapseStringsAfterLength={100}
               value={trace}
               className="min-h-0"
             />

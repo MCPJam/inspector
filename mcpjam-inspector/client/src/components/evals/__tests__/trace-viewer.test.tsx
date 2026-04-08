@@ -992,6 +992,8 @@ describe("TraceViewer", () => {
       expect.objectContaining({
         height: "auto",
         viewOnly: true,
+        collapsible: true,
+        collapseStringsAfterLength: 100,
         value: simpleTextTrace,
       }),
     );
