@@ -58,6 +58,7 @@ export function createPlaygroundSuiteNavigation(): SuiteNavigation {
           suiteId,
           testId,
           ...(options?.openCompare ? { openCompare: true } : {}),
+          ...(options?.iteration ? { iteration: options.iteration } : {}),
         },
         { replace: options?.replace },
       );
@@ -102,6 +103,7 @@ export function createCiSuiteNavigation(route: EvalRoute): SuiteNavigation {
           suiteId,
           testId,
           ...(options?.openCompare ? { openCompare: true } : {}),
+          ...(options?.iteration ? { iteration: options.iteration } : {}),
         },
         { replace: options?.replace },
       ),

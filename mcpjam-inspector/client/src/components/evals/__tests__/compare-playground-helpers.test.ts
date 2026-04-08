@@ -5,10 +5,47 @@ import {
   mergeAdvancedConfigWithOverride,
   resolveIterationModelValue,
   resolveInitialCompareModelValues,
+  resolveLatestCompareRunId,
 } from "../compare-playground-helpers";
 import type { CompareRunRecord } from "../types";
 
 describe("compare-playground-helpers", () => {
+  const makeIteration = (params: {
+    id: string;
+    modelValue: string;
+    createdAt: number;
+    updatedAt?: number;
+    suiteRunId?: string;
+    compareRunId?: string;
+    result?: "passed" | "failed";
+  }) => {
+    const [provider, ...modelParts] = params.modelValue.split("/");
+    return {
+      _id: params.id,
+      createdBy: "user",
+      createdAt: params.createdAt,
+      updatedAt: params.updatedAt ?? params.createdAt + 100,
+      startedAt: params.createdAt,
+      iterationNumber: 1,
+      status: "completed",
+      result: params.result ?? "passed",
+      resultSource: "reported",
+      actualToolCalls: [],
+      tokensUsed: 10,
+      suiteRunId: params.suiteRunId,
+      metadata: params.compareRunId
+        ? { compareRunId: params.compareRunId }
+        : undefined,
+      testCaseSnapshot: {
+        title: "Flowchart",
+        query: "Draw a flowchart",
+        provider,
+        model: modelParts.join("/"),
+        expectedToolCalls: [],
+      },
+    } as any;
+  };
+
   it("prefers case models and dedupes the initial compare selection", () => {
     const selection = resolveInitialCompareModelValues({
       testCase: {
@@ -36,7 +73,9 @@ describe("compare-playground-helpers", () => {
   it("does not pad the compare selection from the catalog when the case already lists models", () => {
     const selection = resolveInitialCompareModelValues({
       testCase: {
-        models: [{ provider: "anthropic", model: "anthropic/claude-haiku-4.5" }],
+        models: [
+          { provider: "anthropic", model: "anthropic/claude-haiku-4.5" },
+        ],
       } as any,
       modelOptions: [
         { value: "anthropic/anthropic/claude-haiku-4.5" },
@@ -190,7 +229,11 @@ describe("compare-playground-helpers", () => {
           expectedToolCalls: [{ toolName: "only_first_turn", arguments: {} }],
           promptTurns: [
             { id: "a", prompt: "A", expectedToolCalls: [] },
-            { id: "b", prompt: "B", expectedToolCalls: [{ toolName: "b", arguments: {} }] },
+            {
+              id: "b",
+              prompt: "B",
+              expectedToolCalls: [{ toolName: "b", arguments: {} }],
+            },
           ],
         },
       } as any,
@@ -226,7 +269,11 @@ describe("compare-playground-helpers", () => {
           expectedToolCalls: [],
           promptTurns: [
             { id: "a", prompt: "A", expectedToolCalls: [] },
-            { id: "b", prompt: "B", expectedToolCalls: [{ toolName: "b", arguments: {} }] },
+            {
+              id: "b",
+              prompt: "B",
+              expectedToolCalls: [{ toolName: "b", arguments: {} }],
+            },
           ],
         },
       } as any,
@@ -325,9 +372,9 @@ describe("compare-playground-helpers", () => {
     });
 
     expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe("iter-new");
-    expect(records["anthropic/anthropic/claude-haiku-4.5"]?.iteration?._id).toBe(
-      "iter-claude",
-    );
+    expect(
+      records["anthropic/anthropic/claude-haiku-4.5"]?.iteration?._id,
+    ).toBe("iter-claude");
   });
 
   it("does not replace an in-flight compare run with historical iterations", () => {
@@ -456,5 +503,274 @@ describe("compare-playground-helpers", () => {
     });
 
     expect(records["openai/gpt-5-nano"]).toBeUndefined();
+  });
+
+  it("resolves the latest tagged compare session id from quick runs only", () => {
+    expect(
+      resolveLatestCompareRunId([
+        makeIteration({
+          id: "suite-newer",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 500,
+          suiteRunId: "suite-1",
+          compareRunId: "cmp_suite_should_ignore",
+        }),
+        makeIteration({
+          id: "quick-untagged-newest",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 450,
+        }),
+        makeIteration({
+          id: "quick-tagged",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 400,
+          compareRunId: "cmp_latest",
+        }),
+      ] as any),
+    ).toBe("cmp_latest");
+  });
+
+  it("hydrates from the latest tagged compare session and keeps the newest retry per model within that session", () => {
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: [
+        "openai/gpt-5-nano",
+        "anthropic/anthropic/claude-haiku-4.5",
+        "google/gemini-2.5-pro",
+      ],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+        "anthropic/anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+        "google/gemini-2.5-pro": "Gemini 2.5 Pro",
+      },
+      iterations: [
+        makeIteration({
+          id: "cmp-old-openai",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 100,
+          compareRunId: "cmp_old",
+        }),
+        makeIteration({
+          id: "cmp-current-openai-old",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 300,
+          compareRunId: "cmp_current",
+          result: "failed",
+        }),
+        makeIteration({
+          id: "cmp-current-openai-retry",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 360,
+          compareRunId: "cmp_current",
+        }),
+        makeIteration({
+          id: "cmp-current-claude",
+          modelValue: "anthropic/anthropic/claude-haiku-4.5",
+          createdAt: 340,
+          compareRunId: "cmp_current",
+        }),
+        makeIteration({
+          id: "quick-untagged-newer",
+          modelValue: "anthropic/anthropic/claude-haiku-4.5",
+          createdAt: 420,
+        }),
+        makeIteration({
+          id: "suite-newer",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 500,
+          suiteRunId: "suite-1",
+        }),
+      ] as any,
+    });
+
+    expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe(
+      "cmp-current-openai-retry",
+    );
+    expect(
+      records["anthropic/anthropic/claude-haiku-4.5"]?.iteration?._id,
+    ).toBe("cmp-current-claude");
+    expect(records["google/gemini-2.5-pro"]).toBeUndefined();
+  });
+
+  it("prefers the explicitly selected compare session over newer history", () => {
+    const preferredIteration = makeIteration({
+      id: "cmp-selected-openai",
+      modelValue: "openai/gpt-5-nano",
+      createdAt: 300,
+      compareRunId: "cmp_selected",
+    });
+
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: [
+        "openai/gpt-5-nano",
+        "anthropic/anthropic/claude-haiku-4.5",
+      ],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+        "anthropic/anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+      },
+      iterations: [
+        makeIteration({
+          id: "cmp-newer-openai",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 500,
+          compareRunId: "cmp_newer",
+          result: "failed",
+        }),
+        makeIteration({
+          id: "cmp-newer-claude",
+          modelValue: "anthropic/anthropic/claude-haiku-4.5",
+          createdAt: 490,
+          compareRunId: "cmp_newer",
+        }),
+        preferredIteration,
+        makeIteration({
+          id: "cmp-selected-claude",
+          modelValue: "anthropic/anthropic/claude-haiku-4.5",
+          createdAt: 280,
+          compareRunId: "cmp_selected",
+        }),
+      ] as any,
+      preferredIteration: preferredIteration as any,
+    });
+
+    expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe(
+      "cmp-selected-openai",
+    );
+    expect(
+      records["anthropic/anthropic/claude-haiku-4.5"]?.iteration?._id,
+    ).toBe("cmp-selected-claude");
+  });
+
+  it("prefers iterations from the explicitly selected suite run", () => {
+    const preferredIteration = makeIteration({
+      id: "suite-selected-openai",
+      modelValue: "openai/gpt-5-nano",
+      createdAt: 200,
+      suiteRunId: "suite-selected",
+    });
+
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: [
+        "openai/gpt-5-nano",
+        "anthropic/anthropic/claude-haiku-4.5",
+      ],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+        "anthropic/anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+      },
+      iterations: [
+        makeIteration({
+          id: "quick-newer-openai",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 500,
+          compareRunId: "cmp_newer",
+        }),
+        preferredIteration,
+        makeIteration({
+          id: "suite-selected-claude",
+          modelValue: "anthropic/anthropic/claude-haiku-4.5",
+          createdAt: 190,
+          suiteRunId: "suite-selected",
+        }),
+      ] as any,
+      preferredIteration: preferredIteration as any,
+    });
+
+    expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe(
+      "suite-selected-openai",
+    );
+    expect(
+      records["anthropic/anthropic/claude-haiku-4.5"]?.iteration?._id,
+    ).toBe("suite-selected-claude");
+  });
+
+  it("pins the explicitly selected iteration even when it is outside the recent history window", () => {
+    const preferredIteration = makeIteration({
+      id: "iter-clicked",
+      modelValue: "openai/gpt-5-nano",
+      createdAt: 50,
+      suiteRunId: "suite-clicked",
+      result: "failed",
+    });
+
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: ["openai/gpt-5-nano"],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+      },
+      iterations: [
+        makeIteration({
+          id: "iter-newer",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 500,
+          compareRunId: "cmp_newer",
+        }),
+      ] as any,
+      preferredIteration: preferredIteration as any,
+    });
+
+    expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe("iter-clicked");
+  });
+
+  it("falls back to the latest quick-run iteration per model when historical compare runs are untagged", () => {
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: [
+        "openai/gpt-5-nano",
+        "anthropic/anthropic/claude-haiku-4.5",
+      ],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+        "anthropic/anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+      },
+      iterations: [
+        makeIteration({
+          id: "quick-openai-old",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 100,
+        }),
+        makeIteration({
+          id: "quick-openai-new",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 250,
+        }),
+        makeIteration({
+          id: "quick-claude",
+          modelValue: "anthropic/anthropic/claude-haiku-4.5",
+          createdAt: 200,
+        }),
+        makeIteration({
+          id: "suite-openai-newer",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 400,
+          suiteRunId: "suite-1",
+        }),
+      ] as any,
+    });
+
+    expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe(
+      "quick-openai-new",
+    );
+    expect(
+      records["anthropic/anthropic/claude-haiku-4.5"]?.iteration?._id,
+    ).toBe("quick-claude");
+  });
+
+  it("falls back to generic historical iterations only when there are no quick runs", () => {
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: ["openai/gpt-5-nano"],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+      },
+      iterations: [
+        makeIteration({
+          id: "suite-only",
+          modelValue: "openai/gpt-5-nano",
+          createdAt: 300,
+          suiteRunId: "suite-1",
+        }),
+      ] as any,
+    });
+
+    expect(records["openai/gpt-5-nano"]?.iteration?._id).toBe("suite-only");
   });
 });

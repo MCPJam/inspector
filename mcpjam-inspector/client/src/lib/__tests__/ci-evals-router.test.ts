@@ -119,6 +119,18 @@ describe("ci-evals-router", () => {
     });
   });
 
+  it("parses test edit route with compare and iteration queries", () => {
+    window.location.hash =
+      "#/ci-evals/suite/s_123/test/t_789/edit?compare=1&iteration=i_42";
+    expect(parseCiEvalsRoute()).toEqual({
+      type: "test-edit",
+      suiteId: "s_123",
+      testId: "t_789",
+      openCompare: true,
+      iteration: "i_42",
+    });
+  });
+
   it("navigates to suite overview route", () => {
     navigateToCiEvalsRoute({ type: "suite-overview", suiteId: "s_abc" });
     expect(window.location.hash).toBe("#/ci-evals/suite/s_abc");
@@ -212,6 +224,19 @@ describe("ci-evals-router", () => {
     });
     expect(window.location.hash).toBe(
       "#/ci-evals/suite/s_abc/test/t_def/edit?compare=1",
+    );
+  });
+
+  it("navigates to test edit route with openCompare and iteration", () => {
+    navigateToCiEvalsRoute({
+      type: "test-edit",
+      suiteId: "s_abc",
+      testId: "t_def",
+      openCompare: true,
+      iteration: "i_42",
+    });
+    expect(window.location.hash).toBe(
+      "#/ci-evals/suite/s_abc/test/t_def/edit?compare=1&iteration=i_42",
     );
   });
 

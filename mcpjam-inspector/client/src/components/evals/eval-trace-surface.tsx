@@ -13,6 +13,7 @@ import {
 import { extractFinalAssistantOutput, resolveTraceModel } from "./compare-playground-helpers";
 import { useEvalTraceBlob } from "./use-eval-trace-blob";
 import type { EvalCase, EvalIteration } from "./types";
+import { resolveIterationDisplayExpectedToolCalls } from "@/shared/prompt-turns";
 
 interface EvalTraceSurfaceProps {
   iteration: EvalIteration | null;
@@ -168,7 +169,10 @@ export function EvalTraceSurface({
       ? Math.max(iteration.updatedAt - iteration.startedAt, 0)
       : null;
 
-  const expectedToolCalls = iteration.testCaseSnapshot?.expectedToolCalls ?? [];
+  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
+    iteration.testCaseSnapshot,
+    testCase,
+  );
   const actualToolCalls =
     resolvedBlob != null
       ? iteration.actualToolCalls ?? []

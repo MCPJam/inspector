@@ -143,6 +143,61 @@ export function deriveLegacyPromptFields(promptTurns: PromptTurn[]): {
   };
 }
 
+type AssertedExpectedInput = {
+  promptTurns?: unknown;
+  advancedConfig?: unknown;
+  query?: string;
+  expectedToolCalls?: unknown;
+  expectedOutput?: string;
+  isNegativeTest?: boolean;
+};
+
+/**
+ * Expected tool calls aggregated for display (e.g. Tools tab), aligned with
+ * `evaluateMultiTurnResults`: concatenate expected tools from every turn that
+ * asserts at least one tool. Negative tests expose no expected calls; the legacy
+ * top-level `expectedToolCalls` is ignored when `promptTurns` is present.
+ */
+export function flattenAssertedExpectedToolCalls(
+  input: AssertedExpectedInput,
+): PromptTurnToolCall[] {
+  if (input.isNegativeTest === true) {
+    return [];
+  }
+  const turns = resolvePromptTurns(input);
+  return turns
+    .filter((turn) => turn.expectedToolCalls.length > 0)
+    .flatMap((turn) => turn.expectedToolCalls);
+}
+
+/** Prefer a completed iteration snapshot; otherwise use the case template (e.g. unsaved run). */
+export function resolveIterationDisplayExpectedToolCalls(
+  snapshot: AssertedExpectedInput | null | undefined,
+  fallbackTestCase: AssertedExpectedInput | null | undefined,
+): PromptTurnToolCall[] {
+  if (snapshot) {
+    return flattenAssertedExpectedToolCalls({
+      promptTurns: snapshot.promptTurns,
+      advancedConfig: snapshot.advancedConfig,
+      query: snapshot.query,
+      expectedToolCalls: snapshot.expectedToolCalls,
+      expectedOutput: snapshot.expectedOutput,
+      isNegativeTest: snapshot.isNegativeTest,
+    });
+  }
+  if (fallbackTestCase) {
+    return flattenAssertedExpectedToolCalls({
+      promptTurns: fallbackTestCase.promptTurns,
+      advancedConfig: fallbackTestCase.advancedConfig,
+      query: fallbackTestCase.query,
+      expectedToolCalls: fallbackTestCase.expectedToolCalls,
+      expectedOutput: fallbackTestCase.expectedOutput,
+      isNegativeTest: fallbackTestCase.isNegativeTest,
+    });
+  }
+  return [];
+}
+
 export function hasMultipleTurns(input: {
   promptTurns?: unknown;
   advancedConfig?: unknown;

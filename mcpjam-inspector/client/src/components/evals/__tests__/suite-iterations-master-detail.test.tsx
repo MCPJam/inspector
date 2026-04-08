@@ -56,16 +56,27 @@ vi.mock("../suite-hero-stats", () => ({
 vi.mock("../test-cases-overview", () => ({
   TestCasesOverview: ({
     onTestCaseClick,
+    onOpenLastRun,
   }: {
     onTestCaseClick: (testCaseId: string) => void;
+    onOpenLastRun?: (testCaseId: string, iterationId: string) => void;
   }) => (
-    <button
-      type="button"
-      data-testid="test-cases-overview"
-      onClick={() => onTestCaseClick("case-1")}
-    >
-      Click on a case to view its run history and performance.
-    </button>
+    <div>
+      <button
+        type="button"
+        data-testid="test-cases-overview"
+        onClick={() => onTestCaseClick("case-1")}
+      >
+        Click on a case to view its run history and performance.
+      </button>
+      <button
+        type="button"
+        data-testid="test-cases-open-last-run"
+        onClick={() => onOpenLastRun?.("case-1", "iter-1")}
+      >
+        Open last run
+      </button>
+    </div>
   ),
 }));
 
@@ -265,6 +276,67 @@ describe("SuiteIterationsView caseListInSidebar", () => {
     expect(navigation.toTestEdit).toHaveBeenCalledWith(
       "suite-1",
       "case-1",
+    );
+  });
+
+  it("preserves the clicked iteration when opening compare from the cases list", async () => {
+    const user = userEvent.setup();
+    const navigation = {
+      ...noopNav,
+      toTestEdit: vi.fn(),
+    };
+
+    render(
+      <SuiteIterationsView
+        suite={baseSuite}
+        cases={[
+          {
+            _id: "case-1",
+            testSuiteId: "suite-1",
+            createdBy: "u",
+            title: "Case 1",
+            query: "Prompt",
+            models: [],
+            runs: 1,
+            expectedToolCalls: [],
+          },
+        ]}
+        iterations={[]}
+        allIterations={[]}
+        runs={[]}
+        runsLoading={false}
+        aggregate={null}
+        onRerun={vi.fn()}
+        onCancelRun={vi.fn()}
+        onDelete={vi.fn()}
+        onDeleteRun={vi.fn()}
+        onDirectDeleteRun={vi.fn().mockResolvedValue(undefined)}
+        connectedServerNames={new Set()}
+        canDeleteSuite={false}
+        rerunningSuiteId={null}
+        cancellingRunId={null}
+        deletingSuiteId={null}
+        deletingRunId={null}
+        availableModels={[]}
+        route={{
+          type: "suite-overview",
+          suiteId: "suite-1",
+          view: "test-cases",
+        }}
+        navigation={navigation}
+        hideRunActions
+      />,
+    );
+
+    await user.click(screen.getByTestId("test-cases-open-last-run"));
+
+    expect(navigation.toTestEdit).toHaveBeenCalledWith(
+      "suite-1",
+      "case-1",
+      {
+        openCompare: true,
+        iteration: "iter-1",
+      },
     );
   });
 

@@ -59,6 +59,7 @@ import {
 } from "./single-test-case-runner";
 import {
   deriveLegacyPromptFields,
+  resolveIterationDisplayExpectedToolCalls,
   resolvePromptTurns,
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
@@ -71,7 +72,10 @@ import {
   buildCompareRunRecord,
   createCompareSessionId,
   mergeAdvancedConfigWithOverride,
+  parseModelValue,
   resolveInitialCompareModelValues,
+  resolveIterationModelValue,
+  resolveLatestCompareRunId,
   resolveModelOptionLabel,
 } from "./compare-playground-helpers";
 import type {
@@ -113,6 +117,8 @@ interface TestTemplateEditorProps {
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   /** Deep link: open compare run surface once iteration data is ready (same as View results). */
   openCompareFromRoute?: boolean;
+  /** Deep link: exact iteration to anchor compare hydration to. */
+  openCompareIterationId?: string | null;
   /** Remove `compare=1` from the hash after handling {@link openCompareFromRoute}. */
   onClearOpenCompareRoute?: () => void;
 }
@@ -275,6 +281,15 @@ function normalizeAdvancedConfig(
   return Object.keys(next).length > 0 ? next : undefined;
 }
 
+function readCompareRunIdFromIteration(
+  iteration: Pick<EvalIteration, "metadata"> | null | undefined,
+) {
+  const compareRunId = iteration?.metadata?.compareRunId;
+  return typeof compareRunId === "string" && compareRunId.trim().length > 0
+    ? compareRunId
+    : null;
+}
+
 export function TestTemplateEditor({
   suiteId,
   selectedTestCaseId,
@@ -286,6 +301,7 @@ export function TestTemplateEditor({
   onExportDraft,
   onContinueInChat,
   openCompareFromRoute = false,
+  openCompareIterationId = null,
   onClearOpenCompareRoute,
 }: TestTemplateEditorProps) {
   const { getAccessToken } = useAuth();
@@ -306,6 +322,11 @@ export function TestTemplateEditor({
   const [compareRunRecords, setCompareRunRecords] = useState<
     Record<string, CompareRunRecord>
   >({});
+  const [routeCompareAnchorIterationId, setRouteCompareAnchorIterationId] =
+    useState<string | null>(openCompareIterationId);
+  const [activeCompareRunId, setActiveCompareRunId] = useState<string | null>(
+    null,
+  );
   const [runColumnTabByModel, setRunColumnTabByModel] = useState<
     Record<string, RunColumnTab>
   >({});
@@ -325,7 +346,9 @@ export function TestTemplateEditor({
    */
   const compareRequestGenByModelRef = useRef<Record<string, number>>({});
   /** Per-model AbortControllers for cancelling superseded streaming runs. */
-  const compareAbortControllersRef = useRef<Record<string, AbortController>>({});
+  const compareAbortControllersRef = useRef<Record<string, AbortController>>(
+    {},
+  );
   /** True when the user clicked Stop for the current batch (suppresses failure toasts). */
   const compareRunUserStoppedRef = useRef(false);
   const initializedSelectionCaseRef = useRef<string | null>(null);
@@ -342,6 +365,12 @@ export function TestTemplateEditor({
     return testCases.find((tc: any) => tc._id === selectedTestCaseId) || null;
   }, [testCases, selectedTestCaseId]);
 
+  const routeCompareAnchorIteration = useQuery(
+    "testSuites:getTestIteration" as any,
+    routeCompareAnchorIterationId
+      ? { iterationId: routeCompareAnchorIterationId }
+      : "skip",
+  ) as EvalIteration | null | undefined;
   const lastSavedIteration = useQuery(
     "testSuites:getTestIteration" as any,
     currentTestCase?.lastMessageRun
@@ -351,7 +380,7 @@ export function TestTemplateEditor({
   const recentIterations = useQuery(
     "testSuites:listTestIterations" as any,
     currentTestCase?._id
-      ? ({ testCaseId: currentTestCase._id } as any)
+      ? ({ testCaseId: currentTestCase._id, limit: 200 } as any)
       : "skip",
   ) as EvalIteration[] | undefined;
 
@@ -362,12 +391,17 @@ export function TestTemplateEditor({
   useEffect(() => {
     setEditorMode("config");
     setCompareRunRecords({});
+    setActiveCompareRunId(null);
     setRunColumnTabByModel({});
     setMobileVisibleModelValue(null);
     setExpandedPromptTurnIds([]);
     initializedSelectionCaseRef.current = null;
     setAddModelMenuOpen(false);
   }, [selectedTestCaseId]);
+
+  useEffect(() => {
+    setRouteCompareAnchorIterationId(openCompareIterationId);
+  }, [openCompareIterationId, selectedTestCaseId]);
 
   const clearCompareStreamingState = useCallback((modelValue: string) => {
     setCompareRunRecords((previous) => {
@@ -493,9 +527,8 @@ export function TestTemplateEditor({
     const normalizedScenario = (editForm.scenario ?? "").trim();
     const normalizedCurrentScenario = (currentTestCase.scenario ?? "").trim();
 
-    const effectiveNegativeOnServer = deriveIsNegativeTestFromPromptTurns(
-      currentPromptTurns,
-    );
+    const effectiveNegativeOnServer =
+      deriveIsNegativeTestFromPromptTurns(currentPromptTurns);
     const serverNegativeFlagMismatch =
       (currentTestCase.isNegativeTest ?? false) !== effectiveNegativeOnServer;
 
@@ -638,7 +671,9 @@ export function TestTemplateEditor({
   };
 
   const buildSavePayload = (form: TestTemplate) => {
-    const isNegativeTest = deriveIsNegativeTestFromPromptTurns(form.promptTurns);
+    const isNegativeTest = deriveIsNegativeTestFromPromptTurns(
+      form.promptTurns,
+    );
     const normalizedPromptTurns = isNegativeTest
       ? form.promptTurns.map((turn) => ({
           ...turn,
@@ -704,6 +739,54 @@ export function TestTemplateEditor({
     }
   };
 
+  const persistSelectedCompareModels = async (modelValues: string[]) => {
+    if (!currentTestCase) {
+      return;
+    }
+
+    const nextModels = modelValues.map((modelValue) => {
+      const { provider, model } = parseModelValue(modelValue);
+      if (!provider || !model) {
+        throw new Error(`Invalid model selection: ${modelValue}`);
+      }
+      return { provider, model };
+    });
+
+    const currentModels = currentTestCase.models ?? [];
+    const modelsUnchanged =
+      currentModels.length === nextModels.length &&
+      currentModels.every(
+        (model, index) =>
+          model.provider === nextModels[index]?.provider &&
+          model.model === nextModels[index]?.model,
+      );
+
+    if (modelsUnchanged) {
+      return;
+    }
+
+    await updateTestCaseMutation({
+      testCaseId: currentTestCase._id,
+      models: nextModels,
+    });
+  };
+
+  const latestHistoricalCompareRunId = useMemo(
+    () => resolveLatestCompareRunId(recentIterations ?? []),
+    [recentIterations],
+  );
+  const routeCompareAnchorModelValue = useMemo(
+    () =>
+      routeCompareAnchorIteration
+        ? resolveIterationModelValue(routeCompareAnchorIteration, currentTestCase)
+        : null,
+    [currentTestCase, routeCompareAnchorIteration],
+  );
+  const routeCompareAnchorRunId = useMemo(
+    () => readCompareRunIdFromIteration(routeCompareAnchorIteration),
+    [routeCompareAnchorIteration],
+  );
+
   const modelOptions = useMemo(() => {
     return buildTestCaseModelOptions(availableModels, currentTestCase);
   }, [availableModels, currentTestCase]);
@@ -733,6 +816,12 @@ export function TestTemplateEditor({
     if (initializedSelectionCaseRef.current === currentTestCase._id) {
       return;
     }
+    if (
+      routeCompareAnchorIterationId &&
+      routeCompareAnchorIteration === undefined
+    ) {
+      return;
+    }
 
     const preferredModelValue = resolveSelectedTestCaseModelValue({
       testCaseId: currentTestCase._id ?? selectedTestCaseId,
@@ -746,13 +835,49 @@ export function TestTemplateEditor({
         preferredModelValue ??
         getPersistedTestCaseModelValue(currentTestCase._id),
     });
+    const routeAnchoredModels = routeCompareAnchorModelValue
+      ? [
+          routeCompareAnchorModelValue,
+          ...initialSelectedModels.filter(
+            (modelValue) => modelValue !== routeCompareAnchorModelValue,
+          ),
+        ].slice(0, 3)
+      : initialSelectedModels;
 
     initializedSelectionCaseRef.current = currentTestCase._id;
-    setSelectedModelValues(initialSelectedModels);
-  }, [currentTestCase, modelOptions, selectedTestCaseId]);
+    setSelectedModelValues(routeAnchoredModels);
+  }, [
+    currentTestCase,
+    modelOptions,
+    routeCompareAnchorIteration,
+    routeCompareAnchorIterationId,
+    routeCompareAnchorModelValue,
+    selectedTestCaseId,
+  ]);
 
   useEffect(() => {
-    if (!currentTestCase || !recentIterations || selectedModelValues.length === 0) {
+    if (!routeCompareAnchorModelValue) {
+      return;
+    }
+
+    setSelectedModelValues((current) => {
+      const next = [
+        routeCompareAnchorModelValue,
+        ...current.filter((modelValue) => modelValue !== routeCompareAnchorModelValue),
+      ].slice(0, 3);
+
+      return current.join("|") === next.join("|") ? current : next;
+    });
+  }, [routeCompareAnchorModelValue]);
+
+  useEffect(() => {
+    if (
+      !currentTestCase ||
+      !recentIterations ||
+      selectedModelValues.length === 0 ||
+      (routeCompareAnchorIterationId &&
+        routeCompareAnchorIteration === undefined)
+    ) {
       return;
     }
 
@@ -763,13 +888,37 @@ export function TestTemplateEditor({
         iterations: recentIterations,
         testCase: currentTestCase,
         existingRecords: current,
+        preferredIteration: routeCompareAnchorIteration ?? null,
       }),
     );
   }, [
     currentTestCase,
     modelLabelByValue,
     recentIterations,
+    routeCompareAnchorIteration,
+    routeCompareAnchorIterationId,
     selectedModelValues,
+  ]);
+
+  useEffect(() => {
+    if (!currentTestCase?._id) {
+      return;
+    }
+
+    setActiveCompareRunId((current) => {
+      if (current) {
+        return current;
+      }
+      if (routeCompareAnchorIterationId) {
+        return routeCompareAnchorRunId;
+      }
+      return latestHistoricalCompareRunId;
+    });
+  }, [
+    currentTestCase?._id,
+    latestHistoricalCompareRunId,
+    routeCompareAnchorIterationId,
+    routeCompareAnchorRunId,
   ]);
 
   useEffect(() => {
@@ -801,10 +950,7 @@ export function TestTemplateEditor({
         return;
       }
 
-      if (
-        (event.metaKey || event.ctrlKey) &&
-        event.key.toLowerCase() === "k"
-      ) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         setAddModelMenuOpen(true);
       }
@@ -818,13 +964,15 @@ export function TestTemplateEditor({
     setMobileVisibleModelValue((current) =>
       current && selectedModelValues.includes(current)
         ? current
-        : selectedModelValues[0] ?? null,
+        : (selectedModelValues[0] ?? null),
     );
   }, [selectedModelValues]);
 
   const addableModelOptions = useMemo(
     () =>
-      modelOptions.filter((option) => !selectedModelValues.includes(option.value)),
+      modelOptions.filter(
+        (option) => !selectedModelValues.includes(option.value),
+      ),
     [modelOptions, selectedModelValues],
   );
 
@@ -858,7 +1006,7 @@ export function TestTemplateEditor({
       setMobileVisibleModelValue((current) =>
         current && selectedModelValues.includes(current)
           ? current
-          : selectedModelValues[0] ?? null,
+          : (selectedModelValues[0] ?? null),
       );
       posthog.capture("compare_run_view_opened", {
         location: "test_template_editor",
@@ -873,16 +1021,26 @@ export function TestTemplateEditor({
     [currentTestCase?._id, selectedModelValues, suiteId],
   );
 
-  const openCompareRouteHandledRef = useRef(false);
+  const openCompareRouteHandledRef = useRef<string | null>(null);
   useEffect(() => {
+    const compareRouteKey = `${selectedTestCaseId}:${openCompareIterationId ?? ""}`;
     if (!openCompareFromRoute) {
-      openCompareRouteHandledRef.current = false;
+      openCompareRouteHandledRef.current = null;
       return;
     }
-    if (!onClearOpenCompareRoute || openCompareRouteHandledRef.current) {
+    if (
+      !onClearOpenCompareRoute ||
+      openCompareRouteHandledRef.current === compareRouteKey
+    ) {
       return;
     }
     if (!currentTestCase?._id || recentIterations === undefined) {
+      return;
+    }
+    if (
+      routeCompareAnchorIterationId &&
+      routeCompareAnchorIteration === undefined
+    ) {
       return;
     }
     if (initializedSelectionCaseRef.current !== currentTestCase._id) {
@@ -895,29 +1053,33 @@ export function TestTemplateEditor({
       if (caseListsModels || modelOptions.length > 0) {
         return;
       }
-      openCompareRouteHandledRef.current = true;
+      openCompareRouteHandledRef.current = compareRouteKey;
       onClearOpenCompareRoute();
       return;
     }
     if (!hasRunViewContent) {
       if (recentIterations.length === 0) {
-        openCompareRouteHandledRef.current = true;
+        openCompareRouteHandledRef.current = compareRouteKey;
         onClearOpenCompareRoute();
       }
       return;
     }
-    openCompareRouteHandledRef.current = true;
+    openCompareRouteHandledRef.current = compareRouteKey;
     openRunView("config_toggle");
     onClearOpenCompareRoute();
   }, [
+    currentTestCase?._id,
     openCompareFromRoute,
+    openCompareIterationId,
     hasRunViewContent,
-    recentIterations,
+    modelOptions.length,
     onClearOpenCompareRoute,
     openRunView,
-    currentTestCase?._id,
+    recentIterations,
+    routeCompareAnchorIteration,
+    routeCompareAnchorIterationId,
     selectedModelValues.length,
-    modelOptions.length,
+    selectedTestCaseId,
   ]);
 
   const handleAddModel = (modelValue: string) => {
@@ -958,7 +1120,9 @@ export function TestTemplateEditor({
         return previous;
       }
       const next = [...previous];
-      const otherIndex = next.findIndex((v, idx) => v === newValue && idx !== index);
+      const otherIndex = next.findIndex(
+        (v, idx) => v === newValue && idx !== index,
+      );
       if (otherIndex >= 0) {
         next[otherIndex] = next[index];
       }
@@ -969,17 +1133,22 @@ export function TestTemplateEditor({
 
   const handleStopCompare = useCallback(() => {
     compareRunUserStoppedRef.current = true;
-    for (const controller of Object.values(compareAbortControllersRef.current)) {
+    for (const controller of Object.values(
+      compareAbortControllersRef.current,
+    )) {
       controller.abort();
     }
   }, []);
 
-  const handleRunCompare = async (modelValuesOverride?: string[]) => {
+  const handleRunCompare = async (options?: {
+    modelValues?: string[];
+    sessionMode?: "new" | "reuse";
+  }) => {
     if (!currentTestCase || !suite || !editForm) {
       return;
     }
 
-    const runModelValues = (modelValuesOverride ?? selectedModelValues).filter(
+    const runModelValues = (options?.modelValues ?? selectedModelValues).filter(
       Boolean,
     );
     if (runModelValues.length === 0) {
@@ -997,7 +1166,29 @@ export function TestTemplateEditor({
 
     const savePayload = buildSavePayload(editForm);
     compareRunUserStoppedRef.current = false;
-    const compareRunId = createCompareSessionId();
+    const reusableCompareRunId =
+      options?.sessionMode === "reuse"
+        ? (activeCompareRunId ?? latestHistoricalCompareRunId)
+        : null;
+    const compareRunId = reusableCompareRunId ?? createCompareSessionId();
+    const startsNewCompareSession = reusableCompareRunId == null;
+
+    if (startsNewCompareSession) {
+      try {
+        await persistSelectedCompareModels(selectedModelValues);
+      } catch (error) {
+        console.error("Failed to save compare model selection:", error);
+        toast.error(
+          getBillingErrorMessage(
+            error,
+            "Failed to save compare models before running",
+          ),
+        );
+        return;
+      }
+      setRouteCompareAnchorIterationId(null);
+    }
+    setActiveCompareRunId(compareRunId);
 
     let preparedRuns: Array<{
       modelValue: string;
@@ -1008,7 +1199,10 @@ export function TestTemplateEditor({
     try {
       preparedRuns = await Promise.all(
         runModelValues.map(async (modelValue) => {
-          const modelLabel = resolveModelOptionLabel(modelValue, modelLabelByValue);
+          const modelLabel = resolveModelOptionLabel(
+            modelValue,
+            modelLabelByValue,
+          );
           const advancedConfig = mergeAdvancedConfigWithOverride({
             baseAdvancedConfig: savePayload.advancedConfig,
             override: undefined,
@@ -1041,7 +1235,9 @@ export function TestTemplateEditor({
       );
     } catch (error) {
       console.error("Failed to prepare compare run:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to prepare compare run"));
+      toast.error(
+        getBillingErrorMessage(error, "Failed to prepare compare run"),
+      );
       return;
     }
 
@@ -1125,10 +1321,12 @@ export function TestTemplateEditor({
             await streamEvalTestCase(
               {
                 ...request.request,
+                compareRunId,
                 skipLastMessageRunUpdate: true,
               },
               (event) => {
-                if (compareRequestGenByModelRef.current[modelValue] !== myGen) return;
+                if (compareRequestGenByModelRef.current[modelValue] !== myGen)
+                  return;
 
                 if (event.type === "complete") {
                   const record = buildCompareRunRecord({
@@ -1204,7 +1402,8 @@ export function TestTemplateEditor({
                       draftMessages: existing.streamingDraftMessages ?? [],
                       actualToolCalls: existing.streamingActualToolCalls ?? [],
                       tokensUsed: existing.streamingMetrics?.tokensUsed ?? 0,
-                      toolCallCount: existing.streamingMetrics?.toolCallCount ?? 0,
+                      toolCallCount:
+                        existing.streamingMetrics?.toolCallCount ?? 0,
                       currentTurnIndex: initialEvalStreamState.currentTurnIndex,
                     },
                     event,
@@ -1231,12 +1430,15 @@ export function TestTemplateEditor({
             return new Promise<CompareRunRecord>((resolve) => {
               // Read the latest state after stream is done
               setCompareRunRecords((previous) => {
-                resolve(previous[modelValue] ?? buildCompareRunRecord({
-                  modelValue,
-                  modelLabel,
-                  iteration: null,
-                  completedAt: Date.now(),
-                }));
+                resolve(
+                  previous[modelValue] ??
+                    buildCompareRunRecord({
+                      modelValue,
+                      modelLabel,
+                      iteration: null,
+                      completedAt: Date.now(),
+                    }),
+                );
                 return previous;
               });
             });
@@ -1280,7 +1482,10 @@ export function TestTemplateEditor({
               });
               return resolved;
             }
-            const message = getBillingErrorMessage(error, "Failed to run model");
+            const message = getBillingErrorMessage(
+              error,
+              "Failed to run model",
+            );
             const failedRecord: CompareRunRecord = {
               ...buildCompareRunRecord({
                 modelValue,
@@ -1358,14 +1563,13 @@ export function TestTemplateEditor({
       toast.success("Cleared the saved latest result.");
     } catch (error) {
       console.error("Failed to clear latest result:", error);
-      toast.error(getBillingErrorMessage(error, "Failed to clear latest result"));
+      toast.error(
+        getBillingErrorMessage(error, "Failed to clear latest result"),
+      );
     }
   };
 
-  const handleRunColumnTabChange = (
-    modelValue: string,
-    tab: RunColumnTab,
-  ) => {
+  const handleRunColumnTabChange = (modelValue: string, tab: RunColumnTab) => {
     setRunColumnTabByModel((previous) => ({
       ...previous,
       [modelValue]: tab,
@@ -1398,18 +1602,47 @@ export function TestTemplateEditor({
       : selectedCompareRecords.length === 2
         ? "lg:grid-cols-2"
         : "lg:grid-cols-3";
-  const latestAvailableIteration = recentIterations?.[0] ?? lastSavedIteration ?? null;
+  const latestAvailableIteration =
+    routeCompareAnchorIteration ??
+    recentIterations?.[0] ??
+    lastSavedIteration ??
+    null;
   const latestAvailableResult = latestAvailableIteration
     ? computeIterationResult(latestAvailableIteration)
     : null;
-  const latestAvailableToneClass =
-    latestAvailableResult === "passed"
-      ? "text-emerald-700 dark:text-emerald-300"
-      : latestAvailableResult === "failed"
-        ? "text-rose-700 dark:text-rose-300"
+  /** Visual + a11y cue on View results / Open last run (replaces header status chip). */
+  const latestRunNavCue =
+    latestAvailableResult === "failed"
+      ? {
+          dotClass:
+            "size-1.5 shrink-0 rounded-full bg-rose-500 dark:bg-rose-400",
+          buttonTextClass: "text-rose-700 dark:text-rose-300",
+          ariaResults: "View results, last run failed",
+          ariaOpen: "Open last run, failed",
+        }
+      : latestAvailableResult === "passed"
+        ? {
+            dotClass:
+              "size-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400",
+            buttonTextClass: "text-emerald-700 dark:text-emerald-300",
+            ariaResults: "View results, last run passed",
+            ariaOpen: "Open last run passed",
+          }
         : latestAvailableResult === "cancelled"
-          ? "text-amber-700 dark:text-amber-300"
-          : "text-muted-foreground";
+          ? {
+              dotClass:
+                "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400",
+              buttonTextClass: "text-amber-800 dark:text-amber-200",
+              ariaResults: "View results, last run stopped",
+              ariaOpen: "Open last run stopped",
+            }
+          : {
+              dotClass:
+                "size-1.5 shrink-0 rounded-full bg-amber-500 dark:bg-amber-400 animate-pulse motion-reduce:animate-none",
+              buttonTextClass: "text-amber-800 dark:text-amber-200",
+              ariaResults: "View results, run in progress",
+              ariaOpen: "Open last run, in progress",
+            };
   const latestAvailableIsSaved =
     Boolean(latestAvailableIteration?._id) &&
     latestAvailableIteration?._id === currentTestCase.lastMessageRun;
@@ -1439,53 +1672,79 @@ export function TestTemplateEditor({
                 ) : null}
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-3">
-                  {isEditingTitle ? (
-                    <input
-                      type="text"
-                      value={editForm?.title || ""}
-                      onChange={(event) =>
-                        editForm &&
-                        setEditForm({ ...editForm, title: event.target.value })
-                      }
-                      onBlur={handleTitleBlur}
-                      onKeyDown={handleTitleKeyDown}
-                      autoFocus
-                      className="min-w-0 flex-1 bg-transparent px-0 py-0 text-xl font-semibold tracking-tight focus:outline-none sm:text-2xl"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      className="min-w-0 flex-1 text-left"
-                      onClick={handleTitleClick}
-                    >
-                      <h2 className="truncate text-xl font-semibold tracking-tight transition-opacity hover:opacity-80 sm:text-2xl">
-                        {editForm?.title || currentTestCase.title}
-                      </h2>
-                    </button>
-                  )}
-                  {latestAvailableIteration ? (
-                    <span
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full border border-current/15 bg-current/[0.07] px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide",
-                        latestAvailableToneClass,
-                      )}
-                    >
-                      <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                      {latestAvailableResult === "passed"
-                        ? "Passed"
-                        : latestAvailableResult === "failed"
-                          ? "Failed"
-                          : latestAvailableResult === "cancelled"
-                            ? "Cancelled"
-                            : latestAvailableIteration
-                              ? "Running"
-                              : "Loading…"}
-                    </span>
-                  ) : null}
+                    {isEditingTitle ? (
+                      <input
+                        type="text"
+                        value={editForm?.title || ""}
+                        onChange={(event) =>
+                          editForm &&
+                          setEditForm({
+                            ...editForm,
+                            title: event.target.value,
+                          })
+                        }
+                        onBlur={handleTitleBlur}
+                        onKeyDown={handleTitleKeyDown}
+                        autoFocus
+                        className="min-w-0 flex-1 bg-transparent px-0 py-0 text-xl font-semibold tracking-tight focus:outline-none sm:text-2xl"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 text-left"
+                        onClick={handleTitleClick}
+                      >
+                        <h2 className="truncate text-xl font-semibold tracking-tight transition-opacity hover:opacity-80 sm:text-2xl">
+                          {editForm?.title || currentTestCase.title}
+                        </h2>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
+                {latestAvailableIteration ? (
+                  hasRunViewContent ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "h-8 gap-1.5 px-2 text-xs",
+                        latestRunNavCue.buttonTextClass,
+                      )}
+                      aria-label={latestRunNavCue.ariaResults}
+                      onClick={() => openRunView("config_toggle")}
+                    >
+                      <span
+                        className={latestRunNavCue.dotClass}
+                        aria-hidden
+                      />
+                      View results
+                    </Button>
+                  ) : canOpenLastRun ? (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        "h-8 gap-1.5 px-2 text-xs",
+                        latestRunNavCue.buttonTextClass,
+                      )}
+                      aria-label={latestRunNavCue.ariaOpen}
+                      onClick={() =>
+                        lastSavedIteration &&
+                        onOpenLastRun?.(lastSavedIteration)
+                      }
+                    >
+                      <span
+                        className={latestRunNavCue.dotClass}
+                        aria-hidden
+                      />
+                      Open last run
+                    </Button>
+                  ) : null
+                ) : null}
                 {onExportDraft ? (
                   <Button
                     type="button"
@@ -1534,32 +1793,6 @@ export function TestTemplateEditor({
                       Save
                     </Button>
                   )
-                ) : null}
-                {latestAvailableIteration ? (
-                  hasRunViewContent ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 text-xs"
-                      onClick={() => openRunView("config_toggle")}
-                    >
-                      Results
-                    </Button>
-                  ) : canOpenLastRun ? (
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-8 px-2 text-xs"
-                      onClick={() =>
-                        lastSavedIteration &&
-                        onOpenLastRun?.(lastSavedIteration)
-                      }
-                    >
-                      Open last run
-                    </Button>
-                  ) : null
                 ) : null}
                 {runDisabledTooltip ? (
                   <Tooltip>
@@ -1621,7 +1854,9 @@ export function TestTemplateEditor({
                       ) : (
                         <>
                           <Play className="size-3.5 fill-current" />
-                          {selectedModelValues.length > 1 ? "Run compare" : "Run"}
+                          {selectedModelValues.length > 1
+                            ? "Run compare"
+                            : "Run"}
                         </>
                       )}
                     </Button>
@@ -1867,7 +2102,9 @@ export function TestTemplateEditor({
                   availableTools={availableTools}
                   evalValidationBorderClass={evalValidationBorderClass}
                   isStepPromptEmpty={isStepPromptEmpty}
-                  stepExpectedToolsNeedAttention={stepExpectedToolsNeedAttention}
+                  stepExpectedToolsNeedAttention={
+                    stepExpectedToolsNeedAttention
+                  }
                   updatePromptTurn={updatePromptTurn}
                   addPromptTurn={addPromptTurn}
                   removePromptTurn={removePromptTurn}
@@ -1950,7 +2187,11 @@ export function TestTemplateEditor({
                         ) : null}
                       </span>
                     </TooltipTrigger>
-                    <TooltipContent variant="muted" side="bottom" sideOffset={6}>
+                    <TooltipContent
+                      variant="muted"
+                      side="bottom"
+                      sideOffset={6}
+                    >
                       {runDisabledTooltip}
                     </TooltipContent>
                   </Tooltip>
@@ -2006,7 +2247,9 @@ export function TestTemplateEditor({
                         : "outline"
                     }
                     className="shrink-0"
-                    onClick={() => setMobileVisibleModelValue(record.modelValue)}
+                    onClick={() =>
+                      setMobileVisibleModelValue(record.modelValue)
+                    }
                   >
                     {record.modelLabel}
                   </Button>
@@ -2029,7 +2272,11 @@ export function TestTemplateEditor({
             ) : (
               <div
                 className={cn(
-                  "grid min-h-0 min-w-0 flex-1 auto-rows-[minmax(0,1fr)] gap-4",
+                  "grid min-h-0 min-w-0 flex-1 gap-4",
+                  // Below lg, models stack: equal-height rows (1fr each) crush traces; size rows
+                  // to content and scroll this panel instead.
+                  "max-lg:auto-rows-min max-lg:overflow-y-auto",
+                  "lg:auto-rows-[minmax(0,1fr)] lg:overflow-hidden",
                   runGridClassName,
                 )}
               >
@@ -2062,7 +2309,12 @@ export function TestTemplateEditor({
                         onTabChange={(tab) =>
                           handleRunColumnTabChange(record.modelValue, tab)
                         }
-                        onRetry={() => void handleRunCompare([record.modelValue])}
+                        onRetry={() =>
+                          void handleRunCompare({
+                            modelValues: [record.modelValue],
+                            sessionMode: "reuse",
+                          })
+                        }
                       />
                     </div>
                   );
@@ -2099,23 +2351,20 @@ function RunColumn({
   onTabChange: (tab: RunColumnTab) => void;
   onRetry: () => void;
 }) {
-  const {
-    toolsMetadata,
-    toolServerMap,
-    connectedServerIds,
-  } = useEvalTraceToolContext({
-    serverNames,
-    workspaceId,
-    retryKey:
-      record.iteration?._id ??
-      record.startedAt ??
-      record.completedAt ??
-      record.modelValue,
-  });
-  const expectedToolCalls =
-    record.iteration?.testCaseSnapshot?.expectedToolCalls ??
-    testCase?.expectedToolCalls ??
-    [];
+  const { toolsMetadata, toolServerMap, connectedServerIds } =
+    useEvalTraceToolContext({
+      serverNames,
+      workspaceId,
+      retryKey:
+        record.iteration?._id ??
+        record.startedAt ??
+        record.completedAt ??
+        record.modelValue,
+    });
+  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
+    record.iteration?.testCaseSnapshot,
+    testCase,
+  );
   const actualToolCalls =
     record.iteration?.actualToolCalls ?? record.streamingActualToolCalls ?? [];
   const showToolsTab =
@@ -2127,18 +2376,17 @@ function RunColumn({
     }
   }, [showToolsTab, activeTab, onTabChange]);
 
-  const statusTone =
+  /** Status marker: pastel fills aligned with metric bar accent colors. */
+  const statusIndicatorClass =
     record.status === "running"
-      ? record.isRetrying
-        ? "text-amber-800 dark:text-amber-200"
-        : "text-sky-700 dark:text-sky-300"
+      ? "size-3 bg-amber-500/45 dark:bg-amber-400/40 animate-pulse motion-reduce:animate-none"
       : record.status === "cancelled" || record.result === "cancelled"
-        ? "text-amber-800 dark:text-amber-200"
+        ? "size-3 bg-amber-500/45 dark:bg-amber-400/40"
         : record.status === "failed" || record.result === "failed"
-          ? "text-rose-700 dark:text-rose-300"
+          ? "size-3 bg-rose-500/45 dark:bg-rose-400/40"
           : record.result === "passed"
-            ? "text-emerald-700 dark:text-emerald-300"
-            : "text-muted-foreground";
+            ? "size-3 bg-emerald-500/45 dark:bg-emerald-400/40"
+            : "size-3 bg-primary/22 dark:bg-primary/20";
   const statusLabel =
     record.status === "running"
       ? record.isRetrying
@@ -2167,10 +2415,7 @@ function RunColumn({
           : "tools";
   const streamingTraceEnvelope = useMemo(
     () =>
-      mergeStreamingTrace(
-        record.streamingTrace,
-        record.streamingDraftMessages,
-      ),
+      mergeStreamingTrace(record.streamingTrace, record.streamingDraftMessages),
     [record.streamingDraftMessages, record.streamingTrace],
   );
   const {
@@ -2187,9 +2432,8 @@ function RunColumn({
       return null;
     }
 
-    const sourceTrace = (persistedTraceBlob ?? streamingTraceEnvelope) as
-      | Record<string, unknown>
-      | null;
+    const sourceTrace = (persistedTraceBlob ??
+      streamingTraceEnvelope) as Record<string, unknown> | null;
 
     if (!sourceTrace) {
       return null;
@@ -2207,9 +2451,12 @@ function RunColumn({
     }
 
     const advancedConfig =
-      record.iteration?.testCaseSnapshot?.advancedConfig ?? testCase?.advancedConfig;
+      record.iteration?.testCaseSnapshot?.advancedConfig ??
+      testCase?.advancedConfig;
     const systemPrompt =
-      typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+      typeof advancedConfig?.system === "string"
+        ? advancedConfig.system
+        : undefined;
     const temperature =
       typeof advancedConfig?.temperature === "number"
         ? advancedConfig.temperature
@@ -2241,7 +2488,8 @@ function RunColumn({
     record.streamingTrace == null &&
     hasStreamingTrace;
 
-  const displayTokens = record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
+  const displayTokens =
+    record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
   const toolCount =
     record.streamingMetrics?.toolCallCount ?? record.metrics.toolCallCount;
   const toolCallLabel =
@@ -2274,19 +2522,20 @@ function RunColumn({
   const currentDuration = record.metrics.durationMs ?? 0;
   const hasComparison = completedRecords.length > 1;
 
-  const isFastest = hasComparison && currentDuration === minDuration && currentDuration > 0;
-  const isFewestTokens = hasComparison && displayTokens === minTokens && displayTokens > 0;
-  const isFewestTools = hasComparison && toolCount === minToolCount && toolCount > 0;
+  const isFastest =
+    hasComparison && currentDuration === minDuration && currentDuration > 0;
+  const isFewestTokens =
+    hasComparison && displayTokens === minTokens && displayTokens > 0;
+  const isFewestTools =
+    hasComparison && toolCount === minToolCount && toolCount > 0;
 
   const durationBarPct =
     maxDuration > 0 ? Math.max(4, (currentDuration / maxDuration) * 100) : 0;
   const tokensBarPct =
-    maxTokens > 0
-      ? Math.max(4, (displayTokens / maxTokens) * 100)
-      : 0;
+    maxTokens > 0 ? Math.max(4, (displayTokens / maxTokens) * 100) : 0;
 
   return (
-    <div className="flex min-h-0 h-full min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40">
+    <div className="flex h-auto min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:h-full">
       <div className="shrink-0 border-b px-3 py-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -2294,9 +2543,15 @@ function RunColumn({
               {record.modelLabel}
             </div>
           </div>
-          <span className={cn("shrink-0 text-[10px] font-medium", statusTone)}>
-            {statusLabel}
-          </span>
+          <span
+            role="img"
+            className={cn(
+              "inline-flex shrink-0 rounded-full",
+              statusIndicatorClass,
+            )}
+            aria-label={statusLabel}
+            title={statusLabel}
+          />
         </div>
 
         {/* Metric comparison bars */}
@@ -2316,7 +2571,9 @@ function RunColumn({
                         ? "bg-emerald-500/25 dark:bg-emerald-400/20"
                         : "bg-primary/10",
                     )}
-                    style={{ width: `${hasComparison ? durationBarPct : 100}%` }}
+                    style={{
+                      width: `${hasComparison ? durationBarPct : 100}%`,
+                    }}
                   />
                 )}
               </div>
@@ -2438,13 +2695,13 @@ function RunColumn({
         record.metrics.mismatchCount > 0 ? (
           <div className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
             {record.metrics.mismatchCount} mismatch
-            {record.metrics.mismatchCount === 1 ? "" : "es"} across expected tool
-            calls.
+            {record.metrics.mismatchCount === 1 ? "" : "es"} across expected
+            tool calls.
           </div>
         ) : null}
       </div>
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden p-3">
+      <div className="flex min-w-0 max-lg:min-h-[min(52vh,26rem)] flex-1 flex-col overflow-hidden p-3 lg:min-h-0">
         {record.iteration ? (
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {traceMode === "chat" ? (
@@ -2526,8 +2783,8 @@ function RunColumn({
             <div className="flex items-center gap-3 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
               <span>
-                {record.isRetrying ? "Retrying" : "Running"}{" "}
-                {record.modelLabel}…
+                {record.isRetrying ? "Retrying" : "Running"} {record.modelLabel}
+                …
               </span>
             </div>
           </div>
@@ -2538,8 +2795,8 @@ function RunColumn({
                 {record.modelLabel} stopped
               </div>
               <p className="mt-2 text-sm text-muted-foreground">
-                This run was stopped before it finished. Partial trace and metrics
-                may still be visible in the tabs above.
+                This run was stopped before it finished. Partial trace and
+                metrics may still be visible in the tabs above.
               </p>
             </div>
           </div>

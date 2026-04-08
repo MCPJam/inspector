@@ -57,10 +57,7 @@ import {
   stripPromptTurnsFromAdvancedConfig,
   type PromptTurn,
 } from "@/shared/prompt-turns";
-import {
-  normalizeToolChoice,
-  type EvalToolChoice,
-} from "@/shared/tool-choice";
+import { normalizeToolChoice, type EvalToolChoice } from "@/shared/tool-choice";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import type {
   EvalStreamEvent,
@@ -102,6 +99,7 @@ export type RunEvalSuiteOptions = {
   mcpClientManager: MCPClientManager;
   recorder?: SuiteRunRecorder | null;
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
+  compareRunId?: string; // For quick compare runs, group related iterations in metadata
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -248,9 +246,7 @@ function extractToolCallsFromConversation(params: {
   return toolsCalled;
 }
 
-function toStreamToolCalls(
-  toolCalls: ToolCall[],
-): EvalStreamToolCall[] {
+function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   return toolCalls.map((toolCall) => ({
     toolName: toolCall.toolName,
     arguments: toolCall.arguments,
@@ -424,6 +420,7 @@ type RunIterationBaseParams = {
   convexClient: ConvexHttpClient;
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
+  compareRunId?: string;
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -457,6 +454,7 @@ const runIterationWithAiSdk = async ({
   convexClient,
   runId,
   abortSignal,
+  compareRunId,
 }: RunIterationAiSdkParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -497,10 +495,17 @@ const runIterationWithAiSdk = async ({
     }
   }
 
-  const { advancedConfig, query, expectedToolCalls, expectedOutput, promptTurns } =
-    resolvedTest;
+  const {
+    advancedConfig,
+    query,
+    expectedToolCalls,
+    expectedOutput,
+    promptTurns,
+  } = resolvedTest;
   const system =
-    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+    typeof advancedConfig?.system === "string"
+      ? advancedConfig.system
+      : undefined;
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -523,6 +528,9 @@ const runIterationWithAiSdk = async ({
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
+  }
+  if (runId === null && compareRunId) {
+    iterationMetadataBase.compareRunId = compareRunId;
   }
   const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
@@ -562,9 +570,8 @@ const runIterationWithAiSdk = async ({
   let activePromptInputMessages: ModelMessage[] = [];
   let activePartialResponseMessages: ModelMessage[] = [];
   let activeCompletedStepCount = 0;
-  let activeTraceCtx:
-    | ReturnType<typeof createAiSdkEvalTraceContext>
-    | null = null;
+  let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
+    null;
 
   try {
     const llmModel = createLlmModel(modelDefinition, apiKey);
@@ -639,7 +646,8 @@ const runIterationWithAiSdk = async ({
           };
           accumulatedUsage = {
             inputTokens: accumulatedUsage.inputTokens + stepUsage.inputTokens,
-            outputTokens: accumulatedUsage.outputTokens + stepUsage.outputTokens,
+            outputTokens:
+              accumulatedUsage.outputTokens + stepUsage.outputTokens,
             totalTokens: accumulatedUsage.totalTokens + stepUsage.totalTokens,
           };
           const responseMessages = step.response?.messages ?? [];
@@ -647,14 +655,16 @@ const runIterationWithAiSdk = async ({
             activePartialResponseMessages.length;
           const messageStartIndex =
             responseMessages.length > 0
-              ? activePromptInputMessages.length + responseMessageCountBeforeAppend
+              ? activePromptInputMessages.length +
+                responseMessageCountBeforeAppend
               : undefined;
           appendDedupedModelMessages(
             activePartialResponseMessages,
             responseMessages as ModelMessage[],
           );
           const appendedMessageCount =
-            activePartialResponseMessages.length - responseMessageCountBeforeAppend;
+            activePartialResponseMessages.length -
+            responseMessageCountBeforeAppend;
           const messageEndIndex =
             messageStartIndex != null && appendedMessageCount > 0
               ? messageStartIndex + appendedMessageCount - 1
@@ -669,7 +679,8 @@ const runIterationWithAiSdk = async ({
             status: "ok",
           });
           accumulatedUsage.inputTokens =
-            (accumulatedUsage.inputTokens ?? 0) + (step.usage?.inputTokens ?? 0);
+            (accumulatedUsage.inputTokens ?? 0) +
+            (step.usage?.inputTokens ?? 0);
           accumulatedUsage.outputTokens =
             (accumulatedUsage.outputTokens ?? 0) +
             (step.usage?.outputTokens ?? 0);
@@ -687,10 +698,7 @@ const runIterationWithAiSdk = async ({
               stepIndex: activeCompletedStepCount - 1,
               snapshotKind: "step_finish",
               messages: snapshotMessages,
-              spans: [
-                ...recordedSpans,
-                ...activeTraceCtx!.recordedSpans,
-              ],
+              spans: [...recordedSpans, ...activeTraceCtx!.recordedSpans],
               actualToolCalls: extractToolCallsFromConversation({
                 messages: snapshotMessages,
               }),
@@ -759,9 +767,7 @@ const runIterationWithAiSdk = async ({
     const traceForGate =
       recordedSpans.length > 0 || conversationMessages.length > 0
         ? {
-            ...(recordedSpans.length > 0
-              ? { spans: recordedSpans }
-              : {}),
+            ...(recordedSpans.length > 0 ? { spans: recordedSpans } : {}),
             messages: conversationMessages as ModelMessage[] as Array<{
               role: string;
               content: unknown;
@@ -786,9 +792,7 @@ const runIterationWithAiSdk = async ({
       toolsCalled: evaluation.toolsCalled,
       usage,
       messages: conversationMessages,
-      ...(recordedSpans.length
-        ? { spans: recordedSpans }
-        : {}),
+      ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
@@ -854,7 +858,8 @@ const runIterationWithAiSdk = async ({
     }
     const failMessages =
       activePromptInputMessages.length > 0
-        ? activeCompletedStepCount > 0 || activePartialResponseMessages.length > 0
+        ? activeCompletedStepCount > 0 ||
+          activePartialResponseMessages.length > 0
           ? [...activePromptInputMessages, ...activePartialResponseMessages]
           : activePromptInputMessages
         : conversationMessages;
@@ -911,6 +916,7 @@ const runIterationViaBackend = async ({
   convexClient,
   runId,
   abortSignal,
+  compareRunId,
 }: RunIterationBackendParams) => {
   const resolvedTest = resolveEvalTestCase(test);
 
@@ -951,10 +957,17 @@ const runIterationViaBackend = async ({
     }
   }
 
-  const { query, expectedToolCalls, expectedOutput, promptTurns, advancedConfig } =
-    resolvedTest;
+  const {
+    query,
+    expectedToolCalls,
+    expectedOutput,
+    promptTurns,
+    advancedConfig,
+  } = resolvedTest;
   const systemPrompt =
-    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+    typeof advancedConfig?.system === "string"
+      ? advancedConfig.system
+      : undefined;
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -966,6 +979,9 @@ const runIterationViaBackend = async ({
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
+  }
+  if (runId === null && compareRunId) {
+    iterationMetadataBase.compareRunId = compareRunId;
   }
 
   const iterationParams = {
@@ -1224,7 +1240,9 @@ const runIterationViaBackend = async ({
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
                 messageStartIndex:
-                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                  stepMessageEndIndex != null
+                    ? stepMessageStartIndex
+                    : undefined,
                 messageEndIndex: stepMessageEndIndex,
                 status: "ok",
               },
@@ -1250,7 +1268,9 @@ const runIterationViaBackend = async ({
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
                 messageStartIndex:
-                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                  stepMessageEndIndex != null
+                    ? stepMessageStartIndex
+                    : undefined,
                 messageEndIndex: stepMessageEndIndex,
                 pushAggregateSpan: false,
               },
@@ -1415,6 +1435,7 @@ const runTestCase = async (params: {
   suiteId?: string;
   runId: string | null;
   abortSignal?: AbortSignal;
+  compareRunId?: string;
 }) => {
   const {
     test,
@@ -1428,6 +1449,7 @@ const runTestCase = async (params: {
     suiteId,
     runId,
     abortSignal,
+    compareRunId,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -1450,6 +1472,7 @@ const runTestCase = async (params: {
         modelApiKeys,
         runId,
         abortSignal,
+        compareRunId,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -1467,6 +1490,7 @@ const runTestCase = async (params: {
       convexClient,
       runId,
       abortSignal,
+      compareRunId,
     });
     outcomes.push(iterationOutcome);
   }
@@ -1485,6 +1509,7 @@ export const runEvalSuiteWithAiSdk = async ({
   mcpClientManager,
   recorder: providedRecorder,
   testCaseId,
+  compareRunId,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const tests = config.tests ?? [];
   const serverIds = config.environment?.servers ?? [];
@@ -1550,6 +1575,7 @@ export const runEvalSuiteWithAiSdk = async ({
         convexAuthToken,
         convexClient,
         testCaseId,
+        compareRunId,
         suiteId,
         runId,
         abortSignal: abortController.signal,
@@ -1707,7 +1733,10 @@ const streamIterationWithAiSdk = async ({
   runId,
   abortSignal,
   emit,
-}: RunIterationAiSdkParams & { emit: StreamEmit }): Promise<EvalIterationOutcome> => {
+  compareRunId,
+}: RunIterationAiSdkParams & {
+  emit: StreamEmit;
+}): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
@@ -1746,10 +1775,17 @@ const streamIterationWithAiSdk = async ({
     }
   }
 
-  const { advancedConfig, query, expectedToolCalls, expectedOutput, promptTurns } =
-    resolvedTest;
+  const {
+    advancedConfig,
+    query,
+    expectedToolCalls,
+    expectedOutput,
+    promptTurns,
+  } = resolvedTest;
   const system =
-    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+    typeof advancedConfig?.system === "string"
+      ? advancedConfig.system
+      : undefined;
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -1770,6 +1806,9 @@ const streamIterationWithAiSdk = async ({
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
+  }
+  if (runId === null && compareRunId) {
+    iterationMetadataBase.compareRunId = compareRunId;
   }
   const iterationParams = {
     testCaseId: test.testCaseId ?? testCaseId,
@@ -1809,9 +1848,8 @@ const streamIterationWithAiSdk = async ({
   let activePromptInputMessages: ModelMessage[] = [];
   let activePartialResponseMessages: ModelMessage[] = [];
   let activeCompletedStepCount = 0;
-  let activeTraceCtx:
-    | ReturnType<typeof createAiSdkEvalTraceContext>
-    | null = null;
+  let activeTraceCtx: ReturnType<typeof createAiSdkEvalTraceContext> | null =
+    null;
 
   try {
     const llmModel = createLlmModel(modelDefinition, apiKey);
@@ -1842,7 +1880,11 @@ const streamIterationWithAiSdk = async ({
         promptIndex,
       );
 
-      emit({ type: "turn_start", turnIndex: promptIndex, prompt: promptTurn.prompt });
+      emit({
+        type: "turn_start",
+        turnIndex: promptIndex,
+        prompt: promptTurn.prompt,
+      });
 
       const result = streamText({
         model: llmModel,
@@ -1889,14 +1931,16 @@ const streamIterationWithAiSdk = async ({
             activePartialResponseMessages.length;
           const messageStartIndex =
             responseMessages.length > 0
-              ? activePromptInputMessages.length + responseMessageCountBeforeAppend
+              ? activePromptInputMessages.length +
+                responseMessageCountBeforeAppend
               : undefined;
           appendDedupedModelMessages(
             activePartialResponseMessages,
             responseMessages as ModelMessage[],
           );
           const appendedMessageCount =
-            activePartialResponseMessages.length - responseMessageCountBeforeAppend;
+            activePartialResponseMessages.length -
+            responseMessageCountBeforeAppend;
           const messageEndIndex =
             messageStartIndex != null && appendedMessageCount > 0
               ? messageStartIndex + appendedMessageCount - 1
@@ -2034,9 +2078,7 @@ const streamIterationWithAiSdk = async ({
     const traceForGate =
       recordedSpans.length > 0 || conversationMessages.length > 0
         ? {
-            ...(recordedSpans.length > 0
-              ? { spans: recordedSpans }
-              : {}),
+            ...(recordedSpans.length > 0 ? { spans: recordedSpans } : {}),
             messages: conversationMessages as ModelMessage[] as Array<{
               role: string;
               content: unknown;
@@ -2061,9 +2103,7 @@ const streamIterationWithAiSdk = async ({
       toolsCalled: evaluation.toolsCalled,
       usage: usageFinal,
       messages: conversationMessages,
-      ...(recordedSpans.length
-        ? { spans: recordedSpans }
-        : {}),
+      ...(recordedSpans.length ? { spans: recordedSpans } : {}),
       ...(promptTraceSummaries.length ? { prompts: promptTraceSummaries } : {}),
       status: "completed" as const,
       startedAt: runStartedAt,
@@ -2127,7 +2167,8 @@ const streamIterationWithAiSdk = async ({
     }
     const failMessages =
       activePromptInputMessages.length > 0
-        ? activeCompletedStepCount > 0 || activePartialResponseMessages.length > 0
+        ? activeCompletedStepCount > 0 ||
+          activePartialResponseMessages.length > 0
           ? [...activePromptInputMessages, ...activePartialResponseMessages]
           : activePromptInputMessages
         : conversationMessages;
@@ -2211,7 +2252,10 @@ const streamIterationViaBackend = async ({
   runId,
   abortSignal,
   emit,
-}: RunIterationBackendParams & { emit: StreamEmit }): Promise<EvalIterationOutcome> => {
+  compareRunId,
+}: RunIterationBackendParams & {
+  emit: StreamEmit;
+}): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
 
   // Check if run was cancelled before starting iteration
@@ -2250,10 +2294,17 @@ const streamIterationViaBackend = async ({
     }
   }
 
-  const { query, expectedToolCalls, expectedOutput, promptTurns, advancedConfig } =
-    resolvedTest;
+  const {
+    query,
+    expectedToolCalls,
+    expectedOutput,
+    promptTurns,
+    advancedConfig,
+  } = resolvedTest;
   const systemPrompt =
-    typeof advancedConfig?.system === "string" ? advancedConfig.system : undefined;
+    typeof advancedConfig?.system === "string"
+      ? advancedConfig.system
+      : undefined;
   const temperature =
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
@@ -2265,6 +2316,9 @@ const streamIterationViaBackend = async ({
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
+  }
+  if (runId === null && compareRunId) {
+    iterationMetadataBase.compareRunId = compareRunId;
   }
 
   const iterationParams = {
@@ -2348,7 +2402,11 @@ const streamIterationViaBackend = async ({
       content: promptTurn.prompt,
     });
 
-    emit({ type: "turn_start", turnIndex: promptIndex, prompt: promptTurn.prompt });
+    emit({
+      type: "turn_start",
+      turnIndex: promptIndex,
+      prompt: promptTurn.prompt,
+    });
 
     let steps = 0;
     while (steps < MAX_STEPS) {
@@ -2475,7 +2533,11 @@ const streamIterationViaBackend = async ({
               emit({ type: "text_delta", content: msg.content });
             } else if (Array.isArray(msg.content)) {
               for (const item of msg.content) {
-                if (item?.type === "text" && typeof item.text === "string" && item.text.length > 0) {
+                if (
+                  item?.type === "text" &&
+                  typeof item.text === "string" &&
+                  item.text.length > 0
+                ) {
                   emit({ type: "text_delta", content: item.text });
                 } else if (item?.type === "tool-call") {
                   const name = item.toolName ?? item.name;
@@ -2483,7 +2545,9 @@ const streamIterationViaBackend = async ({
                     emit({
                       type: "tool_call",
                       toolName: name,
-                      toolCallId: item.toolCallId ?? `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                      toolCallId:
+                        item.toolCallId ??
+                        `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                       args: item.input ?? item.parameters ?? item.args ?? {},
                     });
                   }
@@ -2535,9 +2599,15 @@ const streamIterationViaBackend = async ({
 
             // Emit tool_result events for each tool result message
             for (const toolMsg of newToolMessages) {
-              if ((toolMsg as any)?.role === "tool" && Array.isArray((toolMsg as any).content)) {
+              if (
+                (toolMsg as any)?.role === "tool" &&
+                Array.isArray((toolMsg as any).content)
+              ) {
                 for (const part of (toolMsg as any).content) {
-                  if (part?.type === "tool-result" && typeof part.toolCallId === "string") {
+                  if (
+                    part?.type === "tool-result" &&
+                    typeof part.toolCallId === "string"
+                  ) {
                     emit({
                       type: "tool_result",
                       toolCallId: part.toolCallId,
@@ -2603,7 +2673,9 @@ const streamIterationViaBackend = async ({
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
                 messageStartIndex:
-                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                  stepMessageEndIndex != null
+                    ? stepMessageStartIndex
+                    : undefined,
                 messageEndIndex: stepMessageEndIndex,
                 status: "ok",
               },
@@ -2629,7 +2701,9 @@ const streamIterationViaBackend = async ({
                 outputTokens: json.usage?.completionTokens,
                 totalTokens: json.usage?.totalTokens,
                 messageStartIndex:
-                  stepMessageEndIndex != null ? stepMessageStartIndex : undefined,
+                  stepMessageEndIndex != null
+                    ? stepMessageStartIndex
+                    : undefined,
                 messageEndIndex: stepMessageEndIndex,
                 pushAggregateSpan: false,
               },
@@ -2713,7 +2787,9 @@ const streamIterationViaBackend = async ({
         }
       } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
-          logger.debug("[evals] backend streaming iteration aborted due to cancellation");
+          logger.debug(
+            "[evals] backend streaming iteration aborted due to cancellation",
+          );
           return {
             evaluation: evaluateMultiTurnResults(
               promptTurns,
@@ -2867,6 +2943,7 @@ export const streamTestCase = async (params: {
   runId: string | null;
   abortSignal?: AbortSignal;
   emit: StreamEmit;
+  compareRunId?: string;
 }) => {
   const {
     test,
@@ -2881,6 +2958,7 @@ export const streamTestCase = async (params: {
     runId,
     abortSignal,
     emit,
+    compareRunId,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const modelDefinition = buildModelDefinition(test);
@@ -2904,6 +2982,7 @@ export const streamTestCase = async (params: {
         runId,
         abortSignal,
         emit,
+        compareRunId,
       });
       outcomes.push(iterationOutcome);
       continue;
@@ -2922,6 +3001,7 @@ export const streamTestCase = async (params: {
       runId,
       abortSignal,
       emit,
+      compareRunId,
     });
     outcomes.push(iterationOutcome);
   }

@@ -88,6 +88,7 @@ const endpointCases: EndpointCase[] = [
       testCaseId: "test-case-1",
       model: "openai/gpt-5-mini",
       provider: "openai",
+      compareRunId: "cmp_case",
       testCaseOverrides: {
         advancedConfig: {
           toolChoice: {
@@ -309,6 +310,7 @@ describe("web routes — evals", () => {
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
+        compareRunId: "cmp_stream",
       },
       token,
     );
@@ -324,6 +326,7 @@ describe("web routes — evals", () => {
         testCaseId: "test-case-1",
         model: "openai/gpt-5-mini",
         provider: "openai",
+        compareRunId: "cmp_stream",
         convexAuthToken: token,
       }),
     );

@@ -565,7 +565,7 @@ export function TraceViewer({
               focusMessageId={transcriptNavigation.focusMessageId}
               highlightedMessageIds={transcriptNavigation.highlightedMessageIds}
               navigationKey={transcriptNavigation.navigationKey}
-              contentClassName="min-w-0 w-full max-w-4xl space-y-8 px-4 pt-2"
+              contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
               getMessageWrapperProps={({ message }) => {
                 const sourceRange =
                   adaptedTrace.uiMessageSourceRanges[message.id];

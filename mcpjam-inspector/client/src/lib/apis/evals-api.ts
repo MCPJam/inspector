@@ -67,6 +67,7 @@ type RunTestCaseRequest = EvalRequestWithServers & {
   testCaseId: string;
   model: string;
   provider: string;
+  compareRunId?: string;
   skipLastMessageRunUpdate?: boolean;
   modelApiKeys?: Record<string, string>;
   convexAuthToken?: string | null;

@@ -11,7 +11,10 @@ import {
   captureToolSnapshotForEvalAuthoring,
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
-import { runEvalSuiteWithAiSdk, streamTestCase } from "../../services/evals-runner";
+import {
+  runEvalSuiteWithAiSdk,
+  streamTestCase,
+} from "../../services/evals-runner";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
@@ -91,6 +94,7 @@ export const RunTestCaseRequestSchema = z.object({
   testCaseId: z.string(),
   model: z.string(),
   provider: z.string(),
+  compareRunId: z.string().optional(),
   skipLastMessageRunUpdate: z.boolean().optional(),
   serverIds: z
     .array(z.string())
@@ -367,7 +371,9 @@ export async function runEvalsWithManager(
           JSON.stringify(
             normalizeForComparison(existingTestCase.promptTurns || []),
           ) !==
-          JSON.stringify(normalizeForComparison(testCaseData.promptTurns || []));
+          JSON.stringify(
+            normalizeForComparison(testCaseData.promptTurns || []),
+          );
         const judgeRequirementChanged =
           normalize(existingTestCase.judgeRequirement) !==
           normalize(testCaseData.judgeRequirement);
@@ -524,6 +530,7 @@ export async function runEvalTestCaseWithManager(
     testCaseId,
     model,
     provider,
+    compareRunId,
     serverIds,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -576,6 +583,7 @@ export async function runEvalTestCaseWithManager(
     mcpClientManager: clientManager,
     recorder: null,
     testCaseId,
+    compareRunId,
   });
 
   const expectedIterationId =
@@ -711,6 +719,7 @@ export async function streamEvalTestCaseWithManager(
     testCaseId,
     model,
     provider,
+    compareRunId,
     serverIds,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -749,7 +758,9 @@ export async function streamEvalTestCaseWithManager(
     testCaseId: testCase._id,
   };
 
-  const tools = (await clientManager.getToolsForAiSdk(resolvedServerIds)) as Record<string, any>;
+  const tools = (await clientManager.getToolsForAiSdk(
+    resolvedServerIds,
+  )) as Record<string, any>;
   const encoder = new TextEncoder();
 
   const sseEncode = (event: EvalStreamEvent): Uint8Array =>
@@ -769,6 +780,7 @@ export async function streamEvalTestCaseWithManager(
           testCaseId,
           suiteId: testCase.evalTestSuiteId,
           runId: null,
+          compareRunId,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));
@@ -816,8 +828,7 @@ export async function streamEvalTestCaseWithManager(
           }),
         );
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : String(error);
+        const message = error instanceof Error ? error.message : String(error);
         controller.enqueue(
           sseEncode({
             type: "error",

@@ -51,7 +51,7 @@ export interface SuiteNavigation {
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { openCompare?: boolean; replace?: boolean },
+    options?: { openCompare?: boolean; replace?: boolean; iteration?: string },
   ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
@@ -380,7 +380,10 @@ export function SuiteIterationsView({
     if (route.type !== "test-edit") {
       return;
     }
-    navigation.toTestEdit(suite._id, route.testId, { replace: true });
+    navigation.toTestEdit(suite._id, route.testId, {
+      replace: true,
+      ...(route.iteration ? { iteration: route.iteration } : {}),
+    });
   }, [navigation, route, suite._id]);
 
   const { hasToken } = useAiProviderKeys();
@@ -492,6 +495,9 @@ export function SuiteIterationsView({
                   onExportDraft={handleOpenDraftExport}
                   openCompareFromRoute={
                     route.type === "test-edit" && Boolean(route.openCompare)
+                  }
+                  openCompareIterationId={
+                    route.type === "test-edit" ? (route.iteration ?? null) : null
                   }
                   onClearOpenCompareRoute={handleClearOpenCompareRoute}
                   onBackToList={() =>
@@ -671,9 +677,10 @@ export function SuiteIterationsView({
                       runsLoading={runsLoading}
                       onRunClick={handleRunClick}
                       hideViewModeSelect={hideRunActions}
-                      onOpenLastRun={(testCaseId) =>
+                      onOpenLastRun={(testCaseId, iterationId) =>
                         navigation.toTestEdit(suite._id, testCaseId, {
                           openCompare: true,
+                          iteration: iterationId,
                         })
                       }
                       onDeleteTestCasesBatch={onDeleteTestCasesBatch}

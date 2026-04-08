@@ -27,7 +27,10 @@ import { cn } from "@/lib/utils";
 import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import { resolvePromptTurns } from "@/shared/prompt-turns";
+import {
+  resolveIterationDisplayExpectedToolCalls,
+  resolvePromptTurns,
+} from "@/shared/prompt-turns";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
 const TOOL_CALLS_SUMMARY_MAX_LEN = 160;
@@ -392,11 +395,11 @@ export function IterationDetails({
   const traceStartedAtMs = iteration.startedAt ?? iteration.createdAt;
   const traceEndedAtMs = iteration.updatedAt;
 
-  // Use snapshot values first (reflects what was actually tested, including unsaved edits)
-  const expectedToolCalls =
-    iteration.testCaseSnapshot?.expectedToolCalls ??
-    testCase?.expectedToolCalls ??
-    [];
+  // Aggregate expected tools across turns for display (snapshot wins over draft case).
+  const expectedToolCalls = resolveIterationDisplayExpectedToolCalls(
+    iteration.testCaseSnapshot,
+    testCase,
+  );
   const actualToolCalls = iteration.actualToolCalls || [];
   const promptSummaries = useMemo(() => {
     if (Array.isArray(blob?.prompts) && blob.prompts.length > 0) {

@@ -1,4 +1,8 @@
-import { getModelById, type ModelDefinition, type ModelProvider } from "@/shared/types";
+import {
+  getModelById,
+  type ModelDefinition,
+  type ModelProvider,
+} from "@/shared/types";
 import { matchToolCalls } from "@/shared/eval-matching";
 import { computeIterationResult } from "./pass-criteria";
 import type {
@@ -32,7 +36,10 @@ function normalizeModelProvider(provider?: string): ModelProvider {
 }
 
 export function createCompareSessionId() {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
     return `cmp_${crypto.randomUUID()}`;
   }
 
@@ -63,6 +70,50 @@ const MISMATCH_METADATA_KEYS = [
   "mismatchCount",
 ] as const;
 
+function readMetadataString(
+  metadata: EvalIteration["metadata"],
+  key: string,
+): string | null {
+  if (!metadata) {
+    return null;
+  }
+  const value = metadata[key];
+  if (typeof value !== "string") {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function getIterationSortTime(iteration: EvalIteration): number {
+  return iteration.startedAt ?? iteration.updatedAt ?? iteration.createdAt ?? 0;
+}
+
+function compareIterationsByNewest(a: EvalIteration, b: EvalIteration): number {
+  return getIterationSortTime(b) - getIterationSortTime(a);
+}
+
+function isQuickRunIteration(
+  iteration: Pick<EvalIteration, "suiteRunId">,
+): boolean {
+  return !iteration.suiteRunId;
+}
+
+export function resolveLatestCompareRunId(
+  iterations: EvalIteration[],
+): string | null {
+  const latestTaggedQuickRun = [...iterations]
+    .filter(isQuickRunIteration)
+    .sort(compareIterationsByNewest)
+    .find((iteration) =>
+      readMetadataString(iteration.metadata, "compareRunId"),
+    );
+
+  return latestTaggedQuickRun
+    ? readMetadataString(latestTaggedQuickRun.metadata, "compareRunId")
+    : null;
+}
+
 function readFiniteMetadataNumber(
   metadata: EvalIteration["metadata"],
   key: (typeof MISMATCH_METADATA_KEYS)[number],
@@ -84,9 +135,7 @@ function readFiniteMetadataNumber(
 }
 
 /** Full server-side prompt-aware aggregate counts; all four keys required. */
-function parsePersistedMismatchCounts(
-  metadata: EvalIteration["metadata"],
-): {
+function parsePersistedMismatchCounts(metadata: EvalIteration["metadata"]): {
   missingCount: number;
   unexpectedCount: number;
   argumentMismatchCount: number;
@@ -180,6 +229,7 @@ export function buildHistoricalCompareRunRecords(params: {
   iterations: EvalIteration[];
   testCase?: Pick<EvalCase, "models"> | null;
   existingRecords?: Record<string, CompareRunRecord>;
+  preferredIteration?: EvalIteration | null;
 }) {
   const {
     selectedModelValues,
@@ -187,6 +237,7 @@ export function buildHistoricalCompareRunRecords(params: {
     iterations,
     testCase,
     existingRecords = {},
+    preferredIteration = null,
   } = params;
 
   if (selectedModelValues.length === 0) {
@@ -212,13 +263,45 @@ export function buildHistoricalCompareRunRecords(params: {
   }
 
   const latestIterationByModel = new Map<string, EvalIteration>();
-  const sortedIterations = [...iterations].sort((a, b) => {
-    const aTime = a.startedAt ?? a.updatedAt ?? a.createdAt ?? 0;
-    const bTime = b.startedAt ?? b.updatedAt ?? b.createdAt ?? 0;
-    return bTime - aTime;
-  });
+  const sortedIterations = [...iterations].sort(compareIterationsByNewest);
+  const quickRunIterations = sortedIterations.filter(isQuickRunIteration);
+  const latestCompareRunId = resolveLatestCompareRunId(sortedIterations);
+  const preferredCompareRunId = preferredIteration
+    ? readMetadataString(preferredIteration.metadata, "compareRunId")
+    : null;
+  const preferredSourceIterations = preferredIteration
+    ? preferredCompareRunId && isQuickRunIteration(preferredIteration)
+      ? quickRunIterations.filter(
+          (iteration) =>
+            readMetadataString(iteration.metadata, "compareRunId") ===
+            preferredCompareRunId,
+        )
+      : preferredIteration.suiteRunId
+        ? sortedIterations.filter(
+            (iteration) => iteration.suiteRunId === preferredIteration.suiteRunId,
+          )
+        : []
+    : [];
+  const sourceIterations = preferredIteration
+    ? preferredSourceIterations.length > 0
+      ? preferredSourceIterations
+      : [
+          preferredIteration,
+          ...quickRunIterations.filter(
+            (iteration) => iteration._id !== preferredIteration._id,
+          ),
+        ]
+    : latestCompareRunId != null
+      ? quickRunIterations.filter(
+          (iteration) =>
+            readMetadataString(iteration.metadata, "compareRunId") ===
+            latestCompareRunId,
+        )
+      : quickRunIterations.length > 0
+        ? quickRunIterations
+        : sortedIterations;
 
-  for (const iteration of sortedIterations) {
+  for (const iteration of sourceIterations) {
     const modelValue = resolveIterationModelValue(iteration, testCase);
     if (!modelValue || latestIterationByModel.has(modelValue)) {
       continue;
@@ -302,7 +385,11 @@ export function mergeAdvancedConfigWithOverride(params: {
       throw new Error("Provider flags override must be valid JSON");
     }
 
-    if (!parsedFlags || typeof parsedFlags !== "object" || Array.isArray(parsedFlags)) {
+    if (
+      !parsedFlags ||
+      typeof parsedFlags !== "object" ||
+      Array.isArray(parsedFlags)
+    ) {
       throw new Error("Provider flags override must be a JSON object");
     }
 
@@ -337,8 +424,7 @@ export function buildCompareRunRecord(params: {
     if (cancelled) {
       const end = completedAt ?? Date.now();
       const start = startedAt ?? null;
-      const durationMs =
-        start != null ? Math.max(end - start, 0) : null;
+      const durationMs = start != null ? Math.max(end - start, 0) : null;
       return {
         modelValue,
         modelLabel,
@@ -399,12 +485,8 @@ export function buildCompareRunRecord(params: {
   let mismatchCount: number | null;
 
   if (persisted) {
-    ({
-      missingCount,
-      unexpectedCount,
-      argumentMismatchCount,
-      mismatchCount,
-    } = persisted);
+    ({ missingCount, unexpectedCount, argumentMismatchCount, mismatchCount } =
+      persisted);
   } else if (!isMultiTurnTestCaseSnapshot(iteration.testCaseSnapshot)) {
     const match = matchToolCalls(
       expectedToolCalls,
@@ -474,7 +556,9 @@ export function resolveTraceModel(
   );
 }
 
-export function extractFinalAssistantOutput(adaptedMessages: Array<{ role: string; parts?: any[] }>) {
+export function extractFinalAssistantOutput(
+  adaptedMessages: Array<{ role: string; parts?: any[] }>,
+) {
   const assistantMessage = [...adaptedMessages]
     .reverse()
     .find((message) => message.role === "assistant");
