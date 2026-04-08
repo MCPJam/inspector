@@ -203,6 +203,12 @@ chatV2.post("/", async (c) => {
                   sessionMessages: fullHistory,
                   startedAt: sessionStartedAt,
                   lastActivityAt: Date.now(),
+                  resumeConfig: {
+                    systemPrompt,
+                    temperature,
+                    requireToolApproval,
+                    selectedServers: hasServer ? ["__guest__"] : [],
+                  },
                 });
               }
             : undefined,
@@ -322,6 +328,8 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory) => {
+              const isDirectChat =
+                !shareToken && !sandboxToken;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
@@ -342,6 +350,16 @@ chatV2.post("/", async (c) => {
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
+                ...(isDirectChat
+                  ? {
+                      resumeConfig: {
+                        systemPrompt,
+                        temperature,
+                        requireToolApproval,
+                        selectedServers: selectedServerIds,
+                      },
+                    }
+                  : {}),
               });
             }
           : undefined,

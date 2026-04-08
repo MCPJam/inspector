@@ -3,6 +3,13 @@ import { logger } from "./logger";
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
 
+interface ResumeConfig {
+  systemPrompt?: string;
+  temperature?: number;
+  requireToolApproval?: boolean;
+  selectedServers?: string[];
+}
+
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
@@ -27,6 +34,8 @@ interface PersistChatSessionOptions {
   startedAt: number;
   lastActivityAt?: number;
   timeoutMs?: number;
+  resumeConfig?: ResumeConfig;
+  expectedVersion?: number;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -114,6 +123,12 @@ export async function persistChatSessionToConvex(
         startedAt: options.startedAt,
         ...(options.lastActivityAt
           ? { lastActivityAt: options.lastActivityAt }
+          : {}),
+        ...(options.resumeConfig
+          ? { resumeConfig: options.resumeConfig }
+          : {}),
+        ...(options.expectedVersion !== undefined
+          ? { expectedVersion: options.expectedVersion }
           : {}),
       }),
     });

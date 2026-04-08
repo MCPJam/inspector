@@ -181,6 +181,16 @@ chatV2.post("/", async (c) => {
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
+                ...(body.workspaceId
+                  ? { workspaceId: body.workspaceId }
+                  : {}),
+                resumeConfig: {
+                  systemPrompt,
+                  temperature,
+                  requireToolApproval,
+                  selectedServers,
+                },
+                expectedVersion: body.expectedVersion,
               });
             }
           : undefined,
@@ -242,6 +252,16 @@ chatV2.post("/", async (c) => {
             authHeader,
             startedAt: streamStartedAt,
             lastActivityAt: Date.now(),
+            ...(body.workspaceId
+              ? { workspaceId: body.workspaceId }
+              : {}),
+            resumeConfig: {
+              systemPrompt,
+              temperature,
+              requireToolApproval,
+              selectedServers,
+            },
+            expectedVersion: body.expectedVersion,
           });
         } catch (error) {
           logger.warn("[mcp/chat-v2] onFinish ingestion error", error);

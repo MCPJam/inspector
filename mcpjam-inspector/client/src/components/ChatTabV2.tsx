@@ -48,6 +48,11 @@ import { useChatSession } from "@/hooks/use-chat-session";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { useSharedAppState } from "@/state/app-state-context";
+import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
+import {
+  getChatHistoryDetail,
+  type ChatHistorySession,
+} from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
@@ -228,8 +233,10 @@ export function ChatTabV2({
     mcpToolsTokenCountLoading,
     systemPromptTokenCount,
     systemPromptTokenCountLoading,
+    chatSessionId,
     resetChat: baseResetChat,
     startChatWithMessages,
+    loadChatSession,
     isStreaming,
     disableForAuthentication,
     submitBlocked: baseSubmitBlocked,
@@ -254,6 +261,38 @@ export function ChatTabV2({
       setWidgetStateQueue([]);
     },
   });
+
+  // Chat history handlers
+  const showHistoryRail =
+    HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken;
+
+  const handleSelectThread = useCallback(
+    async (session: ChatHistorySession) => {
+      if (isStreaming) return;
+      try {
+        const detail = await getChatHistoryDetail({
+          chatSessionId: session.chatSessionId,
+          workspaceId: effectiveHostedWorkspaceId ?? undefined,
+        });
+        if (detail.session.messagesBlobUrl) {
+          await loadChatSession({
+            chatSessionId: detail.session.chatSessionId,
+            messagesBlobUrl: detail.session.messagesBlobUrl,
+            resumeConfig: detail.session.resumeConfig,
+            version: detail.session.version,
+          });
+        }
+      } catch (err) {
+        console.error("[ChatTabV2] Failed to load chat session", err);
+      }
+    },
+    [isStreaming, effectiveHostedWorkspaceId, loadChatSession],
+  );
+
+  const handleNewChat = useCallback(() => {
+    if (isStreaming) return;
+    baseResetChat();
+  }, [isStreaming, baseResetChat]);
 
   // Check if thread is empty
   const isThreadEmpty = !messages.some(
@@ -734,8 +773,33 @@ export function ChatTabV2({
         direction="horizontal"
         className="flex-1 min-h-0 h-full"
       >
+        {showHistoryRail && (
+          <>
+            <ResizablePanel
+              defaultSize={22}
+              minSize={15}
+              maxSize={35}
+              collapsible
+              className="min-w-0"
+            >
+              <ChatHistoryRail
+                activeThreadId={chatSessionId}
+                isAuthenticated={isConvexAuthenticated}
+                isStreaming={isStreaming}
+                workspaceId={effectiveHostedWorkspaceId}
+                onSelectThread={handleSelectThread}
+                onNewChat={handleNewChat}
+              />
+            </ResizablePanel>
+            <ResizableHandle />
+          </>
+        )}
         <ResizablePanel
-          defaultSize={minimalMode ? 100 : isJsonRpcPanelVisible ? 70 : 100}
+          defaultSize={
+            showHistoryRail
+              ? isJsonRpcPanelVisible ? 48 : 78
+              : minimalMode ? 100 : isJsonRpcPanelVisible ? 70 : 100
+          }
           minSize={40}
           className="min-w-0"
         >

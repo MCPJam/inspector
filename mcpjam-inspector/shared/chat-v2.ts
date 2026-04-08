@@ -25,4 +25,8 @@ export interface ChatV2Request {
   }>;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  /** Workspace ID for direct-chat history persistence */
+  workspaceId?: string;
+  /** Version for optimistic concurrency on resumed threads */
+  expectedVersion?: number;
 }

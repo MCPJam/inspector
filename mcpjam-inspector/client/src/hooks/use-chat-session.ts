@@ -53,6 +53,7 @@ import {
 } from "@/lib/session-token";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
+import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
 import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { buildHostedServerRequest } from "@/lib/apis/web/context";
@@ -152,6 +153,20 @@ export interface UseChatSessionReturn {
   // Actions
   resetChat: () => void;
   startChatWithMessages: (messages: UIMessage[]) => void;
+  loadChatSession: (session: {
+    chatSessionId: string;
+    messagesBlobUrl: string;
+    resumeConfig?: {
+      systemPrompt?: string;
+      temperature?: number;
+      requireToolApproval?: boolean;
+      selectedServers?: string[];
+    };
+    version: number;
+  }) => Promise<void>;
+
+  // Resumed thread version (for optimistic concurrency)
+  resumedVersion: number | null;
 
   // Computed state for UI
   isStreaming: boolean;
@@ -243,6 +258,7 @@ export function useChatSession({
   const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
+  const [resumedVersion, setResumedVersion] = useState<number | null>(null);
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -430,10 +446,20 @@ export function useChatSession({
         systemPrompt,
         ...(HOSTED_MODE
           ? buildHostedBody()
-          : { selectedServers, chatSessionId }),
+          : {
+              selectedServers,
+              chatSessionId,
+              // Pass workspaceId for BYOK direct-chat history persistence
+              ...(hostedWorkspaceId
+                ? { workspaceId: hostedWorkspaceId }
+                : {}),
+            }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
+          : {}),
+        ...(resumedVersion !== null
+          ? { expectedVersion: resumedVersion }
           : {}),
       }),
       headers: transportHeaders,
@@ -455,6 +481,7 @@ export function useChatSession({
     hostedShareToken,
     hostedSandboxToken,
     hostedSandboxSurface,
+    resumedVersion,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -559,6 +586,7 @@ export function useChatSession({
     pendingForkMessagesRef.current = null;
     setChatSessionId(generateId());
     setMessages([]);
+    setResumedVersion(null);
     onResetRef.current?.();
   }, [setMessages]);
 
@@ -570,6 +598,45 @@ export function useChatSession({
     setChatSessionId(nextSessionId);
     onResetRef.current?.();
   }, []);
+
+  const loadChatSession = useCallback(
+    async (session: {
+      chatSessionId: string;
+      messagesBlobUrl: string;
+      resumeConfig?: {
+        systemPrompt?: string;
+        temperature?: number;
+        requireToolApproval?: boolean;
+        selectedServers?: string[];
+      };
+      version: number;
+    }) => {
+      // Fetch transcript blob
+      const response = await fetch(session.messagesBlobUrl);
+      const transcript = await response.json();
+      const uiMessages = transcriptToUIMessages(transcript);
+
+      // Restore session config
+      if (session.resumeConfig?.systemPrompt !== undefined) {
+        setSystemPrompt(session.resumeConfig.systemPrompt);
+      }
+      if (session.resumeConfig?.temperature !== undefined) {
+        setTemperature(session.resumeConfig.temperature);
+      }
+      if (session.resumeConfig?.requireToolApproval !== undefined) {
+        setRequireToolApproval(session.resumeConfig.requireToolApproval);
+      }
+
+      // Set the same chatSessionId to continue the thread
+      skipNextForkDetectionRef.current = true;
+      pendingForkSessionIdRef.current = null;
+      pendingForkMessagesRef.current = null;
+      setChatSessionId(session.chatSessionId);
+      setMessages(uiMessages);
+      setResumedVersion(session.version);
+    },
+    [setMessages],
+  );
 
   useEffect(() => {
     setSystemPrompt(initialSystemPrompt);
@@ -909,6 +976,10 @@ export function useChatSession({
     // Actions
     resetChat,
     startChatWithMessages,
+    loadChatSession,
+
+    // Resumed thread version
+    resumedVersion,
 
     // Computed state
     isStreaming,
