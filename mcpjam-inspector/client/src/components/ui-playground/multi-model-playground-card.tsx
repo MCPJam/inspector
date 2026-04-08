@@ -54,7 +54,6 @@ export interface PlaygroundDeterministicExecutionRequest {
   replaceExisting?: boolean;
 }
 
-
 function InvokingIndicator({
   toolName,
   customMessage,
@@ -629,10 +628,7 @@ export function MultiModelPlaygroundCard({
               >
                 {isThreadEmpty ? (
                   suppressThreadEmptyHint ? (
-                    <div
-                      className="min-h-[8rem] flex-1"
-                      aria-hidden
-                    />
+                    <div className="min-h-[8rem] flex-1" aria-hidden />
                   ) : (
                     <div className="flex flex-1 items-center justify-center px-6 py-8 text-center text-sm text-muted-foreground">
                       Send a shared message to start this model’s thread.

@@ -32,7 +32,6 @@ export interface BroadcastChatTurnRequest {
   prependMessages: UIMessage[];
 }
 
-
 interface MultiModelChatCardProps {
   model: ModelDefinition;
   comparisonSummaries: MultiModelCardSummary[];
