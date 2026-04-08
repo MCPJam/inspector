@@ -17,7 +17,10 @@ import { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { type ReasoningDisplayMode } from "./parts/reasoning-part";
+import { ClaudeLoadingIndicator } from "@/components/chat-v2/shared/claude-loading-indicator";
 import { getAssistantAvatarDescriptor } from "@/components/chat-v2/shared/assistant-avatar";
+
+type ClaudeFooterMode = "none" | "animated" | "static";
 
 interface MessageViewProps {
   message: UIMessage;
@@ -48,6 +51,7 @@ interface MessageViewProps {
   minimalMode?: boolean;
   interactive?: boolean;
   reasoningDisplayMode?: ReasoningDisplayMode;
+  claudeFooterMode?: ClaudeFooterMode;
 }
 
 function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
@@ -86,7 +90,8 @@ function areMessageViewPropsEqual(
     prev.showSaveViewButton === next.showSaveViewButton &&
     prev.minimalMode === next.minimalMode &&
     prev.interactive === next.interactive &&
-    prev.reasoningDisplayMode === next.reasoningDisplayMode
+    prev.reasoningDisplayMode === next.reasoningDisplayMode &&
+    prev.claudeFooterMode === next.claudeFooterMode
   );
 }
 
@@ -113,6 +118,7 @@ function MessageViewImpl({
   minimalMode = false,
   interactive = true,
   reasoningDisplayMode = "inline",
+  claudeFooterMode = "none",
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostStyle = useSandboxHostStyle();
@@ -122,6 +128,7 @@ function MessageViewImpl({
     themeMode: sandboxHostTheme ?? themeMode,
     sandboxHostStyle,
   });
+  const shouldRenderAssistantAvatar = sandboxHostStyle === null;
   // Hide widget state messages (these are internal and sent to the model)
   if (message.id?.startsWith("widget-state-")) return null;
   // Hide model context messages (these are internal and sent to the model)
@@ -209,61 +216,80 @@ function MessageViewImpl({
   }
 
   const steps = groupAssistantPartsIntoSteps(message.parts ?? []);
+  const showClaudeFooter = claudeFooterMode !== "none";
   return (
-    <article className="flex w-full min-w-0 gap-4">
-      <div
-        className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
-        aria-label={assistantAvatar.ariaLabel}
-      >
-        {assistantAvatar.logoSrc ? (
-          <img
-            src={assistantAvatar.logoSrc}
-            alt={assistantAvatar.logoAlt ?? ""}
-            className="h-4 w-4 object-contain"
-          />
-        ) : (
-          <MessageCircle
-            className="h-4 w-4 text-muted-foreground"
-            aria-hidden
-          />
-        )}
-      </div>
+    <article
+      className={
+        shouldRenderAssistantAvatar
+          ? "flex w-full min-w-0 gap-4"
+          : "w-full min-w-0"
+      }
+    >
+      {shouldRenderAssistantAvatar ? (
+        <div
+          className={`mt-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border ${assistantAvatar.avatarClasses}`}
+          aria-label={assistantAvatar.ariaLabel}
+        >
+          {assistantAvatar.logoSrc ? (
+            <img
+              src={assistantAvatar.logoSrc}
+              alt={assistantAvatar.logoAlt ?? ""}
+              className="h-4 w-4 object-contain"
+            />
+          ) : (
+            <MessageCircle
+              className="h-4 w-4 text-muted-foreground"
+              aria-hidden
+            />
+          )}
+        </div>
+      ) : null}
 
-      <div className="flex-1 min-w-0 space-y-6 text-sm leading-6">
-        {steps.map((stepParts, sIdx) => (
-          <div key={sIdx} className="space-y-3">
-            {stepParts.map((part, pIdx) => (
-              <PartSwitch
-                key={`${sIdx}-${pIdx}`}
-                part={part}
-                role={role}
-                onSendFollowUp={onSendFollowUp}
-                toolsMetadata={toolsMetadata}
-                toolServerMap={toolServerMap}
-                onWidgetStateChange={onWidgetStateChange}
-                onModelContextUpdate={onModelContextUpdate}
-                pipWidgetId={pipWidgetId}
-                fullscreenWidgetId={fullscreenWidgetId}
-                onRequestPip={onRequestPip}
-                onExitPip={onExitPip}
-                onRequestFullscreen={onRequestFullscreen}
-                onExitFullscreen={onExitFullscreen}
-                displayMode={displayMode}
-                onDisplayModeChange={onDisplayModeChange}
-                selectedProtocolOverrideIfBothExists={
-                  selectedProtocolOverrideIfBothExists
-                }
-                onToolApprovalResponse={onToolApprovalResponse}
-                messageParts={message.parts}
-                toolRenderOverrides={toolRenderOverrides}
-                showSaveViewButton={showSaveViewButton}
-                minimalMode={minimalMode}
-                interactive={interactive}
-                reasoningDisplayMode={reasoningDisplayMode}
-              />
-            ))}
+      <div className="flex-1 min-w-0">
+        <div className="space-y-6 text-sm leading-6">
+          {steps.map((stepParts, sIdx) => (
+            <div key={sIdx} className="space-y-3">
+              {stepParts.map((part, pIdx) => (
+                <PartSwitch
+                  key={`${sIdx}-${pIdx}`}
+                  part={part}
+                  role={role}
+                  onSendFollowUp={onSendFollowUp}
+                  toolsMetadata={toolsMetadata}
+                  toolServerMap={toolServerMap}
+                  onWidgetStateChange={onWidgetStateChange}
+                  onModelContextUpdate={onModelContextUpdate}
+                  pipWidgetId={pipWidgetId}
+                  fullscreenWidgetId={fullscreenWidgetId}
+                  onRequestPip={onRequestPip}
+                  onExitPip={onExitPip}
+                  onRequestFullscreen={onRequestFullscreen}
+                  onExitFullscreen={onExitFullscreen}
+                  displayMode={displayMode}
+                  onDisplayModeChange={onDisplayModeChange}
+                  selectedProtocolOverrideIfBothExists={
+                    selectedProtocolOverrideIfBothExists
+                  }
+                  onToolApprovalResponse={onToolApprovalResponse}
+                  messageParts={message.parts}
+                  toolRenderOverrides={toolRenderOverrides}
+                  showSaveViewButton={showSaveViewButton}
+                  minimalMode={minimalMode}
+                  interactive={interactive}
+                  reasoningDisplayMode={reasoningDisplayMode}
+                />
+              ))}
+            </div>
+          ))}
+        </div>
+        {showClaudeFooter ? (
+          <div
+            data-testid={`claude-message-footer-${claudeFooterMode}`}
+            className="pt-4"
+          >
+            <ClaudeLoadingIndicator mode={claudeFooterMode} />
           </div>
-        ))}
+        ) : null}
       </div>
     </article>
   );

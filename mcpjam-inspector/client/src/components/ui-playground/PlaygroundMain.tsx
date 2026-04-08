@@ -67,6 +67,7 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { useSharedAppState } from "@/state/app-state-context";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { useConvexAuth } from "convex/react";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
@@ -147,6 +148,7 @@ interface PlaygroundMainProps {
   disableChatInput?: boolean;
   hideSaveViewButton?: boolean;
   disabledInputPlaceholder?: string;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   // Onboarding
   initialInput?: string;
   /** When true with `initialInput`, reveals the string with a typewriter effect (App Builder NUX). */
@@ -230,6 +232,7 @@ export function PlaygroundMain({
   disableChatInput = false,
   hideSaveViewButton = false,
   disabledInputPlaceholder = "Input disabled in Views",
+  loadingIndicatorVariant = "default",
   initialInput,
   initialInputTypewriter = false,
   blockSubmitUntilServerConnected = false,
@@ -1175,7 +1178,7 @@ export function PlaygroundMain({
                 messages={messages}
                 sendFollowUpMessage={handleSendFollowUp}
                 model={selectedModel}
-                isLoading={status === "submitted"}
+                isLoading={isStreaming}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
                 onWidgetStateChange={handleWidgetStateChange}
@@ -1189,6 +1192,7 @@ export function PlaygroundMain({
                 onToolApprovalResponse={addToolApprovalResponse}
                 toolRenderOverrides={mergedToolRenderOverrides}
                 showSaveViewButton={!hideSaveViewButton}
+                loadingIndicatorVariant={loadingIndicatorVariant}
               />
               {/* Invoking indicator while tool execution is in progress */}
               {isExecuting && executingToolName && (
@@ -1247,7 +1251,8 @@ export function PlaygroundMain({
             !submitBlocked &&
             composer.input.trim().length > 0
           }
-          isThinking={status === "submitted"}
+          isThinking={isStreaming}
+          loadingIndicatorVariant={loadingIndicatorVariant}
           onSend={() => {
             sendMessage({ text: composer.input });
             composer.setInput("");

@@ -37,6 +37,7 @@ export function getAssistantAvatarDescriptor({
       ariaLabel: `${hostLabel} assistant`,
     };
   }
+
   return {
     logoSrc: getProviderLogoFromModel(model, themeMode),
     logoAlt: `${model.id} logo`,
