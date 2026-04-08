@@ -58,7 +58,6 @@ interface AppBuilderTabProps {
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
-  enableTraceViews?: boolean;
   enableMultiModelChat?: boolean;
 }
 
@@ -75,7 +74,6 @@ export function AppBuilderTab({
   onConnect,
   onOnboardingChange,
   playgroundServerSelectorProps,
-  enableTraceViews = false,
   enableMultiModelChat = false,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
@@ -371,7 +369,6 @@ export function AppBuilderTab({
         >
           <PlaygroundMain
             serverName={serverName || ""}
-            enableTraceViews={enableTraceViews}
             enableMultiModelChat={enableMultiModelChat}
             isExecuting={isExecuting}
             executingToolName={selectedTool}

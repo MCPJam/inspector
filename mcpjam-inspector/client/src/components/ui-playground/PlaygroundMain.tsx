@@ -112,7 +112,6 @@ type ThreadThemeMode = "light" | "dark";
 
 interface PlaygroundMainProps {
   serverName: string;
-  enableTraceViews?: boolean;
   enableMultiModelChat?: boolean;
   onWidgetStateChange?: (toolCallId: string, state: unknown) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
@@ -191,7 +190,6 @@ function InvokingIndicator({
 
 export function PlaygroundMain({
   serverName,
-  enableTraceViews = false,
   enableMultiModelChat = false,
   onWidgetStateChange,
   playgroundServerSelectorProps,
@@ -452,9 +450,7 @@ export function PlaygroundMain({
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
-    enableTraceViews &&
-    traceViewsSupported &&
-    (!isMultiModelMode || !effectiveHasMessages);
+    traceViewsSupported && (!isMultiModelMode || !effectiveHasMessages);
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -540,10 +536,10 @@ export function PlaygroundMain({
   }, [resolvedSelectedModels]);
 
   useEffect(() => {
-    if (!enableTraceViews || !traceViewsSupported) {
+    if (!traceViewsSupported) {
       setTraceViewMode("chat");
     }
-  }, [enableTraceViews, traceViewsSupported]);
+  }, [traceViewsSupported]);
 
   useEffect(() => {
     setTraceViewMode("chat");

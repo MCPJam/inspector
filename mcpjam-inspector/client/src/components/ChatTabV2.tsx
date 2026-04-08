@@ -73,7 +73,6 @@ interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
   onHasMessagesChange?: (hasMessages: boolean) => void;
-  enableTraceViews?: boolean;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
   hostedWorkspaceIdOverride?: string;
@@ -109,7 +108,6 @@ export function ChatTabV2({
   connectedOrConnectingServerConfigs,
   selectedServerNames,
   onHasMessagesChange,
-  enableTraceViews = false,
   enableMultiModelChat = false,
   minimalMode = false,
   hostedWorkspaceIdOverride,
@@ -315,7 +313,6 @@ export function ChatTabV2({
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
   const showTopTraceViewTabs =
-    enableTraceViews &&
     traceViewsSupported &&
     !minimalMode &&
     (!isMultiModelMode || !effectiveHasMessages);
@@ -326,11 +323,11 @@ export function ChatTabV2({
   const appliedEvalChatHandoffIdRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!enableTraceViews || !traceViewsSupported) {
+    if (!traceViewsSupported) {
       setTraceViewMode("chat");
       setRevealedInChat(false);
     }
-  }, [enableTraceViews, traceViewsSupported]);
+  }, [traceViewsSupported]);
 
   useEffect(() => {
     if (!canEnableMultiModel && multiModelEnabled) {
