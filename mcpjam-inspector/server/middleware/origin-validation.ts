@@ -23,7 +23,8 @@ function getAllowedOrigins(): string[] {
   }
 
   // Default: localhost origins on common dev ports
-  const ports = [SERVER_PORT, 5173, 8080];
+  const clientPort = parseInt(process.env.CLIENT_PORT || "5173", 10);
+  const ports = [SERVER_PORT, clientPort, 8080];
   const origins: string[] = [];
 
   for (const port of ports) {

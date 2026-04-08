@@ -35,7 +35,10 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
+  SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 import { useConvexAuth } from "convex/react";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { MCPIcon } from "@/components/ui/mcp-icon";
@@ -356,22 +359,59 @@ function navigateToEvalsRunsList() {
   navigateToCiEvalsRoute({ type: "list" });
 }
 
-function SidebarEvalsNavGroup({
+type EvalsSubnavItem = {
+  title: "Playground" | "Runs";
+  href: string;
+  icon: typeof Puzzle | typeof GitBranch;
+  isActive: (activeTab?: string) => boolean;
+  onClick: () => void;
+};
+
+export function getEvalsSubnavItems(options: {
+  evaluateRunsEnabled: boolean;
+}): EvalsSubnavItem[] {
+  const items: EvalsSubnavItem[] = [
+    {
+      title: "Playground",
+      href: withTestingSurface(buildEvalsHash({ type: "list" })),
+      icon: Puzzle,
+      isActive: (activeTab) => activeTab === "evals",
+      onClick: navigateToEvalsExploreList,
+    },
+  ];
+
+  if (options.evaluateRunsEnabled) {
+    items.push({
+      title: "Runs",
+      href: "#/ci-evals",
+      icon: GitBranch,
+      isActive: (activeTab) => activeTab === "ci-evals",
+      onClick: navigateToEvalsRunsList,
+    });
+  }
+
+  return items;
+}
+
+export function SidebarEvalsNavGroup({
   title,
   Icon,
   disabled,
   disabledTooltip,
   activeTab,
+  showRuns = true,
 }: {
   title: string;
   Icon: React.ComponentType<{ className?: string }>;
   disabled?: boolean;
   disabledTooltip?: string;
   activeTab?: string;
+  showRuns?: boolean;
 }) {
   const isEvalsFamily = activeTab === "evals" || activeTab === "ci-evals";
-  const exploreHash = withTestingSurface(buildEvalsHash({ type: "list" }));
-  const runsHash = "#/ci-evals";
+  const subnavItems = getEvalsSubnavItems({
+    evaluateRunsEnabled: showRuns,
+  });
 
   const parentButton = (
     <SidebarMenuButton
@@ -421,42 +461,30 @@ function SidebarEvalsNavGroup({
               parentButton
             )}
             <SidebarMenuSub>
-              <SidebarMenuSubItem>
-                <SidebarMenuSubButton
-                  isActive={activeTab === "evals"}
-                  href={exploreHash}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (disabled) return;
-                    navigateToEvalsExploreList();
-                  }}
-                  aria-disabled={disabled || undefined}
-                  className={
-                    disabled ? "pointer-events-none opacity-50" : undefined
-                  }
-                >
-                  <Puzzle className="h-4 w-4" />
-                  <span>Playground</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-              <SidebarMenuSubItem>
-                <SidebarMenuSubButton
-                  isActive={activeTab === "ci-evals"}
-                  href={runsHash}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (disabled) return;
-                    navigateToEvalsRunsList();
-                  }}
-                  aria-disabled={disabled || undefined}
-                  className={
-                    disabled ? "pointer-events-none opacity-50" : undefined
-                  }
-                >
-                  <GitBranch className="h-4 w-4" />
-                  <span>Runs</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
+              {subnavItems.map((item) => {
+                const ItemIcon = item.icon;
+
+                return (
+                  <SidebarMenuSubItem key={item.title}>
+                    <SidebarMenuSubButton
+                      isActive={item.isActive(activeTab)}
+                      href={item.href}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (disabled) return;
+                        item.onClick();
+                      }}
+                      aria-disabled={disabled || undefined}
+                      className={
+                        disabled ? "pointer-events-none opacity-50" : undefined
+                      }
+                    >
+                      <ItemIcon className="h-4 w-4" />
+                      <span>{item.title}</span>
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                );
+              })}
             </SidebarMenuSub>
           </SidebarMenuItem>
         </SidebarMenu>
@@ -489,6 +517,7 @@ export function MCPSidebar({
   const clientConfigEnabled = useFeatureFlagEnabled("client-config-enabled");
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const evalsEnabled = useFeatureFlagEnabled("evals-enabled");
+  const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
   const learnMoreEnabled = useFeatureFlagEnabled("learn-more-enabled");
   const { isAuthenticated } = useConvexAuth();
   const learningEnabled = !!learningFlagEnabled && isAuthenticated;
@@ -501,6 +530,7 @@ export function MCPSidebar({
     return localStorage.getItem(APP_BUILDER_VISITED_KEY) === "true";
   });
   const learnMore = useLearnMore();
+  const { state, isMobile } = useSidebar();
 
   // Get list of connected server names
   const connectedServerNames = useMemo(() => {
@@ -614,20 +644,71 @@ export function MCPSidebar({
     <>
       <Sidebar collapsible="icon" {...props}>
         <SidebarHeader>
-          <button
-            onClick={() => handleNavClick("#servers")}
-            className="flex items-center justify-center px-4 py-4 w-full cursor-pointer hover:opacity-80 transition-opacity"
+          <div
+            className={cn(
+              "no-drag",
+              state === "collapsed" && !isMobile && "flex justify-center px-0",
+            )}
           >
-            <img
-              src={
-                themeMode === "dark"
-                  ? "/mcp_jam_dark.png"
-                  : "/mcp_jam_light.png"
-              }
-              alt="MCP Jam"
-              className="h-4 w-auto"
-            />
-          </button>
+            {isMobile ? (
+              <button
+                type="button"
+                onClick={() => handleNavClick("#servers")}
+                className="flex w-full cursor-pointer items-center justify-center px-4 py-4 transition-opacity hover:opacity-80"
+              >
+                <img
+                  src={
+                    themeMode === "dark"
+                      ? "/mcp_jam_dark.png"
+                      : "/mcp_jam_light.png"
+                  }
+                  alt="MCP Jam"
+                  className="h-4 w-auto"
+                />
+              </button>
+            ) : state === "expanded" ? (
+              <div className="relative isolate w-full">
+                <button
+                  type="button"
+                  onClick={() => handleNavClick("#servers")}
+                  className={cn(
+                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-3 transition-opacity duration-200",
+                    /* Reserve space for the collapse control so the logo stays visually centered and
+                       clicks on the logo never compete with the invisible hit target. */
+                    "px-2 pr-10 hover:opacity-80",
+                  )}
+                >
+                  <img
+                    src={
+                      themeMode === "dark"
+                        ? "/mcp_jam_dark.png"
+                        : "/mcp_jam_light.png"
+                    }
+                    alt="MCP Jam"
+                    className="h-4 w-auto"
+                  />
+                </button>
+                <SidebarTrigger
+                  className={cn(
+                    "absolute top-1/2 right-0 z-20 size-7 -translate-y-1/2 shrink-0",
+                    /* pointer-events must stay enabled: if we use pointer-events-none until hover,
+                       a click can lose :hover before mouseup/click (Electron / fast moves) and the
+                       event never reaches this button. Touch has no hover — use coarse-pointer rule. */
+                    "pointer-events-auto opacity-0 transition-opacity duration-200",
+                    /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
+                    "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
+                    "[@media(hover:none)]:opacity-100",
+                  )}
+                  aria-label="Collapse sidebar"
+                />
+              </div>
+            ) : (
+              <SidebarTrigger
+                className="size-7 shrink-0"
+                aria-label="Expand sidebar"
+              />
+            )}
+          </div>
           {updateReady && (
             <div className="px-2 pb-2">
               <Button
@@ -685,6 +766,7 @@ export function MCPSidebar({
                     disabled={evalsEntry.disabled}
                     disabledTooltip={evalsEntry.disabledTooltip}
                     activeTab={activeTab}
+                    showRuns={evaluateRunsEnabled === true}
                   />
                 ) : null}
                 {/* Add subtle divider between sections (except after the last section) */}

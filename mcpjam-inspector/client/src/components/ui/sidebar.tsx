@@ -73,21 +73,25 @@ function SidebarProvider({
   const open = openProp ?? _open;
   const setOpen = React.useCallback(
     (value: boolean | ((value: boolean) => boolean)) => {
-      const openState = typeof value === "function" ? value(open) : value;
       if (setOpenProp) {
+        const openState = typeof value === "function" ? value(open) : value;
         setOpenProp(openState);
-      } else {
-        _setOpen(openState);
+        return;
       }
 
-      // This sets the cookie to keep the sidebar state.
-      // Use Secure flag in production (HTTPS) and SameSite for CSRF protection
-      const isSecure = window.location.protocol === "https:";
-      const secureFlag = isSecure ? "; Secure" : "";
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; SameSite=Lax${secureFlag}`;
+      _setOpen((prev) => {
+        return typeof value === "function" ? value(prev) : value;
+      });
     },
     [setOpenProp, open],
   );
+
+  // Persist effective open state (matches prior behavior; avoids side effects inside _setOpen updaters).
+  React.useEffect(() => {
+    const isSecure = window.location.protocol === "https:";
+    const secureFlag = isSecure ? "; Secure" : "";
+    document.cookie = `${SIDEBAR_COOKIE_NAME}=${open}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}; SameSite=Lax${secureFlag}`;
+  }, [open]);
 
   // Helper to toggle the sidebar.
   const toggleSidebar = React.useCallback(() => {
@@ -208,7 +212,7 @@ function Sidebar({
 
   return (
     <div
-      className="group peer text-sidebar-foreground hidden md:block"
+      className="group group/sidebar-rail peer text-sidebar-foreground hidden md:block"
       data-state={state}
       data-collapsible={state === "collapsed" ? collapsible : ""}
       data-variant={variant}

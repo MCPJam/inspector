@@ -5,7 +5,6 @@ import {
   SDK_EVAL_QUICKSTART_INSTALL,
   SDK_EVAL_QUICKSTART_ENV,
   SDK_EVAL_QUICKSTART_RUN,
-  SDK_TEST_AGENT_PROVIDERS,
   buildShellEnvSnippet,
   buildDotEnvSnippet,
 } from "../sdk-eval-quickstart";
@@ -51,19 +50,23 @@ describe("SdkEvalQuickstart", () => {
     });
   });
 
-  it("renders all three step cards with content visible", () => {
+  it("renders all four step cards with content visible", () => {
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    expect(screen.getByText("Install")).toBeTruthy();
+    expect(
+      screen.getByText("Create a project and install the SDK"),
+    ).toBeTruthy();
     expect(screen.getByText("Set environment")).toBeTruthy();
-    expect(screen.getByText("Run the test")).toBeTruthy();
+    expect(
+      screen.getByText("Add mcp-eval.quickstart.test.ts to your project"),
+    ).toBeTruthy();
+    expect(screen.getByText("Run the demo test")).toBeTruthy();
 
     // All content visible without expansion
-    expect(screen.getByText(SDK_EVAL_QUICKSTART_INSTALL)).toBeTruthy();
+    expect(document.body.textContent).toContain("npm install @mcpjam/sdk");
     expect(document.body.textContent).toContain("workspace-api-key");
     expect(document.body.textContent).toContain("learn.mcpjam.com");
     expect(document.body.textContent).toContain("openai");
-    expect(document.body.textContent).toContain("openrouter");
     expect(
       screen.getAllByText(/mcp-eval\.quickstart\.test\.ts/).length,
     ).toBeGreaterThanOrEqual(1);
@@ -74,11 +77,14 @@ describe("SdkEvalQuickstart", () => {
     expect(SDK_EVAL_QUICKSTART_RUN).toMatch(/evalTest\.accuracy/);
   });
 
-  it("shows provider list and SDK README link", () => {
+  it("shows the SDK docs link", () => {
     renderWithProviders(<SdkEvalQuickstart workspaceId="ws-1" />);
 
-    expect(document.body.textContent).toContain(SDK_TEST_AGENT_PROVIDERS);
-    expect(screen.getByText("SDK README")).toBeTruthy();
+    const docsLink = screen.getByRole("link", {
+      name: "Learn more and see all providers in the SDK docs",
+    });
+
+    expect(docsLink).toHaveAttribute("href", "https://docs.mcpjam.com/sdk");
   });
 
   it("copies install snippet when copy is triggered", async () => {
@@ -112,7 +118,7 @@ describe("SdkEvalQuickstart", () => {
     expect(copyToClipboard).toHaveBeenCalledTimes(1);
   });
 
-  it("copies .env snippet when copy is triggered", async () => {
+  it("copies shell exports snippet when copy is triggered", async () => {
     const user = userEvent.setup();
     const { copyToClipboard } = await import("@/lib/clipboard");
     vi.mocked(copyToClipboard).mockResolvedValue(true);

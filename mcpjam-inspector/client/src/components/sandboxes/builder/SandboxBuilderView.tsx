@@ -302,7 +302,7 @@ export function SandboxBuilderView({
     isAuthenticated,
     sandboxId: sandboxId ?? null,
   });
-  const { createSandbox, updateSandbox, setSandboxMode } =
+  const { createSandbox, updateSandbox, setSandboxMode, upsertSandboxMember } =
     useSandboxMutations();
   const { createServer } = useServerMutations();
 
@@ -353,11 +353,14 @@ export function SandboxBuilderView({
   );
   const [isSaving, setIsSaving] = useState(false);
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
+  const [canvasViewportRefitNonce, setCanvasViewportRefitNonce] = useState(0);
   const panelGroupContainerRef = useRef<HTMLDivElement | null>(null);
   const rightPanelRef = useRef<ImperativePanelHandle | null>(null);
   const isInitialMountRef = useRef(true);
   const pendingRestartRef = useRef(false);
   const prevViewModeRef = useRef(viewMode);
+  const prevViewModeForCanvasRefitRef = useRef<ViewMode>(viewMode);
+  const prevMobileSetupSheetForCanvasRef = useRef(isSetupSheetOpen);
 
   // Sync builder session to sessionStorage so it survives OAuth redirects
   useEffect(() => {
@@ -433,6 +436,25 @@ export function SandboxBuilderView({
       setChatKey((k) => k + 1);
     }
   }, [viewMode]);
+
+  useEffect(() => {
+    const prev = prevViewModeForCanvasRefitRef.current;
+    prevViewModeForCanvasRefitRef.current = viewMode;
+    if (viewMode === "setup" && prev !== "setup") {
+      setCanvasViewportRefitNonce((n) => n + 1);
+    }
+  }, [viewMode]);
+
+  useEffect(() => {
+    if (!isMobile || viewMode !== "setup") {
+      prevMobileSetupSheetForCanvasRef.current = isSetupSheetOpen;
+      return;
+    }
+    if (prevMobileSetupSheetForCanvasRef.current !== isSetupSheetOpen) {
+      setCanvasViewportRefitNonce((n) => n + 1);
+    }
+    prevMobileSetupSheetForCanvasRef.current = isSetupSheetOpen;
+  }, [isMobile, viewMode, isSetupSheetOpen]);
 
   // Playground snapshot writer — keeps localStorage in sync with draft config
   useEffect(() => {
@@ -978,6 +1000,15 @@ export function SandboxBuilderView({
     },
     onToggleServer: handleToggleServer,
     onServerOptionalChange: handleServerOptionalChange,
+    inviteSandboxMember: sandboxId
+      ? async (email: string) => {
+          await upsertSandboxMember({
+            sandboxId,
+            email: email.trim().toLowerCase(),
+            sendInviteEmail: true,
+          });
+        }
+      : undefined,
   };
 
   const setupPanelDesktop = (
@@ -1244,6 +1275,7 @@ export function SandboxBuilderView({
                           <SandboxCanvas
                             viewModel={viewModel}
                             selectedNodeId={selectedNodeId}
+                            canvasViewportRefitNonce={canvasViewportRefitNonce}
                             canvasServerPicker={{
                               workspaceServers,
                               selectedServerIds:

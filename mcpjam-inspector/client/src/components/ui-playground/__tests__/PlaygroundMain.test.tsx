@@ -8,9 +8,18 @@ import {
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 
+vi.mock("framer-motion", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("framer-motion")>();
+  return {
+    ...actual,
+    useReducedMotion: () => false,
+  };
+});
+
 // Mock lucide-react icons
 vi.mock("lucide-react", () => ({
   ArrowDown: () => <span data-testid="icon-arrow-down" />,
+  ArrowUp: () => <span data-testid="icon-arrow-up" />,
   Braces: () => <span data-testid="icon-braces" />,
   Loader2: () => <span data-testid="icon-loader" />,
   Smartphone: () => <span data-testid="icon-smartphone" />,
@@ -222,6 +231,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onChange,
     onSubmit,
     disabled,
+    submitDisabled,
     placeholder,
     pulseSubmit,
   }: {
@@ -229,6 +239,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onChange: (v: string) => void;
     onSubmit: (e: any) => void;
     disabled: boolean;
+    submitDisabled?: boolean;
     placeholder: string;
     pulseSubmit?: boolean;
   }) => (
@@ -248,7 +259,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
       />
       <button
         type="submit"
-        disabled={disabled}
+        disabled={disabled || !!submitDisabled}
         data-testid="chat-submit-button"
         data-pulsing={pulseSubmit ? "true" : "false"}
       >
@@ -399,15 +410,17 @@ vi.mock("@/stores/traffic-log-store", () => ({
   },
 }));
 
-// Mock shared app state
+// Mock shared app state (mutate `connectionStatus` in tests when needed)
+const mockSharedAppState = {
+  servers: {
+    "test-server": { connectionStatus: "connected" },
+  } as Record<string, { connectionStatus: string }>,
+  workspaces: {},
+  activeWorkspaceId: "default",
+};
+
 vi.mock("@/state/app-state-context", () => ({
-  useSharedAppState: () => ({
-    servers: {
-      "test-server": { connectionStatus: "connected" },
-    },
-    workspaces: {},
-    activeWorkspaceId: "default",
-  }),
+  useSharedAppState: () => mockSharedAppState,
 }));
 
 // Mock chat-helpers
@@ -433,6 +446,9 @@ describe("PlaygroundMain", () => {
     capturedChatSessionOptions = null;
     mockPreferencesState.themeMode = "light";
     mockPreferencesState.themePreset = "soft-pop";
+    mockSharedAppState.servers["test-server"] = {
+      connectionStatus: "connected",
+    };
     Object.assign(mockUseChatSession, {
       messages: [],
       status: "ready",
@@ -529,8 +545,16 @@ describe("PlaygroundMain", () => {
     it("shows welcome message when thread is empty", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
+      expect(screen.getByRole("img", { name: /MCPJam/i })).toBeInTheDocument();
       expect(
-        screen.getByText("Test ChatGPT Apps and MCP Apps"),
+        screen.getByRole("heading", {
+          name: /This is your playground for MCP./i,
+        }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText(
+          /Test prompts, inspect tools, and debug AI-powered apps/i,
+        ),
       ).toBeInTheDocument();
     });
 
@@ -624,7 +648,9 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(
-        screen.getByPlaceholderText("Ask something to render UI..."),
+        screen.getByPlaceholderText(
+          "Try a prompt that could call your tools...",
+        ),
       ).toBeInTheDocument();
     });
 
@@ -639,6 +665,154 @@ describe("PlaygroundMain", () => {
 
       expect(screen.getByTestId("chat-input-field")).toHaveValue(
         "Draw me an MCP architecture diagram",
+      );
+    });
+
+    it("types initialInput with a typewriter when initialInputTypewriter is true", () => {
+      vi.useFakeTimers();
+      const full = "Draw me an MCP architecture diagram";
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={false}
+          initialInput={full}
+          initialInputTypewriter={true}
+        />,
+      );
+
+      const field = screen.getByTestId("chat-input-field");
+      expect(field).toHaveValue("");
+
+      act(() => {
+        vi.advanceTimersByTime(20);
+      });
+      expect(field).toHaveValue("D");
+
+      act(() => {
+        vi.advanceTimersByTime(20 * full.length);
+      });
+      expect(field).toHaveValue(full);
+
+      vi.useRealTimers();
+    });
+
+    it("pulses submit during first-run typewriter NUX when pulseSubmit is true", () => {
+      const full = "Hello world";
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          showPostConnectGuide={false}
+          initialInput={full}
+          initialInputTypewriter={true}
+          pulseSubmit={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
+        "data-pulsing",
+        "true",
+      );
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "User edit" },
+      });
+
+      expect(screen.getByTestId("chat-submit-button")).toHaveAttribute(
+        "data-pulsing",
+        "false",
+      );
+    });
+
+    it("disables submit when blockSubmitUntilServerConnected and server is not connected", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connecting",
+      };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Draw me an MCP architecture diagram"
+          initialInputTypewriter={false}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
+    });
+
+    it("enables submit after server connects when blockSubmitUntilServerConnected is true", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connecting",
+      };
+
+      const { rerender } = render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Hello"
+          initialInputTypewriter={false}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
+
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connected",
+      };
+      rerender(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Hello"
+          initialInputTypewriter={false}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("shows App Builder send NUX hint outside ChatInput while typewriter NUX is active", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connecting",
+      };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Draw me an MCP architecture diagram"
+          initialInputTypewriter={true}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      const hint = screen.getByTestId("app-builder-send-nux-hint");
+      const chatInput = screen.getByTestId("chat-input");
+      expect(hint).toHaveTextContent("Try this prompt with a demo MCP server");
+      expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
+      expect(
+        chatInput.compareDocumentPosition(hint) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(hint.querySelector("svg")).toBeTruthy();
+    });
+
+    it("keeps App Builder send NUX hint visible after server connects", () => {
+      mockSharedAppState.servers["test-server"] = {
+        connectionStatus: "connected",
+      };
+
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          initialInput="Draw me an MCP architecture diagram"
+          initialInputTypewriter={true}
+          blockSubmitUntilServerConnected={true}
+        />,
+      );
+
+      expect(screen.getByTestId("app-builder-send-nux-hint")).toHaveTextContent(
+        "Try this prompt with a demo MCP server",
       );
     });
 

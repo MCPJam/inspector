@@ -1,4 +1,9 @@
 import { useEffect, useState, type RefObject } from "react";
+import { cn } from "@/lib/utils";
+import {
+  useSandboxHostStyle,
+  useSandboxHostTheme,
+} from "@/contexts/sandbox-host-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
@@ -120,8 +125,18 @@ export function Thread({
   const canSendFullscreenChat =
     !fullscreenChatDisabled && fullscreenChatInput.trim().length > 0;
 
+  const sandboxHostStyle = useSandboxHostStyle();
+  const sandboxHostTheme = useSandboxHostTheme();
+  const isChatgptDark =
+    sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
+
   return (
-    <div className="min-h-0 min-w-0 flex-1 pb-4">
+    <div
+      className={cn(
+        "flex-1 min-h-0 min-w-0 pb-4",
+        isChatgptDark && "bg-[#212121] text-[#DFDFDF]",
+      )}
+    >
       {/* Fixed spacer to reserve space for PIP widget */}
       {pipWidgetId && (
         <div className="h-[480px] flex-shrink-0 pointer-events-none" />

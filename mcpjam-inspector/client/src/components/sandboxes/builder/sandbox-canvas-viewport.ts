@@ -4,7 +4,13 @@ import type { SandboxFlowNode } from "./types";
 export const SANDBOX_BUILDER_NODE_WIDTH = 280;
 export const SANDBOX_BUILDER_NODE_HEIGHT = 128;
 
-/** Chat / host node id from `buildSandboxCanvas` — used to center the viewport on load. */
+/**
+ * Extra space below the host card for the dashed connector + add-server control
+ * (`SandboxCanvas` host handle UI extends below the card with `translate-y-full`).
+ */
+export const SANDBOX_BUILDER_HOST_OVERFLOW_BELOW = 56;
+
+/** Chat / host node id from `buildSandboxCanvas`. */
 export const SANDBOX_BUILDER_HOST_NODE_ID = "host";
 
 interface SandboxCanvasBounds {
@@ -31,6 +37,12 @@ function getNodeDimensions(node: SandboxFlowNode): {
 
 function getRenderableNodes(nodes: SandboxFlowNode[]) {
   return nodes.filter((node) => node.type === "sandboxNode");
+}
+
+export function getSandboxBuilderRenderableNodeIds(
+  nodes: SandboxFlowNode[],
+): string[] {
+  return getRenderableNodes(nodes).map((node) => node.id);
 }
 
 export function getSandboxCanvasLayoutSignature(
@@ -66,6 +78,43 @@ export function getSandboxCanvasBounds(
       maxY: Number.NEGATIVE_INFINITY,
     },
   );
+}
+
+/**
+ * Static graph bounds for `fitBounds`, including host overflow below the card.
+ * Use when React Flow measured bounds are missing or invalid.
+ */
+export function getSandboxCanvasStaticFitBounds(
+  nodes: SandboxFlowNode[],
+): { x: number; y: number; width: number; height: number } | null {
+  const bounds = getSandboxCanvasBounds(nodes);
+  if (!bounds) {
+    return null;
+  }
+  const rect = {
+    x: bounds.minX,
+    y: bounds.minY,
+    width: bounds.maxX - bounds.minX,
+    height: bounds.maxY - bounds.minY,
+  };
+  return extendSandboxViewportBoundsForHostOverflow(rect, nodes);
+}
+
+/** Widen the fit rect downward when the host node is present (measured RF bounds may omit overflow UI). */
+export function extendSandboxViewportBoundsForHostOverflow(
+  bounds: { x: number; y: number; width: number; height: number },
+  layoutNodes: SandboxFlowNode[],
+): { x: number; y: number; width: number; height: number } {
+  const hasHost = layoutNodes.some(
+    (n) => n.type === "sandboxNode" && n.id === SANDBOX_BUILDER_HOST_NODE_ID,
+  );
+  if (!hasHost) {
+    return bounds;
+  }
+  return {
+    ...bounds,
+    height: bounds.height + SANDBOX_BUILDER_HOST_OVERFLOW_BELOW,
+  };
 }
 
 export function getSandboxCanvasCenter(nodes: SandboxFlowNode[]) {

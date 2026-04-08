@@ -273,11 +273,11 @@ export function LoggerView({
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="flex items-center gap-1.5 px-2 py-1.5 border-b border-border flex-shrink-0">
+      <div className="@container/logger-toolbar flex min-w-0 shrink-0 items-center gap-1.5 border-b border-border px-2 py-1.5">
         {isSearchVisible && (
           <>
-            <div className="relative flex-1 min-w-0">
-              <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+            <div className="relative min-w-0 flex-1">
+              <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
               <Input
                 placeholder="Search logs"
                 value={searchQuery}
@@ -285,130 +285,136 @@ export function LoggerView({
                 className="h-7 pl-7 text-xs"
               />
             </div>
-            <span className="text-xs text-muted-foreground whitespace-nowrap hidden sm:inline-block">
+            <span className="hidden whitespace-nowrap text-xs text-muted-foreground @min-[400px]/logger-toolbar:inline-block">
               {filteredItemCount} / {totalItemCount}
             </span>
 
-            {/* Source Filter */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7 relative"
-                  title="Filter Source"
-                >
-                  <Filter
-                    className={cn(
-                      "h-3.5 w-3.5",
-                      sourceFilter !== "all" && "text-primary",
-                    )}
-                  />
-                  {sourceFilter !== "all" && (
-                    <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuRadioGroup
-                  value={sourceFilter}
-                  onValueChange={(value) =>
-                    setSourceFilter(value as "all" | TrafficSource)
-                  }
-                >
-                  <DropdownMenuRadioItem value="all" className="text-xs">
-                    All
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="mcp-server" className="text-xs">
-                    Server
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
-                    Apps
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-
-            {/* Log Level Config */}
-            {isLogLevelVisible && (
-              <Popover>
-                <PopoverTrigger asChild>
+            {/* Source filter + log levels — hide on narrow panels; search + copy/clear stay */}
+            <div className="hidden items-center gap-1.5 @min-[340px]/logger-toolbar:flex">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7"
-                    title="Log Levels"
+                    className="relative h-7 w-7"
+                    title="Filter Source"
                   >
-                    <Settings2 className="h-3.5 w-3.5" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[280px] p-3" align="end">
-                  <div className="space-y-3">
-                    <h4 className="font-medium text-xs text-muted-foreground mb-2">
-                      Server Log Levels
-                    </h4>
-                    {selectableServers.length === 0 ? (
-                      <p className="text-[10px] text-muted-foreground">
-                        No connected servers
-                      </p>
-                    ) : (
-                      <div className="space-y-2">
-                        {selectableServers.map((server) => (
-                          <div
-                            key={server.id}
-                            className="flex items-center justify-between gap-2"
-                          >
-                            <span
-                              className="text-[11px] font-medium truncate max-w-[120px]"
-                              title={server.id}
-                            >
-                              {server.id}
-                            </span>
-                            <Select
-                              value={serverLogLevels[server.id] || "debug"}
-                              onValueChange={(val) => {
-                                const level = val as LoggingLevel;
-                                setServerLogLevels((prev) => ({
-                                  ...prev,
-                                  [server.id]: level,
-                                }));
-                                setServerLoggingLevel(server.id, level)
-                                  .then((res) => {
-                                    if (res?.success)
-                                      toast.success(
-                                        `Updated ${server.id} to ${level}`,
-                                      );
-                                    else
-                                      toast.error(
-                                        res?.error || "Failed to update",
-                                      );
-                                  })
-                                  .catch(() => toast.error("Failed to update"));
-                              }}
-                            >
-                              <SelectTrigger className="h-6 w-[100px] text-[10px]">
-                                <SelectValue placeholder="Level" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {LOGGING_LEVELS.map((level) => (
-                                  <SelectItem
-                                    key={level}
-                                    value={level}
-                                    className="text-[10px]"
-                                  >
-                                    {level}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                          </div>
-                        ))}
-                      </div>
+                    <Filter
+                      className={cn(
+                        "h-3.5 w-3.5",
+                        sourceFilter !== "all" && "text-primary",
+                      )}
+                    />
+                    {sourceFilter !== "all" && (
+                      <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
                     )}
-                  </div>
-                </PopoverContent>
-              </Popover>
-            )}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuRadioGroup
+                    value={sourceFilter}
+                    onValueChange={(value) =>
+                      setSourceFilter(value as "all" | TrafficSource)
+                    }
+                  >
+                    <DropdownMenuRadioItem value="all" className="text-xs">
+                      All
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem
+                      value="mcp-server"
+                      className="text-xs"
+                    >
+                      Server
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="mcp-apps" className="text-xs">
+                      Apps
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              {isLogLevelVisible && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7"
+                      title="Log Levels"
+                    >
+                      <Settings2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[280px] p-3" align="end">
+                    <div className="space-y-3">
+                      <h4 className="mb-2 text-xs font-medium text-muted-foreground">
+                        Server Log Levels
+                      </h4>
+                      {selectableServers.length === 0 ? (
+                        <p className="text-[10px] text-muted-foreground">
+                          No connected servers
+                        </p>
+                      ) : (
+                        <div className="space-y-2">
+                          {selectableServers.map((server) => (
+                            <div
+                              key={server.id}
+                              className="flex items-center justify-between gap-2"
+                            >
+                              <span
+                                className="max-w-[120px] truncate text-[11px] font-medium"
+                                title={server.id}
+                              >
+                                {server.id}
+                              </span>
+                              <Select
+                                value={serverLogLevels[server.id] || "debug"}
+                                onValueChange={(val) => {
+                                  const level = val as LoggingLevel;
+                                  setServerLogLevels((prev) => ({
+                                    ...prev,
+                                    [server.id]: level,
+                                  }));
+                                  setServerLoggingLevel(server.id, level)
+                                    .then((res) => {
+                                      if (res?.success)
+                                        toast.success(
+                                          `Updated ${server.id} to ${level}`,
+                                        );
+                                      else
+                                        toast.error(
+                                          res?.error || "Failed to update",
+                                        );
+                                    })
+                                    .catch(() =>
+                                      toast.error("Failed to update"),
+                                    );
+                                }}
+                              >
+                                <SelectTrigger className="h-6 w-[100px] text-[10px]">
+                                  <SelectValue placeholder="Level" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {LOGGING_LEVELS.map((level) => (
+                                    <SelectItem
+                                      key={level}
+                                      value={level}
+                                      className="text-[10px]"
+                                    >
+                                      {level}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
+            </div>
           </>
         )}
 
@@ -420,7 +426,7 @@ export function LoggerView({
           size="icon"
           onClick={copyLogs}
           disabled={filteredItemCount === 0}
-          className="h-7 w-7 flex-shrink-0"
+          className="hidden h-7 w-7 shrink-0 @min-[300px]/logger-toolbar:inline-flex"
           title="Copy logs to clipboard"
         >
           <Copy className="h-3.5 w-3.5" />

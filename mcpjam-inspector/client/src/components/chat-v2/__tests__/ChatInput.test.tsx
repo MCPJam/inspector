@@ -262,6 +262,70 @@ describe("ChatInput", () => {
         expect(submitButton).not.toBeDisabled();
       }
     });
+
+    it("disables submit when submitDisabled is true even if value has content", () => {
+      render(
+        <ChatInput {...defaultProps} value="Hello" submitDisabled={true} />,
+      );
+
+      const buttons = screen.getAllByRole("button");
+      const submitButton = buttons.find(
+        (btn) => btn.querySelector("svg.lucide-arrow-up") !== null,
+      );
+      expect(submitButton).toBeDefined();
+      expect(submitButton).toBeDisabled();
+    });
+
+    it("does not request form submit on Enter when submitDisabled is true", () => {
+      const requestSubmitSpy = vi
+        .spyOn(HTMLFormElement.prototype, "requestSubmit")
+        .mockImplementation(() => {});
+
+      render(
+        <ChatInput
+          {...defaultProps}
+          value="Hello"
+          submitDisabled={true}
+          onSubmit={vi.fn((e) => e.preventDefault())}
+        />,
+      );
+
+      const textarea = screen.getByPlaceholderText("Type your message...");
+      fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+      expect(requestSubmitSpy).not.toHaveBeenCalled();
+
+      requestSubmitSpy.mockRestore();
+    });
+  });
+
+  describe("onboarding send button", () => {
+    it("applies glow animation only when pulseSubmit is true", () => {
+      const { rerender } = render(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={false} />,
+      );
+      let submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit).toBeDefined();
+      expect(submit?.className).not.toContain("animate-onboarding-pulse");
+
+      rerender(
+        <ChatInput {...defaultProps} value="Hello" pulseSubmit={true} />,
+      );
+      submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit?.className).toContain("animate-onboarding-pulse");
+    });
+
+    it("uses shadow-none so default button shadow does not read as a constant glow", () => {
+      render(<ChatInput {...defaultProps} value="Hello" />);
+      const submit = screen
+        .getAllByRole("button")
+        .find((btn) => btn.querySelector("svg.lucide-arrow-up") !== null);
+      expect(submit?.className).toContain("shadow-none");
+    });
   });
 
   describe("disabled state", () => {

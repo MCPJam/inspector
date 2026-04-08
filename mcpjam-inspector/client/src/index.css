@@ -797,6 +797,75 @@
   }
 }
 
+/* Hand-drawn NUX arrow: stroke draw-on animation */
+@keyframes hand-draw-stroke {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.hand-draw-path {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+.hand-draw-path-body {
+  animation: hand-draw-stroke 1s cubic-bezier(0.33, 1, 0.68, 1) forwards;
+}
+
+/* Filled arrowhead pops in after the stroke finishes drawing */
+.hand-draw-arrowhead-fill {
+  opacity: 0;
+  animation: hand-draw-arrowhead-fade 0.26s cubic-bezier(0.33, 1, 0.68, 1) 0.72s
+    forwards;
+}
+
+@keyframes hand-draw-arrowhead-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Hand-drawn NUX arrow: text fade-in */
+@keyframes hand-draw-text-appear {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.hand-draw-text-appear {
+  opacity: 0;
+  animation: hand-draw-text-appear 0.4s cubic-bezier(0.33, 1, 0.68, 1) 0.85s
+    forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hand-draw-path {
+    stroke-dashoffset: 0;
+    animation: none;
+  }
+  .hand-draw-arrowhead-fill {
+    opacity: 1;
+    animation: none;
+  }
+  .hand-draw-text-appear {
+    opacity: 1;
+    transform: none;
+    animation: none;
+  }
+}
+
 /* Font code variable for theme */
 @theme inline {
   --font-code: var(--font-code);

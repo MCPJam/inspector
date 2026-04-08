@@ -129,6 +129,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("convex/react", () => ({
@@ -137,6 +138,7 @@ vi.mock("convex/react", () => ({
   }),
   useQuery: () => undefined,
   useMutation: () => vi.fn(),
+  useAction: () => vi.fn(),
 }));
 
 vi.mock("@/hooks/useRegistryServers", async (importOriginal) => {
@@ -176,11 +178,23 @@ vi.mock("@/hooks/use-json-rpc-panel", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useWorkspaces", () => ({
-  useWorkspaceServers: () => ({
-    serversRecord: {},
-  }),
-}));
+vi.mock("@/hooks/useWorkspaces", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/hooks/useWorkspaces")>();
+  return {
+    ...actual,
+    useWorkspaceServers: () => ({
+      serversRecord: {},
+    }),
+    useWorkspaceQueries: () => ({
+      allWorkspaces: undefined,
+      workspaces: [],
+      sortedWorkspaces: [],
+      isLoading: false,
+      hasWorkspaces: false,
+      hasAnyWorkspaces: false,
+    }),
+  };
+});
 
 vi.mock("../connection/ServerConnectionCard", () => ({
   ServerConnectionCard: ({
