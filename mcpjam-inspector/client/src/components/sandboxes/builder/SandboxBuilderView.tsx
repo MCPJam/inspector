@@ -1150,6 +1150,11 @@ export function SandboxBuilderView({
                                   initialRequireToolApproval={
                                     draftSandboxConfig.requireToolApproval
                                   }
+                                  loadingIndicatorVariant={
+                                    draftSandboxConfig.hostStyle === "chatgpt"
+                                      ? "chatgpt-dot"
+                                      : "claude-mark"
+                                  }
                                   onOAuthRequired={handlePreviewOAuthRequired}
                                   sandboxComposerBlocked={
                                     introGate.composerBlocked

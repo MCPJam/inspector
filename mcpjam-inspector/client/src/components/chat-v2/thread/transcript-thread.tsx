@@ -16,6 +16,7 @@ import type { DisplayMode } from "@/stores/ui-playground-store";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { cn } from "@/lib/utils";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 
 const NOOP = (..._args: unknown[]) => {};
 const TRANSCRIPT_SCROLL_SETTLE_MS = 120;
@@ -69,6 +70,9 @@ export interface TranscriptThreadProps extends MessageViewPassthroughProps {
   viewportRef?: RefObject<HTMLElement | null>;
   transcriptRef?: Ref<HTMLDivElement>;
   contentClassName?: string;
+  isLoading?: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
+  lastRenderableMessageId?: string | null;
   getMessageWrapperProps?: (
     args: MessageWrapperArgs,
   ) => MessageWrapperProps | undefined;
@@ -187,6 +191,9 @@ export function TranscriptThread({
   viewportRef,
   transcriptRef,
   contentClassName,
+  isLoading = false,
+  loadingIndicatorVariant = "default",
+  lastRenderableMessageId = null,
   getMessageWrapperProps,
 }: TranscriptThreadProps) {
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -342,6 +349,14 @@ export function TranscriptThread({
             isHighlighted,
           }) ?? {};
         const { className, ...restWrapperProps } = wrapperProps;
+        const claudeFooterMode =
+          loadingIndicatorVariant === "claude-mark" &&
+          message.role === "assistant" &&
+          message.id === lastRenderableMessageId
+            ? isLoading
+              ? "animated"
+              : "static"
+            : "none";
 
         return (
           <div
@@ -412,6 +427,7 @@ export function TranscriptThread({
               minimalMode={minimalMode}
               interactive={interactive}
               reasoningDisplayMode={reasoningDisplayMode}
+              claudeFooterMode={claudeFooterMode}
             />
           </div>
         );

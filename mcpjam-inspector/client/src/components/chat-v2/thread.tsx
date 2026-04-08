@@ -1,4 +1,4 @@
-import { useEffect, useState, type RefObject } from "react";
+import { useEffect, useMemo, useState, type RefObject } from "react";
 import { cn } from "@/lib/utils";
 import {
   useSandboxHostStyle,
@@ -15,8 +15,13 @@ import { ThinkingIndicator } from "@/components/chat-v2/shared/thinking-indicato
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
+import {
+  getLastRenderableConversationMessage,
+  hasRenderableConversationContent,
+} from "./thread/thread-helpers";
 
 interface ThreadProps {
   messages: UIMessage[];
@@ -45,6 +50,7 @@ interface ThreadProps {
   showSaveViewButton?: boolean;
   minimalMode?: boolean;
   interactive?: boolean;
+  loadingIndicatorVariant?: LoadingIndicatorVariant;
   reasoningDisplayMode?: ReasoningDisplayMode;
   focusMessageId?: string | null;
   highlightedMessageIds?: string[];
@@ -75,6 +81,7 @@ export function Thread({
   showSaveViewButton = true,
   minimalMode = false,
   interactive = true,
+  loadingIndicatorVariant = "default",
   reasoningDisplayMode = "inline",
   focusMessageId = null,
   highlightedMessageIds = [],
@@ -129,6 +136,21 @@ export function Thread({
   const sandboxHostTheme = useSandboxHostTheme();
   const isChatgptDark =
     sandboxHostStyle === "chatgpt" && sandboxHostTheme === "dark";
+  const lastRenderableMessage = useMemo(
+    () => getLastRenderableConversationMessage(messages),
+    [messages],
+  );
+  const hasVisibleAssistantResponse =
+    lastRenderableMessage?.role === "assistant" &&
+    hasRenderableConversationContent(lastRenderableMessage);
+  const lastRenderableMessageId = hasVisibleAssistantResponse
+    ? lastRenderableMessage.id
+    : null;
+  const shouldShowStandaloneThinkingIndicator =
+    loadingIndicatorVariant === "claude-mark" ||
+    loadingIndicatorVariant === "chatgpt-dot"
+      ? isLoading && !hasVisibleAssistantResponse
+      : isLoading;
 
   return (
     <div
@@ -170,15 +192,18 @@ export function Thread({
         highlightedMessageIds={highlightedMessageIds}
         navigationKey={navigationKey}
         viewportRef={viewportRef}
+        isLoading={isLoading}
+        loadingIndicatorVariant={loadingIndicatorVariant}
+        lastRenderableMessageId={lastRenderableMessageId}
         contentClassName={
           contentClassName ??
           "min-w-0 w-full max-w-4xl mx-auto px-4 pt-8 pb-16 space-y-8"
         }
         getMessageWrapperProps={getMessageWrapperProps}
       />
-      {isLoading && (
+      {shouldShowStandaloneThinkingIndicator && (
         <div className="min-w-0 w-full max-w-4xl mx-auto px-4">
-          <ThinkingIndicator model={model} />
+          <ThinkingIndicator model={model} variant={loadingIndicatorVariant} />
         </div>
       )}
 
@@ -193,6 +218,7 @@ export function Thread({
           disabled={fullscreenChatDisabled}
           canSend={canSendFullscreenChat}
           isThinking={isLoading}
+          loadingIndicatorVariant={loadingIndicatorVariant}
           onSend={() => {
             if (!canSendFullscreenChat) return;
             const text = fullscreenChatInput;
