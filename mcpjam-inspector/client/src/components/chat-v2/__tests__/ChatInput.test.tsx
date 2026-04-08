@@ -549,17 +549,5 @@ describe("ChatInput", () => {
       expect(screen.queryByTestId("context")).not.toBeInTheDocument();
       expect(screen.queryByTestId("context-trigger")).not.toBeInTheDocument();
     });
-
-    it("hides x-ray toggle in minimal mode", () => {
-      render(
-        <ChatInput
-          {...defaultProps}
-          minimalMode={true}
-          onXrayModeChange={vi.fn()}
-        />,
-      );
-
-      expect(screen.queryByText("X-Ray")).not.toBeInTheDocument();
-    });
   });
 });

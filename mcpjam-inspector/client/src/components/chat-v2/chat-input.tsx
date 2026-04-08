@@ -10,14 +10,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import {
-  ArrowUp,
-  Square,
-  Paperclip,
-  Glasses,
-  ShieldCheck,
-  Plus,
-} from "lucide-react";
+import { ArrowUp, Square, Paperclip, ShieldCheck, Plus } from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -53,7 +46,6 @@ import {
 import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
-import { usePostHog } from "posthog-js/react";
 import {
   useSandboxHostStyle,
   useSandboxHostTheme,
@@ -81,6 +73,11 @@ interface ChatInputProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   onModelChange: (model: ModelDefinition) => void;
+  multiModelEnabled?: boolean;
+  selectedModels?: ModelDefinition[];
+  onSelectedModelsChange?: (models: ModelDefinition[]) => void;
+  onMultiModelEnabledChange?: (enabled: boolean) => void;
+  enableMultiModel?: boolean;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -106,9 +103,6 @@ interface ChatInputProps {
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
   onChangeFileAttachments?: (files: FileAttachment[]) => void;
-  /** X-Ray mode toggle */
-  xrayMode?: boolean;
-  onXrayModeChange?: (enabled: boolean) => void;
   /** Tool approval toggle */
   requireToolApproval?: boolean;
   onRequireToolApprovalChange?: (enabled: boolean) => void;
@@ -140,6 +134,11 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
+  multiModelEnabled = false,
+  selectedModels,
+  onSelectedModelsChange,
+  onMultiModelEnabledChange,
+  enableMultiModel = false,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -159,8 +158,6 @@ export function ChatInput({
   onChangeSkillResults,
   fileAttachments = [],
   onChangeFileAttachments,
-  xrayMode = false,
-  onXrayModeChange,
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
@@ -169,7 +166,6 @@ export function ChatInput({
   sandboxAttachableServers,
   onAttachSandboxServer,
 }: ChatInputProps) {
-  const posthog = usePostHog();
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
@@ -302,6 +298,11 @@ export function ChatInput({
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
     fileAttachments.length > 0;
+  const effectiveSelectedModels =
+    selectedModels && selectedModels.length > 0
+      ? selectedModels
+      : [currentModel];
+  const hideContextPopover = multiModelEnabled;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;
@@ -559,6 +560,11 @@ export function ChatInput({
                   onModelChange={onModelChange}
                   isLoading={isLoading}
                   hasMessages={hasMessages}
+                  enableMultiModel={enableMultiModel}
+                  multiModelEnabled={multiModelEnabled}
+                  selectedModels={effectiveSelectedModels}
+                  onSelectedModelsChange={onSelectedModelsChange}
+                  onMultiModelEnabledChange={onMultiModelEnabledChange}
                 />
                 <SystemPromptSelector
                   systemPrompt={
@@ -572,6 +578,8 @@ export function ChatInput({
                   hasMessages={hasMessages}
                   onResetChat={onResetChat}
                   currentModel={currentModel}
+                  multiModelEnabled={multiModelEnabled}
+                  selectedModels={effectiveSelectedModels}
                 />
               </>
             )}
@@ -610,41 +618,10 @@ export function ChatInput({
                 </TooltipContent>
               </Tooltip>
             )}
-            {!minimalMode && onXrayModeChange && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={xrayMode ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => {
-                      if (!xrayMode) {
-                        posthog.capture("xray_opened");
-                      }
-                      onXrayModeChange(!xrayMode);
-                    }}
-                    className={cn(
-                      "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer",
-                      "@max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                    )}
-                  >
-                    <Glasses className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0" />
-                    <span className="text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      X-Ray
-                    </span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {xrayMode
-                    ? "Hide X-Ray view"
-                    : "See what is sent to the model"}
-                </TooltipContent>
-              </Tooltip>
-            )}
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {!minimalMode && (
+            {!minimalMode && !hideContextPopover && (
               <Context
                 usedTokens={tokenUsage?.totalTokens ?? 0}
                 usage={
