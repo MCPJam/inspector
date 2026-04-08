@@ -91,10 +91,6 @@ vi.mock("@/components/chat-v2/mcpjam-free-models-prompt", () => ({
   MCPJamFreeModelsPrompt: () => <div data-testid="upsell-prompt" />,
 }));
 
-vi.mock("@/components/xray/xray-snapshot-view", () => ({
-  XRaySnapshotView: () => <div data-testid="xray-view" />,
-}));
-
 vi.mock("@/components/chat-v2/error", () => ({
   ErrorBox: ({ message }: { message: string }) => (
     <div data-testid="error-box">{message}</div>

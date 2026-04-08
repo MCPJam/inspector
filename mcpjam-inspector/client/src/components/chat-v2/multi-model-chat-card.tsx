@@ -14,6 +14,7 @@ import {
 } from "@/components/chat-v2/model-compare-card-header";
 import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
 import { useChatSession } from "@/hooks/use-chat-session";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import type { ModelDefinition } from "@/shared/types";
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
@@ -150,6 +151,7 @@ export function MultiModelChatCard({
     traceViewsSupported,
     isStreaming,
     addToolApprovalResponse,
+    systemPrompt,
   } = useChatSession({
     selectedServers,
     hostedWorkspaceId,
@@ -180,6 +182,12 @@ export function MultiModelChatCard({
     traceVersion: 1 as const,
     messages: [],
   };
+  const cardRawXRayMirror = useDebouncedXRayPayload({
+    systemPrompt,
+    messages,
+    selectedServers,
+    enabled: showLiveTraceDiagnostics && !isThreadEmpty && traceViewsSupported,
+  });
   const errorMessage = formatErrorMessage(error);
 
   const latestTurn = liveTraceEnvelope?.turns?.at(-1);
@@ -486,26 +494,65 @@ export function MultiModelChatCard({
         ) : null}
 
         {showLiveTraceDiagnostics ? (
-          <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
-            <div className="flex-1 min-h-0 overflow-hidden p-3">
-              {activeTraceViewMode === "timeline" && !hasTraceSnapshot ? (
-                <LiveTracePendingState
-                  testId={`multi-model-live-trace-pending-${String(model.id)}`}
-                />
-              ) : (
-                <TraceViewer
-                  trace={traceViewerTrace}
-                  model={model}
-                  toolsMetadata={toolsMetadata}
-                  toolServerMap={toolServerMap}
-                  forcedViewMode={activeTraceViewMode}
-                  hideToolbar
-                  fillContent
-                  hideTranscriptRevealControls
-                />
-              )}
+          activeTraceViewMode === "raw" ? (
+            <StickToBottom
+              className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300 overflow-hidden"
+              resize="smooth"
+              initial="smooth"
+            >
+              <div className="relative flex flex-1 min-h-0 overflow-hidden p-3">
+                <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+                  <TraceViewer
+                    trace={traceViewerTrace}
+                    model={model}
+                    toolsMetadata={toolsMetadata}
+                    toolServerMap={toolServerMap}
+                    forcedViewMode={activeTraceViewMode}
+                    hideToolbar
+                    fillContent
+                    hideTranscriptRevealControls
+                    rawGrowWithContent
+                    rawXRayMirror={{
+                      payload: cardRawXRayMirror.payload,
+                      loading: cardRawXRayMirror.loading,
+                      error: cardRawXRayMirror.error,
+                      refetch: cardRawXRayMirror.refetch,
+                      hasUiMessages: cardRawXRayMirror.hasMessages,
+                    }}
+                  />
+                </StickToBottom.Content>
+                <ScrollToBottomButton />
+              </div>
+            </StickToBottom>
+          ) : (
+            <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
+              <div className="flex-1 min-h-0 overflow-hidden p-3">
+                {activeTraceViewMode === "timeline" && !hasTraceSnapshot ? (
+                  <LiveTracePendingState
+                    testId={`multi-model-live-trace-pending-${String(model.id)}`}
+                  />
+                ) : (
+                  <TraceViewer
+                    trace={traceViewerTrace}
+                    model={model}
+                    toolsMetadata={toolsMetadata}
+                    toolServerMap={toolServerMap}
+                    forcedViewMode={activeTraceViewMode}
+                    hideToolbar
+                    fillContent
+                    hideTranscriptRevealControls
+                    rawXRayMirror={{
+                      payload: cardRawXRayMirror.payload,
+                      loading: cardRawXRayMirror.loading,
+                      error: cardRawXRayMirror.error,
+                      refetch: cardRawXRayMirror.refetch,
+                      hasUiMessages: cardRawXRayMirror.hasMessages,
+                    }}
+                  />
+                )}
+              </div>
             </div>
-          </div>
+          )
         ) : isThreadEmpty ? (
           <div className="flex flex-1 items-center justify-center px-6 py-8 text-center text-sm text-muted-foreground">
             Send a shared message to start this model’s thread.

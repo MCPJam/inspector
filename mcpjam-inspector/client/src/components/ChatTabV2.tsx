@@ -45,8 +45,8 @@ import {
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
-import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { useSharedAppState } from "@/state/app-state-context";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
@@ -205,8 +205,6 @@ export function ChatTabV2({
     Record<string, boolean>
   >({});
 
-  // X-Ray mode state
-  const [xrayMode, setXrayMode] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<ChatTraceViewMode>("chat");
 
@@ -346,7 +344,6 @@ export function ChatTabV2({
     traceViewsSupported &&
     !isMultiModelMode &&
     !minimalMode &&
-    !xrayMode &&
     !isThreadEmpty;
   const activeTraceViewMode: ChatTraceViewMode = showTraceViewTabs
     ? traceViewMode
@@ -391,12 +388,6 @@ export function ChatTabV2({
     setMultiModelEnabled,
     setSelectedModelIds,
   ]);
-
-  useEffect(() => {
-    if (isMultiModelMode && xrayMode) {
-      setXrayMode(false);
-    }
-  }, [isMultiModelMode, xrayMode]);
 
   useEffect(() => {
     const activeModelIds = new Set(
@@ -741,6 +732,16 @@ export function ChatTabV2({
     traceVersion: 1 as const,
     messages: [],
   };
+  const rawTraceXRayMirror = useDebouncedXRayPayload({
+    systemPrompt,
+    messages,
+    selectedServers: selectedConnectedServerNames,
+    enabled:
+      traceViewsSupported &&
+      !minimalMode &&
+      !isThreadEmpty &&
+      showLiveTraceDiagnostics,
+  });
   const resetMultiModelSessions = useCallback(() => {
     setBroadcastRequest(null);
     setStopBroadcastRequestId(0);
@@ -789,10 +790,6 @@ export function ChatTabV2({
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
-      if (enabled) {
-        setXrayMode(false);
-      }
-
       setMultiModelEnabled(enabled);
     },
     [setMultiModelEnabled],
@@ -1035,7 +1032,7 @@ export function ChatTabV2({
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
-    enableMultiModel: canEnableMultiModel && !xrayMode,
+    enableMultiModel: canEnableMultiModel,
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
@@ -1055,8 +1052,6 @@ export function ChatTabV2({
     onChangeFileAttachments: setFileAttachments,
     skillResults,
     onChangeSkillResults: setSkillResults,
-    xrayMode,
-    onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     minimalMode,
@@ -1180,55 +1175,70 @@ export function ChatTabV2({
                   </div>
                 )}
 
-                {!minimalMode && xrayMode && (
-                  <StickToBottom
-                    className="relative flex flex-1 flex-col min-h-0"
-                    resize="smooth"
-                    initial="smooth"
-                  >
-                    <div className="relative flex-1 min-h-0">
-                      <StickToBottom.Content className="flex flex-col min-h-0">
-                        <XRaySnapshotView
-                          systemPrompt={systemPrompt}
-                          messages={messages}
-                          selectedServers={selectedConnectedServerNames}
-                          onClose={() => setXrayMode(false)}
-                        />
-                      </StickToBottom.Content>
-                      <ScrollToBottomButton />
-                    </div>
-
-                    <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-                      <div className="max-w-4xl mx-auto p-4">
-                        <ChatInput
-                          {...sharedChatInputProps}
-                          hasMessages={!isThreadEmpty}
-                        />
-                      </div>
-                    </div>
-                  </StickToBottom>
-                )}
-
-                {showLiveTraceDiagnostics && !minimalMode && !xrayMode && (
+                {showLiveTraceDiagnostics && !minimalMode && (
                   <div className="flex flex-1 min-h-0 flex-col animate-in fade-in duration-300">
-                    <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
-                      <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
-                        {activeTraceViewMode === "timeline" && !hasTraceSnapshot ? (
-                          <LiveTracePendingState testId="chat-live-trace-pending" />
-                        ) : (
-                          <TraceViewer
-                            trace={traceViewerTrace}
-                            model={selectedModel}
-                            toolsMetadata={toolsMetadata}
-                            toolServerMap={toolServerMap}
-                            forcedViewMode={activeTraceViewMode}
-                            hideToolbar
-                            fillContent
-                            hideTranscriptRevealControls
-                          />
-                        )}
+                    {activeTraceViewMode === "raw" ? (
+                      <StickToBottom
+                        className="flex flex-1 min-h-0 flex-col overflow-hidden"
+                        resize="smooth"
+                        initial="smooth"
+                      >
+                        <div className="relative flex flex-1 min-h-0 overflow-hidden">
+                          <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
+                            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
+                              <TraceViewer
+                                trace={traceViewerTrace}
+                                model={selectedModel}
+                                toolsMetadata={toolsMetadata}
+                                toolServerMap={toolServerMap}
+                                forcedViewMode={activeTraceViewMode}
+                                hideToolbar
+                                fillContent
+                                hideTranscriptRevealControls
+                                rawGrowWithContent
+                                rawXRayMirror={{
+                                  payload: rawTraceXRayMirror.payload,
+                                  loading: rawTraceXRayMirror.loading,
+                                  error: rawTraceXRayMirror.error,
+                                  refetch: rawTraceXRayMirror.refetch,
+                                  hasUiMessages:
+                                    rawTraceXRayMirror.hasMessages,
+                                }}
+                              />
+                            </div>
+                          </StickToBottom.Content>
+                          <ScrollToBottomButton />
+                        </div>
+                      </StickToBottom>
+                    ) : (
+                      <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
+                        <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+                          {activeTraceViewMode === "timeline" &&
+                          !hasTraceSnapshot ? (
+                            <LiveTracePendingState testId="chat-live-trace-pending" />
+                          ) : (
+                            <TraceViewer
+                              trace={traceViewerTrace}
+                              model={selectedModel}
+                              toolsMetadata={toolsMetadata}
+                              toolServerMap={toolServerMap}
+                              forcedViewMode={activeTraceViewMode}
+                              hideToolbar
+                              fillContent
+                              hideTranscriptRevealControls
+                              rawXRayMirror={{
+                                payload: rawTraceXRayMirror.payload,
+                                loading: rawTraceXRayMirror.loading,
+                                error: rawTraceXRayMirror.error,
+                                refetch: rawTraceXRayMirror.refetch,
+                                hasUiMessages:
+                                  rawTraceXRayMirror.hasMessages,
+                              }}
+                            />
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
 
                     <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
                       {errorMessage && (
@@ -1257,7 +1267,7 @@ export function ChatTabV2({
                   <StickToBottom
                     className="relative flex flex-1 flex-col min-h-0 animate-in fade-in duration-300"
                     style={
-                      xrayMode || showLiveTraceDiagnostics
+                      showLiveTraceDiagnostics
                         ? { display: "none" }
                         : undefined
                     }
@@ -1317,8 +1327,7 @@ export function ChatTabV2({
                   </StickToBottom>
                 )}
 
-                {(!minimalMode || !xrayMode) &&
-                  isThreadEmpty &&
+                {isThreadEmpty &&
                   (minimalMode ? (
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="flex-1 flex flex-col items-center justify-center px-4">

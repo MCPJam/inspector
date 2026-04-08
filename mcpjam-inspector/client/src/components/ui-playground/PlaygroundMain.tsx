@@ -63,7 +63,6 @@ import { useTrafficLogStore } from "@/stores/traffic-log-store";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
 import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-overlay";
 import { useSharedAppState } from "@/state/app-state-context";
-import { XRaySnapshotView } from "@/components/xray/xray-snapshot-view";
 import { Settings2 } from "lucide-react";
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useConvexAuth } from "convex/react";
@@ -77,6 +76,7 @@ import {
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { TraceViewModeTabs } from "@/components/evals/trace-view-mode-tabs";
@@ -275,7 +275,6 @@ export function PlaygroundMain({
     }[]
   >([]);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
-  const [xrayMode, setXrayMode] = useState(false);
   const [traceViewMode, setTraceViewMode] =
     useState<PlaygroundTraceViewMode>("chat");
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
@@ -483,7 +482,6 @@ export function PlaygroundMain({
     enableTraceViews &&
     traceViewsSupported &&
     !isMultiModelMode &&
-    !xrayMode &&
     !isThreadEmpty;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
     ? traceViewMode
@@ -538,12 +536,6 @@ export function PlaygroundMain({
     setMultiModelEnabled,
     setSelectedModelIds,
   ]);
-
-  useEffect(() => {
-    if (isMultiModelMode && xrayMode) {
-      setXrayMode(false);
-    }
-  }, [isMultiModelMode, xrayMode]);
 
   useEffect(() => {
     const activeModelIds = new Set(
@@ -788,10 +780,6 @@ export function PlaygroundMain({
 
   const handleMultiModelEnabledChange = useCallback(
     (enabled: boolean) => {
-      if (enabled) {
-        setXrayMode(false);
-      }
-
       setMultiModelEnabled(enabled);
     },
     [setMultiModelEnabled],
@@ -974,6 +962,15 @@ export function PlaygroundMain({
     traceVersion: 1 as const,
     messages: [],
   };
+  const playgroundRawXRayMirror = useDebouncedXRayPayload({
+    systemPrompt,
+    messages,
+    selectedServers,
+    enabled:
+      showLiveTraceDiagnostics &&
+      !isThreadEmpty &&
+      traceViewsSupported,
+  });
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
     !hasTraceSnapshot &&
@@ -997,7 +994,7 @@ export function PlaygroundMain({
     selectedModels: resolvedSelectedModels,
     onSelectedModelsChange: handleSelectedModelsChange,
     onMultiModelEnabledChange: handleMultiModelEnabledChange,
-    enableMultiModel: canEnableMultiModel && !xrayMode,
+    enableMultiModel: canEnableMultiModel,
     systemPrompt,
     onSystemPromptChange: setSystemPrompt,
     temperature,
@@ -1017,8 +1014,6 @@ export function PlaygroundMain({
     onChangeSkillResults: setSkillResults,
     fileAttachments,
     onChangeFileAttachments: setFileAttachments,
-    xrayMode,
-    onXrayModeChange: setXrayMode,
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     pulseSubmit: composer.sendButtonOnboardingPulse,
@@ -1402,24 +1397,67 @@ export function PlaygroundMain({
                     )}
                     data-testid="playground-trace-diagnostics"
                   >
-                    <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
-                      <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
-                        {showLiveTracePending ? (
-                          <LiveTracePendingState testId="playground-live-trace-pending" />
-                        ) : (
-                          <TraceViewer
-                            trace={traceViewerTrace}
-                            model={selectedModel}
-                            toolsMetadata={toolsMetadata}
-                            toolServerMap={toolServerMap}
-                            forcedViewMode={activeTraceViewMode}
-                            hideToolbar
-                            fillContent
-                            hideTranscriptRevealControls
-                          />
-                        )}
+                    {activeTraceViewMode === "raw" && !showLiveTracePending ? (
+                      <StickToBottom
+                        className="flex flex-1 min-h-0 flex-col overflow-hidden"
+                        resize="smooth"
+                        initial="smooth"
+                      >
+                        <div className="relative flex flex-1 min-h-0 overflow-hidden">
+                          <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
+                            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
+                              <TraceViewer
+                                trace={traceViewerTrace}
+                                model={selectedModel}
+                                toolsMetadata={toolsMetadata}
+                                toolServerMap={toolServerMap}
+                                forcedViewMode={activeTraceViewMode}
+                                hideToolbar
+                                fillContent
+                                hideTranscriptRevealControls
+                                rawGrowWithContent
+                                rawXRayMirror={{
+                                  payload: playgroundRawXRayMirror.payload,
+                                  loading: playgroundRawXRayMirror.loading,
+                                  error: playgroundRawXRayMirror.error,
+                                  refetch: playgroundRawXRayMirror.refetch,
+                                  hasUiMessages:
+                                    playgroundRawXRayMirror.hasMessages,
+                                }}
+                              />
+                            </div>
+                          </StickToBottom.Content>
+                          <ScrollToBottomButton />
+                        </div>
+                      </StickToBottom>
+                    ) : (
+                      <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
+                        <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+                          {showLiveTracePending ? (
+                            <LiveTracePendingState testId="playground-live-trace-pending" />
+                          ) : (
+                            <TraceViewer
+                              trace={traceViewerTrace}
+                              model={selectedModel}
+                              toolsMetadata={toolsMetadata}
+                              toolServerMap={toolServerMap}
+                              forcedViewMode={activeTraceViewMode}
+                              hideToolbar
+                              fillContent
+                              hideTranscriptRevealControls
+                              rawXRayMirror={{
+                                payload: playgroundRawXRayMirror.payload,
+                                loading: playgroundRawXRayMirror.loading,
+                                error: playgroundRawXRayMirror.error,
+                                refetch: playgroundRawXRayMirror.refetch,
+                                hasUiMessages:
+                                  playgroundRawXRayMirror.hasMessages,
+                              }}
+                            />
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    )}
                     <div className="flex-shrink-0 border-t border-border bg-background/70">
                       <div className="max-w-4xl mx-auto w-full p-3">
                         {errorMessage && (
@@ -1479,39 +1517,8 @@ export function PlaygroundMain({
                         : hostBackgroundColor,
                     }}
                   >
-                    {/* X-Ray mode: show raw JSON view of AI payload */}
-                    {xrayMode && (
-                      <StickToBottom
-                        className="relative flex flex-1 flex-col min-h-0"
-                        resize="smooth"
-                        initial="smooth"
-                      >
-                        <div className="relative flex-1 min-h-0">
-                          <StickToBottom.Content className="flex flex-col min-h-0">
-                            <XRaySnapshotView
-                              systemPrompt={systemPrompt}
-                              messages={messages}
-                              selectedServers={selectedServers}
-                              onClose={() => setXrayMode(false)}
-                            />
-                          </StickToBottom.Content>
-                          <ScrollToBottomButton />
-                        </div>
-                        <div className="flex-shrink-0 border-t border-border">
-                          <div className="max-w-xl mx-auto w-full p-3">
-                            <ChatInput
-                              {...sharedChatInputProps}
-                              hasMessages={!isThreadEmpty}
-                            />
-                          </div>
-                        </div>
-                      </StickToBottom>
-                    )}
-                    {/* Thread: kept mounted (but hidden) during X-Ray to preserve
-                        MCPAppsRenderer iframes and bridge connections */}
                     <div
                       className="flex flex-col flex-1 min-h-0"
-                      style={xrayMode ? { display: "none" } : undefined}
                     >
                       {threadContent}
                     </div>

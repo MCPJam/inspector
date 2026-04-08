@@ -53,6 +53,14 @@ vi.mock("@/components/ui/json-editor", () => ({
   },
 }));
 
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children?: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children?: ReactNode }) => (
+    <>{children}</>
+  ),
+  TooltipContent: () => null,
+}));
+
 vi.mock("@/components/chat-v2/thread/message-view", () => ({
   MessageView: (props: Record<string, unknown>) => {
     mockMessageView(props);
@@ -889,12 +897,40 @@ describe("TraceViewer", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("Raw tab exposes blob JSON so spans presence can be verified", () => {
+  it("Raw tab exposes full trace JSON in a single tree", () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     fireEvent.click(screen.getByTitle("Raw JSON"));
-    const raw = screen.getByTestId("json-editor").textContent ?? "";
-    expect(raw).toContain('"messages"');
-    expect(raw).not.toContain('"spans"');
+    expect(screen.getByTestId("trace-raw-view")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy trace" }),
+    ).toBeInTheDocument();
+    const combined = screen.getByTestId("json-editor").textContent ?? "";
+    expect(combined).toContain("Hello");
+    expect(combined).toContain('"messages"');
+    expect(combined).not.toContain('"spans"');
+
+    const withSpans = render(
+      <TraceViewer
+        trace={{
+          ...simpleTextTrace,
+          traceVersion: 1 as const,
+          spans: [
+            {
+              id: "s-ping",
+              name: "Ping",
+              category: "step" as const,
+              startMs: 0,
+              endMs: 1,
+            },
+          ],
+        }}
+        estimatedDurationMs={100}
+      />,
+    );
+    fireEvent.click(within(withSpans.container).getByTitle("Raw JSON"));
+    expect(
+      within(withSpans.container).getByTestId("json-editor").textContent ?? "",
+    ).toContain("spans");
   });
 
   it("timeline with spans but no messages still renders; Chat is empty", async () => {
@@ -921,7 +957,9 @@ describe("TraceViewer", () => {
     openChatTab();
     expect(screen.getByText("No messages in trace")).toBeInTheDocument();
     fireEvent.click(screen.getByTitle("Raw JSON"));
-    expect(screen.getByTestId("json-editor").textContent).toContain("spans");
+    expect(screen.getByTestId("json-editor").textContent ?? "").toContain(
+      "spans",
+    );
   });
 
   // --- Widget snapshot replay ---
@@ -975,22 +1013,22 @@ describe("TraceViewer", () => {
     expect(firstCall.message.parts).toBeDefined();
   });
 
-  it("raw mode shows original blob via JsonEditor", () => {
+  it("raw mode shows full trace via JsonEditor", () => {
     render(<TraceViewer trace={simpleTextTrace} />);
 
     fireEvent.click(screen.getByTitle("Raw JSON"));
-    expect(screen.getByTestId("json-editor")).toBeDefined();
+    expect(screen.getByTestId("trace-raw-view")).toBeDefined();
     expect(screen.getByTestId("json-editor").textContent).toContain("Hello");
   });
 
-  it("raw mode uses auto-height JSON so the parent pane scrolls", () => {
+  it("raw mode uses full-height collapsible JsonEditor", () => {
     render(<TraceViewer trace={simpleTextTrace} />);
 
     fireEvent.click(screen.getByTitle("Raw JSON"));
 
     expect(mockJsonEditor).toHaveBeenCalledWith(
       expect.objectContaining({
-        height: "auto",
+        height: "100%",
         viewOnly: true,
         collapsible: true,
         collapseStringsAfterLength: 100,

@@ -16,6 +16,7 @@ import {
 } from "@/components/chat-v2/model-compare-card-header";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
@@ -210,6 +211,7 @@ export function MultiModelPlaygroundCard({
     traceViewsSupported,
     isStreaming,
     addToolApprovalResponse,
+    systemPrompt,
   } = useChatSession({
     selectedServers,
     hostedWorkspaceId,
@@ -249,6 +251,12 @@ export function MultiModelPlaygroundCard({
     traceVersion: 1 as const,
     messages: [],
   };
+  const playgroundCardRawXRay = useDebouncedXRayPayload({
+    systemPrompt,
+    messages,
+    selectedServers,
+    enabled: showLiveTraceDiagnostics && !isThreadEmpty && traceViewsSupported,
+  });
   const latestTurn = effectiveLiveTraceEnvelope?.turns?.at(-1);
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
@@ -549,6 +557,13 @@ export function MultiModelPlaygroundCard({
                   hideToolbar
                   fillContent
                   hideTranscriptRevealControls
+                  rawXRayMirror={{
+                    payload: playgroundCardRawXRay.payload,
+                    loading: playgroundCardRawXRay.loading,
+                    error: playgroundCardRawXRay.error,
+                    refetch: playgroundCardRawXRay.refetch,
+                    hasUiMessages: playgroundCardRawXRay.hasMessages,
+                  }}
                 />
               )}
             </div>

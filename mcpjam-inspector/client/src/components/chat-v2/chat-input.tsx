@@ -14,7 +14,6 @@ import {
   ArrowUp,
   Square,
   Paperclip,
-  Glasses,
   ShieldCheck,
   Plus,
 } from "lucide-react";
@@ -53,7 +52,6 @@ import {
 import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp-prompt-result-card";
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
-import { usePostHog } from "posthog-js/react";
 import {
   useSandboxHostStyle,
   useSandboxHostTheme,
@@ -111,9 +109,6 @@ interface ChatInputProps {
   fileAttachments?: FileAttachment[];
   /** Callback when file attachments change */
   onChangeFileAttachments?: (files: FileAttachment[]) => void;
-  /** X-Ray mode toggle */
-  xrayMode?: boolean;
-  onXrayModeChange?: (enabled: boolean) => void;
   /** Tool approval toggle */
   requireToolApproval?: boolean;
   onRequireToolApprovalChange?: (enabled: boolean) => void;
@@ -169,8 +164,6 @@ export function ChatInput({
   onChangeSkillResults,
   fileAttachments = [],
   onChangeFileAttachments,
-  xrayMode = false,
-  onXrayModeChange,
   requireToolApproval = false,
   onRequireToolApprovalChange,
   minimalMode = false,
@@ -179,7 +172,6 @@ export function ChatInput({
   sandboxAttachableServers,
   onAttachSandboxServer,
 }: ChatInputProps) {
-  const posthog = usePostHog();
   const sandboxHostStyle = useSandboxHostStyle();
   const sandboxHostTheme = useSandboxHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
@@ -629,37 +621,6 @@ export function ChatInput({
                   {requireToolApproval
                     ? "Turn off tool approval"
                     : "Require approval before tools run"}
-                </TooltipContent>
-              </Tooltip>
-            )}
-            {!minimalMode && onXrayModeChange && !multiModelEnabled && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={xrayMode ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() => {
-                      if (!xrayMode) {
-                        posthog.capture("xray_opened");
-                      }
-                      onXrayModeChange(!xrayMode);
-                    }}
-                    className={cn(
-                      "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer",
-                      "@max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                    )}
-                  >
-                    <Glasses className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0" />
-                    <span className="text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      X-Ray
-                    </span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {xrayMode
-                    ? "Hide X-Ray view"
-                    : "See what is sent to the model"}
                 </TooltipContent>
               </Tooltip>
             )}
