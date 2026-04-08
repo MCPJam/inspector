@@ -1,7 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { SandboxBuilderView } from "../SandboxBuilderView";
 import { SANDBOX_STARTERS } from "../drafts";
+
+const { mockUseSandbox, mockChatTabV2 } = vi.hoisted(() => ({
+  mockUseSandbox: vi.fn(() => ({ sandbox: null })),
+  mockChatTabV2: vi.fn(),
+}));
 
 vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
@@ -12,7 +17,7 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/useSandboxes", () => ({
-  useSandbox: () => ({ sandbox: null }),
+  useSandbox: (...args: unknown[]) => mockUseSandbox(...args),
   useSandboxMutations: () => ({
     createSandbox: vi.fn(),
     updateSandbox: vi.fn(),
@@ -52,7 +57,10 @@ vi.mock("@/lib/sandbox-session", async (importOriginal) => {
 });
 
 vi.mock("@/components/ChatTabV2", () => ({
-  ChatTabV2: () => <div data-testid="chat-tab" />,
+  ChatTabV2: (props: { loadingIndicatorVariant?: string }) => {
+    mockChatTabV2(props);
+    return <div data-testid="chat-tab" />;
+  },
 }));
 
 vi.mock("@/components/connection/AddServerModal", () => ({
@@ -74,7 +82,43 @@ const httpsServer = {
   updatedAt: 1,
 };
 
+function createSavedSandbox(hostStyle: "claude" | "chatgpt") {
+  return {
+    sandboxId: `sbx-${hostStyle}`,
+    workspaceId: "ws-1",
+    name: `${hostStyle} sandbox`,
+    description: "",
+    hostStyle,
+    systemPrompt: "You are helpful.",
+    modelId: "openai/gpt-5-mini",
+    temperature: 0.7,
+    requireToolApproval: false,
+    allowGuestAccess: false,
+    mode: "any_signed_in_with_link" as const,
+    servers: [],
+    link: {
+      token: `token-${hostStyle}`,
+      path: `/sandbox/${hostStyle}`,
+      url: `https://example.com/sandbox/${hostStyle}`,
+      rotatedAt: 1,
+    },
+    members: [],
+    welcomeDialog: { enabled: true, body: "" },
+    feedbackDialog: {
+      enabled: true,
+      everyNToolCalls: 1,
+      promptHint: "",
+    },
+  };
+}
+
 describe("SandboxBuilderView", () => {
+  beforeEach(() => {
+    mockUseSandbox.mockReset();
+    mockUseSandbox.mockReturnValue({ sandbox: null });
+    mockChatTabV2.mockReset();
+  });
+
   it("exposes return navigation as an icon button with a descriptive label", () => {
     const draft = SANDBOX_STARTERS.find((s) => s.id === "blank")!.createDraft(
       "openai/gpt-5-mini",
@@ -172,5 +216,51 @@ describe("SandboxBuilderView", () => {
 
     expect(screen.getByRole("button", { name: /Basics/i })).toBeInTheDocument();
     expect(screen.getByTestId("sandbox-canvas")).toBeInTheDocument();
+  });
+
+  it("passes the pulsing dot loading variant for ChatGPT builder previews", () => {
+    const sandbox = createSavedSandbox("chatgpt");
+    mockUseSandbox.mockReturnValue({ sandbox });
+
+    render(
+      <SandboxBuilderView
+        workspaceId="ws-1"
+        workspaceServers={[httpsServer]}
+        sandboxId={sandbox.sandboxId}
+        initialViewMode="preview"
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-tab")).toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loadingIndicatorVariant: "chatgpt-dot",
+      }),
+    );
+  });
+
+  it("passes the Claude mark variant to Claude builder previews", () => {
+    const sandbox = createSavedSandbox("claude");
+    mockUseSandbox.mockReturnValue({ sandbox });
+
+    render(
+      <SandboxBuilderView
+        workspaceId="ws-1"
+        workspaceServers={[httpsServer]}
+        sandboxId={sandbox.sandboxId}
+        initialViewMode="preview"
+        onBack={() => {}}
+        onSavedDraft={() => {}}
+      />,
+    );
+
+    expect(screen.getByTestId("chat-tab")).toBeInTheDocument();
+    expect(mockChatTabV2).toHaveBeenCalledWith(
+      expect.objectContaining({
+        loadingIndicatorVariant: "claude-mark",
+      }),
+    );
   });
 });

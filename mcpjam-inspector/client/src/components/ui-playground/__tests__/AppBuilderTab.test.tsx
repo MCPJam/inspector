@@ -67,6 +67,7 @@ const mockUIPlaygroundStore = {
   formFields: [],
   isExecuting: false,
   deviceType: "mobile",
+  hostStyle: "claude",
   displayMode: "inline",
   globals: { locale: "en-US", theme: "light", timeZone: "UTC" },
   isSidebarVisible: true,
@@ -188,6 +189,7 @@ vi.mock("../PlaygroundMain", () => ({
   PlaygroundMain: ({
     serverName,
     isExecuting,
+    loadingIndicatorVariant,
     showPostConnectGuide,
     initialInput,
     initialInputTypewriter,
@@ -196,6 +198,7 @@ vi.mock("../PlaygroundMain", () => ({
   }: {
     serverName: string;
     isExecuting: boolean;
+    loadingIndicatorVariant?: string;
     showPostConnectGuide?: boolean;
     initialInput?: string;
     initialInputTypewriter?: boolean;
@@ -204,6 +207,7 @@ vi.mock("../PlaygroundMain", () => ({
   }) => (
     <div data-testid="playground-main">
       <span data-testid="server-name">{serverName}</span>
+      <span data-testid="loading-variant">{loadingIndicatorVariant}</span>
       {isExecuting && <span data-testid="executing">Executing...</span>}
       {initialInput && (
         <span data-testid="guided-initial-input">{initialInput}</span>
@@ -294,6 +298,7 @@ describe("AppBuilderTab", () => {
       tools: {},
       formFields: [],
       isExecuting: false,
+      hostStyle: "claude",
       isSidebarVisible: true,
     });
 
@@ -442,6 +447,36 @@ describe("AppBuilderTab", () => {
       await waitFor(() => {
         expect(screen.getByTestId("server-name")).toHaveTextContent(
           "my-server",
+        );
+      });
+    });
+
+    it("passes the Claude mark variant to PlaygroundMain when Claude host style is selected", async () => {
+      const serverConfig = createServerConfig();
+      mockUIPlaygroundStore.hostStyle = "claude";
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("loading-variant")).toHaveTextContent(
+          "claude-mark",
+        );
+      });
+    });
+
+    it("passes the pulsing dot variant to PlaygroundMain when ChatGPT host style is selected", async () => {
+      const serverConfig = createServerConfig();
+      mockUIPlaygroundStore.hostStyle = "chatgpt";
+
+      render(
+        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("loading-variant")).toHaveTextContent(
+          "chatgpt-dot",
         );
       });
     });

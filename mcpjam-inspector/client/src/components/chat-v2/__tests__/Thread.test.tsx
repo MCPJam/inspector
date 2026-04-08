@@ -1,10 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { act, render, screen } from "@testing-library/react";
 import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
 
 const mockMessageView = vi.fn();
+const mockThinkingIndicator = vi.fn();
+const mockFullscreenChatOverlay = vi.fn();
 
 // Mock child components
 vi.mock("../thread/message-view", () => ({
@@ -25,15 +27,25 @@ vi.mock("../thread/message-view", () => ({
 }));
 
 vi.mock("../shared/thinking-indicator", () => ({
-  ThinkingIndicator: ({ model }: { model: ModelDefinition }) => (
-    <div data-testid="thinking-indicator">Thinking... ({model.name})</div>
-  ),
+  ThinkingIndicator: ({
+    model,
+    variant,
+  }: {
+    model: ModelDefinition;
+    variant?: string;
+  }) => {
+    mockThinkingIndicator({ model, variant });
+    return (
+      <div data-testid="thinking-indicator">Thinking... ({model.name})</div>
+    );
+  },
 }));
 
 vi.mock("../fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: () => (
-    <div data-testid="fullscreen-chat-overlay">Fullscreen Overlay</div>
-  ),
+  FullscreenChatOverlay: (props: { loadingIndicatorVariant?: string }) => {
+    mockFullscreenChatOverlay(props);
+    return <div data-testid="fullscreen-chat-overlay">Fullscreen Overlay</div>;
+  },
 }));
 
 describe("Thread", () => {
@@ -242,6 +254,214 @@ describe("Thread", () => {
         "GPT-4",
       );
     });
+
+    it("passes the selected loading indicator variant to the inline indicator", () => {
+      render(
+        <Thread
+          {...defaultProps}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "claude-mark",
+        }),
+      );
+    });
+
+    it("keeps the GPT pulse visible before the first assistant message streams", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="chatgpt-dot"
+        />,
+      );
+
+      expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "chatgpt-dot",
+        }),
+      );
+    });
+
+    it("hides the GPT pulse once assistant content is visible while loading", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Streaming..." }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="chatgpt-dot"
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("thinking-indicator"),
+      ).not.toBeInTheDocument();
+      expect(mockThinkingIndicator).not.toHaveBeenCalled();
+    });
+
+    it("keeps the Claude placeholder row visible before the first assistant message streams", () => {
+      const messages = [createMessage({ id: "msg-1", role: "user" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
+      expect(mockThinkingIndicator).toHaveBeenCalledWith(
+        expect.objectContaining({
+          variant: "claude-mark",
+        }),
+      );
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-1" }),
+          claudeFooterMode: "none",
+        }),
+      );
+    });
+
+    it("moves the Claude mascot onto the latest assistant message while loading", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Streaming..." }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("thinking-indicator"),
+      ).not.toBeInTheDocument();
+      expect(mockThinkingIndicator).not.toHaveBeenCalled();
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-2" }),
+          claudeFooterMode: "animated",
+        }),
+      );
+    });
+
+    it("keeps the standalone Claude placeholder if the latest assistant message is still empty", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(screen.getByTestId("thinking-indicator")).toBeInTheDocument();
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-2" }),
+          claudeFooterMode: "none",
+        }),
+      );
+    });
+
+    it("keeps only the latest assistant Claude footer and makes it static after loading", () => {
+      const messages = [
+        createMessage({
+          id: "msg-1",
+          role: "assistant",
+          parts: [{ type: "text", text: "Older answer" }],
+        }),
+        createMessage({ id: "msg-2", role: "user" }),
+        createMessage({
+          id: "msg-3",
+          role: "assistant",
+          parts: [{ type: "text", text: "Latest answer" }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={false}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-1" }),
+          claudeFooterMode: "none",
+        }),
+      );
+      expect(mockMessageView).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.objectContaining({ id: "msg-3" }),
+          claudeFooterMode: "static",
+        }),
+      );
+    });
+
+    it("keeps the GPT pulse hidden after the response finishes", () => {
+      const messages = [
+        createMessage({ id: "msg-1", role: "user" }),
+        createMessage({
+          id: "msg-2",
+          role: "assistant",
+          parts: [{ type: "text", text: "Done." }],
+        }),
+      ];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          isLoading={false}
+          loadingIndicatorVariant="chatgpt-dot"
+        />,
+      );
+
+      expect(
+        screen.queryByTestId("thinking-indicator"),
+      ).not.toBeInTheDocument();
+    });
   });
 
   describe("PiP functionality", () => {
@@ -265,6 +485,31 @@ describe("Thread", () => {
       expect(
         screen.queryByTestId("fullscreen-chat-overlay"),
       ).not.toBeInTheDocument();
+    });
+
+    it("passes the selected loading indicator variant to the fullscreen overlay", () => {
+      const messages = [createMessage({ id: "msg-1", role: "assistant" })];
+
+      render(
+        <Thread
+          {...defaultProps}
+          messages={messages}
+          enableFullscreenChatOverlay={true}
+          loadingIndicatorVariant="claude-mark"
+        />,
+      );
+
+      act(() => {
+        const firstMessageProps = mockMessageView.mock.calls[0]?.[0];
+        firstMessageProps?.onRequestFullscreen("tool-1");
+      });
+
+      expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
+      expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          loadingIndicatorVariant: "claude-mark",
+        }),
+      );
     });
   });
 

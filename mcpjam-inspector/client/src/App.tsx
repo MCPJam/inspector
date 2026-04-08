@@ -645,8 +645,7 @@ export default function App() {
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(workspaceServers).find(
-      ([, server]) =>
-        (server as any).connectionStatus === "connected",
+      ([, server]) => (server as any).connectionStatus === "connected",
     );
     if (firstConnected) {
       setSelectedServer(firstConnected[0]);
