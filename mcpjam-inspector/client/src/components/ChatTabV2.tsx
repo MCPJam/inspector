@@ -53,6 +53,7 @@ import { HOSTED_MODE } from "@/lib/config";
 import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
+import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { TraceViewModeTabs } from "@/components/evals/trace-view-mode-tabs";
 import {
@@ -110,28 +111,6 @@ function ScrollToBottomButton() {
       >
         <ArrowDown className="h-4 w-4" />
       </button>
-    </div>
-  );
-}
-
-function LiveTracePendingState({
-  testId,
-}: {
-  testId: string;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-0 items-center justify-center rounded-lg border border-border/50 bg-muted/15 px-6 py-10 text-center"
-      data-testid={testId}
-    >
-      <div className="space-y-2">
-        <p className="text-sm font-medium text-foreground">
-          First step still running
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Timeline will appear after the current model step finishes.
-        </p>
-      </div>
     </div>
   );
 }
@@ -344,8 +323,7 @@ export function ChatTabV2({
     enableTraceViews &&
     traceViewsSupported &&
     !isMultiModelMode &&
-    !minimalMode &&
-    !isThreadEmpty;
+    !minimalMode;
   const activeTraceViewMode: ChatTraceViewMode = showTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -1222,7 +1200,7 @@ export function ChatTabV2({
                         <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
                           {activeTraceViewMode === "timeline" &&
                           !hasLiveTimelineContent ? (
-                            <LiveTracePendingState testId="chat-live-trace-pending" />
+                            <LiveTraceTimelineEmptyState testId="chat-live-trace-pending" />
                           ) : (
                             <TraceViewer
                               trace={traceViewerTrace}
@@ -1270,7 +1248,10 @@ export function ChatTabV2({
                         </div>
                       )}
                       <div className="max-w-4xl mx-auto p-4">
-                        <ChatInput {...sharedChatInputProps} hasMessages />
+                        <ChatInput
+                          {...sharedChatInputProps}
+                          hasMessages={!isThreadEmpty}
+                        />
                       </div>
                     </div>
                   </div>
@@ -1341,6 +1322,7 @@ export function ChatTabV2({
                 )}
 
                 {isThreadEmpty &&
+                  !showLiveTraceDiagnostics &&
                   (minimalMode ? (
                     <div className="flex-1 flex flex-col min-h-0">
                       <div className="flex-1 flex flex-col items-center justify-center px-4">

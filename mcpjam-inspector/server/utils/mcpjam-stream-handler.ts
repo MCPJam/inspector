@@ -235,15 +235,22 @@ function readUsageFromFinishChunk(
     return undefined;
   }
 
-  const usage = (
-    finishChunk as UIMessageChunk & {
-      totalUsage?: {
-        inputTokens?: number;
-        outputTokens?: number;
-        totalTokens?: number;
-      };
-    }
-  ).totalUsage;
+  // The Convex /stream endpoint sends token data via `messageMetadata` on the
+  // finish chunk (using toUIMessageStreamResponse's messageMetadata callback).
+  // Fall back to `totalUsage` for compatibility with test mocks / future changes.
+  const chunk = finishChunk as UIMessageChunk & {
+    totalUsage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    };
+    messageMetadata?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    };
+  };
+  const usage = chunk.totalUsage ?? chunk.messageMetadata;
   if (!usage) {
     return undefined;
   }

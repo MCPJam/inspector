@@ -7,6 +7,7 @@ import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import { Thread } from "@/components/chat-v2/thread";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
+import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import {
   type MultiModelCardSummary,
@@ -47,28 +48,6 @@ function ScrollToBottomButton() {
       >
         <ArrowDown className="h-4 w-4" />
       </button>
-    </div>
-  );
-}
-
-function LiveTracePendingState({
-  testId,
-}: {
-  testId: string;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-0 items-center justify-center rounded-lg border border-border/50 bg-muted/15 px-6 py-10 text-center"
-      data-testid={testId}
-    >
-      <div className="space-y-2">
-        <p className="text-sm font-medium text-foreground">
-          First step still running
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Timeline will appear after the current model step finishes.
-        </p>
-      </div>
     </div>
   );
 }
@@ -533,7 +512,7 @@ export function MultiModelChatCard({
               <div className="flex-1 min-h-0 overflow-hidden p-3">
                 {activeTraceViewMode === "timeline" &&
                 !hasLiveTimelineContent ? (
-                  <LiveTracePendingState
+                  <LiveTraceTimelineEmptyState
                     testId={`multi-model-live-trace-pending-${String(model.id)}`}
                   />
                 ) : (

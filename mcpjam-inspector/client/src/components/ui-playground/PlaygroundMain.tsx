@@ -78,6 +78,7 @@ import {
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
+import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { TraceViewModeTabs } from "@/components/evals/trace-view-mode-tabs";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
@@ -199,29 +200,6 @@ function InvokingIndicator({
     </div>
   );
 }
-
-function LiveTracePendingState({
-  testId,
-}: {
-  testId: string;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-0 items-center justify-center rounded-lg border border-border/50 bg-muted/15 px-6 py-10 text-center"
-      data-testid={testId}
-    >
-      <div className="space-y-2">
-        <p className="text-sm font-medium text-foreground">
-          First step still running
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Timeline will appear after the current model step finishes.
-        </p>
-      </div>
-    </div>
-  );
-}
-
 
 export function PlaygroundMain({
   serverName,
@@ -480,10 +458,7 @@ export function PlaygroundMain({
   const effectiveLiveTraceEnvelope =
     hasTraceSnapshot ? liveTraceEnvelope : preludeTraceEnvelope ?? liveTraceEnvelope;
   const showTraceViewTabs =
-    enableTraceViews &&
-    traceViewsSupported &&
-    !isMultiModelMode &&
-    !isThreadEmpty;
+    enableTraceViews && traceViewsSupported && !isMultiModelMode;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceViewTabs
     ? traceViewMode
     : "chat";
@@ -1435,7 +1410,7 @@ export function PlaygroundMain({
                       <div className="flex-1 min-h-0 overflow-hidden px-4 py-4">
                         <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
                           {showLiveTracePending ? (
-                            <LiveTracePendingState testId="playground-live-trace-pending" />
+                            <LiveTraceTimelineEmptyState testId="playground-live-trace-pending" />
                           ) : (
                             <TraceViewer
                               trace={traceViewerTrace}

@@ -489,6 +489,69 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  it("reads token usage from messageMetadata on the finish chunk (Convex toUIMessageStreamResponse format)", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        {
+          type: "text-start",
+          id: "text-1",
+        },
+        {
+          type: "text-delta",
+          id: "text-1",
+          delta: "Hi",
+        },
+        {
+          type: "text-end",
+          id: "text-1",
+        },
+        {
+          type: "finish",
+          finishReason: "stop",
+          messageMetadata: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+        },
+      ]),
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Hi" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const traceEvents = writtenChunks
+      .filter((chunk) => chunk?.type === "data-trace-event")
+      .map((chunk) => chunk.data);
+
+    const snapshot = traceEvents.find((e: any) => e.type === "trace_snapshot");
+    expect(snapshot.snapshot.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+    });
+
+    const llmSpan = snapshot.snapshot.spans.find(
+      (s: any) => s.category === "llm",
+    );
+    expect(llmSpan).toBeDefined();
+    expect(llmSpan.inputTokens).toBe(10);
+    expect(llmSpan.outputTokens).toBe(5);
+    expect(llmSpan.totalTokens).toBe(15);
+
+    const turnFinish = traceEvents.find((e: any) => e.type === "turn_finish");
+    expect(turnFinish.usage).toEqual({
+      inputTokens: 10,
+      outputTokens: 5,
+      totalTokens: 15,
+    });
+  });
+
   it("emits tool trace events when local tool execution runs after a streamed call", async () => {
     global.fetch = vi.fn().mockResolvedValue(
       createSseResponse([

@@ -5,6 +5,7 @@ import {
   fireEvent,
   waitFor,
   act,
+  within,
 } from "@testing-library/react";
 import { PlaygroundMain } from "../PlaygroundMain";
 
@@ -718,7 +719,16 @@ describe("PlaygroundMain", () => {
       expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
     });
 
-    it("shows a pending timeline before the first streamed snapshot and keeps the thread mounted", () => {
+    it("shows trace mode tabs on an empty thread when trace views are supported", () => {
+      mockUseChatSession.messages = [];
+      mockUseChatSession.traceViewsSupported = true;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+    });
+
+    it("shows a Runs-style timeline empty state before the first streamed snapshot and keeps the thread mounted", () => {
       mockUseChatSession.messages = [
         { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
       ];
@@ -731,9 +741,14 @@ describe("PlaygroundMain", () => {
 
       fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
 
+      const pending = screen.getByTestId("playground-live-trace-pending");
+      expect(pending).toBeInTheDocument();
       expect(
-        screen.getByTestId("playground-live-trace-pending"),
+        within(pending).getByTestId(
+          "playground-live-trace-pending-sample-preview",
+        ),
       ).toBeInTheDocument();
+      expect(within(pending).getByTestId("trace-viewer")).toBeInTheDocument();
       expect(
         screen.getByTestId("playground-trace-diagnostics"),
       ).toBeInTheDocument();

@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatTabV2 } from "../ChatTabV2";
 
@@ -305,7 +305,16 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
   });
 
-  it("shows the timeline pending state before the first streamed snapshot while keeping the thread mounted", () => {
+  it("shows trace tabs on an empty thread when trace views are supported", () => {
+    mockUseChatSession.messages = [];
+    mockUseChatSession.traceViewsSupported = true;
+
+    render(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
+
+    expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+  });
+
+  it("shows the Runs-style timeline empty state before the first streamed snapshot while keeping the thread mounted", () => {
     mockUseChatSession.messages = [
       { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
     ];
@@ -318,7 +327,12 @@ describe("ChatTabV2 trace views", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
 
-    expect(screen.getByTestId("chat-live-trace-pending")).toBeInTheDocument();
+    const pending = screen.getByTestId("chat-live-trace-pending");
+    expect(pending).toBeInTheDocument();
+    expect(
+      within(pending).getByTestId("chat-live-trace-pending-sample-preview"),
+    ).toBeInTheDocument();
+    expect(within(pending).getByTestId("trace-viewer")).toBeInTheDocument();
     expect(screen.getByTestId("thread")).toBeInTheDocument();
   });
 

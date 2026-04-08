@@ -2107,17 +2107,17 @@ export function TraceTimeline({
                   }}
                 >
                   <div
-                    className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-3 backdrop-blur"
+                    className="sticky top-0 z-20 border-b border-border/50 bg-background/95 px-4 py-1.5 backdrop-blur"
                     style={{ gridColumn: "1 / 3", gridRow: 1 }}
                   >
-                    <div className="flex min-h-8 min-w-0 items-center gap-3">
+                    <div className="flex min-h-6 min-w-0 items-center gap-3">
                       <div className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
                         Timeline
                       </div>
-                      <div className="min-h-8 min-w-0 flex-1">
+                      <div className="min-h-6 min-w-0 flex-1">
                         <div
                           ref={axisHeaderMeasureRef}
-                          className="relative h-8 min-w-0"
+                          className="relative h-6 min-w-0"
                         >
                           {collapseAxisToSingleRangeLabel ? (
                             <div className="flex h-full min-w-0 items-center justify-center">
@@ -2154,10 +2154,10 @@ export function TraceTimeline({
                     </div>
                   </div>
                   <div
-                    className="sticky top-0 z-20 flex min-h-0 items-center border-b border-l border-border/50 bg-background/95 px-3 py-3 pl-4 backdrop-blur"
+                    className="sticky top-0 z-20 flex min-h-0 items-center border-b border-l border-border/50 bg-background/95 px-3 py-1.5 pl-4 backdrop-blur"
                     style={{ gridColumn: 3, gridRow: 1 }}
                   >
-                    <div className="flex h-8 w-full min-w-0 items-center justify-start gap-1.5">
+                    <div className="flex h-6 w-full min-w-0 items-center justify-start gap-1.5">
                       <Clock
                         className="size-3 shrink-0 text-muted-foreground"
                         aria-hidden

@@ -14,6 +14,7 @@ import {
   type MultiModelCardSummary,
   ModelCompareCardHeader,
 } from "@/components/chat-v2/model-compare-card-header";
+import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
@@ -64,28 +65,6 @@ function ScrollToBottomButton() {
       >
         <ArrowDown className="h-4 w-4" />
       </button>
-    </div>
-  );
-}
-
-function LiveTracePendingState({
-  testId,
-}: {
-  testId: string;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-0 items-center justify-center rounded-lg border border-border/50 bg-muted/15 px-6 py-10 text-center"
-      data-testid={testId}
-    >
-      <div className="space-y-2">
-        <p className="text-sm font-medium text-foreground">
-          First step still running
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Timeline will appear after the current model step finishes.
-        </p>
-      </div>
     </div>
   );
 }
@@ -545,7 +524,7 @@ export function MultiModelPlaygroundCard({
           <div className="flex min-h-0 flex-1 flex-col animate-in fade-in duration-300">
             <div className="flex-1 min-h-0 overflow-hidden p-3">
               {showLiveTracePending ? (
-                <LiveTracePendingState
+                <LiveTraceTimelineEmptyState
                   testId={`playground-live-trace-pending-${String(model.id)}`}
                 />
               ) : (
