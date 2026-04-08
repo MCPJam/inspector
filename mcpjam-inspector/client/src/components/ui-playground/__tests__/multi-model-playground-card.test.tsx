@@ -62,9 +62,20 @@ vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
 }));
 
 vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
-  ModelCompareCardHeader: ({ model }: { model: { name: string } }) => (
-    <div data-testid="compare-card-header">{model.name}</div>
-  ),
+  ModelCompareCardHeader: ({
+    model,
+    showComparisonChrome = true,
+    showTraceTabs,
+  }: {
+    model: { name: string };
+    showComparisonChrome?: boolean;
+    showTraceTabs: boolean;
+  }) => {
+    if (!showComparisonChrome && !showTraceTabs) {
+      return null;
+    }
+    return <div data-testid="compare-card-header">{model.name}</div>;
+  },
 }));
 
 vi.mock("@/contexts/sandbox-host-style-context", () => ({
@@ -134,5 +145,31 @@ describe("MultiModelPlaygroundCard", () => {
     );
     expect(screen.getByTestId("summary-count")).toHaveTextContent("1");
     expect(screen.getByTestId("message-flag-count")).toHaveTextContent("1");
+  });
+
+  it("omits compare header chrome when showComparisonChrome is false (matches chat tab single-column compare)", () => {
+    render(
+      <MultiModelPlaygroundCard
+        model={model}
+        comparisonSummaries={[]}
+        selectedServers={[]}
+        broadcastRequest={null}
+        deterministicExecutionRequest={null}
+        stopRequestId={0}
+        initialSystemPrompt=""
+        initialTemperature={0.7}
+        initialRequireToolApproval={false}
+        displayMode="inline"
+        onDisplayModeChange={vi.fn()}
+        hostStyle="chatgpt"
+        effectiveThreadTheme="light"
+        deviceType="mobile"
+        selectedProtocol={null}
+        onSummaryChange={vi.fn()}
+        showComparisonChrome={false}
+      />,
+    );
+
+    expect(screen.queryByTestId("compare-card-header")).not.toBeInTheDocument();
   });
 });

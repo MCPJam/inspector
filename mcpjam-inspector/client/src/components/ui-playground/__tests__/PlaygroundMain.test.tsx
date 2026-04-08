@@ -305,21 +305,36 @@ vi.mock("@/components/evals/trace-viewer", () => ({
   ),
 }));
 
-vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
-  TraceViewModeTabs: ({
+vi.mock("@/components/evals/trace-view-mode-tabs", () => {
+  const tabs = ({
     mode,
     onModeChange,
   }: {
     mode: "chat" | "timeline" | "raw";
-    onModeChange: (mode: "chat" | "timeline" | "raw") => void;
+    onModeChange: (mode: "chat" | "timeline" | "raw" | "tools") => void;
   }) => (
     <div data-testid="trace-view-tabs" data-mode={mode}>
       <button onClick={() => onModeChange("chat")}>Chat</button>
       <button onClick={() => onModeChange("timeline")}>Trace</button>
       <button onClick={() => onModeChange("raw")}>Raw</button>
     </div>
-  ),
-}));
+  );
+
+  return {
+    TraceViewModeTabs: tabs,
+    ChatTraceViewModeHeaderBar: ({
+      mode,
+      onModeChange,
+    }: {
+      mode: "chat" | "timeline" | "raw";
+      onModeChange: (mode: "chat" | "timeline" | "raw" | "tools") => void;
+    }) => (
+      <div data-testid="chat-trace-view-mode-header-bar">
+        {tabs({ mode, onModeChange })}
+      </div>
+    ),
+  };
+});
 
 vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
   MultiModelPlaygroundCard: ({ model }: { model: { name: string } }) => (
@@ -478,6 +493,7 @@ vi.mock("@/state/app-state-context", () => ({
 vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
   formatErrorMessage: (error: any) =>
     error ? { message: error.message || "Error", details: null } : null,
+  STARTER_PROMPTS: [],
 }));
 
 // Mock utils
@@ -838,7 +854,7 @@ describe("PlaygroundMain", () => {
   });
 
   describe("multi-model chat", () => {
-    it("renders compare cards and hides the top-level trace tabs when multi-model mode is enabled", () => {
+    it("shows the chat-style multi-model empty state, mounts compare cards hidden, and keeps top-level trace tabs when trace views are enabled", () => {
       mockUseChatSession.availableModels = [
         {
           id: "gpt-4",
@@ -853,13 +869,23 @@ describe("PlaygroundMain", () => {
       ];
       mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
       mockUseChatSession.multiModelEnabled = true;
+      mockUseChatSession.traceViewsSupported = true;
 
-      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+      render(
+        <PlaygroundMain
+          {...defaultProps}
+          enableMultiModelChat={true}
+          enableTraceViews={true}
+        />,
+      );
 
+      expect(
+        screen.getByText("Try one of these to get started"),
+      ).toBeInTheDocument();
       expect(screen.getAllByTestId("multi-model-playground-card")).toHaveLength(
         2,
       );
-      expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
     });
   });
 

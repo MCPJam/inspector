@@ -122,6 +122,8 @@ interface MultiModelPlaygroundCardProps {
   invokingMessage?: string | null;
   onSummaryChange: (summary: MultiModelCardSummary) => void;
   onHasMessagesChange?: (modelId: string, hasMessages: boolean) => void;
+  /** When false, hides per-card model title and Latency/Tokens/Tools (single selected model in compare mode). */
+  showComparisonChrome?: boolean;
 }
 
 export function MultiModelPlaygroundCard({
@@ -152,6 +154,7 @@ export function MultiModelPlaygroundCard({
   invokingMessage,
   onSummaryChange,
   onHasMessagesChange,
+  showComparisonChrome = true,
 }: MultiModelPlaygroundCardProps) {
   const [modelContextQueue, setModelContextQueue] = useState<
     {
@@ -515,6 +518,7 @@ export function MultiModelPlaygroundCard({
         mode={activeTraceViewMode}
         onModeChange={handleTraceViewModeChange}
         showTraceTabs={showTraceTabs}
+        showComparisonChrome={showComparisonChrome}
       />
 
       <div
@@ -621,15 +625,8 @@ export function MultiModelPlaygroundCard({
                 }}
               >
                 {isThreadEmpty ? (
-                  <div className="flex flex-1 items-center justify-center px-6 py-8 text-center">
-                    <div className="space-y-2">
-                      <p className="text-sm font-medium text-foreground">
-                        Shared composer is ready
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Send a message to start {model.name}.
-                      </p>
-                    </div>
+                  <div className="flex flex-1 items-center justify-center px-6 py-8 text-center text-sm text-muted-foreground">
+                    Send a shared message to start this model’s thread.
                   </div>
                 ) : (
                   <StickToBottom
