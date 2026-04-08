@@ -1323,6 +1323,9 @@ describe("App hosted OAuth callback handling", () => {
     clearSandboxSession();
     window.history.replaceState({}, "", "/#/evals");
     mockHandleOAuthCallback.mockReset();
+    mockUseFeatureFlagEnabled.mockImplementation(
+      (flag: string) => flag === "playground-enabled",
+    );
 
     render(<App />);
 
@@ -1345,7 +1348,9 @@ describe("App hosted OAuth callback handling", () => {
     };
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? evaluateRunsState.value : false,
+      flag === "evaluate-runs"
+        ? evaluateRunsState.value
+        : flag === "playground-enabled",
     );
 
     render(<App />);
@@ -1376,7 +1381,9 @@ describe("App hosted OAuth callback handling", () => {
 
     mockPosthogState.featureFlags.hasLoadedFlags = false;
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : false,
+      flag === "evaluate-runs"
+        ? undefined
+        : flag === "playground-enabled",
     );
 
     render(<App />);
@@ -1403,7 +1410,9 @@ describe("App hosted OAuth callback handling", () => {
     mockHandleOAuthCallback.mockReset();
 
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "evaluate-runs" ? undefined : false,
+      flag === "evaluate-runs"
+        ? undefined
+        : flag === "playground-enabled",
     );
 
     render(<App />);
@@ -1511,7 +1520,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.hash).toBe("#app-builder");
   });
 
-  it("does not auto-route a true hosted guest into App Builder onboarding when Playground is disabled", async () => {
+  it("still auto-routes a true hosted guest into App Builder onboarding when Playground is disabled", async () => {
     clearHostedOAuthPendingState();
     clearSandboxSession();
     window.history.replaceState({}, "", "/#servers");
@@ -1521,11 +1530,11 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      expect(screen.getByTestId("app-builder-tab")).toBeInTheDocument();
     });
 
-    expect(window.location.hash).toBe("#servers");
-    expect(screen.queryByTestId("app-builder-tab")).not.toBeInTheDocument();
+    expect(window.location.hash).toBe("#app-builder");
+    expect(screen.queryByText("Servers Tab")).not.toBeInTheDocument();
   });
 
   it("goes from hosted loading straight to App Builder onboarding for a true guest when Playground is enabled", async () => {
