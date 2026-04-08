@@ -625,6 +625,7 @@
 .claude-loading-indicator__strip,
 .claude-loading-indicator__static {
   position: absolute;
+  fill: #d97757;
 }
 
 .claude-loading-indicator__static {
