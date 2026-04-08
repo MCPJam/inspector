@@ -8,6 +8,7 @@ import {
 import { listHostedTools } from "@/lib/apis/web/tools-api";
 import { authFetch } from "@/lib/session-token";
 import type { EvalStreamEvent } from "@/shared/eval-stream-events";
+import type { PromptTurn } from "@/shared/prompt-turns";
 
 export const EVALS_API_ENDPOINTS = {
   local: {
@@ -90,6 +91,26 @@ type RunTestCaseRequest = EvalRequestWithServers & {
 
 type GenerateTestsRequest = EvalRequestWithServers & {
   convexAuthToken?: string | null;
+};
+
+export type GeneratedEvalTestCase = {
+  title: string;
+  query: string;
+  runs: number;
+  expectedToolCalls: Array<{
+    toolName: string;
+    arguments: Record<string, unknown>;
+  }>;
+  isNegativeTest?: boolean;
+  scenario?: string;
+  expectedOutput?: string;
+  promptTurns?: PromptTurn[];
+};
+
+export type GenerateEvalTestsResponse = {
+  success: boolean;
+  tests: GeneratedEvalTestCase[];
+  evalTests?: GeneratedEvalTestCase[];
 };
 
 export function getEvalApiEndpoints() {
@@ -232,7 +253,7 @@ export async function runEvalTestCase(
 
 export async function generateEvalTests(
   request: GenerateTestsRequest,
-): Promise<any> {
+): Promise<GenerateEvalTestsResponse> {
   return runByMode({
     local: () =>
       postEvalRequest(
@@ -249,7 +270,7 @@ export async function generateEvalTests(
 
 export async function generateNegativeEvalTests(
   request: GenerateTestsRequest,
-): Promise<any> {
+): Promise<GenerateEvalTestsResponse> {
   return runByMode({
     local: () =>
       postEvalRequest(

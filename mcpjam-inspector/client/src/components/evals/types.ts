@@ -133,7 +133,7 @@ export type CompareRunRecord = {
   modelLabel: string;
   provider: string;
   model: string;
-  status: "idle" | "running" | "completed" | "failed";
+  status: "idle" | "running" | "completed" | "failed" | "cancelled";
   /**
    * When `status === "running"` and there is no iteration yet, true if this run
    * replaces a prior completed/failed attempt (user hit Retry or re-ran compare).

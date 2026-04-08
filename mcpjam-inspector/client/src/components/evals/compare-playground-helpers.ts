@@ -233,9 +233,12 @@ export function buildHistoricalCompareRunRecords(params: {
       continue;
     }
 
-    // In-flight compare runs clear `iteration` until the API returns; do not
-    // backfill from `recentIterations` or we show the previous run's trace/latency.
-    if (nextRecords[modelValue]?.status === "running") {
+    // In-flight or user-stopped compare rows have no `iteration` yet; do not
+    // backfill from `recentIterations` or we show the wrong run's trace/latency.
+    if (
+      nextRecords[modelValue]?.status === "running" ||
+      nextRecords[modelValue]?.status === "cancelled"
+    ) {
       continue;
     }
 
@@ -316,12 +319,48 @@ export function buildCompareRunRecord(params: {
   error?: string | null;
   startedAt?: number | null;
   completedAt?: number | null;
+  /** User or host aborted the in-flight stream before an iteration completed. */
+  cancelled?: boolean;
 }): CompareRunRecord {
-  const { modelValue, modelLabel, iteration, error = null, startedAt, completedAt } =
-    params;
+  const {
+    modelValue,
+    modelLabel,
+    iteration,
+    error = null,
+    startedAt,
+    completedAt,
+    cancelled = false,
+  } = params;
   const { provider, model } = parseModelValue(modelValue);
 
   if (!iteration) {
+    if (cancelled) {
+      const end = completedAt ?? Date.now();
+      const start = startedAt ?? null;
+      const durationMs =
+        start != null ? Math.max(end - start, 0) : null;
+      return {
+        modelValue,
+        modelLabel,
+        provider,
+        model,
+        status: "cancelled",
+        iteration: null,
+        error: null,
+        startedAt: start,
+        completedAt: end,
+        result: "cancelled",
+        metrics: {
+          durationMs,
+          toolCallCount: 0,
+          tokensUsed: 0,
+          missingCount: null,
+          unexpectedCount: null,
+          argumentMismatchCount: null,
+          mismatchCount: null,
+        },
+      };
+    }
     return {
       modelValue,
       modelLabel,

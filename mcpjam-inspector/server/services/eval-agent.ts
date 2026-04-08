@@ -1,10 +1,14 @@
 import type { ModelMessage } from "ai";
+import { normalizePromptTurns, type PromptTurn } from "@/shared/prompt-turns";
 import { logger } from "../utils/logger";
 import type { ServerToolSnapshot } from "../utils/export-helpers.js";
 import {
   flattenServerToolSnapshotTools,
   renderServerToolSnapshotSection,
 } from "../utils/export-helpers.js";
+
+const TOTAL_TEST_CASE_COUNT = 8;
+const NEGATIVE_TEST_CASE_COUNT = 2;
 
 export interface GenerateTestsRequest {
   serverIds: string[];
@@ -22,6 +26,7 @@ export interface GeneratedTestCase {
   scenario: string; // Description of the use case being tested
   expectedOutput: string; // The output or experience expected from the MCP server
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
+  promptTurns?: PromptTurn[];
 }
 
 export const AGENT_SYSTEM_PROMPT = `You are an AI agent specialized in creating realistic test cases for MCP (Model Context Protocol) servers.
@@ -31,19 +36,19 @@ The Model Context Protocol enables AI assistants to securely access external dat
 
 **Your Task:**
 Generate 8 test cases total:
-- 5 normal test cases (where tools SHOULD be triggered)
-- 3 negative test cases (where tools should NOT be triggered)
+- 6 normal test cases (where tools SHOULD be triggered)
+- 2 negative test cases (where tools should NOT be triggered)
 
-**Normal Test Case Distribution (5 tests):**
-- **2 EASY tests** (single tool): Simple, straightforward tasks using one tool
-- **2 MEDIUM tests** (2+ tools): Multi-step workflows requiring 2-3 tools in sequence or parallel
-- **1 HARD test** (3+ tools): Complex scenarios requiring 3+ tools, conditional logic, or cross-server operations
+**Normal Test Case Distribution (6 tests):**
+- **2 EASY single-turn tests** (single tool): Simple, straightforward tasks using one tool
+- **2 MEDIUM single-turn tests** (2+ tools): Multi-step workflows requiring 2-3 tools in sequence or parallel
+- **1 MEDIUM multi-turn test** (2 turns): Follow-up workflow where the user continues from the first result
+- **1 HARD multi-turn test** (2-3 turns): More complex scenario requiring 3+ tools overall, conditional logic, or cross-server operations
 
-**Negative Test Cases (3 tests):**
+**Negative Test Cases (2 tests):**
 Negative test cases are prompts where the AI assistant should NOT use any tools. These help ensure the AI doesn't incorrectly trigger tools when they're not needed.
 - **1 Meta/documentation question**: Ask about capabilities, documentation, or how tools work
-- **1 Similar keywords in non-actionable context**: Use words from tool descriptions but in casual conversation or unrelated contexts
-- **1 Ambiguous/incomplete request**: Vague requests that shouldn't trigger tools
+- **1 Ambiguous or clearly non-actionable request**: Vague or conversational prompt that should not trigger tools
 
 **Guidelines for Normal Tests:**
 1. **Realistic User Queries**: Write queries as if a real user is talking to an AI assistant
@@ -57,13 +62,15 @@ Negative test cases are prompts where the AI assistant should NOT use any tools.
 9. **Discovery-backed cases**: Prefer shorter tests that first resolve the live entity they act on, or switch to a safer capability variant that does not depend on brittle workspace state
 10. **Preserve stable sequences**: If the capability naturally requires a recurring discovery or bootstrap pattern, keep that stable sequence in expectedToolCalls instead of simplifying it away
 11. **Rewrite brittle workflows**: If a candidate workflow would only pass with unverified workspace fixtures, replace it with a substantially different but still relevant case that can cleanly attribute future failures to the MCP server
+12. **Include multi-turn examples**: At least 2 normal tests must use promptTurns with 2-3 user turns
+13. **Make turn 1 actionable**: For multi-turn tests, the first turn should already trigger at least one tool so the case remains attributable and easy to summarize
+14. **Turn-level assertions**: In multi-turn tests, keep expected tool calls on the specific turn where they should happen instead of collapsing everything onto the last turn
 
 **Guidelines for Negative Tests:**
 1. **Edge Cases**: Create prompts that test the boundary between triggering and not triggering tools
-2. **Similar Keywords**: Use words that appear in tool descriptions but in non-actionable contexts
-3. **Meta Questions**: Ask about capabilities, documentation, or how tools work (not using them)
-4. **Conversational**: Include casual conversation that mentions tool-related topics
-5. **Inventory is context only**: Negative tests must still keep expectedToolCalls as []
+2. **Meta Questions**: Ask about capabilities, documentation, or how tools work (not using them)
+3. **Conversational**: Include casual conversation, ambiguity, or vague phrasing that still should not trigger tools
+4. **Inventory is context only**: Negative tests must still keep expectedToolCalls as []
 
 **Output Format (CRITICAL):**
 Respond with ONLY a valid JSON array. No explanations, no markdown code blocks, just the raw JSON array.
@@ -78,6 +85,15 @@ Each test case must include:
   - toolName: Name of the tool to call
   - arguments: Object with expected arguments (can be empty {})
 - isNegativeTest: Boolean, true for negative tests, false or omitted for normal tests
+- promptTurns: Optional array for multi-turn tests
+  - prompt: User message for that turn
+  - expectedToolCalls: Tool calls expected during that turn
+  - expectedOutput: Optional expected response for that turn
+
+For multi-turn tests:
+- Keep top-level query aligned to the first user turn
+- Keep top-level expectedToolCalls aligned to the first turn's expected tool calls
+- Use top-level expectedOutput for the overall expected final outcome
 
 Example:
 [
@@ -110,8 +126,42 @@ Example:
         "toolName": "get_task_details",
         "arguments": {}
       }
+    ]
+  },
+  {
+    "title": "Research then follow up on the top result",
+    "query": "Find the most recent incident related to API latency and summarize it for me",
+    "runs": 1,
+    "scenario": "User first asks for a search, then asks a follow-up that depends on the first result",
+    "expectedOutput": "The AI identifies the relevant incident, then provides a focused follow-up summary after the second user turn",
+    "expectedToolCalls": [
+      {
+        "toolName": "search_incidents",
+        "arguments": {}
+      }
     ],
-    "isNegativeTest": false
+    "promptTurns": [
+      {
+        "prompt": "Find the most recent incident related to API latency and summarize it for me",
+        "expectedToolCalls": [
+          {
+            "toolName": "search_incidents",
+            "arguments": {}
+          }
+        ],
+        "expectedOutput": "The AI returns the latest latency incident with a short summary"
+      },
+      {
+        "prompt": "Now pull the full details for that incident and give me the customer impact",
+        "expectedToolCalls": [
+          {
+            "toolName": "get_incident_details",
+            "arguments": {}
+          }
+        ],
+        "expectedOutput": "The AI explains the detailed incident timeline and customer impact"
+      }
+    ]
   },
   {
     "title": "Documentation inquiry about search",
@@ -123,11 +173,11 @@ Example:
     "isNegativeTest": true
   },
   {
-    "title": "Casual mention of files",
-    "query": "I was reading about file systems yesterday. They're quite interesting!",
+    "title": "Ambiguous request without an actionable task",
+    "query": "I might need something with that later, but I'm still thinking.",
     "runs": 1,
-    "scenario": "User is having a general conversation that mentions files but doesn't request file operations",
-    "expectedOutput": "AI engages in casual conversation without triggering file tools",
+    "scenario": "User has not actually asked the assistant to do anything yet",
+    "expectedOutput": "AI asks a clarifying question or acknowledges the ambiguity without calling tools",
     "expectedToolCalls": [],
     "isNegativeTest": true
   }
@@ -153,7 +203,7 @@ export async function generateTestCases(
       ? `\n**IMPORTANT**: You have ${serverCount} servers available. Create at least 2 test cases that use tools from MULTIPLE servers to test cross-server workflows.`
       : "";
 
-  const userPrompt = `Generate 8 test cases for the following MCP server tools:
+  const userPrompt = `Generate ${TOTAL_TEST_CASE_COUNT} test cases for the following MCP server tools:
 
 ${toolsContext}
 
@@ -162,17 +212,19 @@ ${toolsContext}
 - ${totalTools} total tools${crossServerGuidance}
 
 **Remember:**
-1. Create exactly 8 tests:
-   - 5 normal tests: 2 EASY (1 tool), 2 MEDIUM (2-3 tools), 1 HARD (3+ tools)
-   - 3 negative tests: 1 meta/doc question, 1 similar keywords non-actionable, 1 ambiguous
+1. Create exactly ${TOTAL_TEST_CASE_COUNT} tests:
+   - 6 normal tests: 2 EASY single-turn, 2 MEDIUM single-turn, 1 MEDIUM multi-turn, 1 HARD multi-turn
+   - ${NEGATIVE_TEST_CASE_COUNT} negative tests: 1 meta/doc question, 1 ambiguous or clearly non-actionable prompt
 2. Write realistic user queries that sound natural
 3. Include scenario and expectedOutput for ALL tests
 4. Prefer short, discovery-backed cases over long synthetic workflows with invented workspace entities
-5. For negative tests, use keywords from tools but in non-actionable contexts
-6. If tool descriptions imply prerequisites or a stable discovery sequence, include them explicitly in expectedToolCalls
-7. Do not rely on fake names, ids, places, premium-only assumptions, or other unverified live fixtures unless an earlier step establishes them
-8. If a workflow depends on brittle live state, replace it with a safer attributable variant instead of preserving the same scenario
-9. Respond with ONLY a JSON array - no other text or markdown`;
+5. Include at least 2 multi-turn tests using promptTurns with 2-3 turns
+6. In multi-turn tests, make the first turn actionable and keep top-level query/expectedToolCalls aligned with turn 1
+7. For negative tests, use keywords from tools only in non-actionable contexts
+8. If tool descriptions imply prerequisites or a stable discovery sequence, include them explicitly in expectedToolCalls
+9. Do not rely on fake names, ids, places, premium-only assumptions, or other unverified live fixtures unless an earlier step establishes them
+10. If a workflow depends on brittle live state, replace it with a safer attributable variant instead of preserving the same scenario
+11. Respond with ONLY a JSON array - no other text or markdown`;
 
   const messageHistory: ModelMessage[] = [
     { role: "system", content: AGENT_SYSTEM_PROMPT },
@@ -236,7 +288,7 @@ ${toolsContext}
       throw new Error("Response is not an array");
     }
 
-    // Validate structure and normalize expectedToolCalls format
+    // Validate structure and normalize expectedToolCalls / promptTurns format
     const validatedTests: GeneratedTestCase[] = testCases.map((tc: any) => {
       let normalizedToolCalls: Array<{
         toolName: string;
@@ -266,11 +318,22 @@ ${toolsContext}
           .filter((call: any) => call !== null);
       }
 
-      const isNegativeTest = tc.isNegativeTest === true;
+      const normalizedPromptTurns = normalizePromptTurns(tc.promptTurns);
+      const firstTurn = normalizedPromptTurns[0];
+      const isNegativeTest =
+        tc.isNegativeTest === true ||
+        (normalizedPromptTurns.length > 0 &&
+          normalizedPromptTurns.every(
+            (turn) => turn.expectedToolCalls.length === 0,
+          ));
+
+      if (firstTurn?.expectedToolCalls?.length) {
+        normalizedToolCalls = firstTurn.expectedToolCalls;
+      }
 
       return {
         title: tc.title || "Untitled Test",
-        query: tc.query || "",
+        query: tc.query || firstTurn?.prompt || "",
         runs: typeof tc.runs === "number" ? tc.runs : 1,
         expectedToolCalls: normalizedToolCalls,
         scenario:
@@ -278,12 +341,26 @@ ${toolsContext}
           (isNegativeTest ? "Negative test case" : "No scenario provided"),
         expectedOutput:
           tc.expectedOutput ||
+          normalizedPromptTurns[normalizedPromptTurns.length - 1]?.expectedOutput ||
           (isNegativeTest
             ? "AI responds without calling any tools"
             : "No expected output provided"),
         isNegativeTest,
+        promptTurns:
+          normalizedPromptTurns.length > 0 ? normalizedPromptTurns : undefined,
       };
     });
+
+    if (validatedTests.length > TOTAL_TEST_CASE_COUNT) {
+      return validatedTests.slice(0, TOTAL_TEST_CASE_COUNT);
+    }
+
+    if (validatedTests.length < TOTAL_TEST_CASE_COUNT) {
+      logger.warn("[eval-agent] LLM returned fewer test cases than requested", {
+        requestedCount: TOTAL_TEST_CASE_COUNT,
+        returnedCount: validatedTests.length,
+      });
+    }
 
     return validatedTests;
   } catch (parseError) {

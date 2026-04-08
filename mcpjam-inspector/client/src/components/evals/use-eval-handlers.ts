@@ -175,6 +175,8 @@ export function useEvalHandlers({
             expectedToolCalls: testCase.expectedToolCalls || [],
             isNegativeTest: testCase.isNegativeTest,
             scenario: testCase.scenario,
+            expectedOutput: testCase.expectedOutput,
+            promptTurns: testCase.promptTurns,
             advancedConfig: testCase.advancedConfig,
             testCaseId: testCase._id,
           });

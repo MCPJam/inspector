@@ -288,6 +288,8 @@ export async function runEvalsWithManager(
       expectedToolCalls: any[];
       isNegativeTest?: boolean;
       scenario?: string;
+      expectedOutput?: string;
+      promptTurns?: PromptTurn[];
       judgeRequirement?: string;
       advancedConfig?: any;
     }
@@ -304,6 +306,8 @@ export async function runEvalsWithManager(
         expectedToolCalls: test.expectedToolCalls,
         isNegativeTest: test.isNegativeTest,
         scenario: test.scenario,
+        expectedOutput: test.expectedOutput,
+        promptTurns: test.promptTurns,
         advancedConfig: test.advancedConfig,
       });
     }
@@ -356,6 +360,14 @@ export async function runEvalsWithManager(
         const scenarioChanged =
           normalize(existingTestCase.scenario) !==
           normalize(testCaseData.scenario);
+        const expectedOutputChanged =
+          normalize(existingTestCase.expectedOutput) !==
+          normalize(testCaseData.expectedOutput);
+        const promptTurnsChanged =
+          JSON.stringify(
+            normalizeForComparison(existingTestCase.promptTurns || []),
+          ) !==
+          JSON.stringify(normalizeForComparison(testCaseData.promptTurns || []));
         const judgeRequirementChanged =
           normalize(existingTestCase.judgeRequirement) !==
           normalize(testCaseData.judgeRequirement);
@@ -371,6 +383,8 @@ export async function runEvalsWithManager(
           expectedToolCallsChanged ||
           isNegativeTestChanged ||
           scenarioChanged ||
+          expectedOutputChanged ||
+          promptTurnsChanged ||
           judgeRequirementChanged ||
           advancedConfigChanged;
 
@@ -384,6 +398,8 @@ export async function runEvalsWithManager(
             ),
             isNegativeTest: testCaseData.isNegativeTest,
             scenario: testCaseData.scenario,
+            expectedOutput: testCaseData.expectedOutput,
+            promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
             advancedConfig: sanitizeForConvexTransport(
               testCaseData.advancedConfig,
             ),
@@ -401,6 +417,8 @@ export async function runEvalsWithManager(
           ),
           isNegativeTest: testCaseData.isNegativeTest,
           scenario: testCaseData.scenario,
+          expectedOutput: testCaseData.expectedOutput,
+          promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
           judgeRequirement: testCaseData.judgeRequirement,
           advancedConfig: sanitizeForConvexTransport(
             testCaseData.advancedConfig,
@@ -438,6 +456,8 @@ export async function runEvalsWithManager(
         ),
         isNegativeTest: testCaseData.isNegativeTest,
         scenario: testCaseData.scenario,
+        expectedOutput: testCaseData.expectedOutput,
+        promptTurns: sanitizeForConvexTransport(testCaseData.promptTurns),
         judgeRequirement: testCaseData.judgeRequirement,
         advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
       });

@@ -42,7 +42,9 @@ import {
   generateNegativeEvalTests,
   listEvalTools,
   runEvals,
+  type GeneratedEvalTestCase,
 } from "@/lib/apis/evals-api";
+import type { PromptTurn } from "@/shared/prompt-turns";
 
 interface EvalRunnerProps {
   availableModels: ModelDefinition[];
@@ -96,6 +98,52 @@ const validateExpectedToolCalls = (toolCalls: ExpectedToolCall[]): boolean => {
 
   return true;
 };
+
+function getFirstPromptTurn(
+  promptTurns: PromptTurn[] | undefined,
+): PromptTurn | undefined {
+  return Array.isArray(promptTurns) && promptTurns.length > 0
+    ? promptTurns[0]
+    : undefined;
+}
+
+function promptTurnsRepresentNegativeCase(
+  promptTurns: PromptTurn[] | undefined,
+): boolean {
+  return (
+    Array.isArray(promptTurns) &&
+    promptTurns.length > 0 &&
+    promptTurns.every((turn) => turn.expectedToolCalls.length === 0)
+  );
+}
+
+function mapGeneratedTemplate(
+  test: GeneratedEvalTestCase,
+  index: number,
+): TestTemplate {
+  const promptTurns =
+    Array.isArray(test.promptTurns) && test.promptTurns.length > 0
+      ? test.promptTurns
+      : undefined;
+  const firstTurn = getFirstPromptTurn(promptTurns);
+
+  return {
+    title: test.title || `Generated test ${index + 1}`,
+    query: test.query || firstTurn?.prompt || "",
+    runs: Number(test.runs) > 0 ? Number(test.runs) : 1,
+    expectedToolCalls: firstTurn?.expectedToolCalls
+      ? firstTurn.expectedToolCalls
+      : Array.isArray(test.expectedToolCalls)
+        ? test.expectedToolCalls
+        : [],
+    isNegativeTest:
+      test.isNegativeTest === true ||
+      promptTurnsRepresentNegativeCase(promptTurns),
+    scenario: test.scenario || "",
+    expectedOutput: test.expectedOutput || firstTurn?.expectedOutput,
+    promptTurns,
+  };
+}
 
 export function EvalRunner({
   availableModels,
@@ -368,10 +416,40 @@ export function EvalRunner({
   ) => {
     setTestTemplates((prev) => {
       const next = [...prev];
-      next[index] = {
-        ...next[index],
+      const currentTemplate = next[index];
+      if (!currentTemplate) {
+        return prev;
+      }
+
+      const nextTemplate: TestTemplate = {
+        ...currentTemplate,
         [field]: value,
       };
+
+      const firstTurn = getFirstPromptTurn(nextTemplate.promptTurns);
+      if (firstTurn) {
+        if (field === "query") {
+          nextTemplate.promptTurns = [
+            {
+              ...firstTurn,
+              prompt: typeof value === "string" ? value : firstTurn.prompt,
+            },
+            ...nextTemplate.promptTurns!.slice(1),
+          ];
+        } else if (field === "expectedToolCalls") {
+          nextTemplate.promptTurns = [
+            {
+              ...firstTurn,
+              expectedToolCalls: Array.isArray(value)
+                ? (value as ExpectedToolCall[])
+                : firstTurn.expectedToolCalls,
+            },
+            ...nextTemplate.promptTurns!.slice(1),
+          ];
+        }
+      }
+
+      next[index] = nextTemplate;
       return next;
     });
   };
@@ -405,16 +483,7 @@ export function EvalRunner({
       });
 
       if (result.tests && result.tests.length > 0) {
-        const generatedTemplates = result.tests.map(
-          (test: any, index: number) => ({
-            title: test.title || `Generated test ${index + 1}`,
-            query: test.query || "",
-            runs: Number(test.runs) > 0 ? Number(test.runs) : 1,
-            expectedToolCalls: Array.isArray(test.expectedToolCalls)
-              ? test.expectedToolCalls
-              : [],
-          }),
-        );
+        const generatedTemplates = result.tests.map(mapGeneratedTemplate);
 
         setTestTemplates(generatedTemplates);
         setCurrentStep(2);
@@ -461,21 +530,11 @@ export function EvalRunner({
       });
 
       if (result.tests && result.tests.length > 0) {
-        const generatedNegativeTemplates: TestTemplate[] = result.tests.map(
-          (test: {
-            title: string;
-            scenario: string;
-            query: string;
-            runs: number;
-          }) => ({
-            title: test.title || "Untitled Negative Test",
-            query: test.query || "",
-            runs: Number(test.runs) > 0 ? Number(test.runs) : 1,
-            expectedToolCalls: [],
-            isNegativeTest: true,
-            scenario: test.scenario || "",
-          }),
-        );
+        const generatedNegativeTemplates = result.tests.map((test, index) => ({
+          ...mapGeneratedTemplate(test, index),
+          expectedToolCalls: [],
+          isNegativeTest: true,
+        }));
 
         // Append to existing templates instead of replacing
         setTestTemplates((prev) => [...prev, ...generatedNegativeTemplates]);
@@ -582,6 +641,8 @@ export function EvalRunner({
           expectedToolCalls: template.expectedToolCalls,
           isNegativeTest: template.isNegativeTest,
           scenario: template.scenario,
+          expectedOutput: template.expectedOutput,
+          promptTurns: template.promptTurns,
           testTemplateKey,
         }));
       });

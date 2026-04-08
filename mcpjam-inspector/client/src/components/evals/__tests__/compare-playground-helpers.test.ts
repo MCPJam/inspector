@@ -69,6 +69,21 @@ describe("compare-playground-helpers", () => {
     });
   });
 
+  it("builds a cancelled compare run record with elapsed duration", () => {
+    const record = buildCompareRunRecord({
+      modelValue: "openai/gpt-5",
+      modelLabel: "GPT-5",
+      iteration: null,
+      cancelled: true,
+      startedAt: 1000,
+      completedAt: 5000,
+    });
+
+    expect(record.status).toBe("cancelled");
+    expect(record.result).toBe("cancelled");
+    expect(record.metrics.durationMs).toBe(4000);
+  });
+
   it("computes mismatch counts for a compare run record", () => {
     const record = buildCompareRunRecord({
       modelValue: "openai/gpt-5",
@@ -358,6 +373,48 @@ describe("compare-playground-helpers", () => {
     expect(records["openai/gpt-5-nano"]?.status).toBe("running");
     expect(records["openai/gpt-5-nano"]?.iteration).toBeNull();
     expect(records["openai/gpt-5-nano"]?.metrics.durationMs).toBeNull();
+  });
+
+  it("does not replace a user-stopped compare run with historical iterations", () => {
+    const stopped = buildCompareRunRecord({
+      modelValue: "openai/gpt-5-nano",
+      modelLabel: "GPT-5 Nano",
+      iteration: null,
+      cancelled: true,
+      startedAt: 1000,
+      completedAt: 5000,
+    });
+
+    const records = buildHistoricalCompareRunRecords({
+      selectedModelValues: ["openai/gpt-5-nano"],
+      modelLabelByValue: { "openai/gpt-5-nano": "GPT-5 Nano" },
+      iterations: [
+        {
+          _id: "iter-stale",
+          createdBy: "user",
+          createdAt: 100,
+          updatedAt: 30_000,
+          startedAt: 100,
+          iterationNumber: 1,
+          status: "completed",
+          result: "passed",
+          resultSource: "reported",
+          actualToolCalls: [],
+          tokensUsed: 999,
+          testCaseSnapshot: {
+            title: "T",
+            query: "Q",
+            provider: "openai",
+            model: "gpt-5-nano",
+            expectedToolCalls: [],
+          },
+        },
+      ] as any,
+      existingRecords: { "openai/gpt-5-nano": stopped },
+    });
+
+    expect(records["openai/gpt-5-nano"]?.status).toBe("cancelled");
+    expect(records["openai/gpt-5-nano"]?.iteration).toBeNull();
   });
 
   it("drops compare rows that are no longer selected", () => {

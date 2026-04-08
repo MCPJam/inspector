@@ -17,9 +17,10 @@ describe("generateAndPersistEvalTests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockGetAccessToken.mockResolvedValue("token");
-    vi.mocked(generateEvalTests).mockResolvedValue({ tests: [] } as Awaited<
-      ReturnType<typeof generateEvalTests>
-    >);
+    vi.mocked(generateEvalTests).mockResolvedValue({
+      success: true,
+      tests: [],
+    });
   });
 
   it("skips API when skipIfExistingCases and suite already has cases", async () => {
@@ -44,8 +45,9 @@ describe("generateAndPersistEvalTests", () => {
   it("calls generateEvalTests when skipIfExistingCases and suite is empty", async () => {
     mockQuery.mockResolvedValue([]);
     vi.mocked(generateEvalTests).mockResolvedValue({
-      tests: [{ title: "T", query: "q", expectedToolCalls: [] }],
-    } as Awaited<ReturnType<typeof generateEvalTests>>);
+      success: true,
+      tests: [{ title: "T", query: "q", runs: 1, expectedToolCalls: [] }],
+    });
     mockCreateTestCase.mockResolvedValue({});
 
     const result = await generateAndPersistEvalTests({
@@ -61,5 +63,66 @@ describe("generateAndPersistEvalTests", () => {
     expect(result.skippedBecauseExistingCases).toBe(false);
     expect(generateEvalTests).toHaveBeenCalled();
     expect(mockCreateTestCase).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists promptTurns for generated multi-turn cases", async () => {
+    mockQuery.mockResolvedValue([]);
+    vi.mocked(generateEvalTests).mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "Follow up on a result",
+          query: "Find the latest incident",
+          runs: 1,
+          expectedToolCalls: [{ toolName: "search_incidents", arguments: {} }],
+          promptTurns: [
+            {
+              id: "turn-1",
+              prompt: "Find the latest incident",
+              expectedToolCalls: [
+                { toolName: "search_incidents", arguments: {} },
+              ],
+            },
+            {
+              id: "turn-2",
+              prompt: "Now get the full details for that one",
+              expectedToolCalls: [
+                { toolName: "get_incident_details", arguments: {} },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    mockCreateTestCase.mockResolvedValue({});
+
+    await generateAndPersistEvalTests({
+      convex,
+      getAccessToken: mockGetAccessToken,
+      workspaceId: "ws",
+      suiteId: "suite",
+      serverIds: ["srv"],
+      createTestCase: mockCreateTestCase,
+      skipIfExistingCases: true,
+    });
+
+    expect(mockCreateTestCase).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "Find the latest incident",
+        expectedToolCalls: [
+          { toolName: "search_incidents", arguments: {} },
+        ],
+        promptTurns: [
+          expect.objectContaining({
+            id: "turn-1",
+            prompt: "Find the latest incident",
+          }),
+          expect.objectContaining({
+            id: "turn-2",
+            prompt: "Now get the full details for that one",
+          }),
+        ],
+      }),
+    );
   });
 });

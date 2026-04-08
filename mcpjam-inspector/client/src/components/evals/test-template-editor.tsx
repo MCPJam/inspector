@@ -19,6 +19,7 @@ import {
   Plus,
   RotateCw,
   Save,
+  Square,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -325,6 +326,8 @@ export function TestTemplateEditor({
   const compareRequestGenByModelRef = useRef<Record<string, number>>({});
   /** Per-model AbortControllers for cancelling superseded streaming runs. */
   const compareAbortControllersRef = useRef<Record<string, AbortController>>({});
+  /** True when the user clicked Stop for the current batch (suppresses failure toasts). */
+  const compareRunUserStoppedRef = useRef(false);
   const initializedSelectionCaseRef = useRef<string | null>(null);
 
   const testCases = useQuery("testSuites:listTestCases" as any, {
@@ -964,6 +967,13 @@ export function TestTemplateEditor({
     });
   };
 
+  const handleStopCompare = useCallback(() => {
+    compareRunUserStoppedRef.current = true;
+    for (const controller of Object.values(compareAbortControllersRef.current)) {
+      controller.abort();
+    }
+  }, []);
+
   const handleRunCompare = async (modelValuesOverride?: string[]) => {
     if (!currentTestCase || !suite || !editForm) {
       return;
@@ -986,6 +996,7 @@ export function TestTemplateEditor({
     }
 
     const savePayload = buildSavePayload(editForm);
+    compareRunUserStoppedRef.current = false;
     const compareRunId = createCompareSessionId();
 
     let preparedRuns: Array<{
@@ -1066,7 +1077,9 @@ export function TestTemplateEditor({
         const prior = previous[modelValue];
         const isRetrying =
           prior != null &&
-          (prior.iteration != null || prior.status === "failed");
+          (prior.iteration != null ||
+            prior.status === "failed" ||
+            prior.status === "cancelled");
         next[modelValue] = {
           ...buildCompareRunRecord({
             modelValue,
@@ -1229,12 +1242,43 @@ export function TestTemplateEditor({
             });
           } catch (error) {
             if (abortController.signal.aborted) {
-              return buildCompareRunRecord({
-                modelValue,
-                modelLabel,
-                iteration: null,
-                completedAt: Date.now(),
+              let resolved!: CompareRunRecord;
+              setCompareRunRecords((previous) => {
+                const existing = previous[modelValue];
+                const base = buildCompareRunRecord({
+                  modelValue,
+                  modelLabel,
+                  iteration: null,
+                  cancelled: true,
+                  startedAt: existing?.startedAt ?? null,
+                  completedAt: Date.now(),
+                });
+                const tokensUsed =
+                  existing?.streamingMetrics?.tokensUsed ??
+                  existing?.metrics.tokensUsed ??
+                  0;
+                const toolCallCount =
+                  existing?.streamingMetrics?.toolCallCount ??
+                  existing?.metrics.toolCallCount ??
+                  0;
+                resolved = {
+                  ...base,
+                  streamingTrace: existing?.streamingTrace,
+                  streamingDraftMessages: existing?.streamingDraftMessages,
+                  streamingActualToolCalls: existing?.streamingActualToolCalls,
+                  streamingMetrics:
+                    existing?.streamingMetrics != null
+                      ? existing.streamingMetrics
+                      : undefined,
+                  metrics: {
+                    ...base.metrics,
+                    toolCallCount,
+                    tokensUsed,
+                  },
+                };
+                return { ...previous, [modelValue]: resolved };
               });
+              return resolved;
             }
             const message = getBillingErrorMessage(error, "Failed to run model");
             const failedRecord: CompareRunRecord = {
@@ -1276,7 +1320,9 @@ export function TestTemplateEditor({
       const successfulCount = completedRecords.filter(
         (record) => record.iteration != null,
       ).length;
-      if (successfulCount === completedRecords.length) {
+      if (compareRunUserStoppedRef.current) {
+        toast.message("Compare run stopped.");
+      } else if (successfulCount === completedRecords.length) {
         toast.success(
           `Compare run finished across ${completedRecords.length} model${
             completedRecords.length === 1 ? "" : "s"
@@ -1518,7 +1564,7 @@ export function TestTemplateEditor({
                 {runDisabledTooltip ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="inline-flex">
+                      <span className="inline-flex items-center gap-2">
                         <Button
                           type="button"
                           size="sm"
@@ -1528,18 +1574,30 @@ export function TestTemplateEditor({
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                              <Loader2 className="size-3.5 animate-spin" />
                               Running…
                             </>
                           ) : (
                             <>
-                              <Play className="mr-2 h-3.5 w-3.5 fill-current" />
+                              <Play className="size-3.5 fill-current" />
                               {selectedModelValues.length > 1
                                 ? "Run compare"
                                 : "Run"}
                             </>
                           )}
                         </Button>
+                        {isRunningCompare ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                            onClick={handleStopCompare}
+                          >
+                            <Square className="size-3.5 opacity-90" />
+                            Stop
+                          </Button>
+                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="top" sideOffset={6}>
@@ -1547,25 +1605,39 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 ) : (
-                  <Button
-                    type="button"
-                    size="sm"
-                    className="h-8"
-                    onClick={() => void handleRunCompare()}
-                    disabled={runPrimaryDisabled}
-                  >
+                  <span className="inline-flex items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      className="h-8"
+                      onClick={() => void handleRunCompare()}
+                      disabled={runPrimaryDisabled}
+                    >
+                      {isRunningCompare ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Running…
+                        </>
+                      ) : (
+                        <>
+                          <Play className="size-3.5 fill-current" />
+                          {selectedModelValues.length > 1 ? "Run compare" : "Run"}
+                        </>
+                      )}
+                    </Button>
                     {isRunningCompare ? (
-                      <>
-                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                        Running…
-                      </>
-                    ) : (
-                      <>
-                        <Play className="mr-2 h-3.5 w-3.5 fill-current" />
-                        {selectedModelValues.length > 1 ? "Run compare" : "Run"}
-                      </>
-                    )}
-                  </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 px-2.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        onClick={handleStopCompare}
+                      >
+                        <Square className="size-3.5 opacity-90" />
+                        Stop
+                      </Button>
+                    ) : null}
+                  </span>
                 )}
               </div>
             </div>
@@ -1843,7 +1915,7 @@ export function TestTemplateEditor({
                 runDisabledTooltip ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <span className="inline-flex shrink-0">
+                      <span className="inline-flex shrink-0 items-center gap-2">
                         <Button
                           type="button"
                           variant="outline"
@@ -1854,16 +1926,28 @@ export function TestTemplateEditor({
                         >
                           {isRunningCompare ? (
                             <>
-                              <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                              Retrying…
+                              <Loader2 className="size-3.5 animate-spin" />
+                              Running…
                             </>
                           ) : (
                             <>
-                              <RotateCw className="mr-2 h-3.5 w-3.5" />
+                              <RotateCw className="size-3.5" />
                               Retry all
                             </>
                           )}
                         </Button>
+                        {isRunningCompare ? (
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                            onClick={handleStopCompare}
+                          >
+                            <Square className="size-3.5 opacity-90" />
+                            Stop
+                          </Button>
+                        ) : null}
                       </span>
                     </TooltipTrigger>
                     <TooltipContent variant="muted" side="bottom" sideOffset={6}>
@@ -1871,26 +1955,40 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                 ) : (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="h-8 shrink-0 text-xs"
-                    onClick={() => void handleRunCompare()}
-                    disabled={runPrimaryDisabled}
-                  >
+                  <span className="inline-flex shrink-0 items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 shrink-0 text-xs"
+                      onClick={() => void handleRunCompare()}
+                      disabled={runPrimaryDisabled}
+                    >
+                      {isRunningCompare ? (
+                        <>
+                          <Loader2 className="size-3.5 animate-spin" />
+                          Running…
+                        </>
+                      ) : (
+                        <>
+                          <RotateCw className="size-3.5" />
+                          Retry all
+                        </>
+                      )}
+                    </Button>
                     {isRunningCompare ? (
-                      <>
-                        <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
-                        Retrying…
-                      </>
-                    ) : (
-                      <>
-                        <RotateCw className="mr-2 h-3.5 w-3.5" />
-                        Retry all
-                      </>
-                    )}
-                  </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        className="h-8 shrink-0 px-2.5 text-xs text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+                        onClick={handleStopCompare}
+                      >
+                        <Square className="size-3.5 opacity-90" />
+                        Stop
+                      </Button>
+                    ) : null}
+                  </span>
                 )
               ) : null}
             </div>
@@ -2034,23 +2132,27 @@ function RunColumn({
       ? record.isRetrying
         ? "text-amber-800 dark:text-amber-200"
         : "text-sky-700 dark:text-sky-300"
-      : record.status === "failed" || record.result === "failed"
-        ? "text-rose-700 dark:text-rose-300"
-        : record.result === "passed"
-          ? "text-emerald-700 dark:text-emerald-300"
-          : "text-muted-foreground";
+      : record.status === "cancelled" || record.result === "cancelled"
+        ? "text-amber-800 dark:text-amber-200"
+        : record.status === "failed" || record.result === "failed"
+          ? "text-rose-700 dark:text-rose-300"
+          : record.result === "passed"
+            ? "text-emerald-700 dark:text-emerald-300"
+            : "text-muted-foreground";
   const statusLabel =
     record.status === "running"
       ? record.isRetrying
         ? "Retrying"
         : "Running"
-      : record.status === "failed"
-        ? "Failed"
-        : record.result === "passed"
-          ? "Passed"
-          : record.result === "failed"
-            ? "Failed"
-            : "Ready";
+      : record.status === "cancelled" || record.result === "cancelled"
+        ? "Stopped"
+        : record.status === "failed"
+          ? "Failed"
+          : record.result === "passed"
+            ? "Passed"
+            : record.result === "failed"
+              ? "Failed"
+              : "Ready";
   const durationLabel =
     record.metrics.durationMs != null
       ? `${Math.round(record.metrics.durationMs / 100) / 10}s`
@@ -2427,6 +2529,18 @@ function RunColumn({
                 {record.isRetrying ? "Retrying" : "Running"}{" "}
                 {record.modelLabel}…
               </span>
+            </div>
+          </div>
+        ) : record.status === "cancelled" && !record.iteration ? (
+          <div className="flex min-h-0 flex-1 items-center justify-center rounded-xl border border-amber-500/25 bg-amber-500/5 px-6 py-10">
+            <div className="max-w-sm text-center">
+              <div className="text-sm font-medium text-amber-800 dark:text-amber-200">
+                {record.modelLabel} stopped
+              </div>
+              <p className="mt-2 text-sm text-muted-foreground">
+                This run was stopped before it finished. Partial trace and metrics
+                may still be visible in the tabs above.
+              </p>
             </div>
           </div>
         ) : record.status === "failed" && !record.iteration ? (
