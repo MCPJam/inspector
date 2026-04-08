@@ -357,8 +357,11 @@ chatV2.post("/", async (c) => {
       const orgConfig = await resolveOrgModelConfig({
         workspaceId: hostedBody.workspaceId,
       });
-      const { apiKey: resolvedKey, baseUrls, customProviders: resolvedCustomProviders } =
-        resolveProviderForModel(orgConfig, modelDefinition);
+      const {
+        apiKey: resolvedKey,
+        baseUrls,
+        customProviders: resolvedCustomProviders,
+      } = resolveProviderForModel(orgConfig, modelDefinition);
       const llmModel = createLlmModel(
         modelDefinition,
         resolvedKey,

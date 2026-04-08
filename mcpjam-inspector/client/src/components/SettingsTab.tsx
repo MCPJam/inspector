@@ -310,9 +310,7 @@ export function SettingsTab({
                   variant="link"
                   className="h-auto p-0 text-sm justify-start"
                   onClick={() =>
-                    onNavigate?.(
-                      `organizations/${activeOrganizationId}/models`,
-                    )
+                    onNavigate?.(`organizations/${activeOrganizationId}/models`)
                   }
                 >
                   Go to Organization Models

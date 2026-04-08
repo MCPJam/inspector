@@ -1595,11 +1595,11 @@ export default function App() {
             />
           )}
           {activeTab === "settings" && (
-              <SettingsTab
-                activeOrganizationId={activeOrganizationId}
-                onNavigate={handleNavigate}
-              />
-            )}
+            <SettingsTab
+              activeOrganizationId={activeOrganizationId}
+              onNavigate={handleNavigate}
+            />
+          )}
           {activeTab === "support" && <SupportTab />}
           {activeTab === "profile" && <ProfileTab />}
           {activeTab === "organizations" && (

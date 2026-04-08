@@ -140,14 +140,16 @@ export function buildAvailableModelsFromOrgConfig(
   const openRouterConfig = orgConfig.providers.find(
     (p) => p.providerKey === "openrouter" && p.enabled && p.hasSecret,
   );
-  if (openRouterConfig?.selectedModels && openRouterConfig.selectedModels.length > 0) {
-    const openRouterModels: ModelDefinition[] = openRouterConfig.selectedModels.map(
-      (id) => ({
+  if (
+    openRouterConfig?.selectedModels &&
+    openRouterConfig.selectedModels.length > 0
+  ) {
+    const openRouterModels: ModelDefinition[] =
+      openRouterConfig.selectedModels.map((id) => ({
         id,
         name: id,
         provider: "openrouter" as const,
-      }),
-    );
+      }));
     models.push(...openRouterModels);
   }
 

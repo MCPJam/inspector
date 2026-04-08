@@ -85,7 +85,11 @@ export async function resolveOrgModelConfig(
 export function resolveProviderForModel(
   config: ResolvedOrgModelConfig,
   modelDefinition: ModelDefinition,
-): { apiKey: string; baseUrls: BaseUrls; customProviders: CustomProviderConfig[] } {
+): {
+  apiKey: string;
+  baseUrls: BaseUrls;
+  customProviders: CustomProviderConfig[];
+} {
   const { provider, customProviderName } = modelDefinition;
 
   // Build custom providers list from org config

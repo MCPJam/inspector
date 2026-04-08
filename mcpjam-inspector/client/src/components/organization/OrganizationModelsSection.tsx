@@ -62,15 +62,50 @@ interface ProviderCatalogEntry {
 }
 
 const PROVIDER_CATALOG: ProviderCatalogEntry[] = [
-  { key: "openai", name: "OpenAI", kind: "api-key-only", logo: "/openai_logo.svg" },
-  { key: "anthropic", name: "Anthropic", kind: "api-key-only", logo: "/anthropic_logo.svg" },
-  { key: "google", name: "Google", kind: "api-key-only", logo: "/google_logo.svg" },
-  { key: "deepseek", name: "DeepSeek", kind: "api-key-only", logo: "/deepseek_logo.svg" },
-  { key: "mistral", name: "Mistral", kind: "api-key-only", logo: "/mistral_logo.svg" },
+  {
+    key: "openai",
+    name: "OpenAI",
+    kind: "api-key-only",
+    logo: "/openai_logo.svg",
+  },
+  {
+    key: "anthropic",
+    name: "Anthropic",
+    kind: "api-key-only",
+    logo: "/anthropic_logo.svg",
+  },
+  {
+    key: "google",
+    name: "Google",
+    kind: "api-key-only",
+    logo: "/google_logo.svg",
+  },
+  {
+    key: "deepseek",
+    name: "DeepSeek",
+    kind: "api-key-only",
+    logo: "/deepseek_logo.svg",
+  },
+  {
+    key: "mistral",
+    name: "Mistral",
+    kind: "api-key-only",
+    logo: "/mistral_logo.svg",
+  },
   { key: "xai", name: "xAI", kind: "api-key-only", logo: "/xai_logo.svg" },
-  { key: "azure", name: "Azure OpenAI", kind: "azure", logo: "/azure_logo.png" },
+  {
+    key: "azure",
+    name: "Azure OpenAI",
+    kind: "azure",
+    logo: "/azure_logo.png",
+  },
   { key: "ollama", name: "Ollama", kind: "ollama", logo: "/ollama_logo.svg" },
-  { key: "openrouter", name: "OpenRouter", kind: "openrouter", logo: "/openrouter_logo.png" },
+  {
+    key: "openrouter",
+    name: "OpenRouter",
+    kind: "openrouter",
+    logo: "/openrouter_logo.png",
+  },
 ];
 
 function findCatalogEntry(key: string): ProviderCatalogEntry | undefined {
@@ -237,11 +272,7 @@ export function OrganizationModelsSection({
 
               {isAdmin ? (
                 <div className="pt-3">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={openAddCustom}
-                  >
+                  <Button variant="outline" size="sm" onClick={openAddCustom}>
                     <Plus className="mr-2 size-4" />
                     Add Custom Provider
                   </Button>
@@ -270,9 +301,7 @@ export function OrganizationModelsSection({
               setConfigTarget(null);
             } catch (err) {
               toast.error(
-                err instanceof Error
-                  ? err.message
-                  : "Failed to save provider",
+                err instanceof Error ? err.message : "Failed to save provider",
               );
             }
           }}
@@ -408,7 +437,10 @@ function ProviderRow({
             Configured
           </Badge>
         ) : (
-          <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
+          <Badge
+            variant="outline"
+            className="gap-1 text-xs text-muted-foreground"
+          >
             <Circle className="size-3" />
             Not configured
           </Badge>
@@ -511,7 +543,9 @@ function KnownProviderConfigDialog({
       case "ollama":
         return !!baseUrl.trim();
       case "openrouter":
-        return (!!secret.trim() || existing?.hasSecret) && !!selectedModels.trim();
+        return (
+          (!!secret.trim() || existing?.hasSecret) && !!selectedModels.trim()
+        );
       default:
         return false;
     }
@@ -546,7 +580,10 @@ function KnownProviderConfigDialog({
           {/* API key field -- all except ollama */}
           {kind !== "ollama" ? (
             <div>
-              <label htmlFor="org-provider-secret" className="text-sm font-medium">
+              <label
+                htmlFor="org-provider-secret"
+                className="text-sm font-medium"
+              >
                 API Key
                 {existing?.hasSecret ? (
                   <span className="text-muted-foreground font-normal ml-1">
@@ -566,7 +603,7 @@ function KnownProviderConfigDialog({
           ) : null}
 
           {/* Base URL field -- azure, ollama */}
-          {(kind === "azure" || kind === "ollama") ? (
+          {kind === "azure" || kind === "ollama" ? (
             <div>
               <label htmlFor="org-provider-url" className="text-sm font-medium">
                 Base URL
@@ -795,7 +832,9 @@ function OrgCustomProviderDialog({
             <label htmlFor="org-cp-secret" className="text-sm font-medium">
               API Key{" "}
               <span className="text-muted-foreground font-normal">
-                (optional{editProvider?.hasSecret ? ", leave blank to keep current" : ""})
+                (optional
+                {editProvider?.hasSecret ? ", leave blank to keep current" : ""}
+                )
               </span>
             </label>
             <Input
