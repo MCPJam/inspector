@@ -1575,6 +1575,8 @@ export default function App() {
               }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
+              enableTraceViews
+              enableMultiModelChat
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
                 setEvalChatHandoff((current) =>

@@ -70,6 +70,8 @@ interface TraceViewerProps {
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
   fillContent?: boolean;
+  /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
+  hideTranscriptRevealControls?: boolean;
   /**
    * When `forcedViewMode` is set (e.g. parent tabs), internal `setViewMode("chat")` from
    * "Reveal in Chat" is ignored — call this so the shell can switch to its chat tab.
@@ -151,6 +153,7 @@ export function TraceViewer({
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
+  hideTranscriptRevealControls = false,
   onRevealNavigateToChat,
   sendFollowUpMessage = NOOP,
   onWidgetStateChange,
@@ -503,7 +506,11 @@ export function TraceViewer({
                 transcriptMessages={traceMessages}
                 traceStartedAtMs={traceStartedAtMs}
                 traceEndedAtMs={traceEndedAtMs}
-                onRevealInTranscript={handleRevealInTranscript}
+                onRevealInTranscript={
+                  hideTranscriptRevealControls
+                    ? undefined
+                    : handleRevealInTranscript
+                }
                 hideToolbar={hasRecordedSpans}
                 timelineFilter={hasRecordedSpans ? timelineFilter : undefined}
                 onTimelineFilterChange={

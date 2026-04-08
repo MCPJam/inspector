@@ -86,6 +86,10 @@ vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
     selectedModelId: "openai/gpt-5-mini",
     setSelectedModelId: mockState.setSelectedModelId,
+    selectedModelIds: ["openai/gpt-5-mini"],
+    setSelectedModelIds: vi.fn(),
+    multiModelEnabled: false,
+    setMultiModelEnabled: vi.fn(),
   }),
 }));
 

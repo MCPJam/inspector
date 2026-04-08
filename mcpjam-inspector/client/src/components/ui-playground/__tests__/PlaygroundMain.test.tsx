@@ -63,7 +63,7 @@ vi.mock("@/components/ui/tooltip", () => ({
   ),
   TooltipTrigger: ({
     children,
-    asChild,
+    asChild: _asChild,
   }: {
     children: React.ReactNode;
     asChild?: boolean;
@@ -73,7 +73,7 @@ vi.mock("@/components/ui/tooltip", () => ({
 vi.mock("@/components/ui/popover", () => ({
   Popover: ({
     children,
-    open,
+    open: _open,
   }: {
     children: React.ReactNode;
     open?: boolean;
@@ -83,7 +83,7 @@ vi.mock("@/components/ui/popover", () => ({
   ),
   PopoverTrigger: ({
     children,
-    asChild,
+    asChild: _asChild,
   }: {
     children: React.ReactNode;
     asChild?: boolean;
@@ -163,6 +163,10 @@ const mockUseChatSession = {
     supportsStreaming: true,
   },
   setSelectedModel: vi.fn(),
+  selectedModelIds: [],
+  setSelectedModelIds: vi.fn(),
+  multiModelEnabled: false,
+  setMultiModelEnabled: vi.fn(),
   availableModels: [],
   isAuthLoading: false,
   systemPrompt: "",
@@ -173,10 +177,17 @@ const mockUseChatSession = {
   toolServerMap: {},
   tokenUsage: null,
   resetChat: vi.fn(),
+  chatSessionId: "chat-session-1",
+  liveTraceEnvelope: null,
+  hasTraceSnapshot: false,
+  traceViewsSupported: false,
+  requireToolApproval: false,
+  setRequireToolApproval: vi.fn(),
+  addToolApprovalResponse: vi.fn(),
   isStreaming: false,
   disableForAuthentication: false,
   submitBlocked: false,
-};
+} as any;
 let capturedChatSessionOptions: any = null;
 
 vi.mock("@/hooks/use-chat-session", () => ({
@@ -273,6 +284,44 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
 vi.mock("@/components/chat-v2/error", () => ({
   ErrorBox: ({ message }: { message: string }) => (
     <div data-testid="error-box">{message}</div>
+  ),
+}));
+
+vi.mock("@/components/evals/trace-viewer", () => ({
+  TraceViewer: ({
+    forcedViewMode,
+    trace,
+  }: {
+    forcedViewMode?: "chat" | "timeline" | "raw";
+    trace?: unknown;
+  }) => (
+    <div
+      data-testid="trace-viewer"
+      data-mode={forcedViewMode ?? "timeline"}
+      data-trace={JSON.stringify(trace ?? null)}
+    />
+  ),
+}));
+
+vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
+  TraceViewModeTabs: ({
+    mode,
+    onModeChange,
+  }: {
+    mode: "chat" | "timeline" | "raw";
+    onModeChange: (mode: "chat" | "timeline" | "raw") => void;
+  }) => (
+    <div data-testid="trace-view-tabs" data-mode={mode}>
+      <button onClick={() => onModeChange("chat")}>Chat</button>
+      <button onClick={() => onModeChange("timeline")}>Timeline</button>
+      <button onClick={() => onModeChange("raw")}>Raw</button>
+    </div>
+  ),
+}));
+
+vi.mock("@/components/ui-playground/multi-model-playground-card", () => ({
+  MultiModelPlaygroundCard: ({ model }: { model: { name: string } }) => (
+    <div data-testid="multi-model-playground-card">{model.name}</div>
   ),
 }));
 
@@ -434,6 +483,26 @@ vi.mock("@/lib/utils", () => ({
   cn: (...args: any[]) => args.filter(Boolean).join(" "),
 }));
 
+const sampleLiveTraceEnvelope = {
+  traceVersion: 1 as const,
+  messages: [
+    { role: "user", content: "Draw the diagram" },
+    { role: "assistant", content: "Here is the diagram." },
+  ],
+  spans: [
+    {
+      id: "turn-1-step-0",
+      name: "Step 1",
+      category: "step" as const,
+      startMs: 0,
+      endMs: 120,
+      promptIndex: 0,
+      stepIndex: 0,
+      status: "ok" as const,
+    },
+  ],
+};
+
 describe("PlaygroundMain", () => {
   const defaultProps = {
     serverName: "test-server",
@@ -457,6 +526,13 @@ describe("PlaygroundMain", () => {
       disableForAuthentication: false,
       submitBlocked: false,
       isStreaming: false,
+      chatSessionId: "chat-session-1",
+      availableModels: [],
+      selectedModelIds: [],
+      multiModelEnabled: false,
+      liveTraceEnvelope: null,
+      hasTraceSnapshot: false,
+      traceViewsSupported: false,
     });
   });
 
@@ -618,6 +694,135 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} />);
 
       expect(screen.getByTestId("thread-loading")).toBeInTheDocument();
+    });
+  });
+
+  describe("live trace views", () => {
+    it("shows trace mode tabs only when enabled for a supported live chat", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.traceViewsSupported = true;
+
+      const { rerender } = render(
+        <PlaygroundMain {...defaultProps} enableTraceViews={true} />,
+      );
+
+      expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+
+      mockUseChatSession.traceViewsSupported = false;
+      rerender(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
+    });
+
+    it("shows a pending timeline before the first streamed snapshot and keeps the thread mounted", () => {
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.traceViewsSupported = true;
+      mockUseChatSession.hasTraceSnapshot = false;
+      mockUseChatSession.liveTraceEnvelope = null;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+
+      expect(
+        screen.getByTestId("playground-live-trace-pending"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("playground-trace-diagnostics"),
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("thread")).toBeInTheDocument();
+    });
+
+    it("prefers the streamed live trace over the prelude trace once a snapshot exists", async () => {
+      const pendingExecution = {
+        toolName: "create_view",
+        params: { prompt: "Draw a flow" },
+        result: { ok: true },
+        toolMeta: undefined,
+        state: "output-available" as const,
+        toolCallId: "tool-call-1",
+      };
+
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+      ];
+      mockUseChatSession.traceViewsSupported = true;
+      mockUseChatSession.hasTraceSnapshot = false;
+      mockUseChatSession.liveTraceEnvelope = null;
+
+      const { rerender } = render(
+        <PlaygroundMain
+          {...defaultProps}
+          enableTraceViews={true}
+          pendingExecution={pendingExecution}
+        />,
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+      expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
+        "data-mode",
+        "raw",
+      );
+      expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
+        "data-trace",
+        expect.stringContaining("Execute `create_view`"),
+      );
+
+      mockUseChatSession.hasTraceSnapshot = true;
+      mockUseChatSession.liveTraceEnvelope = sampleLiveTraceEnvelope;
+
+      rerender(
+        <PlaygroundMain
+          {...defaultProps}
+          enableTraceViews={true}
+          pendingExecution={null}
+        />,
+      );
+
+      await waitFor(() => {
+        expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
+          "data-mode",
+          "raw",
+        );
+        expect(screen.getByTestId("trace-viewer")).toHaveAttribute(
+          "data-trace",
+          expect.stringContaining("Draw the diagram"),
+        );
+      });
+      expect(
+        screen.queryByTestId("playground-live-trace-pending"),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("multi-model chat", () => {
+    it("renders compare cards and hides the top-level trace tabs when multi-model mode is enabled", () => {
+      mockUseChatSession.availableModels = [
+        {
+          id: "gpt-4",
+          name: "GPT-4",
+          provider: "openai",
+        },
+        {
+          id: "claude-sonnet-4-5",
+          name: "Claude Sonnet 4.5",
+          provider: "anthropic",
+        },
+      ];
+      mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
+      mockUseChatSession.multiModelEnabled = true;
+
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
+
+      expect(screen.getAllByTestId("multi-model-playground-card")).toHaveLength(
+        2,
+      );
+      expect(screen.queryByTestId("trace-view-tabs")).not.toBeInTheDocument();
     });
   });
 

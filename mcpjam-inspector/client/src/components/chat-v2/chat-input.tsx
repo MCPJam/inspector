@@ -81,6 +81,11 @@ interface ChatInputProps {
   currentModel: ModelDefinition;
   availableModels: ModelDefinition[];
   onModelChange: (model: ModelDefinition) => void;
+  multiModelEnabled?: boolean;
+  selectedModels?: ModelDefinition[];
+  onSelectedModelsChange?: (models: ModelDefinition[]) => void;
+  onMultiModelEnabledChange?: (enabled: boolean) => void;
+  enableMultiModel?: boolean;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -140,6 +145,11 @@ export function ChatInput({
   currentModel,
   availableModels,
   onModelChange,
+  multiModelEnabled = false,
+  selectedModels,
+  onSelectedModelsChange,
+  onMultiModelEnabledChange,
+  enableMultiModel = false,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -302,6 +312,11 @@ export function ChatInput({
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
     fileAttachments.length > 0;
+  const effectiveSelectedModels =
+    selectedModels && selectedModels.length > 0
+      ? selectedModels
+      : [currentModel];
+  const hideContextPopover = multiModelEnabled;
 
   const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     const currentCaretIndex = event.currentTarget.selectionStart;
@@ -559,6 +574,11 @@ export function ChatInput({
                   onModelChange={onModelChange}
                   isLoading={isLoading}
                   hasMessages={hasMessages}
+                  enableMultiModel={enableMultiModel}
+                  multiModelEnabled={multiModelEnabled}
+                  selectedModels={effectiveSelectedModels}
+                  onSelectedModelsChange={onSelectedModelsChange}
+                  onMultiModelEnabledChange={onMultiModelEnabledChange}
                 />
                 <SystemPromptSelector
                   systemPrompt={
@@ -572,6 +592,8 @@ export function ChatInput({
                   hasMessages={hasMessages}
                   onResetChat={onResetChat}
                   currentModel={currentModel}
+                  multiModelEnabled={multiModelEnabled}
+                  selectedModels={effectiveSelectedModels}
                 />
               </>
             )}
@@ -610,7 +632,7 @@ export function ChatInput({
                 </TooltipContent>
               </Tooltip>
             )}
-            {!minimalMode && onXrayModeChange && (
+            {!minimalMode && onXrayModeChange && !multiModelEnabled && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -644,7 +666,7 @@ export function ChatInput({
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
-            {!minimalMode && (
+            {!minimalMode && !hideContextPopover && (
               <Context
                 usedTokens={tokenUsage?.totalTokens ?? 0}
                 usage={

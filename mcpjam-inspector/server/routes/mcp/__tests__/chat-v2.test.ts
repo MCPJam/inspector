@@ -13,6 +13,9 @@ import { APICallError } from "@ai-sdk/provider";
 let capturedStreamEvents: any[] = [];
 let mockWriter: { write: ReturnType<typeof vi.fn> };
 let lastStreamExecution: Promise<void> | null = null;
+let capturedCreateUiStreamOnError:
+  | ((error: unknown) => string)
+  | undefined;
 
 const buildSsePayload = (events: any[]) =>
   `${events
@@ -34,21 +37,90 @@ const createSseResponse = (events: any[]) => {
   });
 };
 
+const createAsyncIterable = (events: any[]) => ({
+  async *[Symbol.asyncIterator]() {
+    for (const event of events) {
+      yield event;
+    }
+  },
+});
+
 // Mock the AI SDK
 vi.mock("ai", async () => {
   const actual = await vi.importActual<typeof import("ai")>("ai");
   return {
     ...actual,
     convertToModelMessages: vi.fn((messages) => messages),
-    streamText: vi.fn().mockReturnValue({
-      toUIMessageStreamResponse: vi.fn().mockReturnValue(
-        new Response(JSON.stringify({ type: "text", content: "Hello" }), {
-          headers: { "Content-Type": "text/event-stream" },
-        }),
-      ),
+    streamText: vi.fn().mockImplementation((options: any) => {
+      const usage = {
+        inputTokens: 10,
+        outputTokens: 5,
+        totalTokens: 15,
+      };
+      const step = {
+        usage,
+        toolCalls: [],
+        toolResults: [],
+        response: {
+          messages: [{ role: "assistant", content: "Hello" }],
+        },
+      };
+
+      const toUIMessageStream = vi.fn(() => {
+        options.prepareStep?.({
+          stepNumber: 0,
+          steps: [],
+          model: options.model,
+        });
+        options.onChunk?.({
+          chunk: {
+            type: "text-delta",
+            id: "text-1",
+            text: "Hello",
+          },
+        });
+        options.onStepFinish?.(step);
+        options.onFinish?.({
+          text: "Hello",
+          finishReason: "stop",
+          totalUsage: usage,
+          steps: [step],
+        });
+
+        return createAsyncIterable([
+          { type: "start" },
+          { type: "text-start", id: "text-1" },
+          { type: "text-delta", id: "text-1", text: "Hello" },
+          { type: "text-end", id: "text-1" },
+          {
+            type: "finish-step",
+            usage,
+            finishReason: "stop",
+            rawFinishReason: "stop",
+            response: {},
+            providerMetadata: undefined,
+          },
+          {
+            type: "finish",
+            finishReason: "stop",
+            rawFinishReason: "stop",
+            totalUsage: usage,
+          },
+        ]);
+      });
+
+      return {
+        toUIMessageStream,
+        toUIMessageStreamResponse: vi.fn().mockReturnValue(
+          new Response(JSON.stringify({ type: "text", content: "Hello" }), {
+            headers: { "Content-Type": "text/event-stream" },
+          }),
+        ),
+      };
     }),
     stepCountIs: vi.fn().mockReturnValue(() => false),
-    createUIMessageStream: vi.fn(({ execute, onFinish }) => {
+    createUIMessageStream: vi.fn(({ execute, onFinish, onError }) => {
+      capturedCreateUiStreamOnError = onError;
       // Create a mock writer that captures events
       mockWriter = {
         write: vi.fn((event) => {
@@ -117,6 +189,7 @@ describe("POST /api/mcp/chat-v2", () => {
     vi.clearAllMocks();
     capturedStreamEvents = [];
     lastStreamExecution = null;
+    capturedCreateUiStreamOnError = undefined;
     manager = createMockMcpClientManager({
       getToolsForAiSdk: vi.fn().mockResolvedValue({}),
     });
@@ -285,6 +358,36 @@ describe("POST /api/mcp/chat-v2", () => {
       expect(res.headers.get("Content-Type")).toContain("text/event-stream");
     });
 
+    it("emits ordered live trace events for configured local models", async () => {
+      const res = await postJson(app, "/api/mcp/chat-v2", {
+        messages: [{ role: "user", content: "Hello" }],
+        model: { id: "gpt-4", provider: "openai" },
+        apiKey: "test-key",
+      });
+
+      expect(res.status).toBe(200);
+      await lastStreamExecution;
+
+      const traceEvents = capturedStreamEvents
+        .filter((event) => event?.type === "data-trace-event")
+        .map((event) => event.data?.type);
+
+      expect(traceEvents).toEqual(
+        expect.arrayContaining([
+          "turn_start",
+          "text_delta",
+          "trace_snapshot",
+          "turn_finish",
+        ]),
+      );
+      expect(traceEvents.indexOf("turn_start")).toBeLessThan(
+        traceEvents.indexOf("trace_snapshot"),
+      );
+      expect(traceEvents.indexOf("trace_snapshot")).toBeLessThan(
+        traceEvents.indexOf("turn_finish"),
+      );
+    });
+
     it("uses provided temperature", async () => {
       const { streamText } = await import("ai");
 
@@ -401,17 +504,8 @@ describe("POST /api/mcp/chat-v2", () => {
   describe("auth error normalization", () => {
     let capturedOnError: ((error: unknown) => string) | undefined;
 
-    beforeEach(async () => {
-      // Override streamText mock to capture the onError callback
-      const { streamText } = await import("ai");
-      vi.mocked(streamText).mockImplementation((() => ({
-        toUIMessageStreamResponse: (opts: any) => {
-          capturedOnError = opts?.onError;
-          return new Response("{}", {
-            headers: { "Content-Type": "text/event-stream" },
-          });
-        },
-      })) as any);
+    beforeEach(() => {
+      capturedOnError = undefined;
     });
 
     async function getOnError(
@@ -422,6 +516,7 @@ describe("POST /api/mcp/chat-v2", () => {
         model: { id: "test-model", name: "Test", provider },
         apiKey: "bad-key",
       });
+      capturedOnError = capturedCreateUiStreamOnError;
       expect(capturedOnError).toBeDefined();
       return capturedOnError!;
     }

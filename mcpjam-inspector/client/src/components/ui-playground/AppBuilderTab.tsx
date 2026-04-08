@@ -366,6 +366,8 @@ export function AppBuilderTab({
         >
           <PlaygroundMain
             serverName={serverName || ""}
+            enableTraceViews
+            enableMultiModelChat
             isExecuting={isExecuting}
             executingToolName={selectedTool}
             invokingMessage={invokingMessage}

@@ -714,6 +714,19 @@ describe("TraceViewer", () => {
     expect(screen.queryByTestId("trace-viewer-chat")).not.toBeInTheDocument();
   });
 
+  it("hides transcript reveal controls when the parent shell owns chat mode", () => {
+    render(
+      <TraceViewer
+        trace={waterfallTrace}
+        hideTranscriptRevealControls
+      />,
+    );
+
+    expect(
+      screen.queryByRole("button", { name: "Reveal in Chat" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("reveals a selected timeline row in chat view", async () => {
     const { scrollTo } = renderInScrollHost(
       <TraceViewer trace={waterfallTrace} />,
