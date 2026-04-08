@@ -163,6 +163,11 @@ function streamDirectChatWithLiveTrace(options: {
     onPersist,
   } = options;
 
+  // Separate array for tracing — we must NOT mutate `messageHistory` because
+  // `streamText` holds a reference and internally accumulates step responses.
+  // Mutating it would cause duplicate items on the next API call (OpenAI
+  // Responses API rejects duplicates by id).
+  const traceHistory = [...messageHistory];
   const initialMessageHistoryLength = messageHistory.length;
   const traceTurn = {
     turnId: generateLiveTraceTurnId(),
@@ -254,9 +259,9 @@ function streamDirectChatWithLiveTrace(options: {
           const responseMessages = Array.isArray(step?.response?.messages)
             ? (step.response.messages as ModelMessage[])
             : [];
-          const beforeLength = messageHistory.length;
-          appendDedupedModelMessages(messageHistory, responseMessages);
-          const afterLength = messageHistory.length;
+          const beforeLength = traceHistory.length;
+          appendDedupedModelMessages(traceHistory, responseMessages);
+          const afterLength = traceHistory.length;
           const messageStartIndex =
             afterLength > beforeLength ? beforeLength : undefined;
           const messageEndIndex =
@@ -279,14 +284,14 @@ function streamDirectChatWithLiveTrace(options: {
 
           setToolSpanMessageRangesFromResults(
             traceContext.recordedSpans,
-            messageHistory,
+            traceHistory,
             traceTurn.promptIndex,
             currentStepIndex,
             collectStepToolCallIds(step.toolCalls),
           );
 
           traceTurn.turnSpans = [...traceContext.recordedSpans];
-          emitTraceSnapshot(writer, messageHistory, tracedTools, traceTurn);
+          emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
         },
         onError: async ({ error }) => {
           if (turnFinished) {
@@ -301,7 +306,7 @@ function streamDirectChatWithLiveTrace(options: {
             promptIndex: traceTurn.promptIndex,
           });
           traceTurn.turnSpans = [...traceContext.recordedSpans];
-          emitTraceSnapshot(writer, messageHistory, tracedTools, traceTurn);
+          emitTraceSnapshot(writer, traceHistory, tracedTools, traceTurn);
           writeTraceEvent(writer, {
             type: "error",
             turnId: traceTurn.turnId,
