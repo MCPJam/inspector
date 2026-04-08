@@ -73,6 +73,10 @@ vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
     selectedModelId: "gpt-4.1-mini",
     setSelectedModelId: mockState.setSelectedModelId,
+    selectedModelIds: ["gpt-4.1-mini"],
+    setSelectedModelIds: vi.fn(),
+    multiModelEnabled: false,
+    setMultiModelEnabled: vi.fn(),
   }),
 }));
 
@@ -185,6 +189,7 @@ vi.mock("ai", () => ({
   },
   generateId: vi.fn(() => `chat-session-${mockState.nextSessionNumber++}`),
   lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
+  convertToModelMessages: vi.fn(async () => []),
 }));
 
 describe("useChatSession fork preservation", () => {

@@ -9,11 +9,13 @@ interface ProviderLogoProps {
   provider: string;
   /** For custom providers, the display name used to derive the first-letter icon */
   customProviderName?: string;
+  className?: string;
 }
 
 export function ProviderLogo({
   provider,
   customProviderName,
+  className,
 }: ProviderLogoProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const sandboxHostTheme = useSandboxHostTheme();
@@ -25,7 +27,12 @@ export function ProviderLogo({
     if (provider === "custom") {
       const letter = customProviderName?.[0]?.toUpperCase() || "C";
       return (
-        <div className="h-3 w-3 rounded-sm bg-primary/10 flex items-center justify-center">
+        <div
+          className={cn(
+            "flex h-3 w-3 items-center justify-center rounded-sm bg-primary/10",
+            className,
+          )}
+        >
           <span className="text-primary font-bold text-[6px]">{letter}</span>
         </div>
       );
@@ -35,6 +42,7 @@ export function ProviderLogo({
         className={cn(
           "h-3 w-3 rounded-sm",
           getProviderColorForTheme(provider, resolvedThemeMode),
+          className,
         )}
       />
     );
@@ -42,10 +50,8 @@ export function ProviderLogo({
     return (
       <img
         src={logoSrc}
-        width={12}
-        height={12}
         alt={`${provider} logo`}
-        className={"h-3 w-3 object-contain"}
+        className={cn("h-3 w-3 object-contain", className)}
       />
     );
   }

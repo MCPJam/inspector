@@ -29,6 +29,8 @@ interface SystemPromptSelectorProps {
   hasMessages?: boolean;
   onResetChat: () => void;
   currentModel: ModelDefinition;
+  multiModelEnabled?: boolean;
+  selectedModels?: ModelDefinition[];
 }
 
 export function SystemPromptSelector({
@@ -41,13 +43,24 @@ export function SystemPromptSelector({
   hasMessages,
   onResetChat,
   currentModel,
+  multiModelEnabled = false,
+  selectedModels,
 }: SystemPromptSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
   const [draftTemperature, setDraftTemperature] = useState(temperature);
   const [confirmReset, setConfirmReset] = useState(false);
 
-  const isGpt5 = isGPT5Model(currentModel.id);
+  const effectiveSelectedModels =
+    multiModelEnabled && selectedModels && selectedModels.length > 0
+      ? selectedModels
+      : [currentModel];
+  const someSelectedModelsAreGpt5 = effectiveSelectedModels.some((model) =>
+    isGPT5Model(model.id),
+  );
+  const allSelectedModelsAreGpt5 = effectiveSelectedModels.every((model) =>
+    isGPT5Model(model.id),
+  );
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
@@ -138,11 +151,16 @@ export function SystemPromptSelector({
               max={2}
               step={0.1}
               className="w-full"
-              disabled={isGpt5}
+              disabled={allSelectedModelsAreGpt5}
             />
-            {isGpt5 ? (
+            {allSelectedModelsAreGpt5 ? (
               <p className="text-xs text-muted-foreground">
                 Temperature is not supported for GPT-5 models
+              </p>
+            ) : someSelectedModelsAreGpt5 ? (
+              <p className="text-xs text-muted-foreground">
+                GPT-5 models ignore temperature. The setting still applies to
+                the other selected models.
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">
