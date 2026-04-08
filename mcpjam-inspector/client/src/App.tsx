@@ -631,6 +631,27 @@ export default function App() {
     previousConnectedServersRef.current = connectedServers;
   }, [activeTab, appState.servers, setSelectedServer]);
 
+  // Auto-select a connected server when navigating to tabs that need one
+  useEffect(() => {
+    const needsServer =
+      activeTab === "app-builder" ||
+      activeTab === "tools" ||
+      activeTab === "resources" ||
+      activeTab === "prompts" ||
+      activeTab === "tasks" ||
+      activeTab === "auth" ||
+      activeTab === "views";
+    if (!needsServer || selectedMCPConfig) return;
+
+    const firstConnected = Object.entries(workspaceServers).find(
+      ([, server]) =>
+        (server as any).connectionStatus === "connected",
+    );
+    if (firstConnected) {
+      setSelectedServer(firstConnected[0]);
+    }
+  }, [activeTab, selectedMCPConfig, workspaceServers, setSelectedServer]);
+
   // Create effective app state that uses the correct workspaces (Convex when authenticated)
   const effectiveAppState = useMemo(
     () => ({
@@ -1285,7 +1306,8 @@ export default function App() {
     activeTab === "chat" ||
     activeTab === "chat-v2" ||
     activeTab === "evals" ||
-    activeTab === "views";
+    activeTab === "views" ||
+    activeTab === "app-builder";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
