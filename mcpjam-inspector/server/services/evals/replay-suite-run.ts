@@ -10,6 +10,10 @@ import {
   storeReplayConfig,
 } from "./route-helpers.js";
 import { logger } from "../../utils/logger.js";
+import {
+  resolveOrgModelConfig,
+  buildModelApiKeysFromOrgConfig,
+} from "../../utils/org-model-config.js";
 
 export type ExecuteSuiteReplayFromRunParams = {
   convexClient: ConvexHttpClient;
@@ -97,11 +101,27 @@ export async function executeSuiteReplayFromRun(
       }
     }
 
+    // Resolve model API keys: prefer client-sent keys, fall back to org config
+    let resolvedModelApiKeys = modelApiKeys;
+    if (!resolvedModelApiKeys && replayMetadata.workspaceId) {
+      try {
+        const orgConfig = await resolveOrgModelConfig({
+          workspaceId: replayMetadata.workspaceId,
+        });
+        resolvedModelApiKeys = buildModelApiKeysFromOrgConfig(orgConfig);
+      } catch (error) {
+        logger.warn("[evals] Failed to resolve org model config for replay", {
+          sourceRunId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     await runEvalSuiteWithAiSdk({
       suiteId: replayMetadata.suiteId,
       runId,
       config,
-      modelApiKeys: modelApiKeys ?? undefined,
+      modelApiKeys: resolvedModelApiKeys ?? undefined,
       convexClient,
       convexHttpUrl,
       convexAuthToken,

@@ -25,4 +25,6 @@ export interface ChatV2Request {
   }>;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  /** When present, the server resolves model provider config from the org backing this workspace. */
+  workspaceId?: string;
 }

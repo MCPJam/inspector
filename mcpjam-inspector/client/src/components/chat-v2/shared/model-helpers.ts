@@ -7,6 +7,7 @@ import {
   Model,
 } from "@/shared/types";
 import type { CustomProvider } from "@mcpjam/sdk/browser";
+import type { OrgModelProvider } from "@/hooks/use-org-model-config";
 
 export function parseModelAliases(
   aliasString: string,
@@ -78,6 +79,95 @@ export function buildAvailableModels(params: {
     models = models.concat(ollamaModels);
   if (openRouterModels.length > 0) models = models.concat(openRouterModels);
   if (customModels.length > 0) models = models.concat(customModels);
+  return models;
+}
+
+/**
+ * OrgVisibleConfig shape as returned by the org model config query.
+ */
+export type OrgVisibleConfig = {
+  providers: OrgModelProvider[];
+};
+
+/**
+ * Check whether a given provider key is present and available in the org config.
+ */
+export function isOrgProviderAvailable(
+  orgConfig: OrgVisibleConfig | undefined,
+  providerKey: string,
+): boolean {
+  if (!orgConfig?.providers) return false;
+  return orgConfig.providers.some((p) => {
+    if (p.providerKey !== providerKey) return false;
+    if (!p.enabled) return false;
+    // Ollama only needs baseUrl, not a secret
+    if (p.providerKey === "ollama") return Boolean(p.baseUrl);
+    return p.hasSecret;
+  });
+}
+
+/**
+ * Build the list of available models from an organization's provider config.
+ * Used in org-backed workspaces where the server resolves API keys.
+ */
+export function buildAvailableModelsFromOrgConfig(
+  orgConfig: OrgVisibleConfig | undefined,
+): ModelDefinition[] {
+  if (!orgConfig?.providers) {
+    // No org config loaded yet — return only MCPJam-provided models
+    return SUPPORTED_MODELS.filter((m) => isMCPJamProvidedModel(String(m.id)));
+  }
+
+  // Determine which provider keys are available
+  const availableProviderKeys = new Set<string>();
+  for (const p of orgConfig.providers) {
+    if (!p.enabled) continue;
+    // Ollama only needs baseUrl; all others need hasSecret
+    if (p.providerKey === "ollama") {
+      if (p.baseUrl) availableProviderKeys.add(p.providerKey);
+    } else {
+      if (p.hasSecret) availableProviderKeys.add(p.providerKey);
+    }
+  }
+
+  // Always include MCPJam-provided models
+  const models: ModelDefinition[] = SUPPORTED_MODELS.filter((m) => {
+    if (isMCPJamProvidedModel(String(m.id))) return true;
+    return availableProviderKeys.has(m.provider);
+  });
+
+  // OpenRouter: include selectedModels from org config
+  const openRouterConfig = orgConfig.providers.find(
+    (p) => p.providerKey === "openrouter" && p.enabled && p.hasSecret,
+  );
+  if (
+    openRouterConfig?.selectedModels &&
+    openRouterConfig.selectedModels.length > 0
+  ) {
+    const openRouterModels: ModelDefinition[] =
+      openRouterConfig.selectedModels.map((id) => ({
+        id,
+        name: id,
+        provider: "openrouter" as const,
+      }));
+    models.push(...openRouterModels);
+  }
+
+  // Custom providers (providerKey starts with "custom:")
+  for (const p of orgConfig.providers) {
+    if (!p.providerKey.startsWith("custom:")) continue;
+    if (!p.enabled || !p.hasSecret) continue;
+    const customName = p.displayName || p.providerKey.replace(/^custom:/, "");
+    for (const modelId of p.modelIds ?? []) {
+      models.push({
+        id: `custom:${customName}:${modelId}`,
+        name: modelId,
+        provider: "custom" as const,
+        customProviderName: customName,
+      });
+    }
+  }
+
   return models;
 }
 

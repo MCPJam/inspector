@@ -10,6 +10,10 @@ import {
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
 import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
+import {
+  resolveOrgModelConfig,
+  resolveProviderForModel,
+} from "../../utils/org-model-config";
 import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -517,14 +521,32 @@ chatV2.post("/", async (c) => {
     }
 
     // User-provided models: direct streamText
-    const llmModel = createLlmModel(
-      modelDefinition,
-      apiKey ?? "",
-      {
+    // If workspaceId is present, resolve provider config from org; otherwise use client-sent keys.
+    let resolvedApiKey: string;
+    let resolvedBaseUrls: { ollama?: string; azure?: string };
+    let resolvedCustomProviders = body.customProviders;
+
+    if (body.workspaceId) {
+      const orgConfig = await resolveOrgModelConfig({
+        workspaceId: body.workspaceId,
+      });
+      const resolved = resolveProviderForModel(orgConfig, modelDefinition);
+      resolvedApiKey = resolved.apiKey;
+      resolvedBaseUrls = resolved.baseUrls;
+      resolvedCustomProviders = resolved.customProviders;
+    } else {
+      resolvedApiKey = apiKey ?? "";
+      resolvedBaseUrls = {
         ollama: body.ollamaBaseUrl,
         azure: body.azureBaseUrl,
-      },
-      body.customProviders,
+      };
+    }
+
+    const llmModel = createLlmModel(
+      modelDefinition,
+      resolvedApiKey,
+      resolvedBaseUrls,
+      resolvedCustomProviders,
     );
 
     const modelMessages = await convertToModelMessages(messages);

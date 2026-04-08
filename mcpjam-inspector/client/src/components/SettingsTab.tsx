@@ -13,7 +13,7 @@ import { Switch } from "./ui/switch";
 import { Button } from "./ui/button";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { updateThemeMode } from "@/lib/theme-utils";
-import { Plus, Pencil, Trash2 } from "lucide-react";
+import { Plus, Pencil, Trash2, Info } from "lucide-react";
 import { HOSTED_MODE } from "@/lib/config";
 
 import type { CustomProvider } from "@mcpjam/sdk/browser";
@@ -28,7 +28,15 @@ interface ProviderConfig {
   getApiKeyUrl: string;
 }
 
-export function SettingsTab() {
+interface SettingsTabProps {
+  activeOrganizationId?: string;
+  onNavigate?: (section: string) => void;
+}
+
+export function SettingsTab({
+  activeOrganizationId,
+  onNavigate,
+}: SettingsTabProps = {}) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const setThemeMode = usePreferencesStore((s) => s.setThemeMode);
   const {
@@ -49,6 +57,10 @@ export function SettingsTab() {
     updateCustomProvider,
     removeCustomProvider,
   } = useCustomProviders();
+
+  // When the user is in an org-backed context, LLM provider configuration is
+  // managed at the organization level, not per-user in local storage.
+  const isOrgBacked = !!activeOrganizationId;
 
   const [editingValue, setEditingValue] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -286,7 +298,29 @@ export function SettingsTab() {
           />
         </SettingsSection>
 
-        {!HOSTED_MODE && (
+        {!HOSTED_MODE && isOrgBacked && (
+          <SettingsSection title="LLM Providers">
+            <div className="flex items-start gap-3 px-4 py-3 rounded-md border border-border/40 bg-muted/30">
+              <Info className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+              <div className="flex flex-col gap-1">
+                <span className="text-sm text-muted-foreground">
+                  Model providers are managed in your organization settings.
+                </span>
+                <Button
+                  variant="link"
+                  className="h-auto p-0 text-sm justify-start"
+                  onClick={() =>
+                    onNavigate?.(`organizations/${activeOrganizationId}/models`)
+                  }
+                >
+                  Go to Organization Models
+                </Button>
+              </div>
+            </div>
+          </SettingsSection>
+        )}
+
+        {!HOSTED_MODE && !isOrgBacked && (
           <>
             {/* LLM Providers */}
             <SettingsSection title="LLM Providers">

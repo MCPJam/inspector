@@ -790,19 +790,25 @@ export function useChatSession({
       };
     };
 
+    // In org-backed workspaces the server resolves credentials from the org
+    // config, so we send workspaceId instead of apiKey / customProviders.
+    const hasOrgWorkspace = !HOSTED_MODE && !!hostedWorkspaceId;
+
     return new DefaultChatTransport({
       api: chatApi,
       fetch: HOSTED_MODE ? authFetch : undefined,
       body: () => ({
         model: selectedModel,
-        ...(HOSTED_MODE ? {} : { apiKey }),
+        ...(HOSTED_MODE || hasOrgWorkspace ? {} : { apiKey }),
         ...(isGpt5 ? {} : { temperature }),
         systemPrompt,
         ...(HOSTED_MODE
           ? buildHostedBody()
-          : { selectedServers, chatSessionId }),
+          : hasOrgWorkspace
+            ? { workspaceId: hostedWorkspaceId, selectedServers, chatSessionId }
+            : { selectedServers, chatSessionId }),
         requireToolApproval: requireToolApprovalRef.current,
-        ...(!HOSTED_MODE && customProviders.length > 0
+        ...(!HOSTED_MODE && !hasOrgWorkspace && customProviders.length > 0
           ? { customProviders }
           : {}),
       }),
