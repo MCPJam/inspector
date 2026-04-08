@@ -497,7 +497,9 @@ export function SuiteIterationsView({
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
                   openCompareIterationId={
-                    route.type === "test-edit" ? (route.iteration ?? null) : null
+                    route.type === "test-edit"
+                      ? (route.iteration ?? null)
+                      : null
                   }
                   onClearOpenCompareRoute={handleClearOpenCompareRoute}
                   onBackToList={() =>

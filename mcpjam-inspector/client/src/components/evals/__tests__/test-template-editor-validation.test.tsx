@@ -177,7 +177,9 @@ describe("TestTemplateEditor prompt validation UI", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByPlaceholderText("Enter the user prompt…")).toBeInTheDocument();
+      expect(
+        screen.getByPlaceholderText("Enter the user prompt…"),
+      ).toBeInTheDocument();
     });
 
     const promptInput = screen.getByPlaceholderText("Enter the user prompt…");

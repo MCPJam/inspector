@@ -701,11 +701,10 @@ export function CiEvalsTab({ convexWorkspaceId }: CiEvalsTabProps) {
                                   location: "test_cases_overview",
                                 },
                               );
-                              const iterationId =
-                                (data?.iteration?._id ??
-                                  data?.runs?.find(
-                                    (run: any) => run?.iteration?._id,
-                                  )?.iteration?._id) as string | undefined;
+                              const iterationId = (data?.iteration?._id ??
+                                data?.runs?.find(
+                                  (run: any) => run?.iteration?._id,
+                                )?.iteration?._id) as string | undefined;
                               if (iterationId) {
                                 ciNavigation.toTestDetail(
                                   selectedSuite._id,

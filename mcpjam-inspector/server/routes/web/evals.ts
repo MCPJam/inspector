@@ -140,7 +140,9 @@ evals.post("/stream-test-case", async (c) => {
     const stream = await streamEvalTestCaseWithManager(
       manager,
       {
-        ...(body as z.infer<typeof hostedRunTestCaseSchema> & { serverIds: string[] }),
+        ...(body as z.infer<typeof hostedRunTestCaseSchema> & {
+          serverIds: string[];
+        }),
         convexAuthToken: bearerToken,
       },
       {

@@ -205,5 +205,4 @@ describe("SuiteHeader", () => {
     expect(generateBtn).toBeDisabled();
     expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
   });
-
 });

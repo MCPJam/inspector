@@ -65,7 +65,11 @@ export function normalizePromptTurns(value: unknown): PromptTurn[] {
 export function extractPromptTurnsFromAdvancedConfig(
   advancedConfig: unknown,
 ): PromptTurn[] {
-  if (!advancedConfig || typeof advancedConfig !== "object" || Array.isArray(advancedConfig)) {
+  if (
+    !advancedConfig ||
+    typeof advancedConfig !== "object" ||
+    Array.isArray(advancedConfig)
+  ) {
     return [];
   }
 
@@ -77,7 +81,11 @@ export function extractPromptTurnsFromAdvancedConfig(
 export function stripPromptTurnsFromAdvancedConfig(
   advancedConfig: unknown,
 ): Record<string, unknown> | undefined {
-  if (!advancedConfig || typeof advancedConfig !== "object" || Array.isArray(advancedConfig)) {
+  if (
+    !advancedConfig ||
+    typeof advancedConfig !== "object" ||
+    Array.isArray(advancedConfig)
+  ) {
     return undefined;
   }
 
@@ -110,7 +118,9 @@ export function resolvePromptTurns(input: {
     return topLevelTurns;
   }
 
-  const legacyTurns = extractPromptTurnsFromAdvancedConfig(input.advancedConfig);
+  const legacyTurns = extractPromptTurnsFromAdvancedConfig(
+    input.advancedConfig,
+  );
   if (legacyTurns.length > 0) {
     return legacyTurns;
   }

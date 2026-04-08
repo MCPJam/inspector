@@ -144,7 +144,9 @@ export function pickSuiteExportCases(
   suiteRuns: EvalSuiteRun[],
 ): EvalExportCaseInput[] {
   if (persistedCases.length > 0) {
-    return persistedCases.map((testCase) => normalizeEvalCaseForExport(testCase));
+    return persistedCases.map((testCase) =>
+      normalizeEvalCaseForExport(testCase),
+    );
   }
 
   const latestRunWithTests = [...suiteRuns]
@@ -174,7 +176,9 @@ export function buildSdkEnvSnippet(
 ): SdkEnvSnippetResult {
   const serverConnections = buildServerConnections(serverIds, serverEntries);
   const httpConnections = serverConnections.filter(
-    (connection): connection is Extract<ExportServerConnection, { kind: "http" }> =>
+    (
+      connection,
+    ): connection is Extract<ExportServerConnection, { kind: "http" }> =>
       connection.kind === "http",
   );
   const stdioConnections = serverConnections.filter(
@@ -203,7 +207,10 @@ export function buildSdkEnvSnippet(
   }
 
   if (stdioConnections.length > 0) {
-    lines.push("", "# STDIO MCP servers are configured inline in the generated test file");
+    lines.push(
+      "",
+      "# STDIO MCP servers are configured inline in the generated test file",
+    );
     for (const connection of stdioConnections) {
       lines.push(
         `# ${connection.serverId}: ${formatCommandDisplay(connection.command, connection.args)}`,
@@ -234,11 +241,7 @@ export function buildSdkTestFile({
   usedPlaceholderFallback = false,
 }: SdkTestFileInput): string {
   const needsPartialArgMatching = anyTestCaseUsesPartialArgMatching(cases);
-  const sdkImports = [
-    "  MCPClientManager,",
-    "  TestAgent,",
-    "  EvalTest,",
-  ];
+  const sdkImports = ["  MCPClientManager,", "  TestAgent,", "  EvalTest,"];
   if (needsPartialArgMatching) {
     sdkImports.push("  matchToolCallWithPartialArgs,");
   }
@@ -249,7 +252,7 @@ export function buildSdkTestFile({
     ...sdkImports,
     '} from "@mcpjam/sdk";',
     "",
-    'type ServerConnection =',
+    "type ServerConnection =",
     '  | { id: string; kind: "http"; url: string }',
     '  | { id: string; kind: "stdio"; command: string; args: string[] };',
     "",
@@ -264,10 +267,7 @@ export function buildSdkTestFile({
   ];
 
   if (suite.description?.trim()) {
-    lines.push(
-      "",
-      `// ${suite.description.trim()}`,
-    );
+    lines.push("", `// ${suite.description.trim()}`);
   }
 
   if (usedPlaceholderFallback) {
@@ -332,9 +332,7 @@ export function buildSuiteExportFileName(
   scope: "suite" | "test-case",
 ): string {
   const safeName = sanitizeFilename(suiteName || "mcpjam-export");
-  return scope === "suite"
-    ? `${safeName}.eval.test.ts`
-    : `${safeName}.test.ts`;
+  return scope === "suite" ? `${safeName}.eval.test.ts` : `${safeName}.test.ts`;
 }
 
 export function buildAgentPromptExportFileName(suiteName: string): string {
@@ -435,10 +433,10 @@ function buildCaseTestBlock(
       "        test: async (agent) => {",
       `          const result = await agent.prompt(${JSON.stringify(firstTurn.prompt)});`,
     );
-    lines.push(`          return ${buildSingleTurnReturnExpression(firstTurn, testCase.isNegativeTest)};`);
     lines.push(
-      "        },",
+      `          return ${buildSingleTurnReturnExpression(firstTurn, testCase.isNegativeTest)};`,
     );
+    lines.push("        },");
   } else {
     lines.push(
       "        test: async (agent) => {",
@@ -473,9 +471,7 @@ function buildCaseTestBlock(
       );
     }
 
-    lines.push(
-      "        },",
-    );
+    lines.push("        },");
   }
 
   lines.push(
@@ -493,7 +489,12 @@ function buildCaseTestBlock(
 }
 
 function buildSingleTurnReturnExpression(
-  turn: { expectedToolCalls: Array<{ toolName: string; arguments: Record<string, any> }> },
+  turn: {
+    expectedToolCalls: Array<{
+      toolName: string;
+      arguments: Record<string, any>;
+    }>;
+  },
   isNegativeTest: boolean,
 ): string {
   if (isNegativeTest) {
@@ -545,7 +546,9 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
     commentLines.push(`Expected output: ${testCase.expectedOutput}`);
   }
   if (testCase.modelHints && testCase.modelHints.length > 0) {
-    commentLines.push(`Model hints from MCPJam: ${testCase.modelHints.join(", ")}`);
+    commentLines.push(
+      `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`,
+    );
   }
 
   const advancedConfig = testCase.advancedConfig ?? undefined;
@@ -612,24 +615,30 @@ function renderServerConnectionEntries(
   return lines.join("\n");
 }
 
-function normalizeOptionalString(value: string | undefined): string | undefined {
+function normalizeOptionalString(
+  value: string | undefined,
+): string | undefined {
   const trimmed = value?.trim();
   return trimmed ? trimmed : undefined;
 }
 
 function sanitizeFilename(value: string): string {
-  return value
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "mcpjam-export";
+  return (
+    value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 80) || "mcpjam-export"
+  );
 }
 
 function sanitizeEnvSegment(value: string): string {
-  return value
-    .toUpperCase()
-    .replace(/[^A-Z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "") || "SERVER";
+  return (
+    value
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "") || "SERVER"
+  );
 }
 
 function formatCommandDisplay(command: string, args: string[]): string {

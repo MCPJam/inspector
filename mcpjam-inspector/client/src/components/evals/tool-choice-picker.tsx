@@ -59,7 +59,8 @@ const MODE_ITEMS: PickerModeItem[] = [
     kind: "mode",
     key: "mode:required",
     label: "Required",
-    description: "Force at least one tool call, but let the model choose which tool.",
+    description:
+      "Force at least one tool call, but let the model choose which tool.",
     value: "required",
   },
   {
@@ -181,7 +182,7 @@ export function ToolChoicePicker({
     activeItem?.kind === "tool"
       ? activeItem.tool
       : currentToolName
-        ? sortedTools.find((tool) => tool.name === currentToolName) ?? null
+        ? (sortedTools.find((tool) => tool.name === currentToolName) ?? null)
         : null;
 
   const selectedKey = getChoiceKey(value);
@@ -388,7 +389,9 @@ export function ToolChoicePicker({
                             )}
                           />
                           <div className="min-w-0">
-                            <div className="font-mono text-sm">{item.tool.name}</div>
+                            <div className="font-mono text-sm">
+                              {item.tool.name}
+                            </div>
                             <div className="line-clamp-2 text-xs leading-5 text-muted-foreground">
                               {getItemDescription(item)}
                             </div>
@@ -425,8 +428,9 @@ export function ToolChoicePicker({
                   </div>
                   <div className="rounded-md border border-dashed border-border/60 bg-muted/20 px-3 py-4 text-xs leading-5 text-muted-foreground">
                     Select a mode when you want broad behavior control. Select a
-                    specific tool from the list when you want the model to stay on
-                    one tool and you need to inspect its parameter schema first.
+                    specific tool from the list when you want the model to stay
+                    on one tool and you need to inspect its parameter schema
+                    first.
                   </div>
                 </div>
               ) : (

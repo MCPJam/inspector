@@ -62,21 +62,15 @@ vi.mock("@/stores/client-config-store", () => ({
 }));
 
 vi.mock("../compare-run-chat-surface", () => ({
-  CompareRunChatSurface: ({
-    iteration,
-  }: {
-    iteration?: { _id?: string };
-  }) => (
+  CompareRunChatSurface: ({ iteration }: { iteration?: { _id?: string } }) => (
     <div data-testid="compare-run-chat-surface">{iteration?._id ?? "none"}</div>
   ),
 }));
 
 vi.mock("../eval-trace-surface", () => ({
-  EvalTraceSurface: ({
-    iteration,
-  }: {
-    iteration?: { _id?: string };
-  }) => <div data-testid="eval-trace-surface">{iteration?._id ?? "none"}</div>,
+  EvalTraceSurface: ({ iteration }: { iteration?: { _id?: string } }) => (
+    <div data-testid="eval-trace-surface">{iteration?._id ?? "none"}</div>
+  ),
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({

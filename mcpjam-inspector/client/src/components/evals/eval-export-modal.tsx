@@ -270,7 +270,9 @@ export function EvalExportModal({
       <DialogContent className="flex h-[min(92vh,960px)] max-h-[min(92vh,960px)] flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
         <DialogHeader className="shrink-0 border-b border-border/60 px-6 py-5">
           <DialogTitle>
-            {scope === "suite" ? "Export suite as SDK eval" : "Export test case"}
+            {scope === "suite"
+              ? "Export suite as SDK eval"
+              : "Export test case"}
           </DialogTitle>
           <DialogDescription>
             {scope === "suite"
@@ -315,8 +317,8 @@ export function EvalExportModal({
                     <AlertTitle>Local server details are incomplete</AlertTitle>
                     <AlertDescription>
                       Replace placeholder values for{" "}
-                      {sdkEnvResult.missingServerIds.join(", ")} before running the
-                      exported file.
+                      {sdkEnvResult.missingServerIds.join(", ")} before running
+                      the exported file.
                     </AlertDescription>
                   </Alert>
                 ) : null}

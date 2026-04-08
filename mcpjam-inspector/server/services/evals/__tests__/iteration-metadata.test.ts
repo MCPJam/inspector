@@ -8,18 +8,22 @@ describe("buildIterationMetadata", () => {
       {
         id: "t1",
         prompt: "Warm up",
-        expectedToolCalls: [] as Array<{ toolName: string; arguments: Record<string, unknown> }>,
+        expectedToolCalls: [] as Array<{
+          toolName: string;
+          arguments: Record<string, unknown>;
+        }>,
       },
       {
         id: "t2",
         prompt: "Fetch data",
-        expectedToolCalls: [
-          { toolName: "fetch", arguments: {} },
-        ],
+        expectedToolCalls: [{ toolName: "fetch", arguments: {} }],
       },
     ];
 
-    const evaluation = evaluateMultiTurnResults(promptTurns, [[], [{ toolName: "fetch", arguments: {} }]]);
+    const evaluation = evaluateMultiTurnResults(promptTurns, [
+      [],
+      [{ toolName: "fetch", arguments: {} }],
+    ]);
 
     expect(evaluation.passed).toBe(true);
     expect(evaluation.missing).toHaveLength(0);
@@ -54,7 +58,9 @@ describe("buildIterationMetadata", () => {
     const meta = buildIterationMetadata(evaluation);
     expect(meta.missingCount).toBe(evaluation.missing.length);
     expect(meta.unexpectedCount).toBe(evaluation.unexpected.length);
-    expect(meta.argumentMismatchCount).toBe(evaluation.argumentMismatches.length);
+    expect(meta.argumentMismatchCount).toBe(
+      evaluation.argumentMismatches.length,
+    );
     expect(meta.mismatchCount).toBe(
       evaluation.missing.length +
         evaluation.unexpected.length +

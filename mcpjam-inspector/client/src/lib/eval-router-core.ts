@@ -80,9 +80,7 @@ export function createEvalRouter(prefix: EvalRouterPrefix) {
         const params = new URLSearchParams(queryString || "");
         const compareRaw = params.get("compare");
         const openCompare =
-          compareRaw === "1" ||
-          compareRaw === "true" ||
-          compareRaw === "yes";
+          compareRaw === "1" || compareRaw === "true" || compareRaw === "yes";
         return {
           type: "test-edit",
           suiteId,

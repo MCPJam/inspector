@@ -478,7 +478,9 @@ describe("TraceViewer", () => {
     expect(screen.getByTestId("trace-viewer-raw-json")).toBeInTheDocument();
     fireEvent.keyDown(window, { key: "Escape", bubbles: true });
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
-    expect(screen.queryByTestId("trace-viewer-raw-json")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("trace-viewer-raw-json"),
+    ).not.toBeInTheDocument();
   });
 
   it("leaves Chat on Escape", async () => {

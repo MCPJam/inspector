@@ -322,48 +322,55 @@ export function IterationDetails({
 
     serverNames.forEach((serverId) => {
       void listTools({ serverId })
-        .then((result: ToolServerMap & { tools?: Array<{ name: string; inputSchema?: any }>; toolsMetadata?: Record<string, unknown> }) => {
-          if (cancelled) return;
+        .then(
+          (
+            result: ToolServerMap & {
+              tools?: Array<{ name: string; inputSchema?: any }>;
+              toolsMetadata?: Record<string, unknown>;
+            },
+          ) => {
+            if (cancelled) return;
 
-          setConnectedServerIds((prev) =>
-            prev.includes(serverId) ? prev : [...prev, serverId],
-          );
+            setConnectedServerIds((prev) =>
+              prev.includes(serverId) ? prev : [...prev, serverId],
+            );
 
-          if (result.tools?.length) {
-            setToolsWithSchema((prev) => {
-              const next = { ...prev };
-              for (const tool of result.tools ?? []) {
-                next[tool.name] = {
-                  name: tool.name,
-                  inputSchema: tool.inputSchema,
-                };
-              }
-              return next;
-            });
+            if (result.tools?.length) {
+              setToolsWithSchema((prev) => {
+                const next = { ...prev };
+                for (const tool of result.tools ?? []) {
+                  next[tool.name] = {
+                    name: tool.name,
+                    inputSchema: tool.inputSchema,
+                  };
+                }
+                return next;
+              });
 
-            setToolServerMap((prev: ToolServerMap) => {
-              const next = { ...prev };
-              for (const tool of result.tools ?? []) {
-                next[tool.name] = serverId;
-              }
-              return next;
-            });
-          }
+              setToolServerMap((prev: ToolServerMap) => {
+                const next = { ...prev };
+                for (const tool of result.tools ?? []) {
+                  next[tool.name] = serverId;
+                }
+                return next;
+              });
+            }
 
-          if (result.toolsMetadata) {
-            setToolsMetadata((prev) => ({
-              ...prev,
-              ...Object.fromEntries(
-                Object.entries(result.toolsMetadata ?? {}).map(
-                  ([toolName, meta]) => [
-                    toolName,
-                    meta as Record<string, unknown>,
-                  ],
+            if (result.toolsMetadata) {
+              setToolsMetadata((prev) => ({
+                ...prev,
+                ...Object.fromEntries(
+                  Object.entries(result.toolsMetadata ?? {}).map(
+                    ([toolName, meta]) => [
+                      toolName,
+                      meta as Record<string, unknown>,
+                    ],
+                  ),
                 ),
-              ),
-            }));
-          }
-        })
+              }));
+            }
+          },
+        )
         .catch((loadError: unknown) => {
           if (cancelled) return;
 
@@ -406,8 +413,14 @@ export function IterationDetails({
       return blob.prompts as Array<{
         promptIndex: number;
         prompt: string;
-        expectedToolCalls: Array<{ toolName: string; arguments: Record<string, any> }>;
-        actualToolCalls: Array<{ toolName: string; arguments: Record<string, any> }>;
+        expectedToolCalls: Array<{
+          toolName: string;
+          arguments: Record<string, any>;
+        }>;
+        actualToolCalls: Array<{
+          toolName: string;
+          arguments: Record<string, any>;
+        }>;
         expectedOutput?: string;
         passed: boolean;
         missing: Array<{ toolName: string; arguments: Record<string, any> }>;
@@ -809,7 +822,8 @@ export function IterationDetails({
         <div className="flex items-center justify-between">
           <div className="text-xs font-semibold">Turn Breakdown</div>
           <div className="text-[10px] text-muted-foreground">
-            {promptSummaries.length} turn{promptSummaries.length === 1 ? "" : "s"}
+            {promptSummaries.length} turn
+            {promptSummaries.length === 1 ? "" : "s"}
             {firstFailedTurnIndex >= 0
               ? ` · first failure on turn ${firstFailedTurnIndex + 1}`
               : ""}

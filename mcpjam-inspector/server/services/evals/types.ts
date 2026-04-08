@@ -108,7 +108,10 @@ export const evaluateMultiTurnResults = (
         };
       }
 
-      const evaluation = evaluateResults(turn.expectedToolCalls, actualToolCalls);
+      const evaluation = evaluateResults(
+        turn.expectedToolCalls,
+        actualToolCalls,
+      );
       return {
         promptIndex,
         prompt: turn.prompt,
@@ -126,7 +129,9 @@ export const evaluateMultiTurnResults = (
   const assertedSummaries = isNegativeTest
     ? promptSummaries
     : promptSummaries.filter((summary) => summary.expectedToolCalls.length > 0);
-  const failedSummaries = assertedSummaries.filter((summary) => !summary.passed);
+  const failedSummaries = assertedSummaries.filter(
+    (summary) => !summary.passed,
+  );
   const firstFailedTurn = promptSummaries.find((summary) =>
     isNegativeTest
       ? !summary.passed

@@ -109,8 +109,7 @@ describe("ci-evals-router", () => {
   });
 
   it("parses test edit route with compare query", () => {
-    window.location.hash =
-      "#/ci-evals/suite/s_123/test/t_789/edit?compare=1";
+    window.location.hash = "#/ci-evals/suite/s_123/test/t_789/edit?compare=1";
     expect(parseCiEvalsRoute()).toEqual({
       type: "test-edit",
       suiteId: "s_123",

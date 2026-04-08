@@ -1897,10 +1897,7 @@ export function TraceTimeline({
 
   return (
     <div
-      className={cn(
-        "space-y-2",
-        fillContent && "flex min-h-0 flex-1 flex-col",
-      )}
+      className={cn("space-y-2", fillContent && "flex min-h-0 flex-1 flex-col")}
     >
       {!hideToolbar ? (
         <div className={fillContent ? "shrink-0" : undefined}>

@@ -6,8 +6,7 @@ export function buildIterationMetadata(
   const missingCount = evaluation.missing.length;
   const unexpectedCount = evaluation.unexpected.length;
   const argumentMismatchCount = evaluation.argumentMismatches.length;
-  const mismatchCount =
-    missingCount + unexpectedCount + argumentMismatchCount;
+  const mismatchCount = missingCount + unexpectedCount + argumentMismatchCount;
 
   const metadata: Record<string, string | number | boolean> = {
     turnCount: evaluation.turnCount,

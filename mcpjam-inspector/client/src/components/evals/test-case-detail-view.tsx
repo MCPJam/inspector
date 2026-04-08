@@ -1,19 +1,10 @@
 import { useMemo, useState } from "react";
-import {
-  Code2,
-  X,
-  ChevronDown,
-  ChevronRight,
-  Loader2,
-} from "lucide-react";
+import { Code2, X, ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
-import {
-  evalStatusLeftBorderClasses,
-  pickLatestCompletedRun,
-} from "./helpers";
+import { evalStatusLeftBorderClasses, pickLatestCompletedRun } from "./helpers";
 import { useRunInsights } from "./use-run-insights";
 import { findRunInsightForCase } from "./run-insight-helpers";
 import { IterationDetails } from "./iteration-details";

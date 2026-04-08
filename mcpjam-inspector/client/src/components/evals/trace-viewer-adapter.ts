@@ -351,9 +351,9 @@ function shouldAttemptWidgetReplay(params: {
 
   return Boolean(
     effectiveServerId &&
-      effectiveResourceUri &&
-      isWidgetUiType(effectiveUiType) &&
-      params.connectedServerIds.has(effectiveServerId),
+    effectiveResourceUri &&
+    isWidgetUiType(effectiveUiType) &&
+    params.connectedServerIds.has(effectiveServerId),
   );
 }
 
