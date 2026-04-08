@@ -181,9 +181,7 @@ chatV2.post("/", async (c) => {
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
-                ...(body.workspaceId
-                  ? { workspaceId: body.workspaceId }
-                  : {}),
+                ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
                 resumeConfig: {
                   systemPrompt,
                   temperature,
@@ -252,9 +250,7 @@ chatV2.post("/", async (c) => {
             authHeader,
             startedAt: streamStartedAt,
             lastActivityAt: Date.now(),
-            ...(body.workspaceId
-              ? { workspaceId: body.workspaceId }
-              : {}),
+            ...(body.workspaceId ? { workspaceId: body.workspaceId } : {}),
             resumeConfig: {
               systemPrompt,
               temperature,

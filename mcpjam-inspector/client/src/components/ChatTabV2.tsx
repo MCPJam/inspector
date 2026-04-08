@@ -797,8 +797,14 @@ export function ChatTabV2({
         <ResizablePanel
           defaultSize={
             showHistoryRail
-              ? isJsonRpcPanelVisible ? 48 : 78
-              : minimalMode ? 100 : isJsonRpcPanelVisible ? 70 : 100
+              ? isJsonRpcPanelVisible
+                ? 48
+                : 78
+              : minimalMode
+                ? 100
+                : isJsonRpcPanelVisible
+                  ? 70
+                  : 100
           }
           minSize={40}
           className="min-w-0"

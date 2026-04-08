@@ -132,9 +132,7 @@ export function ChatHistoryRow({
     <>
       <div
         className={`group flex items-start gap-1.5 rounded-md px-2 py-1.5 text-xs cursor-pointer transition-colors ${
-          isActive
-            ? "bg-accent text-accent-foreground"
-            : "hover:bg-accent/50"
+          isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
         } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
         onClick={handleClick}
       >

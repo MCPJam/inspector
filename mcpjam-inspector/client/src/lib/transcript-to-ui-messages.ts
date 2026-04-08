@@ -89,9 +89,7 @@ function convertParts(content: unknown): UIMessage["parts"] {
   return parts;
 }
 
-export function transcriptToUIMessages(
-  transcript: unknown[],
-): UIMessage[] {
+export function transcriptToUIMessages(transcript: unknown[]): UIMessage[] {
   if (!Array.isArray(transcript)) return [];
 
   const messages: UIMessage[] = [];

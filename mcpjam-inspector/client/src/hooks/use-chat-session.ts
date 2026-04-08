@@ -450,17 +450,13 @@ export function useChatSession({
               selectedServers,
               chatSessionId,
               // Pass workspaceId for BYOK direct-chat history persistence
-              ...(hostedWorkspaceId
-                ? { workspaceId: hostedWorkspaceId }
-                : {}),
+              ...(hostedWorkspaceId ? { workspaceId: hostedWorkspaceId } : {}),
             }),
         requireToolApproval: requireToolApprovalRef.current,
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
           : {}),
-        ...(resumedVersion !== null
-          ? { expectedVersion: resumedVersion }
-          : {}),
+        ...(resumedVersion !== null ? { expectedVersion: resumedVersion } : {}),
       }),
       headers: transportHeaders,
     });

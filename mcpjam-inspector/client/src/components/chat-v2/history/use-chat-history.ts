@@ -80,7 +80,11 @@ export function useChatHistory({
   }, [fetchHistory]);
 
   const performAction = useCallback(
-    async (action: string, sessionId: string, params?: Record<string, unknown>) => {
+    async (
+      action: string,
+      sessionId: string,
+      params?: Record<string, unknown>,
+    ) => {
       await chatHistoryAction(action, sessionId, params);
       await fetchHistory();
     },

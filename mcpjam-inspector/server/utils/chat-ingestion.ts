@@ -124,9 +124,7 @@ export async function persistChatSessionToConvex(
         ...(options.lastActivityAt
           ? { lastActivityAt: options.lastActivityAt }
           : {}),
-        ...(options.resumeConfig
-          ? { resumeConfig: options.resumeConfig }
-          : {}),
+        ...(options.resumeConfig ? { resumeConfig: options.resumeConfig } : {}),
         ...(options.expectedVersion !== undefined
           ? { expectedVersion: options.expectedVersion }
           : {}),

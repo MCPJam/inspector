@@ -37,7 +37,10 @@ async function proxyGet(
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_PROXY_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    DEFAULT_PROXY_TIMEOUT_MS,
+  );
 
   try {
     const response = await fetch(url.toString(), {
@@ -81,7 +84,10 @@ async function proxyPost(
   const convexUrl = getConvexUrl();
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), DEFAULT_PROXY_TIMEOUT_MS);
+  const timeout = setTimeout(
+    () => controller.abort(),
+    DEFAULT_PROXY_TIMEOUT_MS,
+  );
 
   try {
     const response = await fetch(`${convexUrl}${path}`, {

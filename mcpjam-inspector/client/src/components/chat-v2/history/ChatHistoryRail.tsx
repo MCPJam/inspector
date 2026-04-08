@@ -83,20 +83,18 @@ export function ChatHistoryRail({
             </div>
           )}
 
-          {!loading &&
-            personal.length === 0 &&
-            workspace.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-8 px-4">
-                {activeStatus === "active"
-                  ? "No chat history yet. Start a conversation to see it here."
-                  : "No archived chats."}
-              </p>
-            )}
+          {!loading && personal.length === 0 && workspace.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-8 px-4">
+              {activeStatus === "active"
+                ? "No chat history yet. Start a conversation to see it here."
+                : "No archived chats."}
+            </p>
+          )}
 
           {/* Personal section */}
           {personal.length > 0 && (
             <div>
-              {(isAuthenticated && workspace.length > 0) && (
+              {isAuthenticated && workspace.length > 0 && (
                 <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-1">
                   Personal
                 </p>

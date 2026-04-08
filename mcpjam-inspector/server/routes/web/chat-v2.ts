@@ -328,8 +328,7 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory) => {
-              const isDirectChat =
-                !shareToken && !sandboxToken;
+              const isDirectChat = !shareToken && !sandboxToken;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),

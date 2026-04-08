@@ -162,13 +162,10 @@ describe("chat-history routes", () => {
         ),
       );
 
-      const res = await app.request(
-        "/chat-history/detail?chatSessionId=s1",
-        {
-          method: "GET",
-          headers: { Authorization: "Bearer test-token" },
-        },
-      );
+      const res = await app.request("/chat-history/detail?chatSessionId=s1", {
+        method: "GET",
+        headers: { Authorization: "Bearer test-token" },
+      });
 
       expect(res.status).toBe(200);
       const body = await res.json();

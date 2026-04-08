@@ -68,9 +68,7 @@ describe("transcriptToUIMessages", () => {
   });
 
   it("preserves existing IDs", () => {
-    const transcript = [
-      { id: "msg-123", role: "user", content: "Hi" },
-    ];
+    const transcript = [{ id: "msg-123", role: "user", content: "Hi" }];
     const messages = transcriptToUIMessages(transcript);
     expect(messages[0].id).toBe("msg-123");
   });
