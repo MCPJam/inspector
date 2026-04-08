@@ -1478,13 +1478,29 @@ function TimelineDetailPane({
   const toolErrorExcerpt =
     row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
+  const showRevealInChat = Boolean(
+    revealSelection && onRevealInTranscript,
+  );
+
   return (
     <div
       data-testid="trace-detail-pane"
       className="space-y-4 bg-background p-4"
     >
-      <div className="space-y-3 border-b border-border/40 pb-3">
-        <div className="flex gap-3">
+      <div
+        className={cn(
+          "border-b border-border/40 pb-3",
+          showRevealInChat
+            ? "flex flex-col gap-3 min-[400px]:flex-row min-[400px]:items-start"
+            : "",
+        )}
+      >
+        <div
+          className={cn(
+            "flex gap-3",
+            showRevealInChat ? "min-w-0 min-[400px]:flex-1" : "",
+          )}
+        >
           <div className="shrink-0 pt-0.5">
             {row.kind === "prompt" ? (
               <CategoryGlyph category="prompt" size="lg" />
@@ -1538,20 +1554,26 @@ function TimelineDetailPane({
             </div>
           </div>
         </div>
-      </div>
 
-      {revealSelection && onRevealInTranscript ? (
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          className="w-full justify-center"
-          onClick={() => onRevealInTranscript(revealSelection)}
-        >
-          <MessageSquareQuote className="h-3.5 w-3.5" />
-          Reveal in Chat
-        </Button>
-      ) : null}
+        {showRevealInChat ? (
+          <div className="flex min-w-0 min-[400px]:flex-1 min-[400px]:justify-end min-[400px]:pt-0.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="w-full shrink-0 justify-center whitespace-nowrap min-[400px]:w-auto"
+              onClick={() => {
+                if (revealSelection && onRevealInTranscript) {
+                  onRevealInTranscript(revealSelection);
+                }
+              }}
+            >
+              <MessageSquareQuote className="h-3.5 w-3.5" />
+              Reveal in Chat
+            </Button>
+          </div>
+        ) : null}
+      </div>
 
       {row.kind === "prompt" && promptUserMessage ? (
         <div className="min-h-0 max-h-[min(60vh,28rem)] flex-1 overflow-auto rounded-md border border-border/50 bg-muted/10 px-3 py-2 text-xs leading-relaxed text-foreground">

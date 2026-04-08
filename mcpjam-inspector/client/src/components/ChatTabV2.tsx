@@ -1183,7 +1183,9 @@ export function ChatTabV2({
                                   forcedViewMode={activeTraceViewMode}
                                   hideToolbar
                                   fillContent
-                                  hideTranscriptRevealControls
+                                  onRevealNavigateToChat={() =>
+                                    setTraceViewMode("chat")
+                                  }
                                   rawGrowWithContent
                                   rawXRayMirror={{
                                     payload: rawTraceXRayMirror.payload,
@@ -1221,7 +1223,9 @@ export function ChatTabV2({
                               forcedViewMode={activeTraceViewMode}
                               hideToolbar
                               fillContent
-                              hideTranscriptRevealControls
+                              onRevealNavigateToChat={() =>
+                                setTraceViewMode("chat")
+                              }
                               rawXRayMirror={{
                                 payload: rawTraceXRayMirror.payload,
                                 loading: rawTraceXRayMirror.loading,

@@ -2,13 +2,11 @@ import { useMemo, useState } from "react";
 import { Check, Crown, X } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { ConfirmChatResetDialog } from "./dialogs/confirm-chat-reset-dialog";
 import { ProviderLogo } from "./model/provider-logo";
@@ -125,6 +123,11 @@ function sameModelOrder(left: ModelDefinition[], right: ModelDefinition[]): bool
   return left.every((model, index) => String(model.id) === String(right[index]?.id));
 }
 
+/** Strip redundant tier suffix for a denser list (search value still uses full name). */
+function compactModelLabel(name: string): string {
+  return name.replace(/\s*\(Free\)\s*$/i, "").trim() || name;
+}
+
 export function ModelSelector({
   currentModel,
   availableModels,
@@ -199,12 +202,13 @@ export function ModelSelector({
   const leadModel = selectedModelsData[0] ?? currentModel;
   const triggerLabel =
     multiModelEnabled && selectedModelsData.length > 1
-      ? `${leadModel.name} +${selectedModelsData.length - 1}`
-      : leadModel.name;
-  const selectedModelSummaryText =
-    selectedModelsData.length === 1
-      ? "1 model selected"
-      : `${selectedModelsData.length} models selected`;
+      ? `${compactModelLabel(leadModel.name)} +${selectedModelsData.length - 1}`
+      : compactModelLabel(leadModel.name);
+  const modelSections = useMemo(() => {
+    const provided = modelGroups.filter((g) => g.providerType === "provided");
+    const configured = modelGroups.filter((g) => g.providerType === "configured");
+    return { provided, configured };
+  }, [modelGroups]);
   const selectedLimitReached =
     multiModelEnabled && selectedModelsData.length >= maxSelectedModels;
 
@@ -320,6 +324,84 @@ export function ModelSelector({
     });
   };
 
+  const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
+    group.models.map((model) => {
+      const isMcpJamProvided = isMCPJamProvidedModel(String(model.id));
+      const isDisabled =
+        !!model.disabled ||
+        (isMcpJamProvided && !isAuthenticated) ||
+        (multiModelEnabled &&
+          !selectedIds.has(String(model.id)) &&
+          selectedLimitReached);
+      const disabledReason =
+        isMcpJamProvided && !isAuthenticated
+          ? "Sign in to use MCPJam provided models"
+          : !selectedIds.has(String(model.id)) && selectedLimitReached
+            ? `You can compare up to ${maxSelectedModels} models at once`
+            : model.disabledReason;
+      const isSelected = selectedIds.has(String(model.id));
+      const isLead =
+        multiModelEnabled &&
+        isSelected &&
+        String(model.id) === String(leadModel.id);
+
+      const row = (
+        <CommandItem
+          key={String(model.id)}
+          value={`${model.name} ${group.title} ${String(model.id)}`}
+          onSelect={() => {
+            if (multiModelEnabled) {
+              handleMultiModelSelect(model);
+            } else {
+              requestSelectionChange({
+                type: "single",
+                nextModel: model,
+              });
+            }
+          }}
+          disabled={isDisabled}
+          className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+        >
+          <ProviderLogo
+            provider={getLogoProvider(group.provider)}
+            customProviderName={getCustomName(group.provider)}
+            className="size-3.5"
+          />
+          <span className="min-w-0 flex-1 truncate text-sm">
+            {compactModelLabel(model.name)}
+          </span>
+          {multiModelEnabled ? (
+            <div className="flex shrink-0 items-center gap-1">
+              {isLead ? <Crown className="size-3 text-primary" /> : null}
+              <div
+                className={cn(
+                  "flex size-4 items-center justify-center rounded-sm border",
+                  isSelected
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border/60 bg-transparent text-transparent",
+                )}
+              >
+                <Check className="size-2.5" />
+              </div>
+            </div>
+          ) : String(model.id) === String(currentModel.id) ? (
+            <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
+          ) : null}
+        </CommandItem>
+      );
+
+      return disabledReason ? (
+        <Tooltip key={String(model.id)}>
+          <TooltipTrigger asChild>
+            <div>{row}</div>
+          </TooltipTrigger>
+          <TooltipContent side="right">{disabledReason}</TooltipContent>
+        </Tooltip>
+      ) : (
+        row
+      );
+    });
+
   return (
     <>
       <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -345,214 +427,121 @@ export function ModelSelector({
           <TooltipContent side="top">{triggerLabel}</TooltipContent>
         </Tooltip>
 
-        <PopoverContent align="start" className="w-[340px] p-0" sideOffset={8}>
+        <PopoverContent align="start" className="w-[280px] p-0" sideOffset={8}>
           <Command shouldFilter={true}>
             <CommandInput placeholder="Search models" />
 
             {canUseMultiModel ? (
               <>
-                <div className="flex items-center justify-between gap-3 border-b px-3 py-3">
-                  <div className="space-y-0.5">
-                    <p className="text-sm font-medium">Use Multiple Models</p>
-                    <p className="text-xs text-muted-foreground">
-                      Broadcast the shared composer to up to {maxSelectedModels} models.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={multiModelEnabled}
-                    onCheckedChange={handleToggleMultiModel}
-                    aria-label="Use multiple models"
-                    disabled={disabled || isLoading}
-                  />
-                </div>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <div className="flex cursor-default items-center justify-between gap-2 border-b px-2.5 py-2">
+                      <span className="text-xs text-muted-foreground">
+                        Multiple models
+                      </span>
+                      <Switch
+                        checked={multiModelEnabled}
+                        onCheckedChange={handleToggleMultiModel}
+                        aria-label="Use multiple models"
+                        disabled={disabled || isLoading}
+                      />
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="max-w-xs text-xs">
+                    Compare up to {maxSelectedModels} models in one composer. The
+                    first in your selection runs first.
+                  </TooltipContent>
+                </Tooltip>
 
                 {multiModelEnabled ? (
-                  <div className="space-y-2 border-b px-3 py-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs font-medium text-muted-foreground">
-                        {selectedModelSummaryText}
-                      </p>
-                      <Badge variant="secondary" className="text-[10px]">
-                        Lead model runs first in the list
-                      </Badge>
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      {selectedModelsData.map((model, index) => {
-                        const isLead = index === 0;
-                        return (
-                          <button
-                            key={String(model.id)}
-                            type="button"
-                            className={cn(
-                              "group inline-flex max-w-full items-center gap-1.5 rounded-full border px-2 py-1 text-xs transition-colors",
-                              isLead
-                                ? "border-primary/30 bg-primary/5 text-foreground"
-                                : "border-border/60 bg-background text-muted-foreground hover:border-primary/20 hover:text-foreground",
-                            )}
-                            onClick={() => handlePromoteLeadModel(model)}
-                            title={
-                              isLead
-                                ? `${model.name} is the lead model`
-                                : `Promote ${model.name} to lead model`
-                            }
-                          >
-                            <ProviderLogo
-                              provider={model.provider}
-                              customProviderName={model.customProviderName}
-                            />
-                            <span className="truncate">{model.name}</span>
-                            {isLead ? (
-                              <Badge
-                                variant="secondary"
-                                className="h-5 rounded-full px-1.5 text-[10px]"
-                              >
-                                <Crown className="mr-1 h-2.5 w-2.5" />
-                                Lead
-                              </Badge>
-                            ) : null}
-                            {selectedModelsData.length > 1 ? (
-                              <span
-                                role="button"
-                                tabIndex={-1}
-                                className="inline-flex h-4 w-4 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  handleMultiModelSelect(model);
-                                }}
-                              >
-                                <X className="h-3 w-3" />
-                              </span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-
+                  <div
+                    className="flex flex-wrap gap-1 border-b px-2.5 py-1.5"
+                    title="First chip is the lead model. Click a chip to promote it."
+                  >
+                    {selectedModelsData.map((model, index) => {
+                      const isLead = index === 0;
+                      return (
+                        <button
+                          key={String(model.id)}
+                          type="button"
+                          className={cn(
+                            "inline-flex max-w-full items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] transition-colors",
+                            isLead
+                              ? "border-primary/25 bg-primary/5 text-foreground"
+                              : "border-border/50 bg-muted/30 text-muted-foreground hover:text-foreground",
+                          )}
+                          onClick={() => handlePromoteLeadModel(model)}
+                        >
+                          {isLead ? (
+                            <Crown className="h-2.5 w-2.5 shrink-0 text-primary" />
+                          ) : null}
+                          <ProviderLogo
+                            provider={model.provider}
+                            customProviderName={model.customProviderName}
+                            className="size-3"
+                          />
+                          <span className="truncate">
+                            {compactModelLabel(model.name)}
+                          </span>
+                          {selectedModelsData.length > 1 ? (
+                            <span
+                              role="button"
+                              tabIndex={-1}
+                              className="inline-flex size-3.5 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handleMultiModelSelect(model);
+                              }}
+                            >
+                              <X className="h-2.5 w-2.5" />
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
                     {selectedLimitReached ? (
-                      <p className="text-[11px] text-muted-foreground">
-                        Remove a model before adding another one.
-                      </p>
+                      <span className="w-full text-[10px] text-muted-foreground">
+                        Max {maxSelectedModels}. Remove one to add another.
+                      </span>
                     ) : null}
                   </div>
                 ) : null}
               </>
             ) : null}
 
-            <CommandList className="max-h-[360px]">
+            <CommandList className="max-h-[min(320px,45vh)]">
               <CommandEmpty>No matching models.</CommandEmpty>
 
-              {modelGroups.map((group, groupIndex) => {
-                const heading =
-                  group.providerType === "provided"
-                    ? "MCPJam Free Models"
-                    : "Your providers";
-
-                return (
-                  <div key={group.provider}>
-                    {(groupIndex > 0 || (canUseMultiModel && multiModelEnabled)) && (
-                      <CommandSeparator />
-                    )}
-                    <CommandGroup heading={heading}>
-                      <div className="px-2 pb-1 text-[11px] font-medium text-muted-foreground">
+              {modelSections.provided.length > 0 ? (
+                <CommandGroup heading="Free models">
+                  {modelSections.provided.map((group) => (
+                    <div key={group.provider}>
+                      <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                         {group.title}
                       </div>
-                      <ScrollArea className="max-h-[220px]">
-                        <div className="space-y-1 p-1">
-                          {group.models.map((model) => {
-                            const isMcpJamProvided = isMCPJamProvidedModel(
-                              String(model.id),
-                            );
-                            const isDisabled =
-                              !!model.disabled ||
-                              (isMcpJamProvided && !isAuthenticated) ||
-                              (multiModelEnabled &&
-                                !selectedIds.has(String(model.id)) &&
-                                selectedLimitReached);
-                            const disabledReason =
-                              isMcpJamProvided && !isAuthenticated
-                                ? "Sign in to use MCPJam provided models"
-                                : !selectedIds.has(String(model.id)) &&
-                                    selectedLimitReached
-                                  ? `You can compare up to ${maxSelectedModels} models at once`
-                                  : model.disabledReason;
-                            const isSelected = selectedIds.has(String(model.id));
+                      {renderGroupModelItems(group)}
+                    </div>
+                  ))}
+                </CommandGroup>
+              ) : null}
 
-                            const item = (
-                              <CommandItem
-                                key={String(model.id)}
-                                value={`${model.name} ${group.title} ${String(model.id)}`}
-                                onSelect={() => {
-                                  if (multiModelEnabled) {
-                                    handleMultiModelSelect(model);
-                                  } else {
-                                    requestSelectionChange({
-                                      type: "single",
-                                      nextModel: model,
-                                    });
-                                  }
-                                }}
-                                disabled={isDisabled}
-                                className="cursor-pointer rounded-md px-2 py-2 data-[disabled=true]:cursor-not-allowed"
-                              >
-                                <ProviderLogo
-                                  provider={getLogoProvider(group.provider)}
-                                  customProviderName={getCustomName(group.provider)}
-                                />
-                                <div className="min-w-0 flex-1">
-                                  <div className="truncate text-sm font-medium">
-                                    {model.name}
-                                  </div>
-                                  <div className="truncate text-[11px] text-muted-foreground">
-                                    {group.title}
-                                  </div>
-                                </div>
-                                {multiModelEnabled ? (
-                                  <div className="flex items-center gap-1">
-                                    {isSelected && String(model.id) === String(leadModel.id) ? (
-                                      <Badge
-                                        variant="secondary"
-                                        className="rounded-full px-1.5 text-[10px]"
-                                      >
-                                        Lead
-                                      </Badge>
-                                    ) : null}
-                                    <div
-                                      className={cn(
-                                        "flex h-5 w-5 items-center justify-center rounded-full border",
-                                        isSelected
-                                          ? "border-primary bg-primary text-primary-foreground"
-                                          : "border-border/60 bg-background text-transparent",
-                                      )}
-                                    >
-                                      <Check className="h-3 w-3" />
-                                    </div>
-                                  </div>
-                                ) : String(model.id) === String(currentModel.id) ? (
-                                  <div className="ml-auto h-2.5 w-2.5 rounded-full bg-primary" />
-                                ) : null}
-                              </CommandItem>
-                            );
+              {modelSections.provided.length > 0 &&
+              modelSections.configured.length > 0 ? (
+                <CommandSeparator />
+              ) : null}
 
-                            return disabledReason ? (
-                              <Tooltip key={String(model.id)}>
-                                <TooltipTrigger asChild>
-                                  <div>{item}</div>
-                                </TooltipTrigger>
-                                <TooltipContent side="right">
-                                  {disabledReason}
-                                </TooltipContent>
-                              </Tooltip>
-                            ) : (
-                              item
-                            );
-                          })}
-                        </div>
-                      </ScrollArea>
-                    </CommandGroup>
-                  </div>
-                );
-              })}
+              {modelSections.configured.length > 0 ? (
+                <CommandGroup heading="Your providers">
+                  {modelSections.configured.map((group) => (
+                    <div key={group.provider}>
+                      <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
+                        {group.title}
+                      </div>
+                      {renderGroupModelItems(group)}
+                    </div>
+                  ))}
+                </CommandGroup>
+              ) : null}
             </CommandList>
           </Command>
         </PopoverContent>

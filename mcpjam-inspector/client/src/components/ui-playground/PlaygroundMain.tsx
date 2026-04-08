@@ -1394,7 +1394,9 @@ export function PlaygroundMain({
                                   forcedViewMode={activeTraceViewMode}
                                   hideToolbar
                                   fillContent
-                                  hideTranscriptRevealControls
+                                  onRevealNavigateToChat={() =>
+                                    setTraceViewMode("chat")
+                                  }
                                   rawGrowWithContent
                                   rawXRayMirror={{
                                     payload: playgroundRawXRayMirror.payload,
@@ -1425,7 +1427,9 @@ export function PlaygroundMain({
                               forcedViewMode={activeTraceViewMode}
                               hideToolbar
                               fillContent
-                              hideTranscriptRevealControls
+                              onRevealNavigateToChat={() =>
+                                setTraceViewMode("chat")
+                              }
                               rawXRayMirror={{
                                 payload: playgroundRawXRayMirror.payload,
                                 loading: playgroundRawXRayMirror.loading,
