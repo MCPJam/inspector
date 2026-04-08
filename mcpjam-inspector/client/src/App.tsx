@@ -736,8 +736,9 @@ export default function App() {
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
     : (workspaceCreationGate.denialMessage ?? undefined);
-  const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] =
-    useState<string | null>(null);
+  const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
+    string | null
+  >(null);
   const trialModalDismissed =
     trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
@@ -1642,7 +1643,8 @@ export default function App() {
       <Dialog
         open={showTrialDecisionModal}
         onOpenChange={(open) => {
-          if (!open) setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+          if (!open)
+            setTrialModalDismissedForOrg(billingOrganizationId ?? null);
         }}
       >
         <DialogContent
