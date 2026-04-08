@@ -5,7 +5,12 @@ import type { PromptTurn } from "@/shared/prompt-turns";
 
 type TestCaseRunOverrides = Pick<
   EvalCase,
-  "query" | "expectedToolCalls" | "runs" | "expectedOutput" | "advancedConfig"
+  | "query"
+  | "expectedToolCalls"
+  | "isNegativeTest"
+  | "runs"
+  | "expectedOutput"
+  | "advancedConfig"
 >;
 type TestCaseRunOverridesWithTurns = TestCaseRunOverrides & {
   promptTurns?: PromptTurn[];

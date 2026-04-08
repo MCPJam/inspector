@@ -271,19 +271,43 @@ export function EvalsTab({
 
   const handleDeleteTestCasesBatch = useCallback(
     async (testCaseIds: string[]) => {
-      await Promise.all(
-        testCaseIds.map((id) => handlers.directDeleteTestCase(id)),
+      const settledDeletes = await Promise.allSettled(
+        testCaseIds.map(async (id) => {
+          await handlers.directDeleteTestCase(id);
+          return id;
+        }),
       );
+      const deletedIds = new Set(
+        settledDeletes.flatMap((result) =>
+          result.status === "fulfilled" ? [result.value] : [],
+        ),
+      );
+      const failedDeletes = settledDeletes.filter(
+        (result): result is PromiseRejectedResult => result.status === "rejected",
+      );
+
+      if (failedDeletes.length > 0) {
+        console.error("Failed to delete some test cases:", failedDeletes);
+        toast.error(
+          `Failed to delete ${failedDeletes.length} test case${
+            failedDeletes.length === 1 ? "" : "s"
+          }.`,
+        );
+      }
+
       if (
         exploreSuite &&
         selectedTestId &&
-        testCaseIds.includes(selectedTestId)
+        deletedIds.has(selectedTestId)
       ) {
-        navigatePlaygroundEvalsRoute({
-          type: "suite-overview",
-          suiteId: exploreSuite._id,
-          view: "test-cases",
-        });
+        navigatePlaygroundEvalsRoute(
+          {
+            type: "suite-overview",
+            suiteId: exploreSuite._id,
+            view: "test-cases",
+          },
+          { replace: true },
+        );
       }
     },
     [exploreSuite, handlers, selectedTestId],
@@ -370,6 +394,7 @@ export function EvalsTab({
                     if (firstIterationId) {
                       playgroundNavigation.toTestEdit(exploreSuite._id, tc._id, {
                         openCompare: true,
+                        iteration: firstIterationId,
                       });
                     }
                   })();

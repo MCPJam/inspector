@@ -99,6 +99,64 @@ function isQuickRunIteration(
   return !iteration.suiteRunId;
 }
 
+function areCompareRecordMetricsEqual(
+  left: CompareRunRecord["metrics"],
+  right: CompareRunRecord["metrics"],
+): boolean {
+  return (
+    left.durationMs === right.durationMs &&
+    left.toolCallCount === right.toolCallCount &&
+    left.tokensUsed === right.tokensUsed &&
+    left.missingCount === right.missingCount &&
+    left.unexpectedCount === right.unexpectedCount &&
+    left.argumentMismatchCount === right.argumentMismatchCount &&
+    left.mismatchCount === right.mismatchCount
+  );
+}
+
+function areCompareRunRecordsEquivalent(
+  existingRecords: Record<string, CompareRunRecord>,
+  nextRecords: Record<string, CompareRunRecord>,
+): boolean {
+  const existingKeys = Object.keys(existingRecords);
+  const nextKeys = Object.keys(nextRecords);
+
+  if (existingKeys.length !== nextKeys.length) {
+    return false;
+  }
+
+  for (const key of nextKeys) {
+    const existing = existingRecords[key];
+    const next = nextRecords[key];
+
+    if (!existing || !next) {
+      return false;
+    }
+
+    if (existing === next) {
+      continue;
+    }
+
+    if (
+      existing.modelValue !== next.modelValue ||
+      existing.modelLabel !== next.modelLabel ||
+      existing.provider !== next.provider ||
+      existing.model !== next.model ||
+      existing.status !== next.status ||
+      existing.error !== next.error ||
+      existing.startedAt !== next.startedAt ||
+      existing.completedAt !== next.completedAt ||
+      existing.result !== next.result ||
+      existing.iteration?._id !== next.iteration?._id ||
+      !areCompareRecordMetricsEqual(existing.metrics, next.metrics)
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function resolveLatestCompareRunId(
   iterations: EvalIteration[],
 ): string | null {
@@ -248,12 +306,13 @@ export function buildHistoricalCompareRunRecords(params: {
   const hadKeysNotInSelection = Object.keys(existingRecords).some(
     (key) => !selectedSet.has(key),
   );
+  const preserveCompletedIterations = preferredIteration == null;
 
   // Keep only rows for the current compare selection; drop stale model keys.
   const nextRecords: Record<string, CompareRunRecord> = {};
   for (const modelValue of selectedModelValues) {
     const existing = existingRecords[modelValue];
-    if (existing) {
+    if (existing && (preserveCompletedIterations || !existing.iteration)) {
       nextRecords[modelValue] = existing;
     }
   }
@@ -312,7 +371,7 @@ export function buildHistoricalCompareRunRecords(params: {
   let changed = false;
 
   for (const modelValue of selectedModelValues) {
-    if (nextRecords[modelValue]?.iteration) {
+    if (preserveCompletedIterations && nextRecords[modelValue]?.iteration) {
       continue;
     }
 
@@ -338,7 +397,11 @@ export function buildHistoricalCompareRunRecords(params: {
     changed = true;
   }
 
-  return changed || hadKeysNotInSelection ? nextRecords : existingRecords;
+  return changed || hadKeysNotInSelection
+    ? areCompareRunRecordsEquivalent(existingRecords, nextRecords)
+      ? existingRecords
+      : nextRecords
+    : existingRecords;
 }
 
 export function mergeAdvancedConfigWithOverride(params: {

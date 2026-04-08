@@ -271,17 +271,22 @@ export function ChatTabV2({
       return;
     }
 
-    startChatWithMessages(evalChatHandoff.messages);
-    appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
-
+    let matchingModel = null;
     if (evalChatHandoff.modelId) {
-      const matchingModel = availableModels.find(
+      matchingModel = availableModels.find(
         (model) => String(model.id) === evalChatHandoff.modelId,
       );
-      if (matchingModel) {
-        setSelectedModel(matchingModel);
+      if (!matchingModel && availableModels.length === 0) {
+        return;
       }
     }
+
+    if (matchingModel) {
+      setSelectedModel(matchingModel);
+    }
+
+    startChatWithMessages(evalChatHandoff.messages);
+    appliedEvalChatHandoffIdRef.current = evalChatHandoff.id;
 
     if (typeof evalChatHandoff.systemPrompt === "string") {
       setSystemPrompt(evalChatHandoff.systemPrompt);

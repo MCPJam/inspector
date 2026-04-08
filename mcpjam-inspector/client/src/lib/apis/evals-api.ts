@@ -371,27 +371,42 @@ export async function streamEvalTestCase(
 
   const decoder = new TextDecoder();
   let buffer = "";
+  const emitSseLine = (line: string) => {
+    const trimmedLine = line.trim();
+    if (!trimmedLine.startsWith("data: ")) {
+      return;
+    }
+    const data = trimmedLine.slice(6).trim();
+    if (!data || data === "[DONE]") {
+      return;
+    }
+    try {
+      const event = JSON.parse(data) as EvalStreamEvent;
+      onEvent(event);
+    } catch {
+      // ignore malformed lines
+    }
+  };
 
   try {
     while (true) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) {
+        break;
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop() || "";
 
       for (const line of lines) {
-        if (!line.startsWith("data: ")) continue;
-        const data = line.slice(6).trim();
-        if (!data || data === "[DONE]") continue;
-        try {
-          const event = JSON.parse(data) as EvalStreamEvent;
-          onEvent(event);
-        } catch {
-          // ignore malformed lines
-        }
+        emitSseLine(line);
       }
+    }
+
+    buffer += decoder.decode();
+    for (const line of buffer.split("\n")) {
+      emitSseLine(line);
     }
   } finally {
     try {

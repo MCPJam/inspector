@@ -245,6 +245,57 @@ function extractToolCallsFromConversation(params: {
   return toolsCalled;
 }
 
+function toolCallIdentity(toolCall: ToolCall): string {
+  return `${toolCall.toolName}:${JSON.stringify(toolCall.arguments ?? {})}`;
+}
+
+function mergeToolCalls(
+  existingToolCalls: ToolCall[],
+  incomingToolCalls: ToolCall[],
+): ToolCall[] {
+  const seen = new Set(existingToolCalls.map(toolCallIdentity));
+  const merged = [...existingToolCalls];
+
+  for (const toolCall of incomingToolCalls) {
+    const identity = toolCallIdentity(toolCall);
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    merged.push(toolCall);
+  }
+
+  return merged;
+}
+
+function appendPartialToolCallsToPrompt(params: {
+  toolsCalledByPrompt: ToolCall[][];
+  promptIndex: number;
+  partialResponseMessages: ModelMessage[];
+}) {
+  if (params.promptIndex < 0 || params.partialResponseMessages.length === 0) {
+    return;
+  }
+
+  const partialToolCalls = extractToolCallsFromConversation({
+    messages: params.partialResponseMessages,
+  });
+  if (partialToolCalls.length === 0) {
+    return;
+  }
+
+  const existingToolCalls = Array.isArray(
+    params.toolsCalledByPrompt[params.promptIndex],
+  )
+    ? params.toolsCalledByPrompt[params.promptIndex]!
+    : [];
+
+  params.toolsCalledByPrompt[params.promptIndex] = mergeToolCalls(
+    existingToolCalls,
+    partialToolCalls,
+  );
+}
+
 function toStreamToolCalls(toolCalls: ToolCall[]): EvalStreamToolCall[] {
   return toolCalls.map((toolCall) => ({
     toolName: toolCall.toolName,
@@ -817,6 +868,11 @@ const runIterationWithAiSdk = async ({
       });
       recordedSpans.push(...activeTraceCtx.recordedSpans);
     }
+    appendPartialToolCallsToPrompt({
+      toolsCalledByPrompt,
+      promptIndex: activePromptIndex,
+      partialResponseMessages: activePartialResponseMessages,
+    });
     const failMessages =
       activePromptInputMessages.length > 0
         ? activeCompletedStepCount > 0 ||
@@ -933,6 +989,7 @@ const runIterationViaBackend = async ({
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
       : undefined;
+  const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
@@ -1045,6 +1102,7 @@ const runIterationViaBackend = async ({
             model: String(test.model),
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
+            ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
           }),
@@ -2134,6 +2192,11 @@ const streamIterationWithAiSdk = async ({
       });
       recordedSpans.push(...activeTraceCtx.recordedSpans);
     }
+    appendPartialToolCallsToPrompt({
+      toolsCalledByPrompt,
+      promptIndex: activePromptIndex,
+      partialResponseMessages: activePartialResponseMessages,
+    });
     const failMessages =
       activePromptInputMessages.length > 0
         ? activeCompletedStepCount > 0 ||
@@ -2278,6 +2341,7 @@ const streamIterationViaBackend = async ({
     typeof advancedConfig?.temperature === "number"
       ? advancedConfig.temperature
       : undefined;
+  const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
@@ -2396,6 +2460,7 @@ const streamIterationViaBackend = async ({
             model: String(test.model),
             ...(systemPrompt ? { systemPrompt } : {}),
             ...(temperature == null ? {} : { temperature }),
+            ...(toolChoice ? { toolChoice } : {}),
             tools: toolDefs,
             maxOutputTokens: 16384,
           }),
@@ -2510,14 +2575,21 @@ const streamIterationViaBackend = async ({
                   emit({ type: "text_delta", content: item.text });
                 } else if (item?.type === "tool-call") {
                   const name = item.toolName ?? item.name;
+                  const fallbackToolCallId =
+                    item.toolCallId ??
+                    `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                  if (!item.toolCallId) {
+                    item.toolCallId = fallbackToolCallId;
+                  }
+                  if (item.input == null) {
+                    item.input = item.parameters ?? item.args ?? {};
+                  }
                   if (name) {
                     emit({
                       type: "tool_call",
                       toolName: name,
-                      toolCallId:
-                        item.toolCallId ??
-                        `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-                      args: item.input ?? item.parameters ?? item.args ?? {},
+                      toolCallId: fallbackToolCallId,
+                      args: item.input,
                     });
                   }
                 }
@@ -2536,9 +2608,6 @@ const streamIterationViaBackend = async ({
                     toolName: name,
                     arguments: item.input ?? item.parameters ?? item.args ?? {},
                   });
-                }
-                if (!item.toolCallId) {
-                  item.toolCallId = `tc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                 }
                 if (item.input == null) {
                   item.input = item.parameters ?? item.args ?? {};

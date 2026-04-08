@@ -468,7 +468,7 @@ export function useEvalHandlers({
       setRunningTestCaseId(testCase._id);
 
       try {
-        const preparedRuns = await Promise.all(
+        const preparedResults = await Promise.allSettled(
           modelValuesToRun.map((selectedModel) =>
             prepareSingleTestCaseRun({
               workspaceId,
@@ -481,6 +481,36 @@ export function useEvalHandlers({
             }),
           ),
         );
+        const preparedRuns = preparedResults.flatMap((result) =>
+          result.status === "fulfilled" ? [result.value] : [],
+        );
+        const preparationFailures = preparedResults.flatMap((result, index) =>
+          result.status === "rejected"
+            ? [
+                {
+                  modelValue: modelValuesToRun[index]!,
+                  error: result.reason,
+                },
+              ]
+            : [],
+        );
+
+        for (const failure of preparationFailures) {
+          console.error(
+            `Failed to prepare test case for model ${failure.modelValue}:`,
+            failure.error,
+          );
+        }
+
+        if (preparedRuns.length === 0) {
+          toast.error(
+            getBillingErrorMessage(
+              preparationFailures[0]?.error,
+              "Failed to run test case",
+            ),
+          );
+          return null;
+        }
 
         const runResults = await Promise.all(
           preparedRuns.map(async (preparedRun) => {
@@ -557,23 +587,32 @@ export function useEvalHandlers({
             error: unknown;
           } => !result.ok,
         );
+        const totalModelsRequested = modelValuesToRun.length;
+        const totalFailedRuns = [
+          ...preparationFailures.map(({ modelValue, error }) => ({
+            ok: false as const,
+            modelValue,
+            error,
+          })),
+          ...failedRuns,
+        ];
 
-        if (successfulRuns.length === preparedRuns.length) {
+        if (successfulRuns.length === totalModelsRequested) {
           toast.success(
             isMultiModelRun
-              ? `Test completed across ${preparedRuns.length} models!`
+              ? `Test completed across ${totalModelsRequested} models!`
               : "Test completed successfully!",
           );
         } else if (successfulRuns.length > 0) {
           toast.error(
-            `${successfulRuns.length}/${preparedRuns.length} model${
-              preparedRuns.length === 1 ? "" : "s"
+            `${successfulRuns.length}/${totalModelsRequested} model${
+              totalModelsRequested === 1 ? "" : "s"
             } completed successfully.`,
           );
         } else {
           toast.error(
             getBillingErrorMessage(
-              failedRuns[0]?.error,
+              totalFailedRuns[0]?.error,
               "Failed to run test case",
             ),
           );

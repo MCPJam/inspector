@@ -1195,52 +1195,81 @@ export function TestTemplateEditor({
       modelLabel: string;
       request: Awaited<ReturnType<typeof prepareSingleTestCaseRun>>;
     }> = [];
+    const preparationFailures: Array<{
+      modelValue: string;
+      modelLabel: string;
+      error: unknown;
+    }> = [];
 
-    try {
-      preparedRuns = await Promise.all(
-        runModelValues.map(async (modelValue) => {
-          const modelLabel = resolveModelOptionLabel(
-            modelValue,
-            modelLabelByValue,
-          );
-          const advancedConfig = mergeAdvancedConfigWithOverride({
-            baseAdvancedConfig: savePayload.advancedConfig,
-            override: undefined,
-          });
+    const preparedResults = await Promise.allSettled(
+      runModelValues.map(async (modelValue) => {
+        const modelLabel = resolveModelOptionLabel(
+          modelValue,
+          modelLabelByValue,
+        );
+        const advancedConfig = mergeAdvancedConfigWithOverride({
+          baseAdvancedConfig: savePayload.advancedConfig,
+          override: undefined,
+        });
 
-          const preparedRun = await prepareSingleTestCaseRun({
-            workspaceId,
-            suite,
-            testCase: currentTestCase,
-            selectedModel: modelValue,
-            getAccessToken,
-            getToken,
-            hasToken,
-            testCaseOverrides: {
-              query: savePayload.query,
-              expectedToolCalls: savePayload.expectedToolCalls,
-              runs: savePayload.runs,
-              expectedOutput: savePayload.expectedOutput,
-              promptTurns: savePayload.promptTurns,
-              advancedConfig,
-            },
-          });
+        const preparedRun = await prepareSingleTestCaseRun({
+          workspaceId,
+          suite,
+          testCase: currentTestCase,
+          selectedModel: modelValue,
+          getAccessToken,
+          getToken,
+          hasToken,
+          testCaseOverrides: {
+            query: savePayload.query,
+            expectedToolCalls: savePayload.expectedToolCalls,
+            isNegativeTest: savePayload.isNegativeTest,
+            runs: savePayload.runs,
+            expectedOutput: savePayload.expectedOutput,
+            promptTurns: savePayload.promptTurns,
+            advancedConfig,
+          },
+        });
 
-          return {
-            modelValue,
-            modelLabel,
-            request: preparedRun,
-          };
-        }),
+        return {
+          modelValue,
+          modelLabel,
+          request: preparedRun,
+        };
+      }),
+    );
+
+    for (const [index, preparedResult] of preparedResults.entries()) {
+      const modelValue = runModelValues[index]!;
+      const modelLabel = resolveModelOptionLabel(modelValue, modelLabelByValue);
+
+      if (preparedResult.status === "fulfilled") {
+        preparedRuns.push(preparedResult.value);
+        continue;
+      }
+
+      console.error(
+        `Failed to prepare compare run for model ${modelValue}:`,
+        preparedResult.reason,
       );
-    } catch (error) {
-      console.error("Failed to prepare compare run:", error);
+      preparationFailures.push({
+        modelValue,
+        modelLabel,
+        error: preparedResult.reason,
+      });
+    }
+
+    if (preparedRuns.length === 0) {
       toast.error(
-        getBillingErrorMessage(error, "Failed to prepare compare run"),
+        getBillingErrorMessage(
+          preparationFailures[0]?.error,
+          "Failed to prepare compare run",
+        ),
       );
       return;
     }
 
+    const totalRequestedModels = runModelValues.length;
     const modelRequestGen: Record<string, number> = {};
     for (const { modelValue } of preparedRuns) {
       const nextGen =
@@ -1290,6 +1319,16 @@ export function TestTemplateEditor({
           error: null,
         };
       }
+      for (const { modelValue, modelLabel, error } of preparationFailures) {
+        next[modelValue] = buildCompareRunRecord({
+          modelValue,
+          modelLabel,
+          iteration: null,
+          error: getBillingErrorMessage(error, "Failed to prepare compare run"),
+          startedAt: null,
+          completedAt: Date.now(),
+        });
+      }
       return next;
     });
     openRunView("run_compare");
@@ -1301,8 +1340,8 @@ export function TestTemplateEditor({
       suite_id: suiteId,
       test_case_id: currentTestCase._id,
       compare_run_id: compareRunId,
-      model_count: preparedRuns.length,
-      models: preparedRuns.map((run) => run.modelValue),
+      model_count: totalRequestedModels,
+      models: runModelValues,
     });
 
     // Abort any previous streaming runs for models we're about to re-run
@@ -1527,16 +1566,16 @@ export function TestTemplateEditor({
       ).length;
       if (compareRunUserStoppedRef.current) {
         toast.message("Compare run stopped.");
-      } else if (successfulCount === completedRecords.length) {
+      } else if (successfulCount === totalRequestedModels) {
         toast.success(
-          `Compare run finished across ${completedRecords.length} model${
-            completedRecords.length === 1 ? "" : "s"
+          `Compare run finished across ${totalRequestedModels} model${
+            totalRequestedModels === 1 ? "" : "s"
           }.`,
         );
       } else if (successfulCount > 0) {
         toast.error(
-          `${successfulCount}/${completedRecords.length} model${
-            completedRecords.length === 1 ? "" : "s"
+          `${successfulCount}/${totalRequestedModels} model${
+            totalRequestedModels === 1 ? "" : "s"
           } completed successfully.`,
         );
       } else {

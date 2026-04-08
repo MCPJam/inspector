@@ -641,6 +641,66 @@ describe("compare-playground-helpers", () => {
     ).toBe("cmp-selected-claude");
   });
 
+  it("reuses existing compare records when the preferred historical selection is unchanged", () => {
+    const preferredIteration = makeIteration({
+      id: "cmp-selected-openai",
+      modelValue: "openai/gpt-5-nano",
+      createdAt: 300,
+      compareRunId: "cmp_selected",
+    });
+    const iterations = [
+      makeIteration({
+        id: "cmp-newer-openai",
+        modelValue: "openai/gpt-5-nano",
+        createdAt: 500,
+        compareRunId: "cmp_newer",
+        result: "failed",
+      }),
+      makeIteration({
+        id: "cmp-newer-claude",
+        modelValue: "anthropic/anthropic/claude-haiku-4.5",
+        createdAt: 490,
+        compareRunId: "cmp_newer",
+      }),
+      preferredIteration,
+      makeIteration({
+        id: "cmp-selected-claude",
+        modelValue: "anthropic/anthropic/claude-haiku-4.5",
+        createdAt: 280,
+        compareRunId: "cmp_selected",
+      }),
+    ] as any;
+
+    const firstRecords = buildHistoricalCompareRunRecords({
+      selectedModelValues: [
+        "openai/gpt-5-nano",
+        "anthropic/anthropic/claude-haiku-4.5",
+      ],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+        "anthropic/anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+      },
+      iterations,
+      preferredIteration: preferredIteration as any,
+    });
+
+    const nextRecords = buildHistoricalCompareRunRecords({
+      selectedModelValues: [
+        "openai/gpt-5-nano",
+        "anthropic/anthropic/claude-haiku-4.5",
+      ],
+      modelLabelByValue: {
+        "openai/gpt-5-nano": "GPT-5 Nano",
+        "anthropic/anthropic/claude-haiku-4.5": "Claude Haiku 4.5",
+      },
+      iterations: [...iterations],
+      existingRecords: firstRecords,
+      preferredIteration: preferredIteration as any,
+    });
+
+    expect(nextRecords).toBe(firstRecords);
+  });
+
   it("prefers iterations from the explicitly selected suite run", () => {
     const preferredIteration = makeIteration({
       id: "suite-selected-openai",

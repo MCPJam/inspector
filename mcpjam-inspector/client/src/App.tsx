@@ -897,6 +897,10 @@ export default function App() {
       return;
     }
 
+    if (playgroundEnabled == null || playgroundEnabled === false) {
+      return;
+    }
+
     if (
       isFirstRunEligible(
         hasAnyWorkspaceServers,
@@ -912,6 +916,7 @@ export default function App() {
     isAuthenticated,
     isOnboardingDecisionReady,
     isHostedChatRoute,
+    playgroundEnabled,
   ]);
 
   const consumeCheckoutIntent = useCallback(() => {

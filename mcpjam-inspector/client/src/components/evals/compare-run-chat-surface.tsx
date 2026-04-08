@@ -77,10 +77,6 @@ export function CompareRunChatSurface({
   const activeTrace = (resolvedBlob ?? fallbackTrace) as TraceEnvelope | null;
   const hasFallbackTrace = fallbackTrace != null;
 
-  if (!iteration && !fallbackTrace) {
-    return <EmptyState message={emptyMessage} />;
-  }
-
   if (resolvedLoading && !hasFallbackTrace && !resolvedBlob) {
     return <LoadingState message="Loading trace details…" />;
   }
@@ -90,7 +86,15 @@ export function CompareRunChatSurface({
   }
 
   if (!activeTrace) {
-    return <EmptyState message="No chat trace is available for this run." />;
+    return (
+      <EmptyState
+        message={
+          !iteration && !fallbackTrace && !resolvedBlob
+            ? emptyMessage
+            : "No chat trace is available for this run."
+        }
+      />
+    );
   }
 
   return (

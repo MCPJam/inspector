@@ -482,7 +482,7 @@ function buildCaseTestBlock(
     "      });",
     "",
     `      await evalTest.run(agent, {`,
-    `        iterations: 1,`,
+    `        iterations: ${testCase.runs || 1},`,
     `        mcpjam: { suiteName: SUITE_NAME, serverNames: SERVER_IDS },`,
     `      });`,
     "      expect(evalTest.accuracy()).toBe(1);",
@@ -643,4 +643,3 @@ function indentBlock(value: string, spaces: number): string {
     .map((line) => `${padding}${line}`)
     .join("\n");
 }
-

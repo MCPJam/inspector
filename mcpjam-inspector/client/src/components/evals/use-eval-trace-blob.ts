@@ -28,6 +28,7 @@ export function useEvalTraceBlob({
 
     async function run() {
       if (!enabled) {
+        setBlob(null);
         setLoading(false);
         setError(null);
         return;
@@ -40,6 +41,7 @@ export function useEvalTraceBlob({
         return;
       }
 
+      setBlob(null);
       setLoading(true);
       setError(null);
 
