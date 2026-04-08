@@ -176,7 +176,9 @@ export function MessageView({
   return (
     <article
       className={
-        shouldRenderAssistantAvatar ? "flex w-full min-w-0 gap-4" : "w-full min-w-0"
+        shouldRenderAssistantAvatar
+          ? "flex w-full min-w-0 gap-4"
+          : "w-full min-w-0"
       }
     >
       {shouldRenderAssistantAvatar ? (
