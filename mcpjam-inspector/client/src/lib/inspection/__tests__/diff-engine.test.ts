@@ -24,7 +24,9 @@ function makeTool(overrides: Partial<Tool> & { name: string }): Tool {
   } as Tool;
 }
 
-function makeInit(overrides: Partial<InitializationInfo> = {}): InitializationInfo {
+function makeInit(
+  overrides: Partial<InitializationInfo> = {},
+): InitializationInfo {
   return {
     protocolVersion: "2025-03-26",
     transport: "streamable-http",
@@ -128,7 +130,10 @@ describe("normalizeToolSnapshot", () => {
   it("stabilizes key order in nested objects", () => {
     const tool = makeTool({
       name: "t",
-      inputSchema: { type: "object", properties: { z: { type: "string" }, a: { type: "number" } } },
+      inputSchema: {
+        type: "object",
+        properties: { z: { type: "string" }, a: { type: "number" } },
+      },
     });
     const json = JSON.stringify(normalizeToolSnapshot(tool));
     // "a" should come before "z" in the stabilized output
@@ -187,14 +192,20 @@ describe("buildSnapshot", () => {
   it("merges toolsMetadata into tool snapshots", () => {
     const tool = makeTool({ name: "my_tool" });
     const metadata = { my_tool: { uiHint: "panel" } };
-    const snapshot = buildSnapshot(makeInit(), makeToolsResult([tool], metadata));
+    const snapshot = buildSnapshot(
+      makeInit(),
+      makeToolsResult([tool], metadata),
+    );
     expect(snapshot.tools[0].metadata).toEqual({ uiHint: "panel" });
   });
 
   it("prefers tool._meta over toolsMetadata", () => {
     const tool = makeTool({ name: "my_tool", _meta: { uiHint: "button" } });
     const metadata = { my_tool: { uiHint: "panel" } };
-    const snapshot = buildSnapshot(makeInit(), makeToolsResult([tool], metadata));
+    const snapshot = buildSnapshot(
+      makeInit(),
+      makeToolsResult([tool], metadata),
+    );
     expect(snapshot.tools[0].metadata).toEqual({ uiHint: "button" });
   });
 
@@ -209,7 +220,10 @@ describe("buildSnapshot", () => {
 
 describe("computeInspectionDiff", () => {
   it("produces empty diff for identical snapshots", () => {
-    const s = makeSnapshot(makeInit(), makeToolsResult([makeTool({ name: "t" })]));
+    const s = makeSnapshot(
+      makeInit(),
+      makeToolsResult([makeTool({ name: "t" })]),
+    );
     const diff = computeInspectionDiff(s, s);
     expect(diff.initChanges).toHaveLength(0);
     expect(diff.toolChanges).toHaveLength(0);
@@ -261,13 +275,25 @@ describe("computeInspectionDiff", () => {
     const prev = makeSnapshot(
       makeInit(),
       makeToolsResult([
-        makeTool({ name: "t", inputSchema: { type: "object", properties: { a: { type: "string" } } } }),
+        makeTool({
+          name: "t",
+          inputSchema: {
+            type: "object",
+            properties: { a: { type: "string" } },
+          },
+        }),
       ]),
     );
     const current = makeSnapshot(
       makeInit(),
       makeToolsResult([
-        makeTool({ name: "t", inputSchema: { type: "object", properties: { b: { type: "number" } } } }),
+        makeTool({
+          name: "t",
+          inputSchema: {
+            type: "object",
+            properties: { b: { type: "number" } },
+          },
+        }),
       ]),
     );
     const diff = computeInspectionDiff(prev, current);
@@ -276,8 +302,14 @@ describe("computeInspectionDiff", () => {
   });
 
   it("detects changed outputSchema", () => {
-    const toolA = { ...makeTool({ name: "t" }), outputSchema: { type: "string" } } as unknown as Tool;
-    const toolB = { ...makeTool({ name: "t" }), outputSchema: { type: "number" } } as unknown as Tool;
+    const toolA = {
+      ...makeTool({ name: "t" }),
+      outputSchema: { type: "string" },
+    } as unknown as Tool;
+    const toolB = {
+      ...makeTool({ name: "t" }),
+      outputSchema: { type: "number" },
+    } as unknown as Tool;
     const prev = makeSnapshot(makeInit(), makeToolsResult([toolA]));
     const current = makeSnapshot(makeInit(), makeToolsResult([toolB]));
     const diff = computeInspectionDiff(prev, current);
@@ -332,8 +364,14 @@ describe("computeInspectionDiff", () => {
   // ── Init diffs ───────────────────────────────────────────────────
 
   it("detects changed protocolVersion", () => {
-    const prev = makeSnapshot(makeInit({ protocolVersion: "2024-11-05" }), makeToolsResult([]));
-    const current = makeSnapshot(makeInit({ protocolVersion: "2025-03-26" }), makeToolsResult([]));
+    const prev = makeSnapshot(
+      makeInit({ protocolVersion: "2024-11-05" }),
+      makeToolsResult([]),
+    );
+    const current = makeSnapshot(
+      makeInit({ protocolVersion: "2025-03-26" }),
+      makeToolsResult([]),
+    );
     const diff = computeInspectionDiff(prev, current);
     expect(diff.initChanges).toContainEqual({
       field: "protocolVersion",
@@ -343,8 +381,14 @@ describe("computeInspectionDiff", () => {
   });
 
   it("detects changed transport", () => {
-    const prev = makeSnapshot(makeInit({ transport: "stdio" }), makeToolsResult([]));
-    const current = makeSnapshot(makeInit({ transport: "streamable-http" }), makeToolsResult([]));
+    const prev = makeSnapshot(
+      makeInit({ transport: "stdio" }),
+      makeToolsResult([]),
+    );
+    const current = makeSnapshot(
+      makeInit({ transport: "streamable-http" }),
+      makeToolsResult([]),
+    );
     const diff = computeInspectionDiff(prev, current);
     expect(diff.initChanges).toContainEqual({
       field: "transport",
@@ -380,7 +424,9 @@ describe("computeInspectionDiff", () => {
       makeToolsResult([]),
     );
     const diff = computeInspectionDiff(prev, current);
-    expect(diff.initChanges.find((c) => c.field === "serverVersion")).toBeTruthy();
+    expect(
+      diff.initChanges.find((c) => c.field === "serverVersion"),
+    ).toBeTruthy();
   });
 
   it("detects changed serverCapabilities", () => {
@@ -454,8 +500,12 @@ describe("computeInspectionDiff", () => {
     const diff = computeInspectionDiff(prev, current);
     expect(diff.initChanges).toHaveLength(2);
     expect(diff.toolChanges.filter((c) => c.type === "added")).toHaveLength(1);
-    expect(diff.toolChanges.filter((c) => c.type === "removed")).toHaveLength(1);
-    expect(diff.toolChanges.filter((c) => c.type === "changed")).toHaveLength(1);
+    expect(diff.toolChanges.filter((c) => c.type === "removed")).toHaveLength(
+      1,
+    );
+    expect(diff.toolChanges.filter((c) => c.type === "changed")).toHaveLength(
+      1,
+    );
   });
 
   // ── Sort order ───────────────────────────────────────────────────

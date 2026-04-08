@@ -64,8 +64,8 @@ export function normalizeToolSnapshot(
   tool: Tool,
   externalMetadata?: Record<string, unknown>,
 ): NormalizedToolSnapshot {
-  const merged = (tool._meta as Record<string, unknown> | undefined) ??
-    externalMetadata;
+  const merged =
+    (tool._meta as Record<string, unknown> | undefined) ?? externalMetadata;
   const snapshot: NormalizedToolSnapshot = { name: tool.name };
 
   if (tool.description !== undefined) snapshot.description = tool.description;
@@ -102,7 +102,8 @@ export function normalizeInitSnapshot(
         : {}),
     };
   }
-  if (info.instructions !== undefined) snapshot.instructions = info.instructions;
+  if (info.instructions !== undefined)
+    snapshot.instructions = info.instructions;
   if (info.serverCapabilities !== undefined)
     snapshot.serverCapabilities = info.serverCapabilities;
 
@@ -123,7 +124,10 @@ export function buildSnapshot(
 ): ServerInspectionSnapshot {
   const toolsMetadata = toolsResult.toolsMetadata ?? {};
   const tools = (toolsResult.tools ?? []).map((tool: Tool) =>
-    normalizeToolSnapshot(tool, toolsMetadata[tool.name] as Record<string, unknown> | undefined),
+    normalizeToolSnapshot(
+      tool,
+      toolsMetadata[tool.name] as Record<string, unknown> | undefined,
+    ),
   );
 
   // Sort tools by name for deterministic ordering

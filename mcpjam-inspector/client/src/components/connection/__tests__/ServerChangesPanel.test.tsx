@@ -87,9 +87,7 @@ describe("ServerChangesPanel", () => {
     render(
       <ServerChangesPanel
         diff={makeDiff({
-          initChanges: [
-            { field: "protocolVersion", before: "1", after: "2" },
-          ],
+          initChanges: [{ field: "protocolVersion", before: "1", after: "2" }],
         })}
       />,
     );

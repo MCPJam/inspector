@@ -11,7 +11,10 @@ import { getStoredTokensState } from "@/lib/oauth/mcp-oauth";
 import { decodeJWT } from "@/lib/oauth/jwt-decoder";
 import { ScrollableJsonView } from "@/components/ui/json-editor";
 import { useSharedAppState } from "@/state/app-state-context";
-import { useInspectionStore, inspectionStoreKey } from "@/stores/inspection-store";
+import {
+  useInspectionStore,
+  inspectionStoreKey,
+} from "@/stores/inspection-store";
 import { ServerChangesPanel } from "./ServerChangesPanel";
 
 interface ServerInfoContentProps {

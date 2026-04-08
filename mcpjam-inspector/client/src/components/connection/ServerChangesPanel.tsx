@@ -4,7 +4,13 @@
  */
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Minus, RefreshCw } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Plus,
+  Minus,
+  RefreshCw,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   Collapsible,
@@ -142,8 +148,7 @@ function CollapsibleSection({
 
 function InitChangeRow({ change }: { change: InitChange }) {
   const isObject =
-    typeof change.before === "object" ||
-    typeof change.after === "object";
+    typeof change.before === "object" || typeof change.after === "object";
 
   return (
     <div
@@ -274,9 +279,8 @@ function ToolChangeCard({ change }: { change: ToolChange }) {
                   </div>
                   <ScrollableJsonView
                     value={
-                      change.before?.[
-                        field as keyof typeof change.before
-                      ] ?? null
+                      change.before?.[field as keyof typeof change.before] ??
+                      null
                     }
                     showLineNumbers={false}
                     containerClassName="max-h-32 rounded"
@@ -288,9 +292,7 @@ function ToolChangeCard({ change }: { change: ToolChange }) {
                   </div>
                   <ScrollableJsonView
                     value={
-                      change.after?.[
-                        field as keyof typeof change.after
-                      ] ?? null
+                      change.after?.[field as keyof typeof change.after] ?? null
                     }
                     showLineNumbers={false}
                     containerClassName="max-h-32 rounded"

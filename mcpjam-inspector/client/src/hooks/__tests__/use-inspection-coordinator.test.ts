@@ -69,7 +69,9 @@ describe("useInspectionCoordinator", () => {
     vi.clearAllMocks();
     mockActiveWorkspaceId.current = "ws-default";
     useInspectionStore.setState({ records: {} });
-    vi.mocked(listTools).mockResolvedValue(makeToolsResult([{ name: "tool1" }]));
+    vi.mocked(listTools).mockResolvedValue(
+      makeToolsResult([{ name: "tool1" }]),
+    );
   });
 
   it("runs inspection on connect transition with initInfo", async () => {
@@ -96,7 +98,10 @@ describe("useInspectionCoordinator", () => {
 
     // Wait for async inspection to complete
     await vi.waitFor(() => {
-      expect(listTools).toHaveBeenCalledWith({ serverId: "s1", cursor: undefined });
+      expect(listTools).toHaveBeenCalledWith({
+        serverId: "s1",
+        cursor: undefined,
+      });
     });
 
     // Should have saved a record

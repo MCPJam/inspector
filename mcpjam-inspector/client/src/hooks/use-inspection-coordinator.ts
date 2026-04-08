@@ -18,10 +18,20 @@ import { useEffect, useRef } from "react";
 import { toast } from "sonner";
 import type { ServerWithName, ConnectionStatus } from "@/state/app-types";
 import { useSharedAppState } from "@/state/app-state-context";
-import { listTools, type ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
-import { buildSnapshot, computeInspectionDiff, hasMeaningfulChanges } from "@/lib/inspection/diff-engine";
+import {
+  listTools,
+  type ListToolsResultWithMetadata,
+} from "@/lib/apis/mcp-tools-api";
+import {
+  buildSnapshot,
+  computeInspectionDiff,
+  hasMeaningfulChanges,
+} from "@/lib/inspection/diff-engine";
 import { formatDiffSummary } from "@/lib/inspection/diff-summary";
-import { useInspectionStore, inspectionStoreKey } from "@/stores/inspection-store";
+import {
+  useInspectionStore,
+  inspectionStoreKey,
+} from "@/stores/inspection-store";
 
 interface ServerTrack {
   status: ConnectionStatus;
@@ -64,7 +74,8 @@ async function fetchAllTools(
 
   return {
     tools: allTools,
-    toolsMetadata: Object.keys(allMetadata).length > 0 ? allMetadata : undefined,
+    toolsMetadata:
+      Object.keys(allMetadata).length > 0 ? allMetadata : undefined,
   };
 }
 
@@ -104,7 +115,11 @@ export function useInspectionCoordinator(
 
       // Detect transition to connected (only if we have a previous state —
       // first render just records the baseline, doesn't trigger inspection)
-      if (status === "connected" && prev != null && prev.status !== "connected") {
+      if (
+        status === "connected" &&
+        prev != null &&
+        prev.status !== "connected"
+      ) {
         pendingRef.current.add(name);
       }
 
@@ -149,8 +164,7 @@ export function useInspectionCoordinator(
             capturedServerName,
           );
 
-          const prevRecord =
-            useInspectionStore.getState().getRecord(storeKey);
+          const prevRecord = useInspectionStore.getState().getRecord(storeKey);
 
           if (!prevRecord) {
             // First connect — seed baseline, no diff

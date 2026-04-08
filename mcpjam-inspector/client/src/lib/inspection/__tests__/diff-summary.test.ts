@@ -64,9 +64,7 @@ describe("formatDiffSummary", () => {
     expect(
       formatDiffSummary(
         makeDiff({
-          initChanges: [
-            { field: "instructions", before: "a", after: "b" },
-          ],
+          initChanges: [{ field: "instructions", before: "a", after: "b" }],
         }),
       ),
     ).toBe("instructions updated");
@@ -94,9 +92,7 @@ describe("formatDiffSummary", () => {
           { type: "removed", name: "c" },
           { type: "changed", name: "d", changedFields: ["description"] },
         ],
-        initChanges: [
-          { field: "instructions", before: "old", after: "new" },
-        ],
+        initChanges: [{ field: "instructions", before: "old", after: "new" }],
       }),
     );
     expect(result).toBe(
@@ -108,9 +104,7 @@ describe("formatDiffSummary", () => {
     expect(
       formatDiffSummary(
         makeDiff({
-          initChanges: [
-            { field: "transport", before: "stdio", after: "http" },
-          ],
+          initChanges: [{ field: "transport", before: "stdio", after: "http" }],
         }),
       ),
     ).toBe("transport updated");

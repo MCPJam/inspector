@@ -17,9 +17,7 @@ export interface InspectionDetailRequest {
   createdAt: number;
 }
 
-function isValidRequest(
-  value: unknown,
-): value is InspectionDetailRequest {
+function isValidRequest(value: unknown): value is InspectionDetailRequest {
   return (
     value != null &&
     typeof value === "object" &&
