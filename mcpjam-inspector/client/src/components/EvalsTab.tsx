@@ -363,7 +363,11 @@ export function EvalsTab({
                         location: "test_cases_overview",
                       },
                     );
-                    if (data?.iteration?._id) {
+                    const firstIterationId =
+                      data?.iteration?._id ??
+                      data?.runs?.find((run: any) => run?.iteration?._id)
+                        ?.iteration?._id;
+                    if (firstIterationId) {
                       playgroundNavigation.toTestEdit(exploreSuite._id, tc._id, {
                         openCompare: true,
                       });

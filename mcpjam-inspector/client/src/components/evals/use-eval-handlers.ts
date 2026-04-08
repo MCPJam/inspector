@@ -392,6 +392,8 @@ export function useEvalHandlers({
             expectedToolCalls: test.expectedToolCalls,
             isNegativeTest: test.isNegativeTest,
             scenario: test.scenario,
+            expectedOutput: test.expectedOutput,
+            promptTurns: test.promptTurns,
             advancedConfig: test.advancedConfig,
           })),
           serverIds: executionContext.suiteServers,
@@ -578,7 +580,13 @@ export function useEvalHandlers({
         }
 
         if (isMultiModelRun) {
+          const firstSuccessfulIteration =
+            successfulRuns.find((result) => result.data?.iteration?._id)?.data
+              ?.iteration ??
+            successfulRuns[0]?.data?.iteration ??
+            null;
           return {
+            iteration: firstSuccessfulIteration,
             runs: successfulRuns.map((result) => result.data),
           };
         }

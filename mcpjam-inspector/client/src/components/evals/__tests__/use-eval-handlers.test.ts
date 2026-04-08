@@ -200,6 +200,56 @@ describe("useEvalHandlers", () => {
       });
     });
 
+    it("includes promptTurns and expectedOutput when rerunning saved cases", async () => {
+      mockConvexQuery.mockResolvedValueOnce([
+        {
+          _id: "test-case-1",
+          title: "Multi-turn case",
+          query: "Legacy query",
+          runs: 1,
+          models: [{ model: "gpt-4", provider: "openai" }],
+          expectedToolCalls: [],
+          expectedOutput: "Summarize the tool result",
+          promptTurns: [
+            {
+              id: "turn-1",
+              prompt: "First prompt",
+              expectedToolCalls: [],
+            },
+            {
+              id: "turn-2",
+              prompt: "Follow up",
+              expectedToolCalls: [
+                { toolName: "search", arguments: { q: "status" } },
+              ],
+            },
+          ],
+        },
+      ]);
+
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-456",
+          name: "My Suite",
+          description: "Suite description",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      const callArgs = mockAuthFetch.mock.calls[0];
+      const requestBody = JSON.parse(callArgs[1].body);
+
+      expect(requestBody.tests[0]).toMatchObject({
+        expectedOutput: "Summarize the tool result",
+        promptTurns: [
+          expect.objectContaining({ prompt: "First prompt" }),
+          expect.objectContaining({ prompt: "Follow up" }),
+        ],
+      });
+    });
+
     it("does not use regular fetch for /api/mcp/evals/run", async () => {
       const originalFetch = global.fetch;
       const fetchSpy = vi.fn();
@@ -243,7 +293,7 @@ describe("useEvalHandlers", () => {
         useEvalHandlers({
           ...defaultProps,
           connectedServerNames: new Set(),
-          latestRunBySuiteId: new Map([
+          latestRunBySuiteId: new Map<string, any>([
             [
               "suite-123",
               {
@@ -307,7 +357,7 @@ describe("useEvalHandlers", () => {
         useEvalHandlers({
           ...defaultProps,
           connectedServerNames: new Set(),
-          latestRunBySuiteId: new Map([
+          latestRunBySuiteId: new Map<string, any>([
             [
               "suite-123",
               {
@@ -376,7 +426,7 @@ describe("useEvalHandlers", () => {
           ...defaultProps,
           selectedSuiteId: "suite-123",
           connectedServerNames: new Set(["server-1"]),
-          latestRunBySuiteId: new Map([
+          latestRunBySuiteId: new Map<string, any>([
             [
               "suite-123",
               {
@@ -433,7 +483,7 @@ describe("useEvalHandlers", () => {
             },
             recentRuns: [],
           } as any,
-          latestRunBySuiteId: new Map([
+          latestRunBySuiteId: new Map<string, any>([
             [
               "suite-clicked",
               {
@@ -462,10 +512,31 @@ describe("useEvalHandlers", () => {
 
   describe("handleRunTestCase", () => {
     it("runs every configured model when no explicit model is selected", async () => {
+      mockAuthFetch
+        .mockResolvedValueOnce(
+          createFetchResponse({
+            success: true,
+            iteration: { _id: "iter-openai" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          createFetchResponse({
+            success: true,
+            iteration: { _id: "iter-anthropic" },
+          }),
+        )
+        .mockResolvedValueOnce(
+          createFetchResponse({
+            success: true,
+            iteration: { _id: "iter-google" },
+          }),
+        );
+
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
+      let response: Awaited<ReturnType<typeof result.current.handleRunTestCase>>;
       await act(async () => {
-        await result.current.handleRunTestCase(
+        response = await result.current.handleRunTestCase(
           {
             _id: "suite-123",
             name: "Test Suite",
@@ -514,6 +585,14 @@ describe("useEvalHandlers", () => {
       expect(toast.success).toHaveBeenCalledWith(
         "Test completed across 3 models!",
       );
+      expect(response).toMatchObject({
+        iteration: { _id: "iter-openai" },
+        runs: [
+          { iteration: { _id: "iter-openai" } },
+          { iteration: { _id: "iter-anthropic" } },
+          { iteration: { _id: "iter-google" } },
+        ],
+      });
     });
 
     it("keeps the single-model path when a model is explicitly selected", async () => {

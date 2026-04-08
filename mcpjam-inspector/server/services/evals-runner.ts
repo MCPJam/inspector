@@ -7,7 +7,6 @@ import {
   stepCountIs,
 } from "ai";
 import {
-  evaluateResults,
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -561,7 +560,7 @@ const runIterationWithAiSdk = async ({
   let conversationMessages: ModelMessage[] = [...baseMessages];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
-  let accumulatedUsage: UsageTotals = {
+  let accumulatedUsage = {
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
@@ -639,17 +638,6 @@ const runIterationWithAiSdk = async ({
         onStepFinish: async (step) => {
           activeCompletedStepCount += 1;
           const stepFinishedAt = Date.now();
-          const stepUsage = {
-            inputTokens: step.usage?.inputTokens ?? 0,
-            outputTokens: step.usage?.outputTokens ?? 0,
-            totalTokens: step.usage?.totalTokens ?? 0,
-          };
-          accumulatedUsage = {
-            inputTokens: accumulatedUsage.inputTokens + stepUsage.inputTokens,
-            outputTokens:
-              accumulatedUsage.outputTokens + stepUsage.outputTokens,
-            totalTokens: accumulatedUsage.totalTokens + stepUsage.totalTokens,
-          };
           const responseMessages = step.response?.messages ?? [];
           const responseMessageCountBeforeAppend =
             activePartialResponseMessages.length;
@@ -678,33 +666,6 @@ const runIterationWithAiSdk = async ({
             messageEndIndex,
             status: "ok",
           });
-          accumulatedUsage.inputTokens =
-            (accumulatedUsage.inputTokens ?? 0) +
-            (step.usage?.inputTokens ?? 0);
-          accumulatedUsage.outputTokens =
-            (accumulatedUsage.outputTokens ?? 0) +
-            (step.usage?.outputTokens ?? 0);
-          accumulatedUsage.totalTokens =
-            (accumulatedUsage.totalTokens ?? 0) +
-            (step.usage?.totalTokens ?? 0);
-
-          const snapshotMessages = [
-            ...activePromptInputMessages,
-            ...activePartialResponseMessages,
-          ];
-          emit(
-            buildTraceSnapshotEvent({
-              turnIndex: promptIndex,
-              stepIndex: activeCompletedStepCount - 1,
-              snapshotKind: "step_finish",
-              messages: snapshotMessages,
-              spans: [...recordedSpans, ...activeTraceCtx!.recordedSpans],
-              actualToolCalls: extractToolCallsFromConversation({
-                messages: snapshotMessages,
-              }),
-              usage: accumulatedUsage,
-            }),
-          );
         },
         onFinish: async () => {
           /* Final messages read from `result` after await; hook kept for symmetry with AI SDK lifecycle. */
@@ -1839,7 +1800,7 @@ const streamIterationWithAiSdk = async ({
   let conversationMessages: ModelMessage[] = [...baseMessages];
   const recordedSpans: EvalTraceSpan[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
-  const accumulatedUsage: UsageTotals = {
+  const accumulatedUsage = {
     inputTokens: 0,
     outputTokens: 0,
     totalTokens: 0,
@@ -1981,28 +1942,36 @@ const streamIterationWithAiSdk = async ({
       for await (const part of result.fullStream) {
         switch (part.type) {
           case "text-delta":
-            emit({ type: "text_delta", content: part.textDelta });
+            emit({ type: "text_delta", content: part.text });
             break;
           case "tool-call":
             emit({
               type: "tool_call",
               toolName: part.toolName,
               toolCallId: part.toolCallId,
-              args: part.args as Record<string, unknown>,
+              args: (part.input ?? {}) as Record<string, unknown>,
             });
             break;
           case "tool-result":
             emit({
               type: "tool_result",
               toolCallId: part.toolCallId,
-              result: part.result,
-              isError: (part as any).isError,
+              result: part.output,
+              isError: false,
             });
             break;
-          case "step-finish":
+          case "tool-error":
+            emit({
+              type: "tool_result",
+              toolCallId: part.toolCallId,
+              result: part.error,
+              isError: true,
+            });
+            break;
+          case "finish-step":
             emit({
               type: "step_finish",
-              stepNumber: (part as any).stepNumber ?? activeCompletedStepCount,
+              stepNumber: activeCompletedStepCount,
               usage: {
                 inputTokens: part.usage?.inputTokens ?? 0,
                 outputTokens: part.usage?.outputTokens ?? 0,
