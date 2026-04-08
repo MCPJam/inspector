@@ -7,10 +7,7 @@ import {
   EXPLORE_TO_SDK_EVALS_SKILL_MD,
   SKILL_MD,
 } from "@mcpjam/sdk/skill-reference";
-import {
-  resolvePromptTurns,
-  type PromptTurn,
-} from "@/shared/prompt-turns";
+import { resolvePromptTurns, type PromptTurn } from "@/shared/prompt-turns";
 
 export interface ExportedTool {
   name: string;
@@ -336,7 +333,10 @@ export function generateAgentBrief(
         }
         lines.push("");
       }
-      if (c.expectedOutput?.trim() && !(c.promptTurns && c.promptTurns.length > 1)) {
+      if (
+        c.expectedOutput?.trim() &&
+        !(c.promptTurns && c.promptTurns.length > 1)
+      ) {
         lines.push(
           `**Expected output / experience:** ${escapeCell(c.expectedOutput.trim())}`,
         );

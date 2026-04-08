@@ -341,7 +341,8 @@ ${toolsContext}
           (isNegativeTest ? "Negative test case" : "No scenario provided"),
         expectedOutput:
           tc.expectedOutput ||
-          normalizedPromptTurns[normalizedPromptTurns.length - 1]?.expectedOutput ||
+          normalizedPromptTurns[normalizedPromptTurns.length - 1]
+            ?.expectedOutput ||
           (isNegativeTest
             ? "AI responds without calling any tools"
             : "No expected output provided"),

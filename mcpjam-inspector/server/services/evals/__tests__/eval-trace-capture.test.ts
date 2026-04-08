@@ -64,21 +64,15 @@ describe("eval-trace-capture", () => {
       { startAbs: runAt + 20, endAbs: runAt + 40 },
     );
     const parent = spans.find((s) => s.id === "eval-backend-prompt-0-step-0");
-    const tools = spans.find((s) => s.id === "eval-backend-prompt-0-step-0-tools");
+    const tools = spans.find(
+      (s) => s.id === "eval-backend-prompt-0-step-0-tools",
+    );
     expect(tools?.endMs).toBeLessThanOrEqual(parent!.endMs);
   });
 
   it("backend LLM failure — error child under step", () => {
     const spans: EvalTraceSpan[] = [];
-    pushBackendStepLlmFailureSpans(
-      spans,
-      runAt,
-      0,
-      0,
-      runAt,
-      runAt,
-      runAt + 5,
-    );
+    pushBackendStepLlmFailureSpans(spans, runAt, 0, 0, runAt, runAt, runAt + 5);
     expect(spans.some((s) => s.category === "error")).toBe(true);
   });
 

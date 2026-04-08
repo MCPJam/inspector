@@ -98,7 +98,9 @@ export function TestCasesOverview({
   const [hydratedIterations, setHydratedIterations] = useState<EvalIteration[]>(
     [],
   );
-  const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(new Set());
+  const [selectedCaseIds, setSelectedCaseIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [showBatchDeleteModal, setShowBatchDeleteModal] = useState(false);
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
 
@@ -167,9 +169,7 @@ export function TestCasesOverview({
       );
     } catch (error) {
       console.error("Failed to delete test cases:", error);
-      toast.error(
-        getBillingErrorMessage(error, "Failed to delete test cases"),
-      );
+      toast.error(getBillingErrorMessage(error, "Failed to delete test cases"));
     } finally {
       setIsBatchDeleting(false);
     }
@@ -355,9 +355,7 @@ export function TestCasesOverview({
         {/* Column Headers */}
         {testCaseStats.length > 0 && (
           <div className="flex items-center gap-3 w-full px-4 py-1.5 bg-muted/30 border-b text-xs font-medium text-muted-foreground">
-            {batchDelete ? (
-              <div className="w-7 shrink-0" aria-hidden />
-            ) : null}
+            {batchDelete ? <div className="w-7 shrink-0" aria-hidden /> : null}
             <div className="flex-1 min-w-[120px]">Case name</div>
             <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
               <span className="text-right">Last run</span>
@@ -376,226 +374,217 @@ export function TestCasesOverview({
             </div>
           ) : (
             testCaseStats.map(({ testCase, lastRunIteration }) => {
-                const suiteServers = suite.environment?.servers ?? [];
-                const missingServers =
-                  connectedServerNames == null
-                    ? []
-                    : suiteServers.filter(
-                        (serverName) =>
-                          !connectedServerNames.has(serverName),
-                      );
-                const hasModels = Boolean(testCase.models?.length);
-                const isThisCaseRunning = runningTestCaseId === testCase._id;
-                const isAnotherCaseRunning =
-                  runningTestCaseId != null &&
-                  runningTestCaseId !== testCase._id;
-                const runDisabled =
-                  !onRunTestCase ||
-                  blockTestCaseRuns ||
-                  isAnotherCaseRunning ||
-                  !hasModels ||
-                  missingServers.length > 0 ||
-                  isThisCaseRunning;
-                const disconnectedRunTooltip =
-                  missingServers.length > 0
-                    ? `Connect: ${missingServers.join(", ")}`
-                    : null;
+              const suiteServers = suite.environment?.servers ?? [];
+              const missingServers =
+                connectedServerNames == null
+                  ? []
+                  : suiteServers.filter(
+                      (serverName) => !connectedServerNames.has(serverName),
+                    );
+              const hasModels = Boolean(testCase.models?.length);
+              const isThisCaseRunning = runningTestCaseId === testCase._id;
+              const isAnotherCaseRunning =
+                runningTestCaseId != null && runningTestCaseId !== testCase._id;
+              const runDisabled =
+                !onRunTestCase ||
+                blockTestCaseRuns ||
+                isAnotherCaseRunning ||
+                !hasModels ||
+                missingServers.length > 0 ||
+                isThisCaseRunning;
+              const disconnectedRunTooltip =
+                missingServers.length > 0
+                  ? `Connect: ${missingServers.join(", ")}`
+                  : null;
 
-                const lastRunResult = lastRunIteration
-                  ? computeIterationResult(lastRunIteration)
-                  : null;
-                const lastRunLabel =
-                  lastRunResult === "passed"
-                    ? "Passed"
-                    : lastRunResult === "failed"
-                      ? "Failed"
-                      : lastRunResult === "cancelled"
-                        ? "Cancelled"
-                        : lastRunResult === "pending"
-                          ? "Running"
-                          : "Never run";
-                const lastRunTimestamp = lastRunIteration
-                  ? (lastRunIteration.updatedAt ??
-                    lastRunIteration.startedAt ??
-                    lastRunIteration.createdAt ??
-                    null)
-                  : null;
-                const showLastRunFailed = lastRunResult === "failed";
-                const caseTitle = testCase.title || "Untitled test case";
-                const lastRunSummary =
-                  lastRunIteration ? (
-                    <>
-                      {lastRunLabel}
-                      {lastRunTimestamp ? (
-                        <span className="font-normal">
-                          {" "}
-                          · {formatRelativeTime(lastRunTimestamp)}
-                        </span>
-                      ) : null}
-                    </>
+              const lastRunResult = lastRunIteration
+                ? computeIterationResult(lastRunIteration)
+                : null;
+              const lastRunLabel =
+                lastRunResult === "passed"
+                  ? "Passed"
+                  : lastRunResult === "failed"
+                    ? "Failed"
+                    : lastRunResult === "cancelled"
+                      ? "Cancelled"
+                      : lastRunResult === "pending"
+                        ? "Running"
+                        : "Never run";
+              const lastRunTimestamp = lastRunIteration
+                ? (lastRunIteration.updatedAt ??
+                  lastRunIteration.startedAt ??
+                  lastRunIteration.createdAt ??
+                  null)
+                : null;
+              const showLastRunFailed = lastRunResult === "failed";
+              const caseTitle = testCase.title || "Untitled test case";
+              const lastRunSummary = lastRunIteration ? (
+                <>
+                  {lastRunLabel}
+                  {lastRunTimestamp ? (
+                    <span className="font-normal">
+                      {" "}
+                      · {formatRelativeTime(lastRunTimestamp)}
+                    </span>
+                  ) : null}
+                </>
+              ) : (
+                "Never run"
+              );
+              const lastRunOpenable = Boolean(
+                onOpenLastRun && lastRunIteration?._id,
+              );
+              const lastRunAriaLabel =
+                lastRunIteration && lastRunOpenable
+                  ? `View last run: ${lastRunLabel}${
+                      lastRunTimestamp
+                        ? ` · ${formatRelativeTime(lastRunTimestamp)}`
+                        : ""
+                    }`
+                  : undefined;
+
+              const lastPart = (
+                <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
+                  {lastRunOpenable ? (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenLastRun!(testCase._id, lastRunIteration!._id);
+                      }}
+                      className="text-xs text-muted-foreground text-right tabular-nums rounded-sm hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                      aria-label={lastRunAriaLabel}
+                    >
+                      {lastRunSummary}
+                    </button>
                   ) : (
-                    "Never run"
-                  );
-                const lastRunOpenable = Boolean(
-                  onOpenLastRun && lastRunIteration?._id,
-                );
-                const lastRunAriaLabel =
-                  lastRunIteration && lastRunOpenable
-                    ? `View last run: ${lastRunLabel}${
-                        lastRunTimestamp
-                          ? ` · ${formatRelativeTime(lastRunTimestamp)}`
-                          : ""
-                      }`
-                    : undefined;
-
-                const lastPart = (
-                  <div className="flex flex-1 min-w-0 justify-end items-center gap-2 max-w-[min(100%,20rem)]">
-                    {lastRunOpenable ? (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onOpenLastRun!(
-                            testCase._id,
-                            lastRunIteration!._id,
-                          );
-                        }}
-                        className="text-xs text-muted-foreground text-right tabular-nums rounded-sm hover:text-foreground hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                        aria-label={lastRunAriaLabel}
-                      >
-                        {lastRunSummary}
-                      </button>
-                    ) : (
-                      <span className="text-xs text-muted-foreground text-right tabular-nums">
-                        {lastRunSummary}
-                      </span>
-                    )}
-                    <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
-                      {showLastRunFailed ? (
-                        <CircleAlert
-                          className="h-3.5 w-3.5 text-destructive"
-                          aria-label="Last run failed"
-                        />
-                      ) : null}
+                    <span className="text-xs text-muted-foreground text-right tabular-nums">
+                      {lastRunSummary}
                     </span>
-                  </div>
-                );
+                  )}
+                  <span className="w-3.5 h-3.5 shrink-0 flex items-center justify-center">
+                    {showLastRunFailed ? (
+                      <CircleAlert
+                        className="h-3.5 w-3.5 text-destructive"
+                        aria-label="Last run failed"
+                      />
+                    ) : null}
+                  </span>
+                </div>
+              );
 
-                const caseAndLast = (
-                  <>
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium text-left">
-                      {caseTitle}
-                    </span>
-                    {lastPart}
-                  </>
-                );
+              const caseAndLast = (
+                <>
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium text-left">
+                    {caseTitle}
+                  </span>
+                  {lastPart}
+                </>
+              );
 
-                const caseRowClickTarget = (
-                  <div
-                    className="flex flex-1 min-w-0 items-center gap-3 cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
-                    tabIndex={0}
-                    aria-label={`Open test case: ${caseTitle}`}
-                    onClick={() => onTestCaseClick(testCase._id)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        onTestCaseClick(testCase._id);
-                      }
+              const caseRowClickTarget = (
+                <div
+                  className="flex flex-1 min-w-0 items-center gap-3 cursor-pointer rounded-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                  tabIndex={0}
+                  aria-label={`Open test case: ${caseTitle}`}
+                  onClick={() => onTestCaseClick(testCase._id)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onTestCaseClick(testCase._id);
+                    }
+                  }}
+                >
+                  {caseAndLast}
+                </div>
+              );
+
+              const runButton = (
+                <span className="inline-flex shrink-0">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    disabled={runDisabled}
+                    aria-label={`Run ${testCase.title || "test case"}`}
+                    aria-busy={isThisCaseRunning}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (runDisabled) return;
+                      posthog.capture("run_selected_case_button_clicked", {
+                        location: "test_cases_overview",
+                        platform: detectPlatform(),
+                        environment: detectEnvironment(),
+                        test_case_id: testCase._id,
+                      });
+                      onRunTestCase(testCase);
                     }}
                   >
-                    {caseAndLast}
-                  </div>
-                );
-
-                const runButton = (
-                  <span className="inline-flex shrink-0">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 w-7 p-0"
-                      disabled={runDisabled}
-                      aria-label={`Run ${testCase.title || "test case"}`}
-                      aria-busy={isThisCaseRunning}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        if (runDisabled) return;
-                        posthog.capture(
-                          "run_selected_case_button_clicked",
-                          {
-                            location: "test_cases_overview",
-                            platform: detectPlatform(),
-                            environment: detectEnvironment(),
-                            test_case_id: testCase._id,
-                          },
-                        );
-                        onRunTestCase(testCase);
-                      }}
-                    >
-                      {isThisCaseRunning ? (
-                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                      ) : (
-                        <Play className="h-3.5 w-3.5" />
-                      )}
-                    </Button>
-                  </span>
-                );
-
-                const runControl =
-                  showRunColumn && onRunTestCase ? (
-                    disconnectedRunTooltip ? (
-                      <Tooltip>
-                        <TooltipTrigger asChild>{runButton}</TooltipTrigger>
-                        <TooltipContent
-                          variant="muted"
-                          side="left"
-                          sideOffset={8}
-                          className="max-w-[16rem]"
-                        >
-                          {disconnectedRunTooltip}
-                        </TooltipContent>
-                      </Tooltip>
+                    {isThisCaseRunning ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
-                      runButton
-                    )
-                  ) : null;
+                      <Play className="h-3.5 w-3.5" />
+                    )}
+                  </Button>
+                </span>
+              );
 
-                if (batchDelete) {
-                  const isSelected = selectedCaseIds.has(testCase._id);
-                  return (
-                    <div
-                      key={testCase._id}
-                      data-testid={`test-case-row-${testCase._id}`}
-                      className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
-                    >
-                      <div className="flex justify-center w-7 shrink-0">
-                        <Checkbox
-                          checked={isSelected}
-                          onCheckedChange={() =>
-                            toggleCaseSelection(testCase._id)
-                          }
-                          onClick={(e) => e.stopPropagation()}
-                          aria-label={`Select case ${testCase.title || "Untitled test case"}`}
-                        />
-                      </div>
-                      {caseRowClickTarget}
-                      {runControl}
-                    </div>
-                  );
-                }
+              const runControl =
+                showRunColumn && onRunTestCase ? (
+                  disconnectedRunTooltip ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>{runButton}</TooltipTrigger>
+                      <TooltipContent
+                        variant="muted"
+                        side="left"
+                        sideOffset={8}
+                        className="max-w-[16rem]"
+                      >
+                        {disconnectedRunTooltip}
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    runButton
+                  )
+                ) : null;
 
+              if (batchDelete) {
+                const isSelected = selectedCaseIds.has(testCase._id);
                 return (
                   <div
                     key={testCase._id}
                     data-testid={`test-case-row-${testCase._id}`}
                     className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
                   >
+                    <div className="flex justify-center w-7 shrink-0">
+                      <Checkbox
+                        checked={isSelected}
+                        onCheckedChange={() =>
+                          toggleCaseSelection(testCase._id)
+                        }
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`Select case ${testCase.title || "Untitled test case"}`}
+                      />
+                    </div>
                     {caseRowClickTarget}
                     {runControl}
                   </div>
                 );
-              })
+              }
+
+              return (
+                <div
+                  key={testCase._id}
+                  data-testid={`test-case-row-${testCase._id}`}
+                  className="flex items-center gap-2 w-full px-4 py-2.5 transition-colors hover:bg-muted/50"
+                >
+                  {caseRowClickTarget}
+                  {runControl}
+                </div>
+              );
+            })
           )}
         </div>
       </div>

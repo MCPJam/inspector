@@ -368,9 +368,13 @@ export function EvalsTab({
                       data?.runs?.find((run: any) => run?.iteration?._id)
                         ?.iteration?._id;
                     if (firstIterationId) {
-                      playgroundNavigation.toTestEdit(exploreSuite._id, tc._id, {
-                        openCompare: true,
-                      });
+                      playgroundNavigation.toTestEdit(
+                        exploreSuite._id,
+                        tc._id,
+                        {
+                          openCompare: true,
+                        },
+                      );
                     }
                   })();
                 }

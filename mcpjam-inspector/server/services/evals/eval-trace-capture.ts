@@ -66,7 +66,10 @@ function formatRecordedLlmSpanName(modelId?: string): string {
   return id.length > 0 ? `${id} · response` : "LLM";
 }
 
-function formatAiSdkStepSpanId(promptIndex: number, stepNumber: number): string {
+function formatAiSdkStepSpanId(
+  promptIndex: number,
+  stepNumber: number,
+): string {
   return `prompt-${promptIndex}-step-${stepNumber}`;
 }
 
@@ -383,7 +386,10 @@ export function patchAiSdkRecordedSpansMessageRangesFromSteps(
     const stepSpanId = formatAiSdkStepSpanId(promptIndex, stepIndex);
 
     for (const span of spans) {
-      if (span.stepIndex !== stepIndex || (span.promptIndex ?? 0) !== promptIndex) {
+      if (
+        span.stepIndex !== stepIndex ||
+        (span.promptIndex ?? 0) !== promptIndex
+      ) {
         continue;
       }
       if (

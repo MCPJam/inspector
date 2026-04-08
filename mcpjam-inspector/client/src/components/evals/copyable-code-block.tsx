@@ -69,17 +69,12 @@ export function CopyableCodeBlock({
         </div>
       ) : null}
       <div
-        className={cn(
-          "relative",
-          fillHeight && "flex min-h-0 flex-1 flex-col",
-        )}
+        className={cn("relative", fillHeight && "flex min-h-0 flex-1 flex-col")}
       >
         <pre
           className={cn(
             "overflow-auto px-4 py-3.5 text-left font-mono text-[11px] leading-relaxed text-foreground sm:text-xs",
-            fillHeight
-              ? "min-h-0 flex-1"
-              : "max-h-[min(420px,55vh)]",
+            fillHeight ? "min-h-0 flex-1" : "max-h-[min(420px,55vh)]",
             toolbarLabel ? "pr-4" : "pr-12",
           )}
           tabIndex={0}

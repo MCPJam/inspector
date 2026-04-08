@@ -7,8 +7,7 @@ import {
 
 describe("evals-router test-edit compare query", () => {
   it("parses test edit with compare=1", () => {
-    window.location.hash =
-      "#/evals/suite/s_123/test/t_789/edit?compare=1";
+    window.location.hash = "#/evals/suite/s_123/test/t_789/edit?compare=1";
     expect(parseEvalsRoute()).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -18,8 +17,7 @@ describe("evals-router test-edit compare query", () => {
   });
 
   it("parses test edit with compare=true", () => {
-    window.location.hash =
-      "#/evals/suite/s_123/test/t_789/edit?compare=true";
+    window.location.hash = "#/evals/suite/s_123/test/t_789/edit?compare=true";
     expect(parseEvalsRoute()).toEqual({
       type: "test-edit",
       suiteId: "s_123",
@@ -44,9 +42,7 @@ describe("evals-router test-edit compare query", () => {
       testId: "t_def",
       openCompare: true,
     });
-    expect(hash).toBe(
-      "#/evals/suite/s_abc/test/t_def/edit?compare=1",
-    );
+    expect(hash).toBe("#/evals/suite/s_abc/test/t_def/edit?compare=1");
   });
 
   it("parses test edit with compare and iteration queries", () => {

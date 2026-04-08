@@ -273,10 +273,7 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
     await user.click(screen.getByTestId("test-cases-overview"));
 
-    expect(navigation.toTestEdit).toHaveBeenCalledWith(
-      "suite-1",
-      "case-1",
-    );
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1");
   });
 
   it("preserves the clicked iteration when opening compare from the cases list", async () => {
@@ -330,14 +327,10 @@ describe("SuiteIterationsView caseListInSidebar", () => {
 
     await user.click(screen.getByTestId("test-cases-open-last-run"));
 
-    expect(navigation.toTestEdit).toHaveBeenCalledWith(
-      "suite-1",
-      "case-1",
-      {
-        openCompare: true,
-        iteration: "iter-1",
-      },
-    );
+    expect(navigation.toTestEdit).toHaveBeenCalledWith("suite-1", "case-1", {
+      openCompare: true,
+      iteration: "iter-1",
+    });
   });
 
   it("passes canDeleteSuite through to RunOverview in read-only overview (runs view)", () => {

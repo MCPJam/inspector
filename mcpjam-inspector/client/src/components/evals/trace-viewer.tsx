@@ -339,9 +339,7 @@ export function TraceViewer({
 
   return (
     <div
-      className={cn(
-        flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col",
-      )}
+      className={cn(flexFillChrome && "flex min-h-0 min-w-0 flex-1 flex-col")}
       data-testid="trace-viewer-root"
     >
       <div
@@ -365,75 +363,77 @@ export function TraceViewer({
               )}
             >
               <div className="flex min-w-0 min-h-0 flex-1 items-center gap-2">
-              {showRecordedChrome ? (
-                <RecordedTraceToolbar
-                  filter={timelineFilter}
-                  onFilterChange={setTimelineFilter}
-                  isFullyExpanded={isTimelineFullyExpanded}
-                  expandDisabled={promptGroups.length === 0}
-                  showBottomBorder={false}
-                  zoomControls={
-                    <>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7 border-border/50"
-                        title="Zoom in timeline"
-                        aria-label="Zoom in timeline"
-                        disabled={timelineViewportMaxMs <= timelineZoomMinMs}
-                        onClick={() =>
-                          setTimelineViewportMaxMs((v) =>
-                            Math.max(timelineZoomMinMs, Math.round(v * 0.8)),
-                          )
-                        }
-                      >
-                        <Plus className="size-3.5" aria-hidden />
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="icon"
-                        className="h-7 w-7 border-border/50"
-                        title="Zoom out timeline"
-                        aria-label="Zoom out timeline"
-                        disabled={timelineViewportMaxMs >= maxEndMsForToolbar * 4}
-                        onClick={() =>
-                          setTimelineViewportMaxMs((v) =>
-                            Math.min(
-                              maxEndMsForToolbar * 4,
-                              Math.round(v * 1.25),
-                            ),
-                          )
-                        }
-                      >
-                        <Minus className="size-3.5" aria-hidden />
-                      </Button>
-                    </>
-                  }
-                  onToggleExpandAll={() => {
-                    if (isTimelineFullyExpanded) {
-                      setExpandedPromptIds(new Set());
-                      setExpandedStepIds(new Set());
-                    } else {
-                      setExpandedPromptIds(
-                        new Set(promptGroups.map((group) => group.key)),
-                      );
-                      setExpandedStepIds(new Set(fullyExpandedStepIds));
+                {showRecordedChrome ? (
+                  <RecordedTraceToolbar
+                    filter={timelineFilter}
+                    onFilterChange={setTimelineFilter}
+                    isFullyExpanded={isTimelineFullyExpanded}
+                    expandDisabled={promptGroups.length === 0}
+                    showBottomBorder={false}
+                    zoomControls={
+                      <>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7 border-border/50"
+                          title="Zoom in timeline"
+                          aria-label="Zoom in timeline"
+                          disabled={timelineViewportMaxMs <= timelineZoomMinMs}
+                          onClick={() =>
+                            setTimelineViewportMaxMs((v) =>
+                              Math.max(timelineZoomMinMs, Math.round(v * 0.8)),
+                            )
+                          }
+                        >
+                          <Plus className="size-3.5" aria-hidden />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-7 w-7 border-border/50"
+                          title="Zoom out timeline"
+                          aria-label="Zoom out timeline"
+                          disabled={
+                            timelineViewportMaxMs >= maxEndMsForToolbar * 4
+                          }
+                          onClick={() =>
+                            setTimelineViewportMaxMs((v) =>
+                              Math.min(
+                                maxEndMsForToolbar * 4,
+                                Math.round(v * 1.25),
+                              ),
+                            )
+                          }
+                        >
+                          <Minus className="size-3.5" aria-hidden />
+                        </Button>
+                      </>
                     }
-                  }}
-                />
-              ) : (
-                <div className="text-xs font-medium text-muted-foreground">
-                  {effectiveViewMode === "raw"
-                    ? "Trace JSON"
-                    : effectiveViewMode === "tools"
-                      ? "Expected vs actual tools"
-                      : traceMessages.length > 0
-                        ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
-                        : "Trace"}
-                </div>
-              )}
+                    onToggleExpandAll={() => {
+                      if (isTimelineFullyExpanded) {
+                        setExpandedPromptIds(new Set());
+                        setExpandedStepIds(new Set());
+                      } else {
+                        setExpandedPromptIds(
+                          new Set(promptGroups.map((group) => group.key)),
+                        );
+                        setExpandedStepIds(new Set(fullyExpandedStepIds));
+                      }
+                    }}
+                  />
+                ) : (
+                  <div className="text-xs font-medium text-muted-foreground">
+                    {effectiveViewMode === "raw"
+                      ? "Trace JSON"
+                      : effectiveViewMode === "tools"
+                        ? "Expected vs actual tools"
+                        : traceMessages.length > 0
+                          ? `${traceMessages.length} message${traceMessages.length !== 1 ? "s" : ""}`
+                          : "Trace"}
+                  </div>
+                )}
               </div>
               {!forcedViewMode ? (
                 <TraceViewModeTabs
@@ -460,76 +460,6 @@ export function TraceViewer({
         ) : null}
 
         {effectiveViewMode === "raw" && (
-        <div
-          className={cn(
-            "min-w-0 rounded-md border border-border/30 bg-background/50",
-            fillContent
-              ? "min-h-0 flex-1 overflow-auto"
-              : "min-h-0 max-h-[min(70vh,36rem)] overflow-auto",
-          )}
-          data-testid="trace-viewer-raw-json"
-        >
-          <JsonEditor
-            height="auto"
-            viewOnly
-            value={trace}
-            className="min-h-0"
-          />
-        </div>
-        )}
-
-        {effectiveViewMode === "timeline" && (
-        <Suspense
-          fallback={
-            <div className="flex justify-center py-8">
-              <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-            </div>
-          }
-        >
-          <div
-            className={cn(
-              flexFillChrome &&
-                "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
-            )}
-          >
-            <TraceTimelineLazy
-              recordedSpans={recordedSpans}
-              estimatedDurationMs={
-                recordedSpans?.length ? undefined : estimatedDurationMs
-              }
-              transcriptMessageCount={
-                recordedSpans?.length ? 0 : traceMessages.length
-              }
-              transcriptMessages={traceMessages}
-              traceStartedAtMs={traceStartedAtMs}
-              traceEndedAtMs={traceEndedAtMs}
-              onRevealInTranscript={handleRevealInTranscript}
-              hideToolbar={hasRecordedSpans}
-              timelineFilter={hasRecordedSpans ? timelineFilter : undefined}
-              onTimelineFilterChange={
-                hasRecordedSpans ? setTimelineFilter : undefined
-              }
-              expandedPromptIds={hasRecordedSpans ? expandedPromptIds : undefined}
-              onExpandedPromptIdsChange={
-                hasRecordedSpans ? setExpandedPromptIds : undefined
-              }
-              expandedStepIds={hasRecordedSpans ? expandedStepIds : undefined}
-              onExpandedStepIdsChange={
-                hasRecordedSpans ? setExpandedStepIds : undefined
-              }
-              viewportMaxMs={hasRecordedSpans ? timelineViewportMaxMs : undefined}
-              fillContent={fillContent}
-            />
-          </div>
-        </Suspense>
-        )}
-
-        {effectiveViewMode === "chat" &&
-        (traceMessages.length === 0 ? (
-          <div className="text-xs text-muted-foreground">
-            No messages in trace
-          </div>
-        ) : (
           <div
             className={cn(
               "min-w-0 rounded-md border border-border/30 bg-background/50",
@@ -537,98 +467,174 @@ export function TraceViewer({
                 ? "min-h-0 flex-1 overflow-auto"
                 : "min-h-0 max-h-[min(70vh,36rem)] overflow-auto",
             )}
-            data-testid="trace-viewer-chat"
+            data-testid="trace-viewer-raw-json"
           >
-            <Thread
-              messages={adaptedTrace.messages}
-              sendFollowUpMessage={sendFollowUpMessage}
-              model={resolvedModel}
-              isLoading={false}
-              toolsMetadata={toolsMetadata}
-              toolServerMap={toolServerMap}
-              onWidgetStateChange={onWidgetStateChange}
-              onModelContextUpdate={onModelContextUpdate}
-              displayMode={displayMode}
-              onDisplayModeChange={onDisplayModeChange}
-              enableFullscreenChatOverlay={enableFullscreenChatOverlay}
-              fullscreenChatPlaceholder={fullscreenChatPlaceholder}
-              fullscreenChatDisabled={fullscreenChatDisabled}
-              selectedProtocolOverrideIfBothExists={
-                selectedProtocolOverrideIfBothExists
-              }
-              onToolApprovalResponse={onToolApprovalResponse}
-              toolRenderOverrides={adaptedTrace.toolRenderOverrides}
-              showSaveViewButton={false}
-              minimalMode={true}
-              interactive={interactive}
-              reasoningDisplayMode="collapsed"
-              focusMessageId={transcriptNavigation.focusMessageId}
-              highlightedMessageIds={transcriptNavigation.highlightedMessageIds}
-              navigationKey={transcriptNavigation.navigationKey}
-              contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
-              getMessageWrapperProps={({ message }) => {
-                const sourceRange =
-                  adaptedTrace.uiMessageSourceRanges[message.id];
-                return {
-                  "data-source-range": sourceRange
-                    ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
-                    : undefined,
-                };
-              }}
+            <JsonEditor
+              height="auto"
+              viewOnly
+              value={trace}
+              className="min-h-0"
             />
           </div>
-        ))}
+        )}
+
+        {effectiveViewMode === "timeline" && (
+          <Suspense
+            fallback={
+              <div className="flex justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            }
+          >
+            <div
+              className={cn(
+                flexFillChrome &&
+                  "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+              )}
+            >
+              <TraceTimelineLazy
+                recordedSpans={recordedSpans}
+                estimatedDurationMs={
+                  recordedSpans?.length ? undefined : estimatedDurationMs
+                }
+                transcriptMessageCount={
+                  recordedSpans?.length ? 0 : traceMessages.length
+                }
+                transcriptMessages={traceMessages}
+                traceStartedAtMs={traceStartedAtMs}
+                traceEndedAtMs={traceEndedAtMs}
+                onRevealInTranscript={handleRevealInTranscript}
+                hideToolbar={hasRecordedSpans}
+                timelineFilter={hasRecordedSpans ? timelineFilter : undefined}
+                onTimelineFilterChange={
+                  hasRecordedSpans ? setTimelineFilter : undefined
+                }
+                expandedPromptIds={
+                  hasRecordedSpans ? expandedPromptIds : undefined
+                }
+                onExpandedPromptIdsChange={
+                  hasRecordedSpans ? setExpandedPromptIds : undefined
+                }
+                expandedStepIds={hasRecordedSpans ? expandedStepIds : undefined}
+                onExpandedStepIdsChange={
+                  hasRecordedSpans ? setExpandedStepIds : undefined
+                }
+                viewportMaxMs={
+                  hasRecordedSpans ? timelineViewportMaxMs : undefined
+                }
+                fillContent={fillContent}
+              />
+            </div>
+          </Suspense>
+        )}
+
+        {effectiveViewMode === "chat" &&
+          (traceMessages.length === 0 ? (
+            <div className="text-xs text-muted-foreground">
+              No messages in trace
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "min-w-0 rounded-md border border-border/30 bg-background/50",
+                fillContent
+                  ? "min-h-0 flex-1 overflow-auto"
+                  : "min-h-0 max-h-[min(70vh,36rem)] overflow-auto",
+              )}
+              data-testid="trace-viewer-chat"
+            >
+              <Thread
+                messages={adaptedTrace.messages}
+                sendFollowUpMessage={sendFollowUpMessage}
+                model={resolvedModel}
+                isLoading={false}
+                toolsMetadata={toolsMetadata}
+                toolServerMap={toolServerMap}
+                onWidgetStateChange={onWidgetStateChange}
+                onModelContextUpdate={onModelContextUpdate}
+                displayMode={displayMode}
+                onDisplayModeChange={onDisplayModeChange}
+                enableFullscreenChatOverlay={enableFullscreenChatOverlay}
+                fullscreenChatPlaceholder={fullscreenChatPlaceholder}
+                fullscreenChatDisabled={fullscreenChatDisabled}
+                selectedProtocolOverrideIfBothExists={
+                  selectedProtocolOverrideIfBothExists
+                }
+                onToolApprovalResponse={onToolApprovalResponse}
+                toolRenderOverrides={adaptedTrace.toolRenderOverrides}
+                showSaveViewButton={false}
+                minimalMode={true}
+                interactive={interactive}
+                reasoningDisplayMode="collapsed"
+                focusMessageId={transcriptNavigation.focusMessageId}
+                highlightedMessageIds={
+                  transcriptNavigation.highlightedMessageIds
+                }
+                navigationKey={transcriptNavigation.navigationKey}
+                contentClassName="min-w-0 mx-auto w-full max-w-4xl space-y-8 px-4 pt-2"
+                getMessageWrapperProps={({ message }) => {
+                  const sourceRange =
+                    adaptedTrace.uiMessageSourceRanges[message.id];
+                  return {
+                    "data-source-range": sourceRange
+                      ? `${sourceRange.startIndex}-${sourceRange.endIndex}`
+                      : undefined,
+                  };
+                }}
+              />
+            </div>
+          ))}
 
         {effectiveViewMode === "tools" && hasEvalToolCalls ? (
-        <div
-          className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row"
-          data-testid="trace-viewer-tools-compare"
-        >
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
-            <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
-              Expected
+          <div
+            className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 md:flex-row"
+            data-testid="trace-viewer-tools-compare"
+          >
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+              <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
+                Expected
+              </div>
+              {expectedToolCalls.length === 0 ? (
+                <div className="text-xs text-muted-foreground italic">
+                  No expected tool calls
+                </div>
+              ) : (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+                  <JsonEditor
+                    value={expectedToolCalls}
+                    viewOnly
+                    collapsible
+                    defaultExpandDepth={2}
+                    collapseStringsAfterLength={160}
+                    height="100%"
+                    className="min-h-0"
+                  />
+                </div>
+              )}
             </div>
-            {expectedToolCalls.length === 0 ? (
-              <div className="text-xs text-muted-foreground italic">
-                No expected tool calls
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
+              <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
+                Actual
               </div>
-            ) : (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
-                <JsonEditor
-                  value={expectedToolCalls}
-                  viewOnly
-                  collapsible
-                  defaultExpandDepth={2}
-                  collapseStringsAfterLength={160}
-                  height="100%"
-                  className="min-h-0"
-                />
-              </div>
-            )}
-          </div>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 rounded-md border border-border/40 bg-muted/10 p-3">
-            <div className="shrink-0 text-xs font-medium text-muted-foreground uppercase">
-              Actual
+              {actualToolCalls.length === 0 ? (
+                <div className="text-xs text-muted-foreground italic">
+                  No tool calls made
+                </div>
+              ) : (
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
+                  <JsonEditor
+                    value={actualToolCalls}
+                    viewOnly
+                    collapsible
+                    defaultExpandDepth={2}
+                    collapseStringsAfterLength={160}
+                    height="100%"
+                    className="min-h-0"
+                  />
+                </div>
+              )}
             </div>
-            {actualToolCalls.length === 0 ? (
-              <div className="text-xs text-muted-foreground italic">
-                No tool calls made
-              </div>
-            ) : (
-              <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border border-border/30 bg-background/50">
-                <JsonEditor
-                  value={actualToolCalls}
-                  viewOnly
-                  collapsible
-                  defaultExpandDepth={2}
-                  collapseStringsAfterLength={160}
-                  height="100%"
-                  className="min-h-0"
-                />
-              </div>
-            )}
           </div>
-        </div>
         ) : null}
       </div>
     </div>

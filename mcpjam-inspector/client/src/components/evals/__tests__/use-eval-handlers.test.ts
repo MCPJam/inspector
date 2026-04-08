@@ -534,7 +534,9 @@ describe("useEvalHandlers", () => {
 
       const { result } = renderHook(() => useEvalHandlers(defaultProps));
 
-      let response: Awaited<ReturnType<typeof result.current.handleRunTestCase>>;
+      let response: Awaited<
+        ReturnType<typeof result.current.handleRunTestCase>
+      >;
       await act(async () => {
         response = await result.current.handleRunTestCase(
           {
@@ -632,7 +634,9 @@ describe("useEvalHandlers", () => {
         model: "claude-3-5-sonnet",
       });
       expect(requestBody.skipLastMessageRunUpdate).toBeUndefined();
-      expect(toast.success).toHaveBeenCalledWith("Test completed successfully!");
+      expect(toast.success).toHaveBeenCalledWith(
+        "Test completed successfully!",
+      );
     });
   });
 

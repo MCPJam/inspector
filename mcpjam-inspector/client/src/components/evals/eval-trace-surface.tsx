@@ -2,15 +2,15 @@ import { useMemo } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { JsonEditor } from "@/components/ui/json-editor";
 import type { ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import {
-  TraceViewer,
-  type TraceViewerEvalToolCall,
-} from "./trace-viewer";
+import { TraceViewer, type TraceViewerEvalToolCall } from "./trace-viewer";
 import {
   adaptTraceToUiMessages,
   type TraceEnvelope,
 } from "./trace-viewer-adapter";
-import { extractFinalAssistantOutput, resolveTraceModel } from "./compare-playground-helpers";
+import {
+  extractFinalAssistantOutput,
+  resolveTraceModel,
+} from "./compare-playground-helpers";
 import { useEvalTraceBlob } from "./use-eval-trace-blob";
 import type { EvalCase, EvalIteration } from "./types";
 import { resolveIterationDisplayExpectedToolCalls } from "@/shared/prompt-turns";
@@ -140,7 +140,9 @@ export function EvalTraceSurface({
       if (iteration.error) {
         return <SimpleErrorState message={iteration.error} />;
       }
-      return <SimpleEmptyState message="No output captured for this run yet." />;
+      return (
+        <SimpleEmptyState message="No output captured for this run yet." />
+      );
     }
 
     if (output.text) {
@@ -161,7 +163,9 @@ export function EvalTraceSurface({
   }
 
   if (!activeTrace || !traceModel) {
-    return <SimpleEmptyState message="No trace data is available for this run." />;
+    return (
+      <SimpleEmptyState message="No trace data is available for this run." />
+    );
   }
 
   const estimatedDurationMs =
@@ -175,7 +179,7 @@ export function EvalTraceSurface({
   );
   const actualToolCalls =
     resolvedBlob != null
-      ? iteration.actualToolCalls ?? []
+      ? (iteration.actualToolCalls ?? [])
       : fallbackActualToolCalls;
 
   return (

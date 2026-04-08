@@ -37,13 +37,7 @@ vi.mock("../../utils/chat-helpers", () => ({
     apiKey: unknown,
     baseUrls?: unknown,
     customProviders?: unknown,
-  ) =>
-    createLlmModelMock(
-      modelDefinition,
-      apiKey,
-      baseUrls,
-      customProviders,
-    ),
+  ) => createLlmModelMock(modelDefinition, apiKey, baseUrls, customProviders),
 }));
 
 import { runEvalSuiteWithAiSdk, streamTestCase } from "../../evals-runner";
@@ -242,9 +236,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         model: "gpt-5-mini",
         provider: "openai",
         expectedToolCalls: [],
-        promptTurns: [
-          { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
-        ],
+        promptTurns: [{ id: "turn-1", prompt: "Hello", expectedToolCalls: [] }],
         testCaseId: "case-1",
       },
       tools: {},

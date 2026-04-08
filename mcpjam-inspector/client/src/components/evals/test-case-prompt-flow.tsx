@@ -95,12 +95,7 @@ export function TestCasePromptFlow({
       </header>
 
       <LayoutGroup id="prompt-flow-steps">
-        <div
-          className={cn(
-            "relative",
-            multi && "pl-[1.35rem] sm:pl-7",
-          )}
-        >
+        <div className={cn("relative", multi && "pl-[1.35rem] sm:pl-7")}>
           {multi ? (
             <div
               className="pointer-events-none absolute bottom-2 left-[0.4rem] top-6 w-px bg-border/60 sm:left-[0.82rem]"
@@ -245,9 +240,7 @@ export function TestCasePromptFlow({
                             initial={multi ? { height: 0, opacity: 0 } : false}
                             animate={{ height: "auto", opacity: 1 }}
                             exit={
-                              multi
-                                ? { height: 0, opacity: 0 }
-                                : { opacity: 0 }
+                              multi ? { height: 0, opacity: 0 } : { opacity: 0 }
                             }
                             transition={{
                               duration: multi ? 0.22 : 0,

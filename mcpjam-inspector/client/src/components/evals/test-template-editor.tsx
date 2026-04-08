@@ -778,7 +778,10 @@ export function TestTemplateEditor({
   const routeCompareAnchorModelValue = useMemo(
     () =>
       routeCompareAnchorIteration
-        ? resolveIterationModelValue(routeCompareAnchorIteration, currentTestCase)
+        ? resolveIterationModelValue(
+            routeCompareAnchorIteration,
+            currentTestCase,
+          )
         : null,
     [currentTestCase, routeCompareAnchorIteration],
   );
@@ -863,7 +866,9 @@ export function TestTemplateEditor({
     setSelectedModelValues((current) => {
       const next = [
         routeCompareAnchorModelValue,
-        ...current.filter((modelValue) => modelValue !== routeCompareAnchorModelValue),
+        ...current.filter(
+          (modelValue) => modelValue !== routeCompareAnchorModelValue,
+        ),
       ].slice(0, 3);
 
       return current.join("|") === next.join("|") ? current : next;
@@ -1716,10 +1721,7 @@ export function TestTemplateEditor({
                       aria-label={latestRunNavCue.ariaResults}
                       onClick={() => openRunView("config_toggle")}
                     >
-                      <span
-                        className={latestRunNavCue.dotClass}
-                        aria-hidden
-                      />
+                      <span className={latestRunNavCue.dotClass} aria-hidden />
                       View results
                     </Button>
                   ) : canOpenLastRun ? (
@@ -1737,10 +1739,7 @@ export function TestTemplateEditor({
                         onOpenLastRun?.(lastSavedIteration)
                       }
                     >
-                      <span
-                        className={latestRunNavCue.dotClass}
-                        aria-hidden
-                      />
+                      <span className={latestRunNavCue.dotClass} aria-hidden />
                       Open last run
                     </Button>
                   ) : null

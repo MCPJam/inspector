@@ -109,9 +109,7 @@ describe("generateAndPersistEvalTests", () => {
     expect(mockCreateTestCase).toHaveBeenCalledWith(
       expect.objectContaining({
         query: "Find the latest incident",
-        expectedToolCalls: [
-          { toolName: "search_incidents", arguments: {} },
-        ],
+        expectedToolCalls: [{ toolName: "search_incidents", arguments: {} }],
         promptTurns: [
           expect.objectContaining({
             id: "turn-1",

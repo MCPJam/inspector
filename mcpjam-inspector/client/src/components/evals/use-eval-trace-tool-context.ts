@@ -110,8 +110,7 @@ export function useEvalTraceToolContext({
       buildOAuthTokensByServerId(
         normalizedServerNames,
         (serverName) => serversByName.get(serverName),
-        (serverName) =>
-          appState.servers[serverName]?.oauthTokens?.access_token,
+        (serverName) => appState.servers[serverName]?.oauthTokens?.access_token,
       ),
     [normalizedServerNames, serversByName, appState.servers],
   );
@@ -170,10 +169,10 @@ export function useEvalTraceToolContext({
     async function run() {
       try {
         const responses = await Promise.all(
-          normalizedServerNames.map(async (serverName) => [
-            serverName,
-            await listTools({ serverId: serverName }),
-          ] as const),
+          normalizedServerNames.map(
+            async (serverName) =>
+              [serverName, await listTools({ serverId: serverName })] as const,
+          ),
         );
 
         if (cancelled) {

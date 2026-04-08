@@ -77,9 +77,7 @@ export function TestsStep({
 
       {template.promptTurns && template.promptTurns.length > 1 ? (
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="outline">
-            {template.promptTurns.length} turns
-          </Badge>
+          <Badge variant="outline">{template.promptTurns.length} turns</Badge>
           <span>
             Additional follow-up turns are preserved and will be available in
             the test case editor after creation.

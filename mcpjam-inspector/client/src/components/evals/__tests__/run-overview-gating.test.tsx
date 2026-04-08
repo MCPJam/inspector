@@ -84,9 +84,7 @@ describe("RunOverview canDeleteRuns", () => {
   });
 
   it("hides the Runs/Cases selector when hideViewModeSelect is set", () => {
-    renderWithProviders(
-      <RunOverview {...baseProps} hideViewModeSelect />,
-    );
+    renderWithProviders(<RunOverview {...baseProps} hideViewModeSelect />);
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 });

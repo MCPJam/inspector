@@ -278,7 +278,8 @@ export function buildHistoricalCompareRunRecords(params: {
         )
       : preferredIteration.suiteRunId
         ? sortedIterations.filter(
-            (iteration) => iteration.suiteRunId === preferredIteration.suiteRunId,
+            (iteration) =>
+              iteration.suiteRunId === preferredIteration.suiteRunId,
           )
         : []
     : [];

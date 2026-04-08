@@ -110,7 +110,9 @@ describe("EvalExportModal", () => {
       screen.getByRole("tab", { name: "Prompt for agent" }),
     ).toBeDisabled();
     expect(
-      screen.getByText(/only available when the suite targets exactly one MCP server/i),
+      screen.getByText(
+        /only available when the suite targets exactly one MCP server/i,
+      ),
     ).toBeInTheDocument();
   });
 

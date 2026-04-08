@@ -34,7 +34,7 @@ export function TestResultsPanel({
   const turnCount =
     typeof iteration?.metadata?.turnCount === "number"
       ? iteration.metadata.turnCount
-      : iteration?.testCaseSnapshot?.promptTurns?.length ?? 1;
+      : (iteration?.testCaseSnapshot?.promptTurns?.length ?? 1);
   const firstFailedTurnIndex =
     typeof iteration?.metadata?.firstFailedTurnIndex === "number"
       ? iteration.metadata.firstFailedTurnIndex

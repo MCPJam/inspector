@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type {
-  EvalCase,
-  EvalSuiteRun,
-} from "@/components/evals/types";
+import type { EvalCase, EvalSuiteRun } from "@/components/evals/types";
 import type { ServerWithName } from "@/state/app-types";
 import {
   buildSdkEnvSnippet,
@@ -146,7 +143,9 @@ describe("eval-export", () => {
             {
               id: "turn-2",
               prompt: "Now fetch",
-              expectedToolCalls: [{ toolName: "fetch_item", arguments: { id: "42" } }],
+              expectedToolCalls: [
+                { toolName: "fetch_item", arguments: { id: "42" } },
+              ],
             },
           ],
         },
@@ -208,7 +207,9 @@ describe("eval-export", () => {
             {
               id: "turn-1",
               prompt: "Find the customer",
-              expectedToolCalls: [{ toolName: "search_customer", arguments: {} }],
+              expectedToolCalls: [
+                { toolName: "search_customer", arguments: {} },
+              ],
             },
             {
               id: "turn-2",
