@@ -128,38 +128,6 @@ export function buildPersistedPayloadFromRemoteServer(
   };
 }
 
-export interface CarryForwardComparableServer {
-  name: string;
-  enabled: boolean;
-  transportType: "stdio" | "http";
-  command?: string;
-  args?: string[];
-  url?: string;
-  headers?: Record<string, string>;
-  timeout?: number;
-  useOAuth?: boolean;
-  oauthScopes?: string[] | string;
-  clientId?: string;
-}
-
-export function buildPersistedPayloadFromCarryForwardComparableServer(
-  remoteServer: CarryForwardComparableServer,
-): PersistedServerPayload {
-  return {
-    name: remoteServer.name,
-    enabled: remoteServer.enabled,
-    transportType: remoteServer.transportType,
-    command: remoteServer.command,
-    args: remoteServer.args ? [...remoteServer.args] : undefined,
-    url: remoteServer.url,
-    headers: normalizeHeaders(remoteServer.headers),
-    timeout: remoteServer.timeout,
-    useOAuth: remoteServer.useOAuth,
-    oauthScopes: normalizeScopes(remoteServer.oauthScopes),
-    clientId: remoteServer.clientId,
-  };
-}
-
 function normalizePayload(
   payload: PersistedServerPayload,
 ): PersistedServerPayload {
@@ -184,23 +152,6 @@ export function persistedServerPayloadsEqual(
   return (
     JSON.stringify(normalizePayload(left)) ===
     JSON.stringify(normalizePayload(right))
-  );
-}
-
-export function isCarryForwardRemoteServerEquivalent(
-  localServer: Pick<
-    ServerWithName,
-    "config" | "enabled" | "useOAuth" | "oauthFlowProfile"
-  >,
-  remoteServer: CarryForwardComparableServer,
-): boolean {
-  const localPayload = buildPersistedServerPayload(remoteServer.name, localServer);
-  const remotePayload =
-    buildPersistedPayloadFromCarryForwardComparableServer(remoteServer);
-
-  return persistedServerPayloadsEqual(
-    { ...localPayload, headers: undefined },
-    { ...remotePayload, headers: undefined },
   );
 }
 

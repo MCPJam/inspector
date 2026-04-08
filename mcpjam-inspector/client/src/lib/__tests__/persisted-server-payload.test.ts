@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCarryForwardServerPayload,
-  buildPersistedPayloadFromCarryForwardComparableServer,
   buildPersistedPayloadFromRemoteServer,
   buildPersistedServerPayload,
-  isCarryForwardRemoteServerEquivalent,
   persistedServerPayloadsEqual,
 } from "../persisted-server-payload";
 
@@ -93,7 +91,7 @@ describe("persisted-server-payload", () => {
     });
   });
 
-  it("treats matching sanitized local and remote servers as equivalent", () => {
+  it("treats matching local and remote payloads as equivalent", () => {
     const localPayload = buildPersistedServerPayload("linear", {
       config: {
         url: "https://mcp.linear.app/mcp",
@@ -129,41 +127,6 @@ describe("persisted-server-payload", () => {
     expect(persistedServerPayloadsEqual(localPayload, remotePayload)).toBe(
       true,
     );
-    expect(
-      isCarryForwardRemoteServerEquivalent(
-        {
-          config: {
-            url: "https://mcp.linear.app/mcp",
-            requestInit: {
-              headers: {
-                Authorization: "Bearer secret",
-                "X-Custom": "1",
-              },
-            },
-          } as any,
-          enabled: true,
-          useOAuth: true,
-          oauthFlowProfile: {
-            scopes: "read,write",
-            clientId: "linear-client",
-          } as any,
-        },
-        {
-          name: "linear",
-          enabled: true,
-          transportType: "http",
-          url: "https://mcp.linear.app/mcp",
-          headers: {
-            Authorization: "Bearer secret",
-            "X-Custom": "1",
-          },
-          timeout: undefined,
-          useOAuth: true,
-          oauthScopes: ["read", "write"],
-          clientId: "linear-client",
-        } as any,
-      ),
-    ).toBe(true);
   });
 
   it("carry-forward payload omits all headers including sensitive ones", () => {
@@ -194,99 +157,4 @@ describe("persisted-server-payload", () => {
     expect(payload.clientId).toBe("linear-client");
   });
 
-  it("header-only differences are equivalent in carry-forward", () => {
-    const result = isCarryForwardRemoteServerEquivalent(
-      {
-        config: {
-          url: "https://mcp.linear.app/mcp",
-          requestInit: {
-            headers: {
-              Authorization: "Bearer secret",
-              "X-Custom": "1",
-            },
-          },
-        } as any,
-        enabled: true,
-        useOAuth: true,
-        oauthFlowProfile: {
-          scopes: "read,write",
-          clientId: "linear-client",
-        } as any,
-      },
-      {
-        name: "linear",
-        enabled: true,
-        transportType: "http",
-        url: "https://mcp.linear.app/mcp",
-        headers: undefined,
-        timeout: undefined,
-        useOAuth: true,
-        oauthScopes: ["read", "write"],
-        clientId: "linear-client",
-      } as any,
-    );
-
-    expect(result).toBe(true);
-  });
-
-  it("normalizes comparable workspace snapshot servers for carry-forward checks", () => {
-    const payload = buildPersistedPayloadFromCarryForwardComparableServer({
-      name: "linear",
-      enabled: true,
-      transportType: "http",
-      url: "https://mcp.linear.app/mcp",
-      headers: {
-        Authorization: "Bearer secret",
-        "X-Custom": "1",
-      },
-      timeout: 30_000,
-      useOAuth: true,
-      oauthScopes: "read,write",
-      clientId: "linear-client",
-    });
-
-    expect(payload).toEqual({
-      name: "linear",
-      enabled: true,
-      transportType: "http",
-      command: undefined,
-      args: undefined,
-      url: "https://mcp.linear.app/mcp",
-      headers: {
-        Authorization: "Bearer secret",
-        "X-Custom": "1",
-      },
-      timeout: 30_000,
-      useOAuth: true,
-      oauthScopes: ["read", "write"],
-      clientId: "linear-client",
-    });
-  });
-
-  it("same URL but different OAuth config is not equivalent in carry-forward", () => {
-    const result = isCarryForwardRemoteServerEquivalent(
-      {
-        config: { url: "https://mcp.linear.app/mcp" } as any,
-        enabled: true,
-        useOAuth: true,
-        oauthFlowProfile: {
-          scopes: "read,write",
-          clientId: "linear-client",
-        } as any,
-      },
-      {
-        name: "linear",
-        enabled: true,
-        transportType: "http",
-        url: "https://mcp.linear.app/mcp",
-        headers: undefined,
-        timeout: undefined,
-        useOAuth: false,
-        oauthScopes: undefined,
-        clientId: undefined,
-      } as any,
-    );
-
-    expect(result).toBe(false);
-  });
 });

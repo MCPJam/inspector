@@ -492,6 +492,7 @@ export default function App() {
     appState,
     isLoading,
     isLoadingRemoteWorkspaces,
+    isWorkspaceBootstrapLoading,
     workspaceServers,
     connectedOrConnectingServerConfigs,
     selectedMCPConfig,
@@ -1223,6 +1224,11 @@ export default function App() {
     !isOAuthCallback &&
     billingEntitlementsUiEnabled !== false &&
     pendingCheckoutIntent !== null;
+  const shouldShowWorkspaceBootstrapOverlay =
+    !shouldShowBillingHandoffOverlay &&
+    !isHostedChatRoute &&
+    !isOAuthCallback &&
+    isWorkspaceBootstrapLoading;
 
   if (shouldHoldHostedDefaultRouteForAuth) {
     return <LoadingScreen />;
@@ -1618,13 +1624,22 @@ export default function App() {
       <AppStateProvider appState={effectiveAppState}>
         <Toaster />
         <div
-          aria-hidden={shouldShowBillingHandoffOverlay || undefined}
+          data-testid="app-shell-container"
+          aria-hidden={
+            shouldShowBillingHandoffOverlay ||
+            shouldShowWorkspaceBootstrapOverlay ||
+            undefined
+          }
           className={
-            shouldShowBillingHandoffOverlay
+            shouldShowBillingHandoffOverlay || shouldShowWorkspaceBootstrapOverlay
               ? "pointer-events-none opacity-0"
               : undefined
           }
-          inert={shouldShowBillingHandoffOverlay || undefined}
+          inert={
+            shouldShowBillingHandoffOverlay ||
+            shouldShowWorkspaceBootstrapOverlay ||
+            undefined
+          }
         >
           <HostedShellGate
             state={
@@ -1659,6 +1674,12 @@ export default function App() {
         </div>
         {shouldShowBillingHandoffOverlay ? (
           <BillingHandoffLoading overlay />
+        ) : null}
+        {shouldShowWorkspaceBootstrapOverlay ? (
+          <LoadingScreen
+            overlay
+            testId="workspace-bootstrap-loading-overlay"
+          />
         ) : null}
       </AppStateProvider>
     </PreferencesStoreProvider>
