@@ -624,11 +624,17 @@
 
 .claude-loading-indicator__strip,
 .claude-loading-indicator__static {
-  inset: 0;
   position: absolute;
 }
 
+.claude-loading-indicator__static {
+  inset: 0;
+}
+
 .claude-loading-indicator__strip {
+  left: 0;
+  top: 0;
+  width: 100%;
   height: auto;
   transform: translateY(0);
   transform-origin: top center;
