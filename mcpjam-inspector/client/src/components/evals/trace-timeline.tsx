@@ -2070,7 +2070,7 @@ export function TraceTimeline({
         )}
       >
         <ResizablePanelGroup
-          direction="horizontal"
+          direction="vertical"
           className={cn(
             "rounded-lg border border-border/50 bg-background",
             fillContent
@@ -2112,7 +2112,7 @@ export function TraceTimeline({
                   >
                     <div className="flex min-h-6 min-w-0 items-center gap-3">
                       <div className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        Timeline
+                        Trace
                       </div>
                       <div className="min-h-6 min-w-0 flex-1">
                         <div
@@ -2487,12 +2487,7 @@ export function TraceTimeline({
           >
             <div
               data-testid="trace-timeline-detail-sticky"
-              className={cn(
-                "min-h-0 min-w-0 overflow-y-auto lg:sticky lg:top-3",
-                fillContent
-                  ? "max-h-full lg:max-h-full"
-                  : "lg:max-h-[calc(100vh-8rem)]",
-              )}
+              className="h-full min-h-0 min-w-0 max-h-full overflow-y-auto"
             >
               <TimelineDetailPane
                 row={selectedRow}

@@ -455,7 +455,7 @@ describe("TraceViewer", () => {
       .forEach((node) => node.remove());
   });
 
-  it("defaults to Timeline tab", async () => {
+  it("defaults to Trace tab", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
@@ -467,7 +467,7 @@ describe("TraceViewer", () => {
     ).toBeInTheDocument();
   });
 
-  it("switching Timeline, Chat, and Raw works", async () => {
+  it("switching Trace, Chat, and Raw works", async () => {
     render(<TraceViewer trace={simpleTextTrace} estimatedDurationMs={100} />);
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
     openChatTab();
@@ -475,7 +475,7 @@ describe("TraceViewer", () => {
     fireEvent.click(screen.getByTitle("Raw JSON"));
     expect(screen.getByTestId("trace-viewer-raw-json")).toBeInTheDocument();
     expect(screen.getByTestId("json-editor")).toBeInTheDocument();
-    fireEvent.click(screen.getByTitle("Timeline"));
+    fireEvent.click(screen.getByTitle("Trace"));
     expect(await screen.findByText("Estimated total only")).toBeInTheDocument();
   });
 

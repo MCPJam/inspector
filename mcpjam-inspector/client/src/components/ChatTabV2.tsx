@@ -54,6 +54,7 @@ import { buildOAuthTokensByServerId } from "@/lib/oauth/oauth-tokens";
 import type { HostedOAuthRequiredDetails } from "@/lib/hosted-oauth-required";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
+import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { TraceViewModeTabs } from "@/components/evals/trace-view-mode-tabs";
 import {
@@ -197,7 +198,6 @@ export function ChatTabV2({
       ),
     [selectedServerNames, connectedOrConnectingServerConfigs],
   );
-
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
   const { serversByName } = useWorkspaceServers({
@@ -1139,8 +1139,9 @@ export function ChatTabV2({
               <>
                 {showTraceViewTabs && (
                   <div className="bg-background/80 backdrop-blur-sm border-b border-border flex-shrink-0">
-                    <div className="max-w-4xl mx-auto px-4 py-3">
+                    <div className="px-4 py-2.5">
                       <TraceViewModeTabs
+                        layout="fullWidth"
                         mode={activeTraceViewMode}
                         onModeChange={(mode) => {
                           if (mode === "tools") {
@@ -1165,31 +1166,35 @@ export function ChatTabV2({
                         <div className="relative flex flex-1 min-h-0 overflow-hidden">
                           <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
                             <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
-                              <TraceViewer
-                                trace={traceViewerTrace}
-                                model={selectedModel}
-                                toolsMetadata={toolsMetadata}
-                                toolServerMap={toolServerMap}
-                                traceStartedAtMs={
-                                  liveTraceEnvelope?.traceStartedAtMs ?? null
-                                }
-                                traceEndedAtMs={
-                                  liveTraceEnvelope?.traceEndedAtMs ?? null
-                                }
-                                forcedViewMode={activeTraceViewMode}
-                                hideToolbar
-                                fillContent
-                                hideTranscriptRevealControls
-                                rawGrowWithContent
-                                rawXRayMirror={{
-                                  payload: rawTraceXRayMirror.payload,
-                                  loading: rawTraceXRayMirror.loading,
-                                  error: rawTraceXRayMirror.error,
-                                  refetch: rawTraceXRayMirror.refetch,
-                                  hasUiMessages:
-                                    rawTraceXRayMirror.hasMessages,
-                                }}
-                              />
+                              {isThreadEmpty ? (
+                                <LiveTraceRawEmptyState testId="chat-live-raw-pending" />
+                              ) : (
+                                <TraceViewer
+                                  trace={traceViewerTrace}
+                                  model={selectedModel}
+                                  toolsMetadata={toolsMetadata}
+                                  toolServerMap={toolServerMap}
+                                  traceStartedAtMs={
+                                    liveTraceEnvelope?.traceStartedAtMs ?? null
+                                  }
+                                  traceEndedAtMs={
+                                    liveTraceEnvelope?.traceEndedAtMs ?? null
+                                  }
+                                  forcedViewMode={activeTraceViewMode}
+                                  hideToolbar
+                                  fillContent
+                                  hideTranscriptRevealControls
+                                  rawGrowWithContent
+                                  rawXRayMirror={{
+                                    payload: rawTraceXRayMirror.payload,
+                                    loading: rawTraceXRayMirror.loading,
+                                    error: rawTraceXRayMirror.error,
+                                    refetch: rawTraceXRayMirror.refetch,
+                                    hasUiMessages:
+                                      rawTraceXRayMirror.hasMessages,
+                                  }}
+                                />
+                              )}
                             </div>
                           </StickToBottom.Content>
                           <ScrollToBottomButton />

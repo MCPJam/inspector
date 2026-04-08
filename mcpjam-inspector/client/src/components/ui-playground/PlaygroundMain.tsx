@@ -79,6 +79,7 @@ import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
+import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { TraceViewModeTabs } from "@/components/evals/trace-view-mode-tabs";
 import type { PlaygroundServerSelectorProps } from "@/components/ActiveServerSelector";
@@ -1382,25 +1383,29 @@ export function PlaygroundMain({
                         <div className="relative flex flex-1 min-h-0 overflow-hidden">
                           <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
                             <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
-                              <TraceViewer
-                                trace={traceViewerTrace}
-                                model={selectedModel}
-                                toolsMetadata={toolsMetadata}
-                                toolServerMap={toolServerMap}
-                                forcedViewMode={activeTraceViewMode}
-                                hideToolbar
-                                fillContent
-                                hideTranscriptRevealControls
-                                rawGrowWithContent
-                                rawXRayMirror={{
-                                  payload: playgroundRawXRayMirror.payload,
-                                  loading: playgroundRawXRayMirror.loading,
-                                  error: playgroundRawXRayMirror.error,
-                                  refetch: playgroundRawXRayMirror.refetch,
-                                  hasUiMessages:
-                                    playgroundRawXRayMirror.hasMessages,
-                                }}
-                              />
+                              {isThreadEmpty ? (
+                                <LiveTraceRawEmptyState testId="playground-live-raw-pending" />
+                              ) : (
+                                <TraceViewer
+                                  trace={traceViewerTrace}
+                                  model={selectedModel}
+                                  toolsMetadata={toolsMetadata}
+                                  toolServerMap={toolServerMap}
+                                  forcedViewMode={activeTraceViewMode}
+                                  hideToolbar
+                                  fillContent
+                                  hideTranscriptRevealControls
+                                  rawGrowWithContent
+                                  rawXRayMirror={{
+                                    payload: playgroundRawXRayMirror.payload,
+                                    loading: playgroundRawXRayMirror.loading,
+                                    error: playgroundRawXRayMirror.error,
+                                    refetch: playgroundRawXRayMirror.refetch,
+                                    hasUiMessages:
+                                      playgroundRawXRayMirror.hasMessages,
+                                  }}
+                                />
+                              )}
                             </div>
                           </StickToBottom.Content>
                           <ScrollToBottomButton />

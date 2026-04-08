@@ -70,6 +70,9 @@ export function useDebouncedXRayPayload({
     }
 
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (payloadRef.current == null) {
+      setLoading(true);
+    }
     debounceRef.current = setTimeout(() => {
       void fetchPayload();
     }, DEBOUNCE_MS);

@@ -4,8 +4,7 @@
  * (`system`, `tools`, `messages`). Otherwise shows the stored trace blob (evals / offline).
  */
 
-import { AlertCircle, Copy, RefreshCw, ScanSearch } from "lucide-react";
-import { usePostHog } from "posthog-js/react";
+import { AlertCircle, Copy, Loader2, RefreshCw, ScanSearch } from "lucide-react";
 import { toast } from "sonner";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@/components/ui/button";
@@ -23,6 +22,16 @@ export interface TraceRawXRayMirror {
   error: string | null;
   refetch: () => void | Promise<void>;
   hasUiMessages: boolean;
+}
+
+/** Same centered spinner as the trace timeline `TraceViewer` Suspense fallback. */
+function RawViewTraceStyleLoading() {
+  return (
+    <div className="flex flex-1 justify-center py-8">
+      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
+      <span className="sr-only">Loading</span>
+    </div>
+  );
 }
 
 function copyToClipboard(
@@ -51,7 +60,6 @@ export function TraceRawView({
   /** Parent owns scroll (e.g. StickToBottom); JSON height grows with payload. */
   growWithContent?: boolean;
 }) {
-  const posthog = usePostHog();
   const jsonHeight = growWithContent ? "auto" : "100%";
 
   if (xRayMirror) {
@@ -69,20 +77,7 @@ export function TraceRawView({
           className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
           data-testid="trace-raw-view"
         >
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className="text-center">
-              <div className="mx-auto w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-                <ScanSearch className="h-7 w-7 text-primary/70" />
-              </div>
-              <div className="text-sm font-medium text-foreground mb-1">
-                Nothing to inspect yet
-              </div>
-              <div className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
-                Start the conversation to see the exact JSON we send to the
-                model—system prompt, tools, and messages.
-              </div>
-            </div>
-          </div>
+          <RawViewTraceStyleLoading />
         </div>
       );
     }
@@ -93,16 +88,7 @@ export function TraceRawView({
           className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
           data-testid="trace-raw-view"
         >
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className="text-center">
-              <div className="mx-auto w-14 h-14 rounded-full bg-muted/50 flex items-center justify-center mb-4">
-                <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-              </div>
-              <div className="text-sm text-muted-foreground">
-                Building request snapshot…
-              </div>
-            </div>
-          </div>
+          <RawViewTraceStyleLoading />
         </div>
       );
     }
@@ -143,56 +129,19 @@ export function TraceRawView({
           className="flex min-h-0 flex-1 flex-col overflow-hidden w-full"
           data-testid="trace-raw-view"
         >
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className="text-center">
-              <div className="mx-auto w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
-                <ScanSearch className="h-7 w-7 text-primary/70" />
-              </div>
-              <div className="text-sm font-medium text-foreground mb-1">
-                Snapshot not ready
-              </div>
-              <div className="text-xs text-muted-foreground max-w-sm mx-auto leading-relaxed">
-                Raw shows the live request body—system, tools, and messages. It
-                updates a moment after you send; if you just messaged, wait a
-                second or keep typing.
-              </div>
-            </div>
-          </div>
+          <RawViewTraceStyleLoading />
         </div>
       );
     }
 
-    const copyRow = (
+    const xRayTopRightOverlay = loading ? (
       <div className="absolute top-2 right-2 z-10 flex items-center gap-1">
-        {loading && (
-          <RefreshCw
-            className="h-3.5 w-3.5 animate-spin text-muted-foreground"
-            aria-hidden
-          />
-        )}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() =>
-                copyToClipboard(payload, "Model payload", () => {
-                  posthog?.capture("xray_payload_copied", {
-                    tool_count: Object.keys(payload.tools).length,
-                    message_count: payload.messages.length,
-                  });
-                })
-              }
-              className="h-7 w-7"
-              aria-label="Copy model payload"
-            >
-              <Copy className="h-3.5 w-3.5" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Copy payload</TooltipContent>
-        </Tooltip>
+        <RefreshCw
+          className="h-3.5 w-3.5 animate-spin text-muted-foreground"
+          aria-hidden
+        />
       </div>
-    );
+    ) : null;
 
     if (growWithContent) {
       return (
@@ -200,7 +149,7 @@ export function TraceRawView({
           className="relative min-h-0 w-full min-w-0 flex-1"
           data-testid="trace-raw-view"
         >
-          {copyRow}
+          {xRayTopRightOverlay}
           <JsonEditor
             height={jsonHeight}
             value={payload as object}
@@ -219,7 +168,7 @@ export function TraceRawView({
       >
         <div className="flex-1 min-h-0 overflow-auto">
           <div className="relative min-h-0 rounded-lg border border-border bg-muted/20">
-            {copyRow}
+            {xRayTopRightOverlay}
             <JsonEditor
               height={jsonHeight}
               value={payload as object}

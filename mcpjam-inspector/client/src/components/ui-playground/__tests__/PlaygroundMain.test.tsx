@@ -315,7 +315,7 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
   }) => (
     <div data-testid="trace-view-tabs" data-mode={mode}>
       <button onClick={() => onModeChange("chat")}>Chat</button>
-      <button onClick={() => onModeChange("timeline")}>Timeline</button>
+      <button onClick={() => onModeChange("timeline")}>Trace</button>
       <button onClick={() => onModeChange("raw")}>Raw</button>
     </div>
   ),
@@ -728,6 +728,23 @@ describe("PlaygroundMain", () => {
       expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
     });
 
+    it("shows the sample raw JSON empty state on an empty thread when Raw is selected", () => {
+      mockUseChatSession.messages = [];
+      mockUseChatSession.traceViewsSupported = true;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+      const pending = screen.getByTestId("playground-live-raw-pending");
+      expect(pending).toBeInTheDocument();
+      expect(
+        within(pending).getByTestId("playground-live-raw-pending-sample-preview"),
+      ).toBeInTheDocument();
+      expect(within(pending).getByTestId("trace-raw-view")).toBeInTheDocument();
+      expect(screen.getByText(/Sample raw request/i)).toBeInTheDocument();
+    });
+
     it("shows a Runs-style timeline empty state before the first streamed snapshot and keeps the thread mounted", () => {
       mockUseChatSession.messages = [
         { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
@@ -739,7 +756,7 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
-      fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+      fireEvent.click(screen.getByRole("button", { name: "Trace" }));
 
       const pending = screen.getByTestId("playground-live-trace-pending");
       expect(pending).toBeInTheDocument();

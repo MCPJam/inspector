@@ -179,7 +179,7 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
   }) => (
     <div data-testid="trace-view-tabs" data-mode={mode}>
       <button onClick={() => onModeChange("chat")}>Chat</button>
-      <button onClick={() => onModeChange("timeline")}>Timeline</button>
+      <button onClick={() => onModeChange("timeline")}>Trace</button>
       <button onClick={() => onModeChange("raw")}>Raw</button>
     </div>
   ),
@@ -314,6 +314,24 @@ describe("ChatTabV2 trace views", () => {
     expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
   });
 
+  it("shows the sample raw JSON empty state on an empty thread when Raw is selected", () => {
+    mockUseChatSession.messages = [];
+    mockUseChatSession.traceViewsSupported = true;
+
+    render(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Raw" }));
+
+    const pending = screen.getByTestId("chat-live-raw-pending");
+    expect(pending).toBeInTheDocument();
+    expect(
+      within(pending).getByTestId("chat-live-raw-pending-sample-preview"),
+    ).toBeInTheDocument();
+    expect(within(pending).getByTestId("trace-raw-view")).toBeInTheDocument();
+    expect(screen.getByText(/Sample raw request/i)).toBeInTheDocument();
+    expect(screen.getByTestId("chat-input")).toBeInTheDocument();
+  });
+
   it("shows the Runs-style timeline empty state before the first streamed snapshot while keeping the thread mounted", () => {
     mockUseChatSession.messages = [
       { id: "1", role: "user", parts: [{ type: "text", text: "Hello" }] },
@@ -325,7 +343,7 @@ describe("ChatTabV2 trace views", () => {
 
     render(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+    fireEvent.click(screen.getByRole("button", { name: "Trace" }));
 
     const pending = screen.getByTestId("chat-live-trace-pending");
     expect(pending).toBeInTheDocument();
@@ -373,7 +391,7 @@ describe("ChatTabV2 trace views", () => {
 
     render(<ChatTabV2 {...defaultProps} enableTraceViews={true} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Timeline" }));
+    fireEvent.click(screen.getByRole("button", { name: "Trace" }));
 
     expect(screen.queryByTestId("chat-live-trace-pending")).not.toBeInTheDocument();
     expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();

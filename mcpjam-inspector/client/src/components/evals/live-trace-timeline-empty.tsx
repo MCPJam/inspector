@@ -26,7 +26,7 @@ export function LiveTraceTimelineEmptyState({
         appears here after you send a message.
       </p>
       <div
-        className="relative min-h-0 flex-1 overflow-hidden rounded-xl border bg-card"
+        className="relative flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border bg-card"
         data-testid={`${testId}-sample-preview`}
       >
         <TraceViewer
