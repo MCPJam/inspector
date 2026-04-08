@@ -897,10 +897,6 @@ export default function App() {
       return;
     }
 
-    if (playgroundEnabled == null || playgroundEnabled === false) {
-      return;
-    }
-
     if (
       isFirstRunEligible(
         hasAnyWorkspaceServers,
@@ -916,7 +912,6 @@ export default function App() {
     isAuthenticated,
     isOnboardingDecisionReady,
     isHostedChatRoute,
-    playgroundEnabled,
   ]);
 
   const consumeCheckoutIntent = useCallback(() => {
@@ -1390,9 +1385,15 @@ export default function App() {
             </div>
           )}
           {activeTab === "evals" &&
-            (billingUiEnabled &&
-            activeTabBillingLocked &&
-            activeTabBillingFeature ? (
+            (playgroundEnabled === false ? (
+              <EmptyState
+                icon={Construction}
+                title="Playground Coming Soon"
+                description="The Playground is under construction. Stay tuned!"
+              />
+            ) : billingUiEnabled &&
+              activeTabBillingLocked &&
+              activeTabBillingFeature ? (
               <BillingUpsellGate
                 feature={activeTabBillingFeature}
                 currentPlan={
@@ -1561,25 +1562,18 @@ export default function App() {
             />
           )}
           {activeTab === "tracing" && <TracingTab />}
-          {activeTab === "app-builder" &&
-            (playgroundEnabled ? (
-              <AppBuilderTab
-                serverConfig={selectedMCPConfig}
-                serverName={appState.selectedServer}
-                servers={workspaceServers}
-                isAuthenticated={isAuthenticated}
-                isAuthLoading={isAuthLoading}
-                onConnect={handleConnect}
-                onOnboardingChange={setAppBuilderOnboarding}
-                playgroundServerSelectorProps={playgroundServerSelectorProps}
-              />
-            ) : (
-              <EmptyState
-                icon={Construction}
-                title="Playground Coming Soon"
-                description="The Playground is under construction. Stay tuned!"
-              />
-            ))}
+          {activeTab === "app-builder" && (
+            <AppBuilderTab
+              serverConfig={selectedMCPConfig}
+              serverName={appState.selectedServer}
+              servers={workspaceServers}
+              isAuthenticated={isAuthenticated}
+              isAuthLoading={isAuthLoading}
+              onConnect={handleConnect}
+              onOnboardingChange={setAppBuilderOnboarding}
+              playgroundServerSelectorProps={playgroundServerSelectorProps}
+            />
+          )}
           {activeTab === "client-config" && (
             <ClientConfigTab
               activeWorkspaceId={activeWorkspaceId}
