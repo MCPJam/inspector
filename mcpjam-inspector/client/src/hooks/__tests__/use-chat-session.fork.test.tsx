@@ -189,6 +189,7 @@ vi.mock("ai", () => ({
   },
   generateId: vi.fn(() => `chat-session-${mockState.nextSessionNumber++}`),
   lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
+  convertToModelMessages: vi.fn(async () => []),
 }));
 
 describe("useChatSession fork preservation", () => {

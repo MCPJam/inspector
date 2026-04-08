@@ -142,6 +142,7 @@ vi.mock("ai", () => ({
   },
   generateId: vi.fn(() => nextSessionId()),
   lastAssistantMessageIsCompleteWithApprovalResponses: vi.fn(),
+  convertToModelMessages: vi.fn(async () => []),
 }));
 
 describe("useChatSession live trace state", () => {
@@ -530,6 +531,7 @@ describe("useChatSession live trace state", () => {
     );
 
     await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
       expect(mockState.chatOnData).not.toBeNull();
     });
 
