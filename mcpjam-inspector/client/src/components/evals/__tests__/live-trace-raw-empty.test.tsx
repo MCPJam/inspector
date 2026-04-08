@@ -12,7 +12,9 @@ describe("LiveTraceRawEmptyState", () => {
 
     const root = screen.getByTestId("raw-empty");
     expect(root).toBeInTheDocument();
-    expect(within(root).getByTestId("raw-empty-sample-preview")).toBeInTheDocument();
+    expect(
+      within(root).getByTestId("raw-empty-sample-preview"),
+    ).toBeInTheDocument();
     expect(within(root).getByTestId("trace-raw-view-mock")).toBeInTheDocument();
     expect(screen.getByText(/Sample raw request/i)).toBeInTheDocument();
     expect(

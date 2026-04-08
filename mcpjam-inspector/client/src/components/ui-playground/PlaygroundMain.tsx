@@ -95,12 +95,8 @@ import {
   buildPreludeTraceEnvelope,
   type PreludeTraceExecution,
 } from "@/components/ui-playground/live-trace-prelude";
-import {
-  type BroadcastChatTurnRequest,
-} from "@/components/chat-v2/multi-model-chat-card";
-import {
-  type MultiModelCardSummary,
-} from "@/components/chat-v2/model-compare-card-header";
+import { type BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
+import { type MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
 import {
   MultiModelPlaygroundCard,
   type PlaygroundDeterministicExecutionRequest,
@@ -441,7 +437,8 @@ export function PlaygroundMain({
 
     return selectedModel ? [selectedModel] : [];
   }, [multiModelAvailableModels, selectedModel, selectedModelIds]);
-  const canEnableMultiModel = enableMultiModelChat && availableModels.length > 1;
+  const canEnableMultiModel =
+    enableMultiModelChat && availableModels.length > 1;
   const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
   const effectiveHasMessages = isMultiModelMode
     ? Object.values(multiModelHasMessages).some(Boolean)
@@ -450,8 +447,9 @@ export function PlaygroundMain({
     () => buildPreludeTraceEnvelope(preludeTraceExecutions),
     [preludeTraceExecutions],
   );
-  const effectiveLiveTraceEnvelope =
-    hasTraceSnapshot ? liveTraceEnvelope : preludeTraceEnvelope ?? liveTraceEnvelope;
+  const effectiveLiveTraceEnvelope = hasTraceSnapshot
+    ? liveTraceEnvelope
+    : (preludeTraceEnvelope ?? liveTraceEnvelope);
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =
@@ -494,7 +492,9 @@ export function PlaygroundMain({
       return;
     }
 
-    const sanitizedIds = resolvedSelectedModels.map((model) => String(model.id));
+    const sanitizedIds = resolvedSelectedModels.map((model) =>
+      String(model.id),
+    );
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
       sanitizedIds.length !== persistedIds.length ||
@@ -526,12 +526,16 @@ export function PlaygroundMain({
 
     setMultiModelSummaries((previous) =>
       Object.fromEntries(
-        Object.entries(previous).filter(([modelId]) => activeModelIds.has(modelId)),
+        Object.entries(previous).filter(([modelId]) =>
+          activeModelIds.has(modelId),
+        ),
       ),
     );
     setMultiModelHasMessages((previous) =>
       Object.fromEntries(
-        Object.entries(previous).filter(([modelId]) => activeModelIds.has(modelId)),
+        Object.entries(previous).filter(([modelId]) =>
+          activeModelIds.has(modelId),
+        ),
       ),
     );
   }, [resolvedSelectedModels]);
@@ -810,9 +814,7 @@ export function PlaygroundMain({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
         multi_model_enabled: isMultiModelMode,
-        multi_model_count: isMultiModelMode
-          ? resolvedSelectedModels.length
-          : 1,
+        multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
         ...(captureProps ?? {}),
       });
 
@@ -880,7 +882,11 @@ export function PlaygroundMain({
       !submitBlocked &&
       !composer.submitGatedByServer
     ) {
-      if (!isMultiModelMode && displayMode === "fullscreen" && isWidgetFullscreen) {
+      if (
+        !isMultiModelMode &&
+        displayMode === "fullscreen" &&
+        isWidgetFullscreen
+      ) {
         setIsFullscreenChatOpen(true);
       }
 
@@ -1632,9 +1638,7 @@ export function PlaygroundMain({
                         : hostBackgroundColor,
                     }}
                   >
-                    <div
-                      className="flex flex-col flex-1 min-h-0"
-                    >
+                    <div className="flex flex-col flex-1 min-h-0">
                       {threadContent}
                     </div>
                   </div>

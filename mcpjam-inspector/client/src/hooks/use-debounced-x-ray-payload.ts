@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState, useLayoutEffect } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useLayoutEffect,
+} from "react";
 import type { UIMessage } from "ai";
 import {
   getXRayPayload,
@@ -35,7 +41,9 @@ export function useDebouncedXRayPayload({
       setError(null);
     } catch (err) {
       if (!payloadRef.current) {
-        setError(err instanceof Error ? err.message : "Failed to fetch payload");
+        setError(
+          err instanceof Error ? err.message : "Failed to fetch payload",
+        );
       }
     } finally {
       setLoading(false);

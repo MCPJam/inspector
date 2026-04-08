@@ -1120,7 +1120,9 @@ describe("TraceTimeline detail pane", () => {
       .getAllByTestId("trace-row")
       .find((el) => el.textContent?.includes('User: "save checkpoint"'));
     expect(secondPrompt).toBeTruthy();
-    fireEvent.click(within(secondPrompt!).getByTestId("trace-row-label-button"));
+    fireEvent.click(
+      within(secondPrompt!).getByTestId("trace-row-label-button"),
+    );
     expect(secondPrompt!).toHaveClass("trace-waterfall-row-selected");
 
     const spansB = spansA.map((s) => ({ ...s, endMs: s.endMs + 400 }));

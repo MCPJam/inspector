@@ -220,7 +220,11 @@ function getPromptAssistantStepBaseIndex(
   promptMessageStartIndex: number,
 ): number {
   let assistantCount = 0;
-  for (let index = promptMessageStartIndex; index < messageHistory.length; index += 1) {
+  for (
+    let index = promptMessageStartIndex;
+    index < messageHistory.length;
+    index += 1
+  ) {
     if (messageHistory[index]?.role === "assistant") {
       assistantCount += 1;
     }
@@ -500,16 +504,16 @@ async function processStream(
           });
           hasToolCalls = true;
           writer.write({ ...chunk, toolCallId });
-            writeTraceEvent(writer, {
-              type: "tool_call",
-              turnId: traceTurn.turnId,
-              promptIndex: traceTurn.promptIndex,
-              stepIndex,
-              toolCallId,
-              toolName: chunk.toolName,
-              input: toTraceRecord(chunk.input),
-              serverId: readToolServerId(tools, chunk.toolName),
-            });
+          writeTraceEvent(writer, {
+            type: "tool_call",
+            turnId: traceTurn.turnId,
+            promptIndex: traceTurn.promptIndex,
+            stepIndex,
+            toolCallId,
+            toolName: chunk.toolName,
+            input: toTraceRecord(chunk.input),
+            serverId: readToolServerId(tools, chunk.toolName),
+          });
 
           if (requireToolApproval) {
             writer.write({
@@ -1114,8 +1118,7 @@ async function processOneStep(
       );
       emitTraceSnapshot(writer, messageHistory, tools, traceTurn);
 
-      const errorText =
-        error instanceof Error ? error.message : String(error);
+      const errorText = error instanceof Error ? error.message : String(error);
       writeTraceEvent(writer, {
         type: "error",
         turnId: traceTurn.turnId,

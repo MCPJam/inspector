@@ -142,8 +142,7 @@ export function MultiModelChatCard({
     ? traceViewMode
     : "chat";
   const showLiveTraceDiagnostics = activeTraceViewMode !== "chat";
-  const showTraceDiagnosticsShell =
-    showLiveTraceDiagnostics || revealedInChat;
+  const showTraceDiagnosticsShell = showLiveTraceDiagnostics || revealedInChat;
 
   const navigateTraceRevealToChat = useCallback(() => {
     setTraceViewMode("chat");
@@ -219,8 +218,8 @@ export function MultiModelChatCard({
         (message) =>
           !(
             message.role === "system" &&
-            (message as { metadata?: { source?: string } })?.metadata?.source ===
-              "server-instruction"
+            (message as { metadata?: { source?: string } })?.metadata
+              ?.source === "server-instruction"
           ),
       );
 
@@ -253,7 +252,9 @@ export function MultiModelChatCard({
         const messageId = `widget-state-${toolCallId}`;
 
         if (state === null) {
-          nextMessages = nextMessages.filter((message) => message.id !== messageId);
+          nextMessages = nextMessages.filter(
+            (message) => message.id !== messageId,
+          );
           continue;
         }
 
@@ -331,7 +332,9 @@ export function MultiModelChatCard({
       },
     ) => {
       setModelContextQueue((previous) => {
-        const filtered = previous.filter((item) => item.toolCallId !== toolCallId);
+        const filtered = previous.filter(
+          (item) => item.toolCallId !== toolCallId,
+        );
         return [...filtered, { toolCallId, context }];
       });
     },
@@ -339,23 +342,28 @@ export function MultiModelChatCard({
   );
 
   const queueContextMessages = useCallback(() => {
-    const contextMessages = modelContextQueue.map(({ toolCallId, context }) => ({
-      id: `model-context-${toolCallId}-${Date.now()}`,
-      role: "user" as const,
-      parts: [
-        {
-          type: "text" as const,
-          text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+    const contextMessages = modelContextQueue.map(
+      ({ toolCallId, context }) => ({
+        id: `model-context-${toolCallId}-${Date.now()}`,
+        role: "user" as const,
+        parts: [
+          {
+            type: "text" as const,
+            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+          },
+        ],
+        metadata: {
+          source: "widget-model-context",
+          toolCallId,
         },
-      ],
-      metadata: {
-        source: "widget-model-context",
-        toolCallId,
-      },
-    }));
+      }),
+    );
 
     if (contextMessages.length > 0) {
-      setMessages((previous) => [...previous, ...(contextMessages as UIMessage[])]);
+      setMessages((previous) => [
+        ...previous,
+        ...(contextMessages as UIMessage[]),
+      ]);
       setModelContextQueue([]);
     }
   }, [modelContextQueue, setMessages]);
@@ -515,9 +523,7 @@ export function MultiModelChatCard({
                   model={model}
                   toolsMetadata={toolsMetadata}
                   toolServerMap={toolServerMap}
-                  traceStartedAtMs={
-                    liveTraceEnvelope?.traceStartedAtMs ?? null
-                  }
+                  traceStartedAtMs={liveTraceEnvelope?.traceStartedAtMs ?? null}
                   traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
                   forcedViewMode="chat"
                   hideToolbar

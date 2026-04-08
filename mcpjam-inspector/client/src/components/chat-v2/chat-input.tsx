@@ -10,13 +10,7 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import {
-  ArrowUp,
-  Square,
-  Paperclip,
-  ShieldCheck,
-  Plus,
-} from "lucide-react";
+import { ArrowUp, Square, Paperclip, ShieldCheck, Plus } from "lucide-react";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,

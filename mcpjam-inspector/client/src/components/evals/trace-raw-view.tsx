@@ -4,7 +4,13 @@
  * (`system`, `tools`, `messages`). Otherwise shows the stored trace blob (evals / offline).
  */
 
-import { AlertCircle, Copy, Loader2, RefreshCw, ScanSearch } from "lucide-react";
+import {
+  AlertCircle,
+  Copy,
+  Loader2,
+  RefreshCw,
+  ScanSearch,
+} from "lucide-react";
 import { toast } from "sonner";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { Button } from "@/components/ui/button";
@@ -28,21 +34,18 @@ export interface TraceRawXRayMirror {
 function RawViewTraceStyleLoading() {
   return (
     <div className="flex flex-1 justify-center py-8">
-      <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" aria-hidden />
+      <Loader2
+        className="h-5 w-5 animate-spin text-muted-foreground"
+        aria-hidden
+      />
       <span className="sr-only">Loading</span>
     </div>
   );
 }
 
-function copyToClipboard(
-  data: unknown,
-  label: string,
-  onCopied?: () => void,
-) {
+function copyToClipboard(data: unknown, label: string, onCopied?: () => void) {
   navigator.clipboard
-    .writeText(
-      typeof data === "string" ? data : JSON.stringify(data, null, 2),
-    )
+    .writeText(typeof data === "string" ? data : JSON.stringify(data, null, 2))
     .then(() => {
       onCopied?.();
       toast.success(`${label} copied to clipboard`);

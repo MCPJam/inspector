@@ -16,8 +16,9 @@ export function LiveTraceRawEmptyState({ testId }: { testId: string }) {
       <p className="shrink-0 px-1 text-center text-xs text-muted-foreground">
         <span className="font-medium text-foreground">Sample raw request</span>
         {" — "}
-        Example of the JSON payload sent to the model (system prompt, tool definitions,
-        and chat messages). Your live request appears after you send a message.
+        Example of the JSON payload sent to the model (system prompt, tool
+        definitions, and chat messages). Your live request appears after you
+        send a message.
       </p>
       <div
         className="relative min-h-0 flex-1 overflow-auto rounded-xl border bg-card p-2"

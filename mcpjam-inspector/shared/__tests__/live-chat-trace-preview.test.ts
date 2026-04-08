@@ -33,10 +33,7 @@ describe("filterEventsForActiveTurnPreview", () => {
       },
     ];
     const filtered = filterEventsForActiveTurnPreview(events, TURN);
-    expect(filtered.map((e) => e.type)).toEqual([
-      "turn_start",
-      "text_delta",
-    ]);
+    expect(filtered.map((e) => e.type)).toEqual(["turn_start", "text_delta"]);
   });
 
   it("ignores other turns", () => {
@@ -169,10 +166,7 @@ describe("pickTranscriptForLiveTracePreview", () => {
       { role: "user" as const, content: "old" },
       { role: "assistant" as const, content: "a" },
     ];
-    const ui = [
-      ...snap,
-      { role: "user" as const, content: "new" },
-    ];
+    const ui = [...snap, { role: "user" as const, content: "new" }];
     expect(
       pickTranscriptForLiveTracePreview({
         snapshotMessages: snap,

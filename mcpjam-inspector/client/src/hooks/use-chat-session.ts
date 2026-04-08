@@ -313,7 +313,10 @@ function applyLiveTraceEvent(
       };
     }
     case "trace_snapshot": {
-      const turnState = ensureTurnState(event.turnId, event.snapshot.promptIndex);
+      const turnState = ensureTurnState(
+        event.turnId,
+        event.snapshot.promptIndex,
+      );
       const turnExists = baseState.turnOrder.includes(event.turnId);
       return {
         ...baseState,
@@ -338,7 +341,9 @@ function applyLiveTraceEvent(
           ? event.snapshot.messages
           : baseState.messages,
         activeTurnId:
-          baseState.activeTurnId === null ? event.turnId : baseState.activeTurnId,
+          baseState.activeTurnId === null
+            ? event.turnId
+            : baseState.activeTurnId,
         activeTurnHasSnapshot:
           baseState.activeTurnId === event.turnId ||
           baseState.activeTurnId === null,
@@ -429,7 +434,10 @@ function buildLiveTraceEnvelope(
     turns,
   };
 
-  if (typeof traceStartedAtMs === "number" && Number.isFinite(traceStartedAtMs)) {
+  if (
+    typeof traceStartedAtMs === "number" &&
+    Number.isFinite(traceStartedAtMs)
+  ) {
     envelope.traceStartedAtMs = traceStartedAtMs;
     envelope.traceEndedAtMs = traceStartedAtMs + nextOffsetMs;
   }
@@ -460,7 +468,10 @@ function mergePreviewSpansIntoLiveEnvelope(
     snapshotMessages: envelope.messages,
     transcriptFromUi,
   });
-  const previewIndexed = applyPreviewSpansUserMessageIndices(preview, transcript);
+  const previewIndexed = applyPreviewSpansUserMessageIndices(
+    preview,
+    transcript,
+  );
 
   const existing = envelope.spans ?? [];
   const baseOffset =
@@ -565,9 +576,8 @@ export function useChatSession({
   const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
-  const [liveTraceState, setLiveTraceState] = useState<LiveTraceAccumulatorState>(
-    () => createEmptyLiveTraceState(),
-  );
+  const [liveTraceState, setLiveTraceState] =
+    useState<LiveTraceAccumulatorState>(() => createEmptyLiveTraceState());
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -836,20 +846,23 @@ export function useChatSession({
       : undefined,
   });
 
-  const [traceTranscriptFromUi, setTraceTranscriptFromUi] =
-    useState<ModelMessage[] | null>(null);
+  const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
+    ModelMessage[] | null
+  >(null);
 
   useEffect(() => {
-    const persistent = messages.filter((message) => !isTransientMessage(message));
+    const persistent = messages.filter(
+      (message) => !isTransientMessage(message),
+    );
     if (persistent.length === 0) {
       setTraceTranscriptFromUi(null);
       return;
     }
     let cancelled = false;
     void convertToModelMessages(
-      persistent.map(
-        ({ id: _omitId, ...rest }) => rest,
-      ) as Parameters<typeof convertToModelMessages>[0],
+      persistent.map(({ id: _omitId, ...rest }) => rest) as Parameters<
+        typeof convertToModelMessages
+      >[0],
       { ignoreIncompleteToolCalls: true },
     ).then((modelMessages) => {
       if (!cancelled) {
@@ -916,8 +929,7 @@ export function useChatSession({
     traceTranscriptFromUi,
   ]);
   const hasLiveTimelineContent =
-    livePreviewSpanCount > 0 ||
-    (liveTraceEnvelope?.spans?.length ?? 0) > 0;
+    livePreviewSpanCount > 0 || (liveTraceEnvelope?.spans?.length ?? 0) > 0;
 
   useEffect(() => {
     setLiveTraceState(createEmptyLiveTraceState());

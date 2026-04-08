@@ -31,7 +31,11 @@ import {
 import { CHATGPT_CHAT_BACKGROUND } from "@/config/chatgpt-host-context";
 import { CLAUDE_DESKTOP_CHAT_BACKGROUND } from "@/config/claude-desktop-host-context";
 import type { UIType } from "@/lib/mcp-ui/mcp-apps-utils";
-import type { DeviceType, DisplayMode, HostStyle } from "@/stores/ui-playground-store";
+import type {
+  DeviceType,
+  DisplayMode,
+  HostStyle,
+} from "@/stores/ui-playground-store";
 import type { BroadcastChatTurnRequest } from "@/components/chat-v2/multi-model-chat-card";
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
@@ -206,24 +210,26 @@ export function MultiModelPlaygroundCard({
   );
   const effectiveLiveTraceEnvelope = hasTraceSnapshot
     ? liveTraceEnvelope
-    : preludeTraceEnvelope ?? liveTraceEnvelope;
+    : (preludeTraceEnvelope ?? liveTraceEnvelope);
   const showTraceTabs = traceViewsSupported && !isThreadEmpty;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceTabs
     ? traceViewMode
     : "chat";
   const showLiveTraceDiagnostics = activeTraceViewMode !== "chat";
-  const showTraceDiagnosticsShell =
-    showLiveTraceDiagnostics || revealedInChat;
+  const showTraceDiagnosticsShell = showLiveTraceDiagnostics || revealedInChat;
 
   const navigateTraceRevealToChat = useCallback(() => {
     setTraceViewMode("chat");
     setRevealedInChat(true);
   }, []);
 
-  const handleTraceViewModeChange = useCallback((mode: PlaygroundTraceViewMode) => {
-    setTraceViewMode(mode);
-    setRevealedInChat(false);
-  }, []);
+  const handleTraceViewModeChange = useCallback(
+    (mode: PlaygroundTraceViewMode) => {
+      setTraceViewMode(mode);
+      setRevealedInChat(false);
+    },
+    [],
+  );
 
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&
@@ -311,23 +317,28 @@ export function MultiModelPlaygroundCard({
   }, [chatSessionId]);
 
   const queueContextMessages = useCallback(() => {
-    const contextMessages = modelContextQueue.map(({ toolCallId, context }) => ({
-      id: `model-context-${toolCallId}-${Date.now()}`,
-      role: "user" as const,
-      parts: [
-        {
-          type: "text" as const,
-          text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+    const contextMessages = modelContextQueue.map(
+      ({ toolCallId, context }) => ({
+        id: `model-context-${toolCallId}-${Date.now()}`,
+        role: "user" as const,
+        parts: [
+          {
+            type: "text" as const,
+            text: `Widget ${toolCallId} context: ${JSON.stringify(context)}`,
+          },
+        ],
+        metadata: {
+          source: "widget-model-context",
+          toolCallId,
         },
-      ],
-      metadata: {
-        source: "widget-model-context",
-        toolCallId,
-      },
-    }));
+      }),
+    );
 
     if (contextMessages.length > 0) {
-      setMessages((previous) => [...previous, ...(contextMessages as UIMessage[])]);
+      setMessages((previous) => [
+        ...previous,
+        ...(contextMessages as UIMessage[]),
+      ]);
       setModelContextQueue([]);
     }
   }, [modelContextQueue, setMessages]);
@@ -362,7 +373,9 @@ export function MultiModelPlaygroundCard({
       return;
     }
 
-    if (lastExecutionRequestIdRef.current === deterministicExecutionRequest.id) {
+    if (
+      lastExecutionRequestIdRef.current === deterministicExecutionRequest.id
+    ) {
       return;
     }
 
@@ -416,7 +429,10 @@ export function MultiModelPlaygroundCard({
       setMessages((previous) => {
         let next = [...previous];
         for (const message of newMessages) {
-          next = upsertById(next as typeof newMessages, message) as typeof previous;
+          next = upsertById(
+            next as typeof newMessages,
+            message,
+          ) as typeof previous;
         }
         return next;
       });
@@ -487,7 +503,9 @@ export function MultiModelPlaygroundCard({
       },
     ) => {
       setModelContextQueue((previous) => {
-        const filtered = previous.filter((item) => item.toolCallId !== toolCallId);
+        const filtered = previous.filter(
+          (item) => item.toolCallId !== toolCallId,
+        );
         return [...filtered, { toolCallId, context }];
       });
     },

@@ -13,9 +13,7 @@ import { APICallError } from "@ai-sdk/provider";
 let capturedStreamEvents: any[] = [];
 let mockWriter: { write: ReturnType<typeof vi.fn> };
 let lastStreamExecution: Promise<void> | null = null;
-let capturedCreateUiStreamOnError:
-  | ((error: unknown) => string)
-  | undefined;
+let capturedCreateUiStreamOnError: ((error: unknown) => string) | undefined;
 
 const buildSsePayload = (events: any[]) =>
   `${events

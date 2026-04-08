@@ -55,9 +55,7 @@ vi.mock("@/components/ui/json-editor", () => ({
 
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children?: ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ children }: { children?: ReactNode }) => (
-    <>{children}</>
-  ),
+  TooltipTrigger: ({ children }: { children?: ReactNode }) => <>{children}</>,
   TooltipContent: () => null,
 }));
 
@@ -723,12 +721,7 @@ describe("TraceViewer", () => {
   });
 
   it("hides transcript reveal controls when the parent shell owns chat mode", () => {
-    render(
-      <TraceViewer
-        trace={waterfallTrace}
-        hideTranscriptRevealControls
-      />,
-    );
+    render(<TraceViewer trace={waterfallTrace} hideTranscriptRevealControls />);
 
     expect(
       screen.queryByRole("button", { name: "Reveal in Chat" }),

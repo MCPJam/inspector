@@ -1053,8 +1053,7 @@ function findStepLlmTokenStats(
     return {};
   }
   const llm = recordedSpans.find(
-    (sp) =>
-      sp.category === "llm" && sp.promptIndex === p && sp.stepIndex === s,
+    (sp) => sp.category === "llm" && sp.promptIndex === p && sp.stepIndex === s,
   );
   if (!llm) {
     return {};
@@ -1478,9 +1477,7 @@ function TimelineDetailPane({
   const toolErrorExcerpt =
     row.kind === "span" && toolData.errorText ? toolData.errorText : null;
 
-  const showRevealInChat = Boolean(
-    revealSelection && onRevealInTranscript,
-  );
+  const showRevealInChat = Boolean(revealSelection && onRevealInTranscript);
 
   return (
     <div
