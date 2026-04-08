@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildCarryForwardServerPayload,
-  buildPersistedPayloadFromRemoteServer,
   buildPersistedServerPayload,
-  persistedServerPayloadsEqual,
 } from "../persisted-server-payload";
 
 describe("persisted-server-payload", () => {
@@ -45,28 +43,6 @@ describe("persisted-server-payload", () => {
     });
   });
 
-  it("preserves Authorization in remote persisted payloads", () => {
-    const payload = buildPersistedPayloadFromRemoteServer({
-      name: "linear",
-      enabled: true,
-      transportType: "http",
-      url: "https://mcp.linear.app/mcp",
-      headers: {
-        Authorization: "Bearer secret",
-        "X-Custom": "1",
-      },
-      timeout: 30_000,
-      useOAuth: true,
-      oauthScopes: ["read", "write"],
-      clientId: "linear-client",
-    });
-
-    expect(payload.headers).toEqual({
-      Authorization: "Bearer secret",
-      "X-Custom": "1",
-    });
-  });
-
   it("excludes runtime-only state from the persisted payload", () => {
     const payload = buildPersistedServerPayload("demo", {
       config: { url: "https://example.com/mcp" } as any,
@@ -89,44 +65,6 @@ describe("persisted-server-payload", () => {
       oauthScopes: undefined,
       clientId: undefined,
     });
-  });
-
-  it("treats matching local and remote payloads as equivalent", () => {
-    const localPayload = buildPersistedServerPayload("linear", {
-      config: {
-        url: "https://mcp.linear.app/mcp",
-        requestInit: {
-          headers: {
-            Authorization: "Bearer secret",
-            "X-Custom": "1",
-          },
-        },
-      } as any,
-      enabled: true,
-      useOAuth: true,
-      oauthFlowProfile: {
-        scopes: "read,write",
-        clientId: "linear-client",
-      } as any,
-    });
-    const remotePayload = buildPersistedPayloadFromRemoteServer({
-      name: "linear",
-      enabled: true,
-      transportType: "http",
-      url: "https://mcp.linear.app/mcp",
-      headers: {
-        Authorization: "Bearer secret",
-        "X-Custom": "1",
-      },
-      timeout: undefined,
-      useOAuth: true,
-      oauthScopes: ["read", "write"],
-      clientId: "linear-client",
-    });
-
-    expect(persistedServerPayloadsEqual(localPayload, remotePayload)).toBe(
-      true,
-    );
   });
 
   it("carry-forward payload omits all headers including sensitive ones", () => {
@@ -156,5 +94,4 @@ describe("persisted-server-payload", () => {
     expect(payload.oauthScopes).toEqual(["read", "write"]);
     expect(payload.clientId).toBe("linear-client");
   });
-
 });

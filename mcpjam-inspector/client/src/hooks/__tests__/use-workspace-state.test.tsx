@@ -132,6 +132,17 @@ function createAppState(workspaces: Record<string, Workspace>): AppState {
   };
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+
+  return { promise, resolve, reject };
+}
+
 function renderUseWorkspaceState({
   appState,
   activeOrganizationId,
@@ -1635,6 +1646,202 @@ describe("useWorkspaceState automatic workspace creation", () => {
     });
   });
 
+  it("ignores a stale bootstrap import result that resolves after sign-out", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const deferred = createDeferred<{
+      targetWorkspaceId: string;
+      targetOrganizationId?: string;
+      createdWorkspace: boolean;
+      importedServerNames: string[];
+      skippedExistingNameServerNames: string[];
+      failedServerNames: string[];
+      importedSourceWorkspaceIds: string[];
+      timedOut: boolean;
+    }>();
+    bootstrapGuestServerImportMock.mockImplementationOnce(() => deferred.promise);
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { dispatch, rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+
+    await act(async () => {
+      deferred.resolve({
+        targetWorkspaceId: "remote-stale",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(dispatch).not.toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+      updates: {
+        sharedWorkspaceId: "remote-stale",
+      },
+    });
+    expect(localStorage.getItem("convex-active-workspace-id")).toBe("remote-1");
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalledWith(
+      "Could not import guest servers after sign-in",
+    );
+  });
+
+  it("ignores a stale bootstrap result after sign-out and allows a new sign-in pass", async () => {
+    workspaceQueryState.allWorkspaces = [
+      {
+        _id: "remote-1",
+        name: "Remote workspace",
+        servers: {},
+        ownerId: "user-1",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    workspaceQueryState.workspaces = [...workspaceQueryState.allWorkspaces];
+    workspaceServersState.servers = [];
+    localStorage.setItem("convex-active-workspace-id", "remote-1");
+
+    const firstDeferred = createDeferred<{
+      targetWorkspaceId: string;
+      targetOrganizationId?: string;
+      createdWorkspace: boolean;
+      importedServerNames: string[];
+      skippedExistingNameServerNames: string[];
+      failedServerNames: string[];
+      importedSourceWorkspaceIds: string[];
+      timedOut: boolean;
+    }>();
+    const secondDeferred = createDeferred<{
+      targetWorkspaceId: string;
+      targetOrganizationId?: string;
+      createdWorkspace: boolean;
+      importedServerNames: string[];
+      skippedExistingNameServerNames: string[];
+      failedServerNames: string[];
+      importedSourceWorkspaceIds: string[];
+      timedOut: boolean;
+    }>();
+    bootstrapGuestServerImportMock
+      .mockImplementationOnce(() => firstDeferred.promise)
+      .mockImplementationOnce(() => secondDeferred.promise);
+
+    const appState = createAppState({
+      default: createLocalWorkspace("default", {
+        name: "Default",
+        description: "Default workspace",
+        isDefault: true,
+        servers: {
+          demo: {
+            name: "demo",
+            config: { url: "https://example.com/mcp" } as any,
+            lastConnectionTime: new Date("2026-01-01T00:00:00.000Z"),
+            connectionStatus: "disconnected",
+            retryCount: 0,
+          },
+        },
+      }),
+    });
+
+    const { dispatch, rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+    rerender({ isAuthenticated: true });
+
+    await waitFor(() => {
+      expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(2);
+    });
+
+    await act(async () => {
+      firstDeferred.resolve({
+        targetWorkspaceId: "remote-stale",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+      await Promise.resolve();
+    });
+
+    expect(dispatch).not.toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "default",
+      updates: {
+        sharedWorkspaceId: "remote-stale",
+      },
+    });
+    expect(localStorage.getItem("convex-active-workspace-id")).toBe("remote-1");
+
+    await act(async () => {
+      secondDeferred.resolve({
+        targetWorkspaceId: "remote-2",
+        targetOrganizationId: undefined,
+        createdWorkspace: false,
+        importedServerNames: ["demo"],
+        skippedExistingNameServerNames: [],
+        failedServerNames: [],
+        importedSourceWorkspaceIds: ["default"],
+        timedOut: false,
+      });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      expect(dispatch).toHaveBeenCalledWith({
+        type: "UPDATE_WORKSPACE",
+        workspaceId: "default",
+        updates: {
+          sharedWorkspaceId: "remote-2",
+        },
+      });
+    });
+  });
+
   it("clears the completed bootstrap guard after sign-out", async () => {
     workspaceQueryState.allWorkspaces = [
       {
@@ -1678,6 +1885,156 @@ describe("useWorkspaceState automatic workspace creation", () => {
 
     await waitFor(() => {
       expect(bootstrapGuestServerImportMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("ignores a stale workspace migration result that resolves after sign-out", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const deferred = createDeferred<string>();
+    createWorkspaceMock.mockImplementationOnce(() => deferred.promise);
+
+    const appState = createAppState({
+      "workspace-1": createLocalWorkspace("workspace-1", {
+        name: "Needs migration",
+        description: "Needs migration",
+      }),
+    });
+
+    const { dispatch, rerender } = renderUseWorkspaceState({ appState });
+
+    await waitFor(() => {
+      expect(createWorkspaceMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+
+    await act(async () => {
+      deferred.resolve("remote-stale");
+      await Promise.resolve();
+    });
+
+    expect(dispatch).not.toHaveBeenCalledWith({
+      type: "UPDATE_WORKSPACE",
+      workspaceId: "workspace-1",
+      updates: {
+        sharedWorkspaceId: "remote-stale",
+      },
+    });
+  });
+
+  it("does not send ensure-default twice on a same-org sign-out/sign-in flicker", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const deferred = createDeferred<string>();
+    ensureDefaultWorkspaceMock.mockImplementationOnce(() => deferred.promise);
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-empty",
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-empty",
+      });
+    });
+
+    rerender({ isAuthenticated: false });
+
+    await act(async () => {
+      deferred.resolve("default-workspace-id-stale");
+      await Promise.resolve();
+    });
+
+    rerender({ isAuthenticated: true, organizationId: "org-empty" });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledWith({
+        organizationId: "org-empty",
+      });
+    });
+  });
+
+  it("allows ensure-default to run again after an org change even if the old org request finishes later", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    const deferred = createDeferred<string>();
+    ensureDefaultWorkspaceMock
+      .mockImplementationOnce(() => deferred.promise)
+      .mockResolvedValueOnce("default-workspace-id-org-b");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-a",
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-a",
+      });
+    });
+
+    rerender({ organizationId: "org-b" });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(2);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-b",
+      });
+    });
+
+    await act(async () => {
+      deferred.resolve("default-workspace-id-org-a");
+      await Promise.resolve();
+    });
+
+    expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("clears ensure-default in-flight dedupe after a failure so a later retry is allowed", async () => {
+    workspaceQueryState.allWorkspaces = [];
+    workspaceQueryState.workspaces = [];
+
+    ensureDefaultWorkspaceMock
+      .mockRejectedValueOnce(new Error("ensure failed"))
+      .mockResolvedValueOnce("default-workspace-id-next");
+
+    const appState = createAppState({
+      default: createSyntheticDefaultWorkspace(),
+    });
+
+    const { rerender } = renderUseWorkspaceState({
+      appState,
+      activeOrganizationId: "org-empty",
+    });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(1);
+    });
+
+    rerender({ isAuthenticated: false });
+    rerender({ isAuthenticated: true, organizationId: "org-empty" });
+
+    await waitFor(() => {
+      expect(ensureDefaultWorkspaceMock).toHaveBeenCalledTimes(2);
+      expect(ensureDefaultWorkspaceMock).toHaveBeenLastCalledWith({
+        organizationId: "org-empty",
+      });
     });
   });
 
