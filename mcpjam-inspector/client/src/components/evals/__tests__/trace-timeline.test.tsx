@@ -738,7 +738,7 @@ describe("TraceTimeline detail pane", () => {
     ).toHaveTextContent("—");
   });
 
-  it("shows step LLM token usage on tool row hover when the tool span has no token fields", async () => {
+  it("does NOT inherit LLM token counts onto tool row hover card", async () => {
     const user = userEvent.setup();
     const traceStartedAtMs = Date.parse("2026-03-30T02:35:00.000Z");
     const spans: EvalTraceSpan[] = [
@@ -785,13 +785,13 @@ describe("TraceTimeline detail pane", () => {
     const hoverCard = await screen.findByTestId("trace-row-hover-card");
     expect(
       within(hoverCard).getByTestId("trace-row-hover-input-tokens"),
-    ).toHaveTextContent("50");
+    ).toHaveTextContent("—");
     expect(
       within(hoverCard).getByTestId("trace-row-hover-output-tokens"),
-    ).toHaveTextContent("12");
+    ).toHaveTextContent("—");
     expect(
       within(hoverCard).getByTestId("trace-row-hover-total-tokens"),
-    ).toHaveTextContent("62");
+    ).toHaveTextContent("—");
   });
 
   it("LLM span INPUT includes full prior conversation (system + users), not just messages inside messageStartIndex", async () => {

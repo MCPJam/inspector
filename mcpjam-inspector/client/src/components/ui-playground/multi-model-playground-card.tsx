@@ -208,9 +208,10 @@ export function MultiModelPlaygroundCard({
     () => buildPreludeTraceEnvelope(preludeTraceExecutions),
     [preludeTraceExecutions],
   );
-  const effectiveLiveTraceEnvelope = hasTraceSnapshot
-    ? liveTraceEnvelope
-    : (preludeTraceEnvelope ?? liveTraceEnvelope);
+  const effectiveLiveTraceEnvelope =
+    hasTraceSnapshot || isStreaming
+      ? liveTraceEnvelope
+      : (preludeTraceEnvelope ?? liveTraceEnvelope);
   const showTraceTabs = traceViewsSupported && !isThreadEmpty;
   const activeTraceViewMode: PlaygroundTraceViewMode = showTraceTabs
     ? traceViewMode

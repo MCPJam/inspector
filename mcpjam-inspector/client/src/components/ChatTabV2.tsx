@@ -329,6 +329,7 @@ export function ChatTabV2({
   useEffect(() => {
     if (!enableTraceViews || !traceViewsSupported) {
       setTraceViewMode("chat");
+      setRevealedInChat(false);
     }
   }, [enableTraceViews, traceViewsSupported]);
 

@@ -167,34 +167,42 @@ export function ModelSelector({
     [groupedModels],
   );
 
-  const modelGroups = useMemo(
-    () =>
-      sortedProviders
-        .map((provider) => {
-          const models = (groupedModels.get(provider) || []).filter((model) =>
-            hideProvidedModels
-              ? !isMCPJamProvidedModel(String(model.id))
-              : true,
-          );
+  const modelGroups = useMemo(() => {
+    const groups: {
+      provider: GroupKey;
+      title: string;
+      providerType: "provided" | "configured";
+      models: ModelDefinition[];
+    }[] = [];
 
-          if (models.length === 0) {
-            return null;
-          }
+    for (const provider of sortedProviders) {
+      const allModels = groupedModels.get(provider) || [];
+      const filtered = hideProvidedModels
+        ? allModels.filter((model) => !isMCPJamProvidedModel(String(model.id)))
+        : allModels;
 
-          return {
-            provider,
-            title: getProviderDisplayName(provider),
-            providerType: models.some((model) =>
-              isMCPJamProvidedModel(String(model.id)),
-            )
-              ? "provided"
-              : "configured",
-            models,
-          };
-        })
-        .filter((group): group is NonNullable<typeof group> => group !== null),
-    [groupedModels, hideProvidedModels, sortedProviders],
-  );
+      if (filtered.length === 0) {
+        continue;
+      }
+
+      const provided = filtered.filter((model) =>
+        isMCPJamProvidedModel(String(model.id)),
+      );
+      const configured = filtered.filter(
+        (model) => !isMCPJamProvidedModel(String(model.id)),
+      );
+      const title = getProviderDisplayName(provider);
+
+      if (provided.length > 0) {
+        groups.push({ provider, title, providerType: "provided", models: provided });
+      }
+      if (configured.length > 0) {
+        groups.push({ provider, title, providerType: "configured", models: configured });
+      }
+    }
+
+    return groups;
+  }, [groupedModels, hideProvidedModels, sortedProviders]);
 
   const selectedIds = useMemo(
     () => new Set(selectedModelsData.map((model) => String(model.id))),
@@ -521,7 +529,7 @@ export function ModelSelector({
               {modelSections.provided.length > 0 ? (
                 <CommandGroup heading="Free models">
                   {modelSections.provided.map((group) => (
-                    <div key={group.provider}>
+                    <div key={`${group.provider}:${group.providerType}`}>
                       <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                         {group.title}
                       </div>
@@ -539,7 +547,7 @@ export function ModelSelector({
               {modelSections.configured.length > 0 ? (
                 <CommandGroup heading="Your providers">
                   {modelSections.configured.map((group) => (
-                    <div key={group.provider}>
+                    <div key={`${group.provider}:${group.providerType}`}>
                       <div className="px-2 pb-0.5 pt-1 text-[10px] font-medium tracking-wide text-muted-foreground uppercase">
                         {group.title}
                       </div>

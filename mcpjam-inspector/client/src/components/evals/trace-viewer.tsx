@@ -488,10 +488,15 @@ export function TraceViewer({
         {effectiveViewMode === "raw" && (
           <div
             className={cn(
-              "min-w-0 flex flex-col overflow-hidden",
-              flexFillChrome
-                ? "min-h-0 flex-1"
-                : "min-h-0 max-h-[min(70vh,36rem)]",
+              "min-w-0 flex flex-col",
+              rawGrowWithContent
+                ? ""
+                : cn(
+                    "overflow-hidden",
+                    flexFillChrome
+                      ? "min-h-0 flex-1"
+                      : "min-h-0 max-h-[min(70vh,36rem)]",
+                  ),
             )}
             data-testid="trace-viewer-raw-json"
           >

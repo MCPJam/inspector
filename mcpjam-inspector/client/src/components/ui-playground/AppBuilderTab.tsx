@@ -58,6 +58,8 @@ interface AppBuilderTabProps {
   onConnect?: (formData: ServerFormData) => void;
   onOnboardingChange?: (isOnboarding: boolean) => void;
   playgroundServerSelectorProps?: PlaygroundServerSelectorProps;
+  enableTraceViews?: boolean;
+  enableMultiModelChat?: boolean;
 }
 
 const APP_BUILDER_FIRST_RUN_PROMPT = "Draw me an MCP architecture diagram";
@@ -73,6 +75,8 @@ export function AppBuilderTab({
   onConnect,
   onOnboardingChange,
   playgroundServerSelectorProps,
+  enableTraceViews = false,
+  enableMultiModelChat = false,
 }: AppBuilderTabProps) {
   const posthog = usePostHog();
   const prefersReducedMotion = useReducedMotion();
@@ -367,8 +371,8 @@ export function AppBuilderTab({
         >
           <PlaygroundMain
             serverName={serverName || ""}
-            enableTraceViews
-            enableMultiModelChat
+            enableTraceViews={enableTraceViews}
+            enableMultiModelChat={enableMultiModelChat}
             isExecuting={isExecuting}
             executingToolName={selectedTool}
             invokingMessage={invokingMessage}

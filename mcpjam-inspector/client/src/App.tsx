@@ -276,6 +276,7 @@ export default function App() {
   const registryEnabled = useFeatureFlagEnabled("registry-enabled");
   const playgroundEnabled = useFeatureFlagEnabled("playground-enabled");
   const evaluateRunsEnabled = useFeatureFlagEnabled("evaluate-runs");
+  const traceViewsEnabled = useFeatureFlagEnabled("trace-views") === true;
   const {
     getAccessToken,
     signIn,
@@ -1580,7 +1581,7 @@ export default function App() {
               }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
-              enableTraceViews
+              enableTraceViews={traceViewsEnabled}
               enableMultiModelChat
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
@@ -1601,6 +1602,8 @@ export default function App() {
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
+              enableTraceViews={traceViewsEnabled}
+              enableMultiModelChat
             />
           )}
           {activeTab === "client-config" && (

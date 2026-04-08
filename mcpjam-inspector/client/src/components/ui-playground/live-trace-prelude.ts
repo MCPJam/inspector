@@ -92,6 +92,12 @@ export function buildPreludeTraceEnvelope(
           toolName: execution.toolName,
           input: execution.params,
         },
+      ],
+    } satisfies ModelMessage);
+    const toolMessageIndex = messages.length;
+    messages.push({
+      role: "tool",
+      content: [
         {
           type: "tool-result" as const,
           toolCallId: execution.toolCallId,
@@ -112,7 +118,7 @@ export function buildPreludeTraceEnvelope(
       startMs,
       endMs,
       messageStartIndex: assistantMessageIndex,
-      messageEndIndex: assistantMessageIndex,
+      messageEndIndex: toolMessageIndex,
     });
     spans.push({
       id: `prelude-tool-${execution.toolCallId}`,
@@ -127,7 +133,7 @@ export function buildPreludeTraceEnvelope(
       startMs,
       endMs,
       messageStartIndex: assistantMessageIndex,
-      messageEndIndex: assistantMessageIndex,
+      messageEndIndex: toolMessageIndex,
     });
     if (execution.state === "output-error") {
       spans.push({
@@ -143,7 +149,7 @@ export function buildPreludeTraceEnvelope(
         startMs,
         endMs,
         messageStartIndex: assistantMessageIndex,
-        messageEndIndex: assistantMessageIndex,
+        messageEndIndex: toolMessageIndex,
       });
     }
 

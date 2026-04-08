@@ -1095,7 +1095,11 @@ function getRowTokenStats(
     typeof base.inputTokens === "number" ||
     typeof base.outputTokens === "number" ||
     typeof base.totalTokens === "number";
-  if (hasAny || !recordedSpans?.length) {
+  if (
+    hasAny ||
+    !recordedSpans?.length ||
+    (row.span.category !== "llm" && row.span.category !== "step")
+  ) {
     return base;
   }
   const inherited = findStepLlmTokenStats(recordedSpans, row.span);

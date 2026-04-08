@@ -159,7 +159,7 @@ export function buildLiveChatPreviewSpans(options: {
     if (agg) {
       agg.llmEndMs = Math.max(
         agg.llmEndMs,
-        agg.llmStartMs + Math.min(previewWallElapsedMs, 120_000),
+        Math.min(previewWallElapsedMs, 120_000),
       );
       cursor = Math.max(cursor, agg.llmEndMs);
     }

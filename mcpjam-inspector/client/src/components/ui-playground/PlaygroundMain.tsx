@@ -447,9 +447,10 @@ export function PlaygroundMain({
     () => buildPreludeTraceEnvelope(preludeTraceExecutions),
     [preludeTraceExecutions],
   );
-  const effectiveLiveTraceEnvelope = hasTraceSnapshot
-    ? liveTraceEnvelope
-    : (preludeTraceEnvelope ?? liveTraceEnvelope);
+  const effectiveLiveTraceEnvelope =
+    hasTraceSnapshot || isStreaming
+      ? liveTraceEnvelope
+      : (preludeTraceEnvelope ?? liveTraceEnvelope);
   // Match ChatTabV2 `showTopTraceViewTabs`: keep Trace/Chat/Raw while multi-model is
   // empty; hide the top bar once compare columns are active (per-card trace tabs take over).
   const showTraceViewTabs =

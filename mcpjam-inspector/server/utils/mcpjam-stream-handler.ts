@@ -691,6 +691,8 @@ async function handlePendingApprovals(
   messageHistory: ModelMessage[],
   tools: ToolSet,
   mcpClientManager: MCPClientManager,
+  traceTurn?: LiveTraceTurnContext,
+  stepIndex?: number,
 ): Promise<boolean> {
   // Build approvalId → toolCallId map, toolCallId → toolName map,
   // and toolCallId → assistant message index map from assistant messages
@@ -767,15 +769,29 @@ async function handlePendingApprovals(
 
     for (const toolCallId of deniedToolCallIds) {
       if (existingResultIds.has(toolCallId)) continue;
+      const toolName = toolCallIdToToolName.get(toolCallId) ?? "unknown";
       writer.write({
         type: "tool-output-denied",
         toolCallId,
       });
 
+      if (traceTurn && typeof stepIndex === "number") {
+        writeTraceEvent(writer, {
+          type: "tool_result",
+          turnId: traceTurn.turnId,
+          promptIndex: traceTurn.promptIndex,
+          stepIndex,
+          toolCallId,
+          toolName,
+          output: { type: "error-text", value: "Tool execution denied by user." },
+          errorText: "Tool execution denied by user.",
+        });
+      }
+
       const part: ToolResultPart = {
         type: "tool-result",
         toolCallId,
-        toolName: toolCallIdToToolName.get(toolCallId) ?? "unknown",
+        toolName,
         output: {
           type: "error-text",
           value: "Tool execution denied by user.",
@@ -816,7 +832,7 @@ async function handlePendingApprovals(
       tools: tools as Record<string, any>,
     });
 
-    emitToolResults(writer, mcpClientManager, newMessages);
+    emitToolResults(writer, mcpClientManager, newMessages, traceTurn, stepIndex);
     didHandle = true;
   }
 
@@ -1227,6 +1243,8 @@ export async function handleMCPJamFreeChatModel(
             messageHistory,
             tools,
             mcpClientManager,
+            traceTurn,
+            promptStepBaseIndex + steps,
           );
           if (handled) {
             // Approvals were processed — if there are still unresolved tool
