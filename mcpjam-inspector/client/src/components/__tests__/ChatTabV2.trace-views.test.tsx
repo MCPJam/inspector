@@ -1,5 +1,11 @@
 import type { CSSProperties, ReactNode } from "react";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatTabV2 } from "../ChatTabV2";
 
@@ -122,11 +128,9 @@ vi.mock("use-stick-to-bottom", () => {
       {children}
     </div>
   );
-  StickToBottomComponent.Content = ({
-    children,
-  }: {
-    children: ReactNode;
-  }) => <div>{children}</div>;
+  StickToBottomComponent.Content = ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  );
 
   return {
     StickToBottom: StickToBottomComponent,
@@ -406,7 +410,9 @@ describe("ChatTabV2 trace views", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Trace" }));
 
-    expect(screen.queryByTestId("chat-live-trace-pending")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("chat-live-trace-pending"),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
   });
 

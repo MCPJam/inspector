@@ -179,7 +179,7 @@ export function buildPreludeTraceEnvelope(
       output: toolResultOutput,
       errorText:
         execution.state === "output-error"
-          ? execution.errorText ?? "Tool execution failed"
+          ? (execution.errorText ?? "Tool execution failed")
           : undefined,
     });
     events.push({

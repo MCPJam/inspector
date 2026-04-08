@@ -124,7 +124,10 @@ function collectStepToolCallIds(
   }
 
   for (const toolCall of toolCalls) {
-    if (typeof toolCall?.toolCallId === "string" && toolCall.toolCallId.length > 0) {
+    if (
+      typeof toolCall?.toolCallId === "string" &&
+      toolCall.toolCallId.length > 0
+    ) {
       toolCallIds.add(toolCall.toolCallId);
     }
   }
@@ -351,7 +354,9 @@ function streamDirectChatWithLiveTrace(options: {
               responseMessages,
               assistantText: event.text,
               toolCalls: event.steps.flatMap((step) => step.toolCalls ?? []),
-              toolResults: event.steps.flatMap((step) => step.toolResults ?? []),
+              toolResults: event.steps.flatMap(
+                (step) => step.toolResults ?? [],
+              ),
               usage: traceTurn.turnUsage,
               finishReason: event.finishReason,
             });
@@ -522,7 +527,9 @@ chatV2.post("/", async (c) => {
     const streamStartedAt = Date.now();
     const authHeader = c.req.header("authorization");
 
-    const scrubbedModelMessages = scrubMessages(modelMessages as ModelMessage[]);
+    const scrubbedModelMessages = scrubMessages(
+      modelMessages as ModelMessage[],
+    );
 
     return streamDirectChatWithLiveTrace({
       llmModel,

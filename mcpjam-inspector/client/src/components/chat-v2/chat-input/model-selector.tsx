@@ -19,11 +19,12 @@ import {
   CommandList,
   CommandSeparator,
 } from "@/components/ui/command";
+import { ModelDefinition, isMCPJamProvidedModel } from "@/shared/types.js";
 import {
-  ModelDefinition,
-  isMCPJamProvidedModel,
-} from "@/shared/types.js";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 
 interface ModelSelectorProps {
@@ -111,16 +112,19 @@ const getLogoProvider = (groupKey: GroupKey): string =>
   groupKey.startsWith("custom:") ? "custom" : groupKey;
 
 const getCustomName = (groupKey: GroupKey): string | undefined =>
-  groupKey.startsWith("custom:")
-    ? groupKey.slice("custom:".length)
-    : undefined;
+  groupKey.startsWith("custom:") ? groupKey.slice("custom:".length) : undefined;
 
-function sameModelOrder(left: ModelDefinition[], right: ModelDefinition[]): boolean {
+function sameModelOrder(
+  left: ModelDefinition[],
+  right: ModelDefinition[],
+): boolean {
   if (left.length !== right.length) {
     return false;
   }
 
-  return left.every((model, index) => String(model.id) === String(right[index]?.id));
+  return left.every(
+    (model, index) => String(model.id) === String(right[index]?.id),
+  );
 }
 
 /** Strip redundant tier suffix for a denser list (search value still uses full name). */
@@ -168,7 +172,9 @@ export function ModelSelector({
       sortedProviders
         .map((provider) => {
           const models = (groupedModels.get(provider) || []).filter((model) =>
-            hideProvidedModels ? !isMCPJamProvidedModel(String(model.id)) : true,
+            hideProvidedModels
+              ? !isMCPJamProvidedModel(String(model.id))
+              : true,
           );
 
           if (models.length === 0) {
@@ -206,7 +212,9 @@ export function ModelSelector({
       : compactModelLabel(leadModel.name);
   const modelSections = useMemo(() => {
     const provided = modelGroups.filter((g) => g.providerType === "provided");
-    const configured = modelGroups.filter((g) => g.providerType === "configured");
+    const configured = modelGroups.filter(
+      (g) => g.providerType === "configured",
+    );
     return { provided, configured };
   }, [modelGroups]);
   const selectedLimitReached =
@@ -449,8 +457,8 @@ export function ModelSelector({
                     </div>
                   </TooltipTrigger>
                   <TooltipContent side="bottom" className="max-w-xs text-xs">
-                    Compare up to {maxSelectedModels} models in one composer. The
-                    first in your selection runs first.
+                    Compare up to {maxSelectedModels} models in one composer.
+                    The first in your selection runs first.
                   </TooltipContent>
                 </Tooltip>
 

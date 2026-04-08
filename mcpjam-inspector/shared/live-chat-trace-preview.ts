@@ -98,8 +98,7 @@ export function buildLiveChatPreviewSpans(options: {
         agg.llmEndMs = Math.max(
           agg.llmEndMs,
           agg.llmStartMs + MIN_BLOCK_MS,
-          agg.llmStartMs +
-            Math.min(agg.deltaChars * 3, MAX_DELTA_STRETCH_MS),
+          agg.llmStartMs + Math.min(agg.deltaChars * 3, MAX_DELTA_STRETCH_MS),
         );
         cursor = Math.max(cursor, agg.llmEndMs);
         lastTextDeltaStep = ev.stepIndex;
@@ -132,7 +131,10 @@ export function buildLiveChatPreviewSpans(options: {
         const toolSpan = agg.tools.find((t) => t.toolCallId === ev.toolCallId);
         if (toolSpan) {
           const err = Boolean(ev.errorText?.trim());
-          toolSpan.endMs = Math.max(toolSpan.endMs, toolSpan.startMs + STEP_SEGMENT_MS);
+          toolSpan.endMs = Math.max(
+            toolSpan.endMs,
+            toolSpan.startMs + STEP_SEGMENT_MS,
+          );
           toolSpan.status = err ? "error" : "ok";
           cursor = Math.max(cursor, toolSpan.endMs);
         }
@@ -264,4 +266,3 @@ export function applyPreviewSpansUserMessageIndices(
     };
   });
 }
-

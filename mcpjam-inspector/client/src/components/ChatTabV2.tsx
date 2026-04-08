@@ -174,9 +174,9 @@ export function ChatTabV2({
       };
     }[]
   >([]);
-  const [elicitationQueue, setElicitationQueue] = useState<
-    DialogElicitation[]
-  >([]);
+  const [elicitationQueue, setElicitationQueue] = useState<DialogElicitation[]>(
+    [],
+  );
   const [elicitationLoading, setElicitationLoading] = useState(false);
   const [isWidgetFullscreen, setIsWidgetFullscreen] = useState(false);
   const [broadcastRequest, setBroadcastRequest] =
@@ -191,8 +191,7 @@ export function ChatTabV2({
     Record<string, boolean>
   >({});
 
-  const [traceViewMode, setTraceViewMode] =
-    useState<ChatTraceViewMode>("chat");
+  const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
 
   // Filter to only connected servers
@@ -313,7 +312,12 @@ export function ChatTabV2({
     }
 
     return selectedModel ? [selectedModel] : [];
-  }, [availableModels, multiModelAvailableModels, selectedModel, selectedModelIds]);
+  }, [
+    availableModels,
+    multiModelAvailableModels,
+    selectedModel,
+    selectedModelIds,
+  ]);
   const canEnableMultiModel =
     enableMultiModelChat &&
     !minimalMode &&
@@ -350,7 +354,9 @@ export function ChatTabV2({
       return;
     }
 
-    const sanitizedIds = resolvedSelectedModels.map((model) => String(model.id));
+    const sanitizedIds = resolvedSelectedModels.map((model) =>
+      String(model.id),
+    );
     const persistedIds = selectedModelIds.slice(0, 3);
     const idsChanged =
       sanitizedIds.length !== persistedIds.length ||
@@ -382,12 +388,16 @@ export function ChatTabV2({
 
     setMultiModelSummaries((previous) =>
       Object.fromEntries(
-        Object.entries(previous).filter(([modelId]) => activeModelIds.has(modelId)),
+        Object.entries(previous).filter(([modelId]) =>
+          activeModelIds.has(modelId),
+        ),
       ),
     );
     setMultiModelHasMessages((previous) =>
       Object.fromEntries(
-        Object.entries(previous).filter(([modelId]) => activeModelIds.has(modelId)),
+        Object.entries(previous).filter(([modelId]) =>
+          activeModelIds.has(modelId),
+        ),
       ),
     );
   }, [resolvedSelectedModels]);
@@ -824,9 +834,7 @@ export function ChatTabV2({
         model_name: selectedModel?.name ?? null,
         model_provider: selectedModel?.provider ?? null,
         multi_model_enabled: isMultiModelMode,
-        multi_model_count: isMultiModelMode
-          ? resolvedSelectedModels.length
-          : 1,
+        multi_model_count: isMultiModelMode ? resolvedSelectedModels.length : 1,
         ...(captureProps ?? {}),
       });
 
@@ -900,9 +908,10 @@ export function ChatTabV2({
       skillResults.length > 0 ||
       fileAttachments.length > 0;
     if (hasContent && !inputDisabled) {
-
       // Build messages from MCP prompts
-      const promptMessages = buildMcpPromptMessages(mcpPromptResults) as UIMessage[];
+      const promptMessages = buildMcpPromptMessages(
+        mcpPromptResults,
+      ) as UIMessage[];
 
       // Build messages from skills
       const skillMessages = buildSkillToolMessages(skillResults) as UIMessage[];
@@ -1293,118 +1302,119 @@ export function ChatTabV2({
                   />
                 ) : null}
 
-                {(showLiveTraceDiagnostics || revealedInChat) && !minimalMode && (
-                  <div className="flex flex-1 min-h-0 flex-col">
-                    {activeTraceViewMode === "raw" ? (
-                      <StickToBottom
-                        className="flex flex-1 min-h-0 flex-col overflow-hidden"
-                        resize="smooth"
-                        initial="smooth"
-                      >
-                        <div className="relative flex flex-1 min-h-0 overflow-hidden">
-                          <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
-                            <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
-                              {isThreadEmpty ? (
-                                <LiveTraceRawEmptyState testId="chat-live-raw-pending" />
-                              ) : (
-                                <TraceViewer
-                                  trace={traceViewerTrace}
-                                  model={selectedModel}
-                                  toolsMetadata={toolsMetadata}
-                                  toolServerMap={toolServerMap}
-                                  traceStartedAtMs={
-                                    liveTraceEnvelope?.traceStartedAtMs ?? null
-                                  }
-                                  traceEndedAtMs={
-                                    liveTraceEnvelope?.traceEndedAtMs ?? null
-                                  }
-                                  forcedViewMode={activeTraceViewMode}
-                                  hideToolbar
-                                  fillContent
-                                  onRevealNavigateToChat={() => {
-                                    setTraceViewMode("chat");
-                                    setRevealedInChat(true);
-                                  }}
-                                  rawGrowWithContent
-                                  rawXRayMirror={{
-                                    payload: rawTraceXRayMirror.payload,
-                                    loading: rawTraceXRayMirror.loading,
-                                    error: rawTraceXRayMirror.error,
-                                    refetch: rawTraceXRayMirror.refetch,
-                                    hasUiMessages:
-                                      rawTraceXRayMirror.hasMessages,
-                                  }}
-                                />
-                              )}
-                            </div>
-                          </StickToBottom.Content>
-                          <ScrollToBottomButton />
-                        </div>
-                      </StickToBottom>
-                    ) : (
-                      <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
-                        <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
-                          {activeTraceViewMode === "timeline" &&
-                          !hasLiveTimelineContent ? (
-                            <LiveTraceTimelineEmptyState testId="chat-live-trace-pending" />
-                          ) : (
-                            <TraceViewer
-                              trace={traceViewerTrace}
-                              model={selectedModel}
-                              toolsMetadata={toolsMetadata}
-                              toolServerMap={toolServerMap}
-                              traceStartedAtMs={
-                                liveTraceEnvelope?.traceStartedAtMs ?? null
-                              }
-                              traceEndedAtMs={
-                                liveTraceEnvelope?.traceEndedAtMs ?? null
-                              }
-                              forcedViewMode={activeTraceViewMode}
-                              hideToolbar
-                              fillContent
-                              onRevealNavigateToChat={() => {
-                                setTraceViewMode("chat");
-                                setRevealedInChat(true);
-                              }}
-                              rawXRayMirror={{
-                                payload: rawTraceXRayMirror.payload,
-                                loading: rawTraceXRayMirror.loading,
-                                error: rawTraceXRayMirror.error,
-                                refetch: rawTraceXRayMirror.refetch,
-                                hasUiMessages:
-                                  rawTraceXRayMirror.hasMessages,
-                              }}
-                            />
-                          )}
-                        </div>
-                      </div>
-                    )}
-
-                    <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
-                      {errorMessage && (
-                        <div className="max-w-4xl mx-auto px-4 pt-4">
-                          <ErrorBox
-                            message={errorMessage.message}
-                            errorDetails={errorMessage.details}
-                            code={errorMessage.code}
-                            statusCode={errorMessage.statusCode}
-                            isRetryable={errorMessage.isRetryable}
-                            isMCPJamPlatformError={
-                              errorMessage.isMCPJamPlatformError
-                            }
-                            onResetChat={baseResetChat}
-                          />
+                {(showLiveTraceDiagnostics || revealedInChat) &&
+                  !minimalMode && (
+                    <div className="flex flex-1 min-h-0 flex-col">
+                      {activeTraceViewMode === "raw" ? (
+                        <StickToBottom
+                          className="flex flex-1 min-h-0 flex-col overflow-hidden"
+                          resize="smooth"
+                          initial="smooth"
+                        >
+                          <div className="relative flex flex-1 min-h-0 overflow-hidden">
+                            <StickToBottom.Content className="flex min-h-0 flex-1 flex-col overflow-y-auto px-4 pt-4">
+                              <div className="mx-auto flex min-h-0 w-full max-w-6xl flex-1 flex-col">
+                                {isThreadEmpty ? (
+                                  <LiveTraceRawEmptyState testId="chat-live-raw-pending" />
+                                ) : (
+                                  <TraceViewer
+                                    trace={traceViewerTrace}
+                                    model={selectedModel}
+                                    toolsMetadata={toolsMetadata}
+                                    toolServerMap={toolServerMap}
+                                    traceStartedAtMs={
+                                      liveTraceEnvelope?.traceStartedAtMs ??
+                                      null
+                                    }
+                                    traceEndedAtMs={
+                                      liveTraceEnvelope?.traceEndedAtMs ?? null
+                                    }
+                                    forcedViewMode={activeTraceViewMode}
+                                    hideToolbar
+                                    fillContent
+                                    onRevealNavigateToChat={() => {
+                                      setTraceViewMode("chat");
+                                      setRevealedInChat(true);
+                                    }}
+                                    rawGrowWithContent
+                                    rawXRayMirror={{
+                                      payload: rawTraceXRayMirror.payload,
+                                      loading: rawTraceXRayMirror.loading,
+                                      error: rawTraceXRayMirror.error,
+                                      refetch: rawTraceXRayMirror.refetch,
+                                      hasUiMessages:
+                                        rawTraceXRayMirror.hasMessages,
+                                    }}
+                                  />
+                                )}
+                              </div>
+                            </StickToBottom.Content>
+                            <ScrollToBottomButton />
+                          </div>
+                        </StickToBottom>
+                      ) : (
+                        <div className="flex min-h-64 flex-1 flex-col overflow-hidden px-4 py-4">
+                          <div className="mx-auto flex h-full min-h-0 w-full max-w-6xl flex-col">
+                            {activeTraceViewMode === "timeline" &&
+                            !hasLiveTimelineContent ? (
+                              <LiveTraceTimelineEmptyState testId="chat-live-trace-pending" />
+                            ) : (
+                              <TraceViewer
+                                trace={traceViewerTrace}
+                                model={selectedModel}
+                                toolsMetadata={toolsMetadata}
+                                toolServerMap={toolServerMap}
+                                traceStartedAtMs={
+                                  liveTraceEnvelope?.traceStartedAtMs ?? null
+                                }
+                                traceEndedAtMs={
+                                  liveTraceEnvelope?.traceEndedAtMs ?? null
+                                }
+                                forcedViewMode={activeTraceViewMode}
+                                hideToolbar
+                                fillContent
+                                onRevealNavigateToChat={() => {
+                                  setTraceViewMode("chat");
+                                  setRevealedInChat(true);
+                                }}
+                                rawXRayMirror={{
+                                  payload: rawTraceXRayMirror.payload,
+                                  loading: rawTraceXRayMirror.loading,
+                                  error: rawTraceXRayMirror.error,
+                                  refetch: rawTraceXRayMirror.refetch,
+                                  hasUiMessages: rawTraceXRayMirror.hasMessages,
+                                }}
+                              />
+                            )}
+                          </div>
                         </div>
                       )}
-                      <div className="max-w-4xl mx-auto p-4">
-                        <ChatInput
-                          {...sharedChatInputProps}
-                          hasMessages={!isThreadEmpty}
-                        />
+
+                      <div className="bg-background/80 backdrop-blur-sm border-t border-border flex-shrink-0">
+                        {errorMessage && (
+                          <div className="max-w-4xl mx-auto px-4 pt-4">
+                            <ErrorBox
+                              message={errorMessage.message}
+                              errorDetails={errorMessage.details}
+                              code={errorMessage.code}
+                              statusCode={errorMessage.statusCode}
+                              isRetryable={errorMessage.isRetryable}
+                              isMCPJamPlatformError={
+                                errorMessage.isMCPJamPlatformError
+                              }
+                              onResetChat={baseResetChat}
+                            />
+                          </div>
+                        )}
+                        <div className="max-w-4xl mx-auto p-4">
+                          <ChatInput
+                            {...sharedChatInputProps}
+                            hasMessages={!isThreadEmpty}
+                          />
+                        </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {!isThreadEmpty && (
                   <StickToBottom
@@ -1545,7 +1555,9 @@ export function ChatTabV2({
                                   <button
                                     key={prompt.text}
                                     type="button"
-                                    onClick={() => handleStarterPrompt(prompt.text)}
+                                    onClick={() =>
+                                      handleStarterPrompt(prompt.text)
+                                    }
                                     className="rounded-full border border-border bg-background px-4 py-2 text-sm text-foreground transition hover:border-foreground hover:bg-accent cursor-pointer font-light"
                                   >
                                     {prompt.label}

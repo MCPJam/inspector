@@ -787,7 +787,9 @@ describe("PlaygroundMain", () => {
       const pending = screen.getByTestId("playground-live-raw-pending");
       expect(pending).toBeInTheDocument();
       expect(
-        within(pending).getByTestId("playground-live-raw-pending-sample-preview"),
+        within(pending).getByTestId(
+          "playground-live-raw-pending-sample-preview",
+        ),
       ).toBeInTheDocument();
       expect(within(pending).getByTestId("trace-raw-view")).toBeInTheDocument();
       expect(screen.getByText(/Sample raw request/i)).toBeInTheDocument();

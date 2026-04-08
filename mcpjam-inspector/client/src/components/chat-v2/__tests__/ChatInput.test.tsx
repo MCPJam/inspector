@@ -549,6 +549,5 @@ describe("ChatInput", () => {
       expect(screen.queryByTestId("context")).not.toBeInTheDocument();
       expect(screen.queryByTestId("context-trigger")).not.toBeInTheDocument();
     });
-
   });
 });

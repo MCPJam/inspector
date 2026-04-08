@@ -68,8 +68,10 @@ export function ModelCompareCardHeader({
     .map((item) => item.toolCount)
     .filter((value) => value > 0);
 
-  const maxDuration = durationValues.length > 0 ? Math.max(...durationValues) : 0;
-  const minDuration = durationValues.length > 0 ? Math.min(...durationValues) : 0;
+  const maxDuration =
+    durationValues.length > 0 ? Math.max(...durationValues) : 0;
+  const minDuration =
+    durationValues.length > 0 ? Math.min(...durationValues) : 0;
   const maxTokens = tokenValues.length > 0 ? Math.max(...tokenValues) : 0;
   const minTokens = tokenValues.length > 0 ? Math.min(...tokenValues) : 0;
   const minToolCount = toolValues.length > 0 ? Math.min(...toolValues) : 0;
@@ -154,7 +156,9 @@ export function ModelCompareCardHeader({
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
                           : "bg-primary/10",
                       )}
-                      style={{ width: `${hasComparison ? durationBarPct : 100}%` }}
+                      style={{
+                        width: `${hasComparison ? durationBarPct : 100}%`,
+                      }}
                     />
                   ) : null}
                 </div>
@@ -185,7 +189,9 @@ export function ModelCompareCardHeader({
                           ? "bg-emerald-500/25 dark:bg-emerald-400/20"
                           : "bg-primary/10",
                       )}
-                      style={{ width: `${hasComparison ? tokensBarPct : 100}%` }}
+                      style={{
+                        width: `${hasComparison ? tokensBarPct : 100}%`,
+                      }}
                     />
                   ) : null}
                 </div>

@@ -170,7 +170,11 @@ function resolveTraceMessages(
 
   if (Array.isArray(trace)) {
     messages = trace;
-  } else if (isRecord(trace) && "messages" in trace && Array.isArray(trace.messages)) {
+  } else if (
+    isRecord(trace) &&
+    "messages" in trace &&
+    Array.isArray(trace.messages)
+  ) {
     messages = trace.messages as TraceSourceMessage[];
     if ("widgetSnapshots" in trace && Array.isArray(trace.widgetSnapshots)) {
       widgetSnapshots = trace.widgetSnapshots as TraceWidgetSnapshot[];
@@ -182,7 +186,9 @@ function resolveTraceMessages(
   return { messages, widgetSnapshots };
 }
 
-function normalizeMessageContent(message: TraceSourceMessage): TraceContentPart[] {
+function normalizeMessageContent(
+  message: TraceSourceMessage,
+): TraceContentPart[] {
   if (typeof message.content === "string") {
     return [
       {

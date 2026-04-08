@@ -74,15 +74,17 @@ const model = {
 };
 
 function Harness() {
-  const [summaries, setSummaries] = useState<Record<string, MultiModelCardSummary>>(
-    {},
-  );
+  const [summaries, setSummaries] = useState<
+    Record<string, MultiModelCardSummary>
+  >({});
   const [messageFlags, setMessageFlags] = useState<Record<string, boolean>>({});
 
   return (
     <div>
       <div data-testid="summary-count">{Object.keys(summaries).length}</div>
-      <div data-testid="message-flag-count">{Object.keys(messageFlags).length}</div>
+      <div data-testid="message-flag-count">
+        {Object.keys(messageFlags).length}
+      </div>
       <MultiModelChatCard
         model={model}
         comparisonSummaries={Object.values(summaries)}

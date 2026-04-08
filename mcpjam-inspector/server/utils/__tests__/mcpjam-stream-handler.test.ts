@@ -508,7 +508,11 @@ describe("mcpjam-stream-handler", () => {
         {
           type: "finish",
           finishReason: "stop",
-          messageMetadata: { inputTokens: 10, outputTokens: 5, totalTokens: 15 },
+          messageMetadata: {
+            inputTokens: 10,
+            outputTokens: 5,
+            totalTokens: 15,
+          },
         },
       ]),
     );
@@ -568,14 +572,14 @@ describe("mcpjam-stream-handler", () => {
         },
       ]),
     );
-    vi.mocked(hasUnresolvedToolCalls).mockImplementation((messages) =>
-      messages.some(
-        (message: any) =>
-          message?.role === "assistant" &&
-          Array.isArray(message.content) &&
-          message.content.some((part: any) => part.type === "tool-call"),
-      ) &&
-      !messages.some((message: any) => message?.role === "tool"),
+    vi.mocked(hasUnresolvedToolCalls).mockImplementation(
+      (messages) =>
+        messages.some(
+          (message: any) =>
+            message?.role === "assistant" &&
+            Array.isArray(message.content) &&
+            message.content.some((part: any) => part.type === "tool-call"),
+        ) && !messages.some((message: any) => message?.role === "tool"),
     );
     vi.mocked(executeToolCallsFromMessages).mockImplementation(
       async (messages: any[]) => {
@@ -623,7 +627,13 @@ describe("mcpjam-stream-handler", () => {
       .map((chunk) => chunk.data);
 
     expect(traceEvents.map((event) => event.type)).toEqual(
-      expect.arrayContaining(["turn_start", "tool_call", "tool_result", "trace_snapshot", "turn_finish"]),
+      expect.arrayContaining([
+        "turn_start",
+        "tool_call",
+        "tool_result",
+        "trace_snapshot",
+        "turn_finish",
+      ]),
     );
     expect(traceEvents).toEqual(
       expect.arrayContaining([

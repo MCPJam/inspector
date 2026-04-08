@@ -33,10 +33,7 @@ import {
 } from "./recorded-trace-toolbar";
 import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
-import {
-  TraceRawView,
-  type TraceRawXRayMirror,
-} from "./trace-raw-view";
+import { TraceRawView, type TraceRawXRayMirror } from "./trace-raw-view";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
@@ -215,9 +212,7 @@ export function TraceViewer({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
   const shouldCaptureRawPayloadOpened =
-    trace != null &&
-    effectiveViewMode === "raw" &&
-    rawXRayMirror != null;
+    trace != null && effectiveViewMode === "raw" && rawXRayMirror != null;
   useEffect(() => {
     if (!shouldCaptureRawPayloadOpened) return;
     posthog?.capture("xray_opened");
