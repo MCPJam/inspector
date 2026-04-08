@@ -191,7 +191,7 @@
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.0",
     "cross-env": "^10.1.0",
-    "electron": "^37.2.5",
+    "electron": "^39.8.5",
     "eslint": "^9",
     "jsdom": "^27.4.0",
     "png-to-ico": "^2.1.8",
@@ -202,7 +202,7 @@
     "tsx": "^4.19.2",
     "tw-animate-css": "^1.3.5",
     "typescript": "^5",
-    "vite": "^7.1.4",
+    "vite": "^7.3.2",
     "vite-tsconfig-paths": "^6.0.4",
     "vitest": "^3.2.4"
   },
