@@ -6,6 +6,13 @@ import { isMCPAuthError, MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
 import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
+import type { ModelProvider } from "@/shared/types";
+import {
+  resolveOrgModelConfig,
+  resolveProviderForModel,
+} from "../../utils/org-model-config";
+import { createLlmModel } from "../../utils/chat-helpers";
+import { streamText, stepCountIs, type ToolSet as StreamToolSet } from "ai";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
@@ -293,7 +300,12 @@ chatV2.post("/", async (c) => {
       const { allTools, enhancedSystemPrompt, resolvedTemperature } = prepared;
       const hostedChatSessionId = body.chatSessionId;
 
-      if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
+      const modelMessages = await convertToModelMessages(messages);
+      const isMcpjamModel =
+        modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id);
+
+      if (isMcpjamModel) {
+        // MCPJam-provided model — delegate to the hosted stream handler
         if (!process.env.CONVEX_HTTP_URL) {
           throw new WebRouteError(
             500,
@@ -301,31 +313,75 @@ chatV2.post("/", async (c) => {
             "Server missing CONVEX_HTTP_URL configuration",
           );
         }
-      } else {
-        throw new WebRouteError(
-          400,
-          ErrorCode.FEATURE_NOT_SUPPORTED,
-          "Only MCPJam hosted models are supported in hosted mode",
-        );
+
+        return handleMCPJamFreeChatModel({
+          messages: modelMessages as ModelMessage[],
+          modelId: String(modelDefinition.id),
+          systemPrompt: enhancedSystemPrompt,
+          temperature: resolvedTemperature,
+          tools: allTools as ToolSet,
+          authHeader: c.req.header("authorization"),
+          mcpClientManager: manager,
+          selectedServers: selectedServerIds,
+          requireToolApproval,
+          onConversationComplete: hostedChatSessionId
+            ? async (fullHistory) => {
+                await persistChatSessionToConvex({
+                  chatSessionId: hostedChatSessionId,
+                  modelId: String(modelDefinition.id),
+                  modelSource: "mcpjam",
+                  workspaceId: hostedBody.workspaceId,
+                  sourceType: shareToken
+                    ? "serverShare"
+                    : sandboxToken
+                      ? "sandbox"
+                      : "direct",
+                  ...(sandboxToken && surface ? { surface } : {}),
+                  shareToken,
+                  sandboxToken,
+                  ...(shareToken && selectedServerIds[0]
+                    ? { serverId: selectedServerIds[0] }
+                    : {}),
+                  authHeader: c.req.header("authorization"),
+                  sessionMessages: fullHistory,
+                  startedAt: sessionStartedAt,
+                  lastActivityAt: Date.now(),
+                });
+              }
+            : undefined,
+          onStreamComplete: () => manager.disconnectAllServers(),
+        });
       }
 
-      const modelMessages = await convertToModelMessages(messages);
-      return handleMCPJamFreeChatModel({
+      // BYOK model — resolve provider config from org
+      const orgConfig = await resolveOrgModelConfig({
+        workspaceId: hostedBody.workspaceId,
+      });
+      const { apiKey: resolvedKey, baseUrls, customProviders: resolvedCustomProviders } =
+        resolveProviderForModel(orgConfig, modelDefinition);
+      const llmModel = createLlmModel(
+        modelDefinition,
+        resolvedKey,
+        baseUrls,
+        resolvedCustomProviders,
+      );
+
+      const result = streamText({
+        model: llmModel,
         messages: modelMessages as ModelMessage[],
-        modelId: String(modelDefinition.id),
-        systemPrompt: enhancedSystemPrompt,
-        temperature: resolvedTemperature,
-        tools: allTools as ToolSet,
-        authHeader: c.req.header("authorization"),
-        mcpClientManager: manager,
-        selectedServers: selectedServerIds,
-        requireToolApproval,
-        onConversationComplete: hostedChatSessionId
-          ? async (fullHistory) => {
+        ...(resolvedTemperature !== undefined
+          ? { temperature: resolvedTemperature }
+          : {}),
+        system: enhancedSystemPrompt,
+        tools: allTools as StreamToolSet,
+        stopWhen: stepCountIs(20),
+        onFinish: async () => {
+          if (hostedChatSessionId) {
+            try {
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
-                modelSource: "mcpjam",
+                modelSource: "byok",
                 workspaceId: hostedBody.workspaceId,
                 sourceType: shareToken
                   ? "serverShare"
@@ -339,14 +395,20 @@ chatV2.post("/", async (c) => {
                   ? { serverId: selectedServerIds[0] }
                   : {}),
                 authHeader: c.req.header("authorization"),
-                sessionMessages: fullHistory,
+                sessionMessages: [],
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
               });
+            } catch (e) {
+              // Non-fatal — log but don't break the stream
+              console.error("Failed to persist BYOK chat session", e);
             }
-          : undefined,
-        onStreamComplete: () => manager.disconnectAllServers(),
+          }
+          await manager.disconnectAllServers();
+        },
       });
+
+      return result.toDataStreamResponse();
     } catch (error) {
       await manager.disconnectAllServers();
       throw error;

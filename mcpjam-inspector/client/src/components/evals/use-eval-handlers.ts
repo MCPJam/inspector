@@ -192,18 +192,22 @@ export function useEvalHandlers({
         return null;
       }
 
+      // When running in an org-backed workspace the server resolves API keys
+      // from the org config, so we skip populating modelApiKeys.
       const modelApiKeys: Record<string, string> = {};
-      for (const provider of providersNeeded) {
-        const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
-        if (!hasToken(tokenKey)) {
-          toast.error(
-            `Please add your ${provider} API key in Settings before running evals`,
-          );
-          return null;
-        }
-        const key = getToken(tokenKey);
-        if (key) {
-          modelApiKeys[provider] = key;
+      if (!workspaceId) {
+        for (const provider of providersNeeded) {
+          const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
+          if (!hasToken(tokenKey)) {
+            toast.error(
+              `Please add your ${provider} API key in Settings before running evals`,
+            );
+            return null;
+          }
+          const key = getToken(tokenKey);
+          if (key) {
+            modelApiKeys[provider] = key;
+          }
         }
       }
 
@@ -215,7 +219,7 @@ export function useEvalHandlers({
         providersNeeded,
       };
     },
-    [getTestCasesForRerun, getToken, hasToken],
+    [getTestCasesForRerun, getToken, hasToken, workspaceId],
   );
 
   const handleReplayRun = useCallback(

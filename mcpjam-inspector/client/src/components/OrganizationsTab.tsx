@@ -64,6 +64,7 @@ import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
+import { OrganizationModelsSection } from "./organization/OrganizationModelsSection";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -78,9 +79,9 @@ function getOrganizationRouteHash(
   organizationId: string,
   section: OrganizationRouteSection,
 ): string {
-  return section === "billing"
-    ? `organizations/${organizationId}/billing`
-    : `organizations/${organizationId}`;
+  if (section === "billing") return `organizations/${organizationId}/billing`;
+  if (section === "models") return `organizations/${organizationId}/models`;
+  return `organizations/${organizationId}`;
 }
 
 interface PendingPaidUpgradeConfirmation {
@@ -423,8 +424,12 @@ function OrganizationPage({
     "billing-entitlements-ui",
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
-  const activeSection =
-    billingUiEnabled && section === "billing" ? "billing" : "overview";
+  const activeSection: OrganizationRouteSection =
+    section === "models"
+      ? "models"
+      : billingUiEnabled && section === "billing"
+        ? "billing"
+        : "overview";
   const memberInviteGate = resolveBillingGateState({
     billingUiEnabled,
     organizationId: organization._id,
@@ -1079,24 +1084,37 @@ function OrganizationPage({
               </div>
             </div>
           </CardContent>
-          {billingUiEnabled ? (
-            <nav
-              className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
-              aria-label="Organization settings sections"
+          <nav
+            className="flex items-end gap-1 border-t border-border/60 bg-muted/20 px-2 sm:px-5"
+            aria-label="Organization settings sections"
+          >
+            <button
+              type="button"
+              onClick={() => navigateToSection("overview")}
+              aria-current={activeSection === "overview" ? "page" : undefined}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                activeSection === "overview"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
             >
-              <button
-                type="button"
-                onClick={() => navigateToSection("overview")}
-                aria-current={activeSection === "overview" ? "page" : undefined}
-                className={cn(
-                  "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
-                  activeSection === "overview"
-                    ? "border-primary text-foreground"
-                    : "border-transparent text-muted-foreground hover:text-foreground",
-                )}
-              >
-                General
-              </button>
+              General
+            </button>
+            <button
+              type="button"
+              onClick={() => navigateToSection("models")}
+              aria-current={activeSection === "models" ? "page" : undefined}
+              className={cn(
+                "-mb-px shrink-0 border-b-2 px-3 py-3.5 text-sm font-medium transition-colors sm:px-4",
+                activeSection === "models"
+                  ? "border-primary text-foreground"
+                  : "border-transparent text-muted-foreground hover:text-foreground",
+              )}
+            >
+              Models
+            </button>
+            {billingUiEnabled ? (
               <button
                 type="button"
                 onClick={() => navigateToSection("billing")}
@@ -1110,11 +1128,16 @@ function OrganizationPage({
               >
                 Billing
               </button>
-            </nav>
-          ) : null}
+            ) : null}
+          </nav>
         </Card>
 
-        {activeSection === "billing" ? (
+        {activeSection === "models" ? (
+          <OrganizationModelsSection
+            organizationId={organization._id}
+            isAdmin={canEdit}
+          />
+        ) : activeSection === "billing" ? (
           <>
             <OrganizationBillingSection
               billingStatus={billingStatus}

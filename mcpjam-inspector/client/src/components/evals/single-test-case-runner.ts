@@ -165,9 +165,11 @@ export async function prepareSingleTestCaseRun({
     throw new Error("Invalid model selection");
   }
 
+  // When running in an org-backed workspace the server resolves API keys
+  // from the org config, so we skip populating modelApiKeys.
   const modelApiKeys: Record<string, string> = {};
 
-  if (!isMCPJamProvidedModel(model)) {
+  if (!workspaceId && !isMCPJamProvidedModel(model)) {
     const tokenKey = provider.toLowerCase() as keyof ProviderTokens;
     if (!hasToken(tokenKey)) {
       throw new Error(
