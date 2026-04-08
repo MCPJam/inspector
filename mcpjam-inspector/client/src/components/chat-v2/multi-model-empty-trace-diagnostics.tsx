@@ -8,7 +8,6 @@ import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty"
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 
-
 export type MultiModelEmptyTraceMode = "chat" | "timeline" | "raw";
 
 export interface MultiModelEmptyTraceDiagnosticsPanelProps {

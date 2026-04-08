@@ -194,10 +194,20 @@ export function ModelSelector({
       const title = getProviderDisplayName(provider);
 
       if (provided.length > 0) {
-        groups.push({ provider, title, providerType: "provided", models: provided });
+        groups.push({
+          provider,
+          title,
+          providerType: "provided",
+          models: provided,
+        });
       }
       if (configured.length > 0) {
-        groups.push({ provider, title, providerType: "configured", models: configured });
+        groups.push({
+          provider,
+          title,
+          providerType: "configured",
+          models: configured,
+        });
       }
     }
 

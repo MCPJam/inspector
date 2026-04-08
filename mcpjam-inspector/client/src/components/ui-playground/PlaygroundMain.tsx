@@ -163,8 +163,6 @@ interface PlaygroundMainProps {
 
 type PlaygroundTraceViewMode = "chat" | "timeline" | "raw";
 
-
-
 // Invoking indicator component (ChatGPT-style "Invoking [toolName]")
 function InvokingIndicator({
   toolName,
@@ -1357,9 +1355,7 @@ export function PlaygroundMain({
                 model={multiModelTracePanelModel}
                 toolsMetadata={toolsMetadata}
                 toolServerMap={toolServerMap}
-                traceStartedAtMs={
-                  liveTraceEnvelope?.traceStartedAtMs ?? null
-                }
+                traceStartedAtMs={liveTraceEnvelope?.traceStartedAtMs ?? null}
                 traceEndedAtMs={liveTraceEnvelope?.traceEndedAtMs ?? null}
                 rawXRayMirror={{
                   payload: playgroundRawXRayMirror.payload,
@@ -1389,10 +1385,7 @@ export function PlaygroundMain({
                   ) : null
                 }
                 chatInputSlot={
-                  <ChatInput
-                    {...sharedChatInputProps}
-                    hasMessages={false}
-                  />
+                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
                 }
               />
             ) : null}
@@ -1417,10 +1410,7 @@ export function PlaygroundMain({
                 }
                 onStarterPrompt={handleMultiModelStarterPrompt}
                 chatInputSlot={
-                  <ChatInput
-                    {...sharedChatInputProps}
-                    hasMessages={false}
-                  />
+                  <ChatInput {...sharedChatInputProps} hasMessages={false} />
                 }
               />
             ) : null}
@@ -1476,9 +1466,7 @@ export function PlaygroundMain({
                       invokingMessage={invokingMessage}
                       onSummaryChange={handleMultiModelSummaryChange}
                       onHasMessagesChange={handleMultiModelHasMessagesChange}
-                      showComparisonChrome={
-                        resolvedSelectedModels.length > 1
-                      }
+                      showComparisonChrome={resolvedSelectedModels.length > 1}
                       suppressThreadEmptyHint={false}
                     />
                   ))}

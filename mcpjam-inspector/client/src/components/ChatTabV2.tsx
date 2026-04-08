@@ -105,7 +105,6 @@ interface ChatTabProps {
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
-
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
   selectedServerNames,

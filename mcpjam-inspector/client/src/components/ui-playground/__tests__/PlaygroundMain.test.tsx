@@ -502,9 +502,10 @@ vi.mock("@/state/app-state-context", () => ({
 
 // Mock chat-helpers (keep real placeholders; stub formatError + empty starters for stable tests)
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/components/chat-v2/shared/chat-helpers")
-  >();
+  const actual =
+    await importOriginal<
+      typeof import("@/components/chat-v2/shared/chat-helpers")
+    >();
   return {
     ...actual,
     formatErrorMessage: (error: any) =>
@@ -1285,9 +1286,7 @@ describe("PlaygroundMain", () => {
       mockUseChatSession.selectedModelIds = ["gpt-4", "claude-sonnet-4-5"];
       mockUseChatSession.multiModelEnabled = true;
 
-      render(
-        <PlaygroundMain {...defaultProps} enableMultiModelChat={true} />,
-      );
+      render(<PlaygroundMain {...defaultProps} enableMultiModelChat={true} />);
 
       expect(
         screen.getAllByPlaceholderText("Sign in to use free chat").length,

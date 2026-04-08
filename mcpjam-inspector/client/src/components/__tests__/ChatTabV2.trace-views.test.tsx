@@ -104,9 +104,10 @@ vi.mock("@/components/chat-v2/error", () => ({
 }));
 
 vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/components/chat-v2/shared/chat-helpers")
-  >();
+  const actual =
+    await importOriginal<
+      typeof import("@/components/chat-v2/shared/chat-helpers")
+    >();
   return {
     ...actual,
     STARTER_PROMPTS: [],

@@ -783,7 +783,10 @@ async function handlePendingApprovals(
           stepIndex,
           toolCallId,
           toolName,
-          output: { type: "error-text", value: "Tool execution denied by user." },
+          output: {
+            type: "error-text",
+            value: "Tool execution denied by user.",
+          },
           errorText: "Tool execution denied by user.",
         });
       }
@@ -832,7 +835,13 @@ async function handlePendingApprovals(
       tools: tools as Record<string, any>,
     });
 
-    emitToolResults(writer, mcpClientManager, newMessages, traceTurn, stepIndex);
+    emitToolResults(
+      writer,
+      mcpClientManager,
+      newMessages,
+      traceTurn,
+      stepIndex,
+    );
     didHandle = true;
   }
 
