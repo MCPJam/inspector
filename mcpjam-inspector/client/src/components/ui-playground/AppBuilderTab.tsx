@@ -98,6 +98,7 @@ export function AppBuilderTab({
     formFields,
     isExecuting,
     deviceType,
+    hostStyle,
     isSidebarVisible,
     selectedProtocol,
     setTools,
@@ -380,6 +381,9 @@ export function AppBuilderTab({
             }
             initialInputTypewriter={firstRunComposerSeed}
             blockSubmitUntilServerConnected={firstRunComposerSeed}
+            loadingIndicatorVariant={
+              hostStyle === "chatgpt" ? "chatgpt-dot" : "claude-mark"
+            }
             pulseSubmit={firstRunComposerSeed}
             showPostConnectGuide={false}
             onFirstMessageSent={
