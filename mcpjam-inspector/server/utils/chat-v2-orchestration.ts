@@ -21,6 +21,7 @@ import { MCPClientManager } from "@mcpjam/sdk";
 import {
   isAnthropicCompatibleModel,
   getInvalidAnthropicToolNames,
+  scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
   type CustomProviderConfig,
@@ -65,7 +66,7 @@ function truncateToolDescription(
   return `${normalized.slice(0, maxLength - 3)}...`;
 }
 
-function buildMcpToolInventoryPrompt(
+export function buildMcpToolInventoryPrompt(
   mcpTools: Record<string, unknown>,
   selectedServers?: string[],
 ): string {
@@ -92,8 +93,6 @@ function buildMcpToolInventoryPrompt(
     serverGroups.set(serverId, existing);
   }
 
-  if (serverGroups.size === 0) return "";
-
   const preferredServerIds = Array.from(new Set(selectedServers ?? [])).filter(
     (serverId) => serverGroups.has(serverId),
   );
@@ -115,11 +114,25 @@ function buildMcpToolInventoryPrompt(
     })
     .join("\n\n");
 
-  return [
+  const sections = [
     "## Connected MCP Tools",
-    "You have direct access to the following MCP tools. If the user asks what tools or servers are available, answer from this list instead of saying you do not have MCP visibility.",
-    serverSections,
-  ].join("\n\n");
+    "Tool availability can change between turns. Only the MCP tools listed in this section are currently callable.",
+    "If the user asks what tools or servers are available, answer from this list instead of saying you do not have MCP visibility.",
+    "If a tool was mentioned earlier in the conversation but is not listed here, do not call it and do not claim it is still available.",
+  ];
+
+  if (serverGroups.size === 0) {
+    sections.push("No MCP tools are currently connected.");
+    return sections.join("\n\n");
+  }
+
+  sections.push("You have direct access to the following MCP tools.");
+  sections.push(
+    "If the user explicitly asks you to call or use one of these tools by name, call it instead of claiming you do not have it.",
+  );
+  sections.push(serverSections);
+
+  return sections.join("\n\n");
 }
 
 /**
@@ -167,6 +180,7 @@ export async function prepareChatV2(
     : (skillTools as Record<string, unknown>);
 
   const allTools = { ...mcpTools, ...finalSkillTools } as ToolSet;
+  const availableToolNames = Object.keys(allTools);
 
   // 2. Anthropic tool name validation
   if (isAnthropicCompatibleModel(modelDefinition, customProviders)) {
@@ -186,6 +200,7 @@ export async function prepareChatV2(
     skillsPromptSection,
   ]
     .filter((section): section is string => Boolean(section?.trim()))
+    .map((section) => section.trim())
     .join("\n\n");
 
   // 4. Temperature resolution
@@ -197,7 +212,7 @@ export async function prepareChatV2(
   const scrubMessages = (msgs: ModelMessage[]) =>
     scrubChatGPTAppsToolResultsForBackend(
       scrubMcpAppsToolResultsForBackend(
-        msgs,
+        scrubUnavailableToolHistoryForBackend(msgs, availableToolNames),
         mcpClientManager,
         selectedServers,
       ),

@@ -14,7 +14,6 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/lib/guest-session", () => ({
   getGuestBearerToken: vi.fn(),
   forceRefreshGuestSession: vi.fn(),
-  peekStoredGuestToken: vi.fn(() => null),
 }));
 
 vi.mock("@/lib/apis/web/context", async () => {

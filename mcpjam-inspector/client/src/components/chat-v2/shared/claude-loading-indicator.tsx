@@ -1,5 +1,4 @@
 import { useReducedMotion } from "framer-motion";
-import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 
 const CLAUDE_STATIC_PATH =
@@ -22,8 +21,6 @@ interface ClaudeSvgProps {
   viewBox: string;
   pathData: string;
   className?: string;
-  preserveAspectRatio?: string;
-  style?: CSSProperties;
   testId: string;
   hidden?: boolean;
 }
@@ -32,8 +29,6 @@ function ClaudeSvg({
   viewBox,
   pathData,
   className,
-  preserveAspectRatio,
-  style,
   testId,
   hidden = false,
 }: ClaudeSvgProps) {
@@ -42,8 +37,6 @@ function ClaudeSvg({
       xmlns="http://www.w3.org/2000/svg"
       viewBox={viewBox}
       className={className}
-      preserveAspectRatio={preserveAspectRatio}
-      style={style}
       data-testid={testId}
       hidden={hidden}
     >
@@ -91,7 +84,7 @@ export function ClaudeLoadingIndicator({
             >
               <span
                 data-testid="loading-indicator-claude-stage"
-                className="claude-loading-indicator__stage relative block h-full w-full [&>svg]:block [&>svg]:w-full"
+                className="claude-loading-indicator__stage relative block h-full w-full [&>svg]:block [&>svg]:w-full [&>svg]:fill-current"
               >
                 <ClaudeSvg
                   viewBox="0 0 100 100"
@@ -104,8 +97,6 @@ export function ClaudeLoadingIndicator({
                   viewBox="0 0 100 900"
                   pathData={CLAUDE_STRIP_900_PATH}
                   className="claude-loading-indicator__strip claude-loading-indicator__strip--900"
-                  preserveAspectRatio="xMidYMin meet"
-                  style={{ aspectRatio: "1 / 9" }}
                   testId="loading-indicator-claude-strip-900"
                   hidden={!showAnimatedStrips}
                 />
@@ -113,8 +104,6 @@ export function ClaudeLoadingIndicator({
                   viewBox="0 0 100 800"
                   pathData={CLAUDE_STRIP_800_PATH}
                   className="claude-loading-indicator__strip claude-loading-indicator__strip--800"
-                  preserveAspectRatio="xMidYMin meet"
-                  style={{ aspectRatio: "1 / 8" }}
                   testId="loading-indicator-claude-strip-800"
                   hidden={!showAnimatedStrips}
                 />

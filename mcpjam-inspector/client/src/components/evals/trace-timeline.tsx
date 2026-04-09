@@ -2104,7 +2104,7 @@ export function TraceTimeline({
         >
           <ResizablePanel
             defaultSize={65}
-            minSize={0}
+            minSize={40}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <ScrollArea
@@ -2525,6 +2525,7 @@ export function TraceTimeline({
           <ResizablePanel
             defaultSize={35}
             minSize={20}
+            maxSize={50}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <div

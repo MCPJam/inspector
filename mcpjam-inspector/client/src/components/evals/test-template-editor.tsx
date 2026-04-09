@@ -2532,25 +2532,21 @@ function RunColumn({
     record.streamingMetrics?.toolCallCount ?? record.metrics.toolCallCount;
   const toolCallLabel =
     toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
-  const isFailedCompareRecord =
-    record.status === "failed" || record.result === "failed";
 
   // Compute relative metrics across all completed records for comparison bars
-  const comparableRecords = allRecords.filter(
+  const completedRecords = allRecords.filter(
     (r) =>
-      r.status !== "failed" &&
-      r.result !== "failed" &&
       r.metrics.durationMs != null &&
       r.metrics.durationMs > 0 &&
       (r.status === "completed" || r.iteration != null),
   );
-  const allDurations = comparableRecords
+  const allDurations = completedRecords
     .map((r) => r.metrics.durationMs!)
     .filter(Boolean);
-  const allTokens = comparableRecords
+  const allTokens = completedRecords
     .map((r) => r.metrics.tokensUsed)
     .filter((t) => t > 0);
-  const allToolCounts = comparableRecords
+  const allToolCounts = completedRecords
     .map((r) => r.metrics.toolCallCount)
     .filter((t) => t > 0);
 
@@ -2562,34 +2558,19 @@ function RunColumn({
     allToolCounts.length > 0 ? Math.min(...allToolCounts) : 0;
 
   const currentDuration = record.metrics.durationMs ?? 0;
-  const hasComparison = comparableRecords.length > 1;
-  const hasRunningRecord = allRecords.some((item) => item.status === "running");
-  const canHighlightWinner = hasComparison && !hasRunningRecord;
+  const hasComparison = completedRecords.length > 1;
 
   const isFastest =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    currentDuration === minDuration &&
-    currentDuration > 0;
+    hasComparison && currentDuration === minDuration && currentDuration > 0;
   const isFewestTokens =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    displayTokens === minTokens &&
-    displayTokens > 0;
+    hasComparison && displayTokens === minTokens && displayTokens > 0;
   const isFewestTools =
-    canHighlightWinner &&
-    !isFailedCompareRecord &&
-    toolCount === minToolCount &&
-    toolCount > 0;
+    hasComparison && toolCount === minToolCount && toolCount > 0;
 
   const durationBarPct =
-    maxDuration > 0
-      ? Math.min(100, Math.max(4, (currentDuration / maxDuration) * 100))
-      : 0;
+    maxDuration > 0 ? Math.max(4, (currentDuration / maxDuration) * 100) : 0;
   const tokensBarPct =
-    maxTokens > 0
-      ? Math.min(100, Math.max(4, (displayTokens / maxTokens) * 100))
-      : 0;
+    maxTokens > 0 ? Math.max(4, (displayTokens / maxTokens) * 100) : 0;
 
   return (
     <div className="flex h-auto min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-border/60 bg-card/40 lg:h-full">

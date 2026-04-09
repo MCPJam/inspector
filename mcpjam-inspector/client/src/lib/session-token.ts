@@ -18,10 +18,7 @@ import {
   resetTokenCache,
   shouldRetryHostedAuth401,
 } from "@/lib/apis/web/context";
-import {
-  forceRefreshGuestSession,
-  peekStoredGuestToken,
-} from "@/lib/guest-session";
+import { forceRefreshGuestSession } from "@/lib/guest-session";
 
 // Extend window type for the injected token
 declare global {
@@ -75,50 +72,6 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
   return Object.keys(headers).some(
     (key) => key.toLowerCase() === "authorization",
   );
-}
-
-/**
- * Extract the raw bearer token from caller-provided headers, if present.
- * Returns the token string (without "Bearer " prefix), or null.
- */
-function extractBearerToken(headers?: HeadersInit): string | null {
-  if (!headers) return null;
-
-  let value: string | undefined;
-
-  if (headers instanceof Headers) {
-    value = headers.get("Authorization") ?? undefined;
-  } else if (Array.isArray(headers)) {
-    const entry = headers.find(
-      ([key]) => key.toLowerCase() === "authorization",
-    );
-    value = entry?.[1];
-  } else {
-    const key = Object.keys(headers).find(
-      (k) => k.toLowerCase() === "authorization",
-    );
-    value = key ? (headers as Record<string, string>)[key] : undefined;
-  }
-
-  if (value && value.startsWith("Bearer ")) {
-    return value.slice("Bearer ".length);
-  }
-  return null;
-}
-
-/**
- * Check if a caller-provided Authorization header contains a stale guest
- * bearer token. During the guest→signed-in transition, the chat transport
- * may still hold a captured guest bearer that should not block retry logic.
- */
-function isCallerAuthStaleGuestBearer(headers?: HeadersInit): boolean {
-  const callerToken = extractBearerToken(headers);
-  if (!callerToken) return false;
-
-  const storedGuestToken = peekStoredGuestToken();
-  if (!storedGuestToken) return false;
-
-  return callerToken === storedGuestToken;
 }
 
 function buildAuthFetchInit(
@@ -282,8 +235,7 @@ export async function authFetch(
     response.status !== 401 ||
     !HOSTED_MODE ||
     !shouldRetryHostedAuth401() ||
-    (callerProvidedAuthorization &&
-      !isCallerAuthStaleGuestBearer(init?.headers))
+    callerProvidedAuthorization
   ) {
     return response;
   }

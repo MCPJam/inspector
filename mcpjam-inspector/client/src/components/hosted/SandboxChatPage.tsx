@@ -681,9 +681,6 @@ export function SandboxChatPage({
           )}
           minimalMode
           reasoningDisplayMode="hidden"
-          loadingIndicatorVariant={
-            hostStyle === "chatgpt" ? "chatgpt-dot" : "claude-mark"
-          }
           hostedWorkspaceIdOverride={session.payload.workspaceId}
           hostedSelectedServerIdsOverride={sessionServersActive.map(
             (server) => server.serverId,
