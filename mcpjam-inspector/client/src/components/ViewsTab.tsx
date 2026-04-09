@@ -1022,7 +1022,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
       >
         {/* Left Panel - Views List or Editor */}
         <ResizablePanel
-          defaultSize={55}
+          defaultSize={40}
           minSize={30}
           maxSize={70}
           className="border-r bg-muted/30 flex flex-col"
@@ -1072,7 +1072,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
         {/* Right Panel - UI Preview or Empty State */}
         <ResizablePanel
-          defaultSize={45}
+          defaultSize={60}
           className="flex flex-col overflow-hidden"
         >
           {!selectedView ? (

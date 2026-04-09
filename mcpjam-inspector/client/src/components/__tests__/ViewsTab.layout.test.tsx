@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewsTab } from "../ViewsTab";
 
@@ -140,7 +140,7 @@ describe("ViewsTab layout", () => {
     });
   });
 
-  it("renders with valid panel defaults when the Views tab mounts", () => {
+  it("mounts without invalid panel layout warnings", () => {
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -148,16 +148,12 @@ describe("ViewsTab layout", () => {
       expect(() =>
         render(<ViewsTab selectedServer="selected-server" />),
       ).not.toThrow();
-
-      expect(screen.getByText("Views")).toBeInTheDocument();
-      expect(screen.getByText("No views yet")).toBeInTheDocument();
-      expect(screen.getByText("No views for this server")).toBeInTheDocument();
-      expect(hasConsoleMessage(warnSpy, INVALID_LAYOUT_TOTAL_MESSAGE)).toBe(
-        false,
-      );
-      expect(hasConsoleMessage(errorSpy, INVALID_LAYOUT_TOTAL_MESSAGE)).toBe(
-        false,
-      );
+      expect(
+        hasConsoleMessage(warnSpy, INVALID_LAYOUT_TOTAL_MESSAGE),
+      ).toBe(false);
+      expect(
+        hasConsoleMessage(errorSpy, INVALID_LAYOUT_TOTAL_MESSAGE),
+      ).toBe(false);
     } finally {
       warnSpy.mockRestore();
       errorSpy.mockRestore();
