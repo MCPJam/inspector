@@ -23,37 +23,35 @@ const {
     hasPendingMembers: false,
   }));
   const useChatHistoryMock = vi.fn(() => ({
-      personal: [] as ChatHistorySession[],
-      workspace: [] as ChatHistorySession[],
-      loading: false,
-      error: null,
-      isReactive: false,
-      refetch: refetchMock,
-      actions: {
-        rename: vi.fn(),
-        archive: vi.fn(),
-        unarchive: vi.fn(),
-        share: vi.fn(),
-        unshare: vi.fn(),
-        pin: vi.fn(),
-        unpin: vi.fn(),
-        archiveManySessionIds: archiveManySessionIdsMock,
-        archiveAllActive: vi.fn(),
-      },
-    }));
-    return {
-      refetchMock,
-      archiveManySessionIdsMock,
-      useChatHistoryMock,
-      useWorkspaceMembersMock,
-      chatHistoryRowPropsSpy,
-    };
-  },
-);
+    personal: [] as ChatHistorySession[],
+    workspace: [] as ChatHistorySession[],
+    loading: false,
+    error: null,
+    isReactive: false,
+    refetch: refetchMock,
+    actions: {
+      rename: vi.fn(),
+      archive: vi.fn(),
+      unarchive: vi.fn(),
+      share: vi.fn(),
+      unshare: vi.fn(),
+      pin: vi.fn(),
+      unpin: vi.fn(),
+      archiveManySessionIds: archiveManySessionIdsMock,
+      archiveAllActive: vi.fn(),
+    },
+  }));
+  return {
+    refetchMock,
+    archiveManySessionIdsMock,
+    useChatHistoryMock,
+    useWorkspaceMembersMock,
+    chatHistoryRowPropsSpy,
+  };
+});
 
 vi.mock("@/hooks/useWorkspaces", () => ({
-  useWorkspaceMembers: (...args: unknown[]) =>
-    useWorkspaceMembersMock(...args),
+  useWorkspaceMembers: (...args: unknown[]) => useWorkspaceMembersMock(...args),
 }));
 
 vi.mock("../use-chat-history", () => ({
@@ -372,7 +370,8 @@ describe("ChatHistoryRail", () => {
     );
 
     const personalCall = chatHistoryRowPropsSpy.mock.calls.find(
-      (c) => (c[0] as { session?: ChatHistorySession }).session?._id === "p-only",
+      (c) =>
+        (c[0] as { session?: ChatHistorySession }).session?._id === "p-only",
     );
     expect(personalCall?.[0]).not.toHaveProperty("workspaceThreadOwner");
   });

@@ -58,9 +58,9 @@ export function useChatHistory({
   requestHeaders,
 }: UseChatHistoryOptions): UseChatHistoryReturn {
   const { isAuthenticated, isLoading: isAuthLoading } = useConvexAuth();
-  const [personalFallback, setPersonalFallback] = useState<ChatHistorySession[]>(
-    [],
-  );
+  const [personalFallback, setPersonalFallback] = useState<
+    ChatHistorySession[]
+  >([]);
   const [workspaceFallback, setWorkspaceFallback] = useState<
     ChatHistorySession[]
   >([]);

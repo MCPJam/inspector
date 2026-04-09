@@ -6,7 +6,9 @@ import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { ChatHistoryRow } from "../ChatHistoryRow";
 import { getModelById } from "@/shared/types";
 
-function sessionStub(overrides: Partial<ChatHistorySession> = {}): ChatHistorySession {
+function sessionStub(
+  overrides: Partial<ChatHistorySession> = {},
+): ChatHistorySession {
   return {
     _id: "s1",
     chatSessionId: "chat-s1",
@@ -35,7 +37,9 @@ const actions = {
 };
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
-  DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
+  DropdownMenu: ({ children }: { children: ReactNode }) => (
+    <div>{children}</div>
+  ),
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
     <button type="button">{children}</button>
   ),
@@ -62,9 +66,12 @@ vi.mock("@/components/ui/input", () => ({
 
 vi.mock("@/components/ui/tooltip", () => ({
   Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
-  TooltipTrigger: ({ children }: { children: ReactNode; asChild?: boolean }) => (
-    <>{children}</>
-  ),
+  TooltipTrigger: ({
+    children,
+  }: {
+    children: ReactNode;
+    asChild?: boolean;
+  }) => <>{children}</>,
   TooltipContent: () => null,
 }));
 
@@ -280,7 +287,8 @@ describe("ChatHistoryRow", () => {
   });
 
   it("keeps long custom titles truncatable within a narrow rail", () => {
-    const longTitle = "suuuuuuuuuuper long prompt suuuuuuuuuupersuuuuuuuuuupersuuuu";
+    const longTitle =
+      "suuuuuuuuuuper long prompt suuuuuuuuuupersuuuuuuuuuupersuuuu";
     render(
       <div style={{ width: 120 }}>
         <ChatHistoryRow

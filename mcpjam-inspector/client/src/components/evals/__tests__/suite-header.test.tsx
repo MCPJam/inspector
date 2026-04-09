@@ -200,9 +200,9 @@ describe("SuiteHeader", () => {
       />,
     );
 
-    const generateBtn = screen.getByRole("button", { name: /generate/i });
-    expect(generateBtn).toHaveAttribute("aria-busy", "true");
-    expect(generateBtn).toBeDisabled();
-    expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
+  const generateBtn = screen.getByRole("button", { name: /generate/i });
+  expect(generateBtn).toHaveAttribute("aria-busy", "true");
+  expect(generateBtn).toBeDisabled();
+  expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
   });
 });

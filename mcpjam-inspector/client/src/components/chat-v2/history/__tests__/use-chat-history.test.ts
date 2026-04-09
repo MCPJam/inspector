@@ -34,7 +34,8 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/lib/apis/web/chat-history-api", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/apis/web/chat-history-api")>();
+  const actual =
+    await importOriginal<typeof import("@/lib/apis/web/chat-history-api")>();
   return {
     ...actual,
     listChatHistory: vi.fn(),

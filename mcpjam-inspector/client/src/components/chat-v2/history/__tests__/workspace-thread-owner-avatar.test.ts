@@ -6,7 +6,9 @@ import {
   resolveWorkspaceThreadOwnerAvatar,
 } from "../workspace-thread-owner-avatar";
 
-function session(overrides: Partial<ChatHistorySession> = {}): ChatHistorySession {
+function session(
+  overrides: Partial<ChatHistorySession> = {},
+): ChatHistorySession {
   return {
     _id: "doc1",
     chatSessionId: "chat1",
@@ -64,7 +66,10 @@ describe("buildWorkspaceOwnerProfileByUserId", () => {
   it("skips members without userId or user payload", () => {
     const map = buildWorkspaceOwnerProfileByUserId([
       { ...member("u1", null), user: null },
-      { ...member("", { name: "x", email: "e", imageUrl: "" }), userId: undefined },
+      {
+        ...member("", { name: "x", email: "e", imageUrl: "" }),
+        userId: undefined,
+      },
     ]);
     expect(map.size).toBe(0);
   });

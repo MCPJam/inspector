@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -152,7 +146,9 @@ function ThreadSection({
                       )}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">{archiveTooltip}</TooltipContent>
+                  <TooltipContent side="bottom">
+                    {archiveTooltip}
+                  </TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -184,9 +180,7 @@ function ThreadSection({
           )}
         >
           <div className="min-h-0 min-w-0 overflow-x-hidden">
-            <div className="min-w-0 space-y-0.5 py-0.5 pl-1.5">
-              {children}
-            </div>
+            <div className="min-w-0 space-y-0.5 py-0.5 pl-1.5">{children}</div>
           </div>
         </CollapsibleContent>
       </section>
@@ -278,9 +272,7 @@ export function ChatHistoryRail({
 
     const activeInSection = sessions.some((s) => s._id === activeSessionId);
     if (activeInSection && beforeResetChatAfterArchiveAll) {
-      const allowed = await Promise.resolve(
-        beforeResetChatAfterArchiveAll(),
-      );
+      const allowed = await Promise.resolve(beforeResetChatAfterArchiveAll());
       if (!allowed) {
         return;
       }
