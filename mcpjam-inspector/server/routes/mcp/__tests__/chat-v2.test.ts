@@ -156,7 +156,6 @@ vi.mock("../../../utils/chat-helpers", async () => {
 vi.mock("@/shared/types", () => ({
   isGPT5Model: vi.fn().mockReturnValue(false),
   isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
-  isGuestAllowedModel: vi.fn().mockReturnValue(true),
 }));
 
 vi.mock("../../../utils/guest-auth.js", () => ({
@@ -808,6 +807,47 @@ describe("POST /api/mcp/chat-v2", () => {
             authorization: "Bearer guest-test-token",
           }),
         });
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it("does NOT reject MCPJam models that are outside the old guest-allowed list", async () => {
+      const { isMCPJamProvidedModel } = await import("@/shared/types");
+      vi.mocked(isMCPJamProvidedModel).mockReturnValue(true);
+
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "openai/gpt-4o-mini", provider: "openai" },
+        });
+
+        // Should succeed, not return 403
+        expect(res.status).toBe(200);
       } finally {
         global.fetch = originalFetch;
       }
