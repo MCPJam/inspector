@@ -20,8 +20,8 @@ import { Label } from "@/components/ui/label";
 import {
   getDefaultRegistrationStrategy,
   getSupportedRegistrationStrategies,
-} from "@/lib/oauth/state-machines/factory";
-import type { OAuthProtocolVersion } from "@/lib/oauth/state-machines/types";
+  type OAuthProtocolVersion,
+} from "@mcpjam/sdk/browser";
 import type {
   OAuthRegistrationStrategy,
   OAuthTestProfile,

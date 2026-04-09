@@ -12,22 +12,22 @@ import type {
   RegistrationStrategy2025_03_26,
   RegistrationStrategy2025_06_18,
   RegistrationStrategy2025_11_25,
-} from "./types";
+} from "./types.js";
 
 import {
   createDebugOAuthStateMachine as create2025_03_26,
   type DebugOAuthStateMachineConfig as Config2025_03_26,
-} from "./debug-oauth-2025-03-26";
+} from "./debug-oauth-2025-03-26.js";
 
 import {
   createDebugOAuthStateMachine as create2025_06_18,
   type DebugOAuthStateMachineConfig as Config2025_06_18,
-} from "./debug-oauth-2025-06-18";
+} from "./debug-oauth-2025-06-18.js";
 
 import {
   createDebugOAuthStateMachine as create2025_11_25,
   type DebugOAuthStateMachineConfig as Config2025_11_25,
-} from "./debug-oauth-2025-11-25";
+} from "./debug-oauth-2025-11-25.js";
 
 /**
  * Configuration for creating an OAuth state machine with protocol version selection

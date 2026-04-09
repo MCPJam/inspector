@@ -9,50 +9,39 @@
  * - No Client ID Metadata Documents support
  */
 
-import { decodeJWT, formatJWTTimestamp } from "../jwt-decoder";
-import { EMPTY_OAUTH_FLOW_STATE } from "./types";
+import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
+import { EMPTY_OAUTH_FLOW_STATE } from "./types.js";
 import type {
+  BaseOAuthStateMachineConfig,
   OAuthFlowStep,
   OAuthFlowState,
   OAuthStateMachine,
   RegistrationStrategy2025_03_26,
   HttpHistoryEntry,
-} from "./types";
-import type { DiagramAction } from "./shared/types";
+} from "./types.js";
+import type { DiagramAction } from "./shared/types.js";
 import {
-  proxyFetch,
   addInfoLog,
-  generateRandomString,
-  generateCodeChallenge,
-  loadPreregisteredCredentials,
   markLatestHttpEntryAsError,
   toLogErrorDetails,
+} from "./shared/logging.js";
+import {
   mergeHeaders,
   mergeHeadersForAuthServer,
-} from "./shared/helpers";
+  normalizeHeaders,
+} from "./shared/headers.js";
+import {
+  generateRandomString,
+  generateCodeChallenge,
+} from "./shared/pkce.js";
 
 // Re-export types for backward compatibility
 export type { OAuthFlowStep, OAuthFlowState };
 export { EMPTY_OAUTH_FLOW_STATE };
 
-// Legacy type alias
-export type OauthFlowStateJune2025 = OAuthFlowState;
-
-// Legacy state export
-export const EMPTY_OAUTH_FLOW_STATE_V2: OauthFlowStateJune2025 =
-  EMPTY_OAUTH_FLOW_STATE;
-
 // Configuration for creating the state machine (2025-03-26 specific)
-export interface DebugOAuthStateMachineConfig {
-  state: OauthFlowStateJune2025;
-  getState?: () => OauthFlowStateJune2025;
-  updateState: (updates: Partial<OauthFlowStateJune2025>) => void;
-  serverUrl: string;
-  serverName: string;
-  redirectUrl?: string;
-  fetchFn?: typeof fetch;
-  customScopes?: string;
-  customHeaders?: Record<string, string>;
+export interface DebugOAuthStateMachineConfig
+  extends BaseOAuthStateMachineConfig {
   registrationStrategy?: RegistrationStrategy2025_03_26; // dcr | preregistered only
 }
 
@@ -308,7 +297,7 @@ export function buildActions_2025_03_26(
 }
 
 // Helper: Build authorization base URL from MCP server URL (2025-03-26 specific)
-// Discards path component and uses origin
+// Discards path component and uses origin for legacy fallback endpoints.
 function buildAuthorizationBaseUrl(serverUrl: string): string {
   const url = new URL(serverUrl);
   return url.origin;
@@ -356,20 +345,40 @@ export const createDebugOAuthStateMachine = (
     serverUrl,
     serverName,
     redirectUrl,
-    fetchFn = fetch,
+    requestExecutor,
+    scheduleAutoAdvance,
+    loadPreregisteredCredentials,
+    dynamicRegistration,
     customScopes,
     customHeaders,
     registrationStrategy = "dcr", // Default to DCR for 2025-03-26
   } = config;
 
-  const redirectUri =
-    redirectUrl || `${window.location.origin}/oauth/callback/debug`;
+  const redirectUri = redirectUrl;
+  const dynamicRegistrationDefaults = dynamicRegistration ?? {};
+
+  if (
+    registrationStrategy === "dcr" &&
+    !dynamicRegistrationDefaults.client_name
+  ) {
+    throw new Error(
+      "Dynamic registration metadata must include client_name",
+    );
+  }
 
   // Note: Unlike the 2025-06-18 and 2025-11-25 machines, this spec version
   // does not support Protected Resource Metadata (RFC 9728), so there is no
   // loggingFetch / discoverOAuthProtectedResourceMetadata path here.
 
   const getCurrentState = () => (getState ? getState() : initialState);
+
+  const executeRequest = (url: string, options: RequestInit = {}) =>
+    requestExecutor({
+      url,
+      method: options.method || "GET",
+      headers: normalizeHeaders(options.headers as HeadersInit | undefined),
+      body: options.body as any,
+    });
 
   const machine: OAuthStateMachine = {
     state: initialState,
@@ -379,6 +388,12 @@ export const createDebugOAuthStateMachine = (
       const state = getCurrentState();
 
       updateState({ isInitiatingAuth: true });
+
+      const autoAdvance = (delayMs: number) => {
+        scheduleAutoAdvance?.(() => {
+          void machine.proceedToNextStep();
+        }, delayMs);
+      };
 
       try {
         switch (state.currentStep) {
@@ -393,7 +408,7 @@ export const createDebugOAuthStateMachine = (
               isInitiatingAuth: false,
             });
 
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "request_without_token":
@@ -403,7 +418,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             try {
-              const response = await proxyFetch(state.serverUrl, {
+              const response = await executeRequest(state.serverUrl, {
                 method: "POST",
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
@@ -479,8 +494,9 @@ export const createDebugOAuthStateMachine = (
 
           case "discovery_start":
             // Step 3: Start authorization server metadata discovery
-            const authBaseUrl = buildAuthorizationBaseUrl(state.serverUrl!);
-            const authServerUrls = buildAuthServerMetadataUrls(authBaseUrl);
+            const discoveryBaseUrl = state.serverUrl!;
+            const authServerUrls =
+              buildAuthServerMetadataUrls(discoveryBaseUrl);
 
             const authServerRequest = {
               method: "GET",
@@ -490,7 +506,7 @@ export const createDebugOAuthStateMachine = (
 
             updateState({
               currentStep: "request_authorization_server_metadata",
-              authorizationServerUrl: authBaseUrl,
+              authorizationServerUrl: discoveryBaseUrl,
               lastRequest: authServerRequest,
               lastResponse: undefined,
               httpHistory: [
@@ -504,7 +520,7 @@ export const createDebugOAuthStateMachine = (
               isInitiatingAuth: false,
             });
 
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "request_authorization_server_metadata":
@@ -517,8 +533,6 @@ export const createDebugOAuthStateMachine = (
               state.authorizationServerUrl,
             );
             let authServerMetadata = null;
-            let lastError = null;
-            let successUrl = "";
             let finalResponseData: any = null;
 
             for (const url of urlsToTry) {
@@ -550,30 +564,28 @@ export const createDebugOAuthStateMachine = (
                   httpHistory: updatedHistoryForRetry,
                 });
 
-                const response = await proxyFetch(url, {
+                const response = await executeRequest(url, {
                   method: "GET",
                   headers: requestHeaders,
                 });
 
                 if (response.ok) {
                   authServerMetadata = response.body;
-                  successUrl = url;
                   finalResponseData = response;
                   break;
                 } else if (response.status >= 400 && response.status < 500) {
                   continue;
-                } else {
-                  lastError = new Error(`HTTP ${response.status} from ${url}`);
                 }
               } catch (error) {
-                lastError = error;
                 continue;
               }
             }
 
             // If discovery failed, use fallback endpoints
             if (!authServerMetadata) {
-              const baseUrl = state.authorizationServerUrl;
+              const baseUrl = buildAuthorizationBaseUrl(
+                state.authorizationServerUrl,
+              );
               authServerMetadata = {
                 issuer: baseUrl,
                 authorization_endpoint: `${baseUrl}/authorize`,
@@ -715,7 +727,10 @@ export const createDebugOAuthStateMachine = (
 
             if (registrationStrategy === "preregistered") {
               const { clientId, clientSecret } =
-                loadPreregisteredCredentials(serverName);
+                (await loadPreregisteredCredentials?.({
+                  serverName,
+                  serverUrl,
+                })) ?? {};
 
               if (!clientId) {
                 updateState({
@@ -762,12 +777,18 @@ export const createDebugOAuthStateMachine = (
                 state.authorizationServerMetadata.scopes_supported;
 
               const clientMetadata: Record<string, any> = {
-                client_name: "MCP Inspector Debug Client",
-                logo_uri: "https://www.mcpjam.com/mcp_jam_2row.png",
-                redirect_uris: [redirectUri],
-                grant_types: ["authorization_code", "refresh_token"],
-                response_types: ["code"],
-                token_endpoint_auth_method: "none",
+                ...dynamicRegistrationDefaults,
+                redirect_uris:
+                  dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
+                grant_types: dynamicRegistrationDefaults.grant_types ?? [
+                  "authorization_code",
+                  "refresh_token",
+                ],
+                response_types:
+                  dynamicRegistrationDefaults.response_types ?? ["code"],
+                token_endpoint_auth_method:
+                  dynamicRegistrationDefaults.token_endpoint_auth_method ??
+                  "none",
               };
 
               if (scopesSupported && scopesSupported.length > 0) {
@@ -798,7 +819,7 @@ export const createDebugOAuthStateMachine = (
                 isInitiatingAuth: false,
               });
 
-              setTimeout(() => machine.proceedToNextStep(), 50);
+              autoAdvance(50);
               return;
             } else {
               // No registration endpoint - use mock client ID
@@ -822,7 +843,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             try {
-              const response = await proxyFetch(
+              const response = await executeRequest(
                 state.authorizationServerMetadata.registration_endpoint,
                 {
                   method: "POST",
@@ -1116,7 +1137,7 @@ export const createDebugOAuthStateMachine = (
               isInitiatingAuth: false,
             });
 
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "token_request":
@@ -1152,7 +1173,7 @@ export const createDebugOAuthStateMachine = (
                 tokenRequestBody.set("resource", state.serverUrl);
               }
 
-              const response = await proxyFetch(
+              const response = await executeRequest(
                 state.authorizationServerMetadata.token_endpoint,
                 {
                   method: "POST",
@@ -1426,7 +1447,7 @@ export const createDebugOAuthStateMachine = (
               isInitiatingAuth: false,
             });
 
-            setTimeout(() => machine.proceedToNextStep(), 50);
+            autoAdvance(50);
             return;
 
           case "authenticated_mcp_request":
@@ -1436,7 +1457,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             try {
-              const response = await proxyFetch(state.serverUrl, {
+              const response = await executeRequest(state.serverUrl, {
                 method: "POST",
                 headers: mergeHeaders(customHeaders, {
                   Authorization: `Bearer ${state.accessToken}`,
@@ -1500,7 +1521,7 @@ export const createDebugOAuthStateMachine = (
 
                     // Don't add intermediate log - the detection result log below has all the info
 
-                    const getResponse = await proxyFetch(state.serverUrl, {
+                    const getResponse = await executeRequest(state.serverUrl, {
                       method: "GET",
                       headers: {
                         Authorization: `Bearer ${state.accessToken}`,
@@ -1780,7 +1801,7 @@ export const createDebugOAuthStateMachine = (
 
     resetFlow: () => {
       updateState({
-        ...EMPTY_OAUTH_FLOW_STATE_V2,
+        ...EMPTY_OAUTH_FLOW_STATE,
         lastRequest: undefined,
         lastResponse: undefined,
         httpHistory: [],

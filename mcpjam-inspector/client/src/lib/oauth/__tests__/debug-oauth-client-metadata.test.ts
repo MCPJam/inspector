@@ -1,48 +1,28 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  createDebugOAuthStateMachine as createDebugOAuthStateMachine20250326,
-  EMPTY_OAUTH_FLOW_STATE_V2 as EMPTY_OAUTH_FLOW_STATE_20250326,
-} from "../state-machines/debug-oauth-2025-03-26";
-import {
-  createDebugOAuthStateMachine as createDebugOAuthStateMachine20250618,
-  EMPTY_OAUTH_FLOW_STATE_V2 as EMPTY_OAUTH_FLOW_STATE_20250618,
-} from "../state-machines/debug-oauth-2025-06-18";
-import {
-  createDebugOAuthStateMachine as createDebugOAuthStateMachine20251125,
-  EMPTY_OAUTH_FLOW_STATE_V2 as EMPTY_OAUTH_FLOW_STATE_20251125,
-} from "../state-machines/debug-oauth-2025-11-25";
-import type {
-  OAuthFlowState,
-  OAuthStateMachine,
-} from "../state-machines/types";
+import { EMPTY_OAUTH_FLOW_STATE, type OAuthFlowState } from "@mcpjam/sdk/browser";
+import { createInspectorOAuthStateMachine } from "../debug-state-machine-adapter";
+
+vi.mock("@/lib/session-token", () => ({
+  authFetch: vi.fn(),
+}));
+
+vi.mock("@/lib/config", () => ({
+  HOSTED_MODE: false,
+}));
 
 const EXPECTED_LOGO_URI = "https://www.mcpjam.com/mcp_jam_2row.png";
-const REDIRECT_URI = "https://app.mcpjam.com/oauth/callback/debug";
 const REGISTRATION_ENDPOINT = "https://auth.example.com/register";
 
-type MachineFactory = (config: {
-  state: OAuthFlowState;
-  getState: () => OAuthFlowState;
-  updateState: (updates: Partial<OAuthFlowState>) => void;
-  serverUrl: string;
-  serverName: string;
-  redirectUrl: string;
-  registrationStrategy: "dcr";
-}) => OAuthStateMachine;
-
 type FlowCase = {
-  label: string;
-  createMachine: MachineFactory;
-  emptyState: OAuthFlowState;
+  protocolVersion: "2025-03-26" | "2025-06-18" | "2025-11-25";
   expectedClientName: string;
 };
 
 function createStateMachineHarness({
-  createMachine,
-  emptyState,
-}: Pick<FlowCase, "createMachine" | "emptyState">) {
+  protocolVersion,
+}: Pick<FlowCase, "protocolVersion">) {
   let state: OAuthFlowState = {
-    ...emptyState,
+    ...EMPTY_OAUTH_FLOW_STATE,
     currentStep: "received_authorization_server_metadata",
     authorizationServerMetadata: {
       issuer: "https://auth.example.com",
@@ -60,13 +40,13 @@ function createStateMachineHarness({
     state = { ...state, ...updates };
   };
 
-  const machine = createMachine({
+  const machine = createInspectorOAuthStateMachine({
+    protocolVersion,
     state,
     getState: () => state,
     updateState,
     serverUrl: "https://mcp.example.com",
     serverName: "Test Server",
-    redirectUrl: REDIRECT_URI,
     registrationStrategy: "dcr",
   });
 
@@ -76,7 +56,7 @@ function createStateMachineHarness({
   };
 }
 
-describe("OAuth debugger DCR client metadata", () => {
+describe("Inspector OAuth adapter client metadata defaults", () => {
   afterEach(() => {
     vi.clearAllTimers();
     vi.useRealTimers();
@@ -84,27 +64,22 @@ describe("OAuth debugger DCR client metadata", () => {
 
   it.each<FlowCase>([
     {
-      label: "2025-03-26",
-      createMachine: createDebugOAuthStateMachine20250326,
-      emptyState: EMPTY_OAUTH_FLOW_STATE_20250326,
+      protocolVersion: "2025-03-26",
       expectedClientName: "MCP Inspector Debug Client",
     },
     {
-      label: "2025-06-18",
-      createMachine: createDebugOAuthStateMachine20250618,
-      emptyState: EMPTY_OAUTH_FLOW_STATE_20250618,
+      protocolVersion: "2025-06-18",
       expectedClientName: "MCPJam Inspector Debug Client",
     },
     {
-      label: "2025-11-25",
-      createMachine: createDebugOAuthStateMachine20251125,
-      emptyState: EMPTY_OAUTH_FLOW_STATE_20251125,
+      protocolVersion: "2025-11-25",
       expectedClientName: "MCPJam Inspector Debug Client",
     },
   ])(
-    "%s includes logo_uri in the DCR registration payload",
+    "$protocolVersion includes the Inspector logo_uri and client_name in the DCR registration payload",
     async (flowCase) => {
       vi.useFakeTimers();
+      const redirectUri = `${window.location.origin}/oauth/callback/debug`;
 
       const { machine, getState } = createStateMachineHarness(flowCase);
 
@@ -117,7 +92,7 @@ describe("OAuth debugger DCR client metadata", () => {
         body: {
           client_name: flowCase.expectedClientName,
           logo_uri: EXPECTED_LOGO_URI,
-          redirect_uris: [REDIRECT_URI],
+          redirect_uris: [redirectUri],
           grant_types: ["authorization_code", "refresh_token"],
           response_types: ["code"],
           token_endpoint_auth_method: "none",

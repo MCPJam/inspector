@@ -20,7 +20,7 @@ import {
 import type {
   InfoLogLevel,
   LogErrorDetails,
-} from "@/lib/oauth/state-machines/types";
+} from "@mcpjam/sdk/browser";
 
 interface InfoLogEntryProps {
   label: string;
