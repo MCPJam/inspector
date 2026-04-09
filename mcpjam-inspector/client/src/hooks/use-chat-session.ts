@@ -55,7 +55,6 @@ import {
 } from "@/lib/session-token";
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
-import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -657,26 +656,7 @@ export function useChatSession({
       customProviders,
     });
     if (HOSTED_MODE) {
-      const mcpjamModels = models.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      );
-      // Guests should see the same MCPJam-hosted free model set as signed-in
-      // free users. Shared billing/feature entitlements still require auth.
-      if (guestMode) {
-        return mcpjamModels.filter((m) =>
-          GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
-        );
-      }
-      return mcpjamModels;
-    }
-    // Non-hosted: filter out non-guest MCPJam models when unauthenticated
-    // (keep user-provided models + 3 free MCPJam models)
-    if (!isAuthenticated) {
-      return models.filter(
-        (m) =>
-          !isMCPJamProvidedModel(String(m.id)) ||
-          isGuestAllowedModel(String(m.id)),
-      );
+      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
     }
     return models;
   }, [
@@ -685,8 +665,6 @@ export function useChatSession({
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
-    guestMode,
-    isAuthenticated,
     customProviders,
   ]);
 
@@ -1290,15 +1268,9 @@ export function useChatSession({
   }, [messages]);
 
   // Computed state for UI
-  // Compute guest access from React state instead of the global hostedApiContext.
-  // Shared chats are guest-capable even though they are scoped to a workspace,
-  // while direct guests have no workspace at all.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
-  // In non-hosted mode: auth is only needed if a future MCPJam model opts out
-  // of guest access. Current free-tier MCPJam models run on guest auth.
-  const requiresAuthForChat = HOSTED_MODE
-    ? true
-    : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));
+  // In non-hosted mode: MCPJam models no longer require sign-in.
+  const requiresAuthForChat = HOSTED_MODE;
   const isAuthReady =
     !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
   // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens

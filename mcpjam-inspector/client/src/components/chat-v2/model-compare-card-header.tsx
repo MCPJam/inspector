@@ -55,16 +55,18 @@ export function ModelCompareCardHeader({
     return null;
   }
 
-  const completedSummaries = allSummaries.filter(
-    (item) => item.durationMs != null && item.durationMs > 0,
+  const isErroredSummary = summary?.status === "error";
+  const comparableSummaries = allSummaries.filter(
+    (item) =>
+      item.status !== "error" && item.durationMs != null && item.durationMs > 0,
   );
-  const durationValues = completedSummaries
+  const durationValues = comparableSummaries
     .map((item) => item.durationMs ?? 0)
     .filter((value) => value > 0);
-  const tokenValues = completedSummaries
+  const tokenValues = comparableSummaries
     .map((item) => item.tokens)
     .filter((value) => value > 0);
-  const toolValues = completedSummaries
+  const toolValues = comparableSummaries
     .map((item) => item.toolCount)
     .filter((value) => value > 0);
 
@@ -75,23 +77,40 @@ export function ModelCompareCardHeader({
   const maxTokens = tokenValues.length > 0 ? Math.max(...tokenValues) : 0;
   const minTokens = tokenValues.length > 0 ? Math.min(...tokenValues) : 0;
   const minToolCount = toolValues.length > 0 ? Math.min(...toolValues) : 0;
-  const hasComparison = completedSummaries.length > 1;
+  const hasComparison = comparableSummaries.length > 1;
+  const hasRunningSummary = allSummaries.some(
+    (item) => item.status === "running",
+  );
+  const canHighlightWinner = hasComparison && !hasRunningSummary;
 
   const currentDuration = summary?.durationMs ?? 0;
   const currentTokens = summary?.tokens ?? 0;
   const currentToolCount = summary?.toolCount ?? 0;
 
   const isFastest =
-    hasComparison && currentDuration > 0 && currentDuration === minDuration;
+    canHighlightWinner &&
+    !isErroredSummary &&
+    currentDuration > 0 &&
+    currentDuration === minDuration;
   const isFewestTokens =
-    hasComparison && currentTokens > 0 && currentTokens === minTokens;
+    canHighlightWinner &&
+    !isErroredSummary &&
+    currentTokens > 0 &&
+    currentTokens === minTokens;
   const isFewestTools =
-    hasComparison && currentToolCount > 0 && currentToolCount === minToolCount;
+    canHighlightWinner &&
+    !isErroredSummary &&
+    currentToolCount > 0 &&
+    currentToolCount === minToolCount;
 
   const durationBarPct =
-    maxDuration > 0 ? Math.max(4, (currentDuration / maxDuration) * 100) : 0;
+    maxDuration > 0
+      ? Math.min(100, Math.max(4, (currentDuration / maxDuration) * 100))
+      : 0;
   const tokensBarPct =
-    maxTokens > 0 ? Math.max(4, (currentTokens / maxTokens) * 100) : 0;
+    maxTokens > 0
+      ? Math.min(100, Math.max(4, (currentTokens / maxTokens) * 100))
+      : 0;
 
   const statusIndicatorClass =
     summary?.status === "running"
