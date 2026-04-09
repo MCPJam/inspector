@@ -1270,7 +1270,7 @@ export function useChatSession({
   // Computed state for UI
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
   // In non-hosted mode: MCPJam models no longer require sign-in.
-  const requiresAuthForChat = HOSTED_MODE ? true : false;
+  const requiresAuthForChat = HOSTED_MODE;
   const isAuthReady =
     !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
   // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
