@@ -642,6 +642,7 @@
 }
 
 .claude-loading-indicator__strip {
+  display: block;
   left: 0;
   top: 0;
   width: 100%;

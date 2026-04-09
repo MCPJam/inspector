@@ -86,7 +86,7 @@ export function ClaudeLoadingIndicator({
             >
               <span
                 data-testid="loading-indicator-claude-stage"
-                className="claude-loading-indicator__stage relative block h-full w-full [&>svg]:block [&>svg]:w-full"
+                className="claude-loading-indicator__stage relative block h-full w-full"
               >
                 <ClaudeSvg
                   viewBox="0 0 100 100"
