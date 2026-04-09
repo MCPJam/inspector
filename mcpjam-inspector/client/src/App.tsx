@@ -1579,6 +1579,7 @@ export default function App() {
               allServerConfigs={workspaceServers}
               onServerToggle={toggleServerSelection}
               onReconnectServer={handleReconnect}
+              onAddServer={handleConnect}
               onSelectedServerNamesChange={setSelectedMCPConfigs}
               onHasMessagesChange={setChatHasMessages}
               enableMultiModelChat

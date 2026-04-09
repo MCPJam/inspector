@@ -34,7 +34,8 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
-import { ModelDefinition } from "@/shared/types";
+import { ModelDefinition, ServerFormData } from "@/shared/types";
+import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-prompt-selector";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
@@ -128,6 +129,8 @@ interface ChatInputProps {
   onServerToggle?: (serverName: string) => void;
   /** Reconnect a disconnected server. */
   onReconnectServer?: (serverName: string) => Promise<void>;
+  /** Add a new server (opens the add-server modal). */
+  onAddServer?: (formData: ServerFormData) => void;
   /** Hosted sandbox: optional servers not yet connected (Add server popover). */
   sandboxAttachableServers?: Array<{
     serverId: string;
@@ -182,6 +185,7 @@ export function ChatInput({
   allServerConfigs,
   onServerToggle,
   onReconnectServer,
+  onAddServer,
   sandboxAttachableServers,
   onAttachSandboxServer,
 }: ChatInputProps) {
@@ -200,6 +204,8 @@ export function ChatInput({
   >(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [plusPopoverOpen, setPlusPopoverOpen] = useState(false);
+  const [addServerModalOpen, setAddServerModalOpen] = useState(false);
+  const [systemPromptOpen, setSystemPromptOpen] = useState(false);
 
   const caret = useTextareaCaretPosition(
     textareaRef,
@@ -438,6 +444,7 @@ export function ChatInput({
         : "bg-muted text-muted-foreground cursor-not-allowed";
 
   return (
+    <>
     <form ref={formRef} className={cn("w-full", className)} onSubmit={onSubmit}>
       <div
         ref={containerRef}
@@ -580,16 +587,31 @@ export function ChatInput({
                   side="top"
                   sideOffset={8}
                 >
-                  {allServerConfigs &&
-                    onServerToggle &&
-                    Object.keys(allServerConfigs).length > 0 && (
+                  {(onAddServer ||
+                    (allServerConfigs &&
+                      onServerToggle &&
+                      Object.keys(allServerConfigs).length > 0)) && (
                       <div className="px-1 pt-1 pb-0">
                         <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
                           Servers
                         </p>
+                        {allServerConfigs &&
+                          onServerToggle &&
+                          Object.keys(allServerConfigs).length > 0 && (
                         <div className="max-h-48 overflow-y-auto">
-                          {Object.entries(allServerConfigs).map(
-                            ([name, server]) => {
+                          {Object.entries(allServerConfigs)
+                            .sort(([aName, a], [bName, b]) => {
+                              const statusOrder: Record<string, number> = {
+                                connected: 0,
+                                connecting: 1,
+                                failed: 2,
+                              };
+                              const aOrder = statusOrder[a.connectionStatus] ?? 3;
+                              const bOrder = statusOrder[b.connectionStatus] ?? 3;
+                              if (aOrder !== bOrder) return aOrder - bOrder;
+                              return aName.localeCompare(bName);
+                            })
+                            .map(([name, server]) => {
                               const isSelected =
                                 selectedServers?.includes(name) ?? false;
                               const isConnected =
@@ -664,6 +686,20 @@ export function ChatInput({
                             },
                           )}
                         </div>
+                        )}
+                        {onAddServer && (
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 cursor-pointer"
+                            onClick={() => {
+                              setPlusPopoverOpen(false);
+                              setAddServerModalOpen(true);
+                            }}
+                          >
+                            <Plus className="h-3.5 w-3.5" />
+                            Add server
+                          </button>
+                        )}
                       </div>
                     )}
 
@@ -689,31 +725,17 @@ export function ChatInput({
                       </button>
                     )}
 
-                    <SystemPromptSelector
-                      systemPrompt={
-                        systemPrompt ||
-                        "You are a helpful assistant with access to MCP tools."
-                      }
-                      onSystemPromptChange={onSystemPromptChange}
-                      temperature={temperature}
-                      onTemperatureChange={onTemperatureChange}
-                      isLoading={isLoading}
-                      hasMessages={hasMessages}
-                      onResetChat={onResetChat}
-                      currentModel={currentModel}
-                      multiModelEnabled={multiModelEnabled}
-                      selectedModels={effectiveSelectedModels}
-                      renderTrigger={
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
-                          onClick={() => setPlusPopoverOpen(false)}
-                        >
-                          <Settings2 className="h-4 w-4 text-muted-foreground" />
-                          System Prompt & Temperature
-                        </button>
-                      }
-                    />
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
+                      onClick={() => {
+                        setPlusPopoverOpen(false);
+                        setSystemPromptOpen(true);
+                      }}
+                    >
+                      <Settings2 className="h-4 w-4 text-muted-foreground" />
+                      System Prompt & Temperature
+                    </button>
 
                     {onRequireToolApprovalChange && (
                       <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
@@ -858,5 +880,37 @@ export function ChatInput({
         </div>
       </div>
     </form>
+
+      {onAddServer && (
+        <AddServerModal
+          isOpen={addServerModalOpen}
+          onClose={() => setAddServerModalOpen(false)}
+          onSubmit={(formData) => {
+            onAddServer(formData);
+            setAddServerModalOpen(false);
+          }}
+        />
+      )}
+
+      {!minimalMode && (
+        <SystemPromptSelector
+          systemPrompt={
+            systemPrompt ||
+            "You are a helpful assistant with access to MCP tools."
+          }
+          onSystemPromptChange={onSystemPromptChange}
+          temperature={temperature}
+          onTemperatureChange={onTemperatureChange}
+          isLoading={isLoading}
+          hasMessages={hasMessages}
+          onResetChat={onResetChat}
+          currentModel={currentModel}
+          multiModelEnabled={multiModelEnabled}
+          selectedModels={effectiveSelectedModels}
+          open={systemPromptOpen}
+          onOpenChange={setSystemPromptOpen}
+        />
+      )}
+    </>
   );
 }

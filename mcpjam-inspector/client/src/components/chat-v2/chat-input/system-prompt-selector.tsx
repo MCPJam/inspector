@@ -33,6 +33,10 @@ interface SystemPromptSelectorProps {
   selectedModels?: ModelDefinition[];
   /** Custom trigger element to replace the default toolbar button. */
   renderTrigger?: React.ReactNode;
+  /** Controlled open state (overrides internal state when provided). */
+  open?: boolean;
+  /** Callback when controlled open state changes. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function SystemPromptSelector({
@@ -48,8 +52,12 @@ export function SystemPromptSelector({
   multiModelEnabled = false,
   selectedModels,
   renderTrigger,
+  open: controlledOpen,
+  onOpenChange: controlledOnOpenChange,
 }: SystemPromptSelectorProps) {
-  const [isOpen, setIsOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const isOpen = controlledOpen ?? internalOpen;
+  const setIsOpen = controlledOnOpenChange ?? setInternalOpen;
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
   const [draftTemperature, setDraftTemperature] = useState(temperature);
   const [confirmReset, setConfirmReset] = useState(false);

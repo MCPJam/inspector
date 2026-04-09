@@ -106,6 +106,8 @@ interface ChatTabProps {
   onServerToggle?: (serverName: string) => void;
   /** Reconnect a disconnected server. */
   onReconnectServer?: (serverName: string) => Promise<void>;
+  /** Add a new server (opens add-server modal). */
+  onAddServer?: (formData: import("@/shared/types").ServerFormData) => void;
   onSelectedServerNamesChange?: (names: string[]) => void;
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
@@ -146,6 +148,7 @@ export function ChatTabV2({
   allServerConfigs,
   onServerToggle,
   onReconnectServer,
+  onAddServer,
   onSelectedServerNamesChange,
   onHasMessagesChange,
   enableMultiModelChat = false,
@@ -1846,6 +1849,7 @@ export function ChatTabV2({
     allServerConfigs,
     onServerToggle,
     onReconnectServer,
+    onAddServer,
     sandboxAttachableServers:
       sandboxOptionalInventory && sandboxOptionalInventory.length > 0
         ? sandboxOptionalInventory

@@ -1133,6 +1133,7 @@ export function PlaygroundMain({
     allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
     onServerToggle: handlePlaygroundServerToggle,
     onReconnectServer: playgroundServerSelectorProps?.onReconnect,
+    onAddServer: playgroundServerSelectorProps?.onConnect,
   };
 
   // Check if widget should take over the full container

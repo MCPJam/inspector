@@ -143,11 +143,8 @@ describe("ChatInput", () => {
       expect(screen.getByTestId("model-selector")).toHaveTextContent("GPT-4");
     });
 
-    it("renders system prompt selector inside plus dropdown", async () => {
+    it("renders system prompt selector", async () => {
       render(<ChatInput {...defaultProps} />);
-
-      const plusButton = screen.getByRole("button", { name: "Options" });
-      fireEvent.click(plusButton);
 
       expect(screen.getByTestId("system-prompt-selector")).toBeInTheDocument();
     });
