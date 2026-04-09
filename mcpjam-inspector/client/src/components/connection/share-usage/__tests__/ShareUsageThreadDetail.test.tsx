@@ -31,6 +31,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
 vi.mock("@/components/evals/trace-viewer-adapter", () => ({
   adaptTraceToUiMessages: (...args: unknown[]) =>
     mockAdaptTraceToUiMessages(...args),
+  snapshotsToTraceWidgetSnapshots: (snapshots: unknown[]) => snapshots,
 }));
 
 vi.mock("@/components/chat-v2/thread/message-view", () => ({

@@ -11,12 +11,18 @@ import {
   useWidgetDebugStore,
   type WidgetDebugInfo,
 } from "@/stores/widget-debug-store";
+import {
+  createChatHistoryWidgetSnapshot,
+  generateWidgetSnapshotUploadUrl,
+} from "@/lib/apis/web/chat-history-api";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
+  directGuestMode?: boolean;
   chatSessionId: string;
   hostedShareToken?: string;
   hostedSandboxToken?: string;
+  persistedSnapshotToolCallIds?: string[];
   messages: UIMessage[];
 }
 
@@ -162,9 +168,11 @@ function shouldRetryPendingSnapshot(result: unknown, error: unknown): boolean {
 
 export function useSharedChatWidgetCapture({
   enabled,
+  directGuestMode = false,
   chatSessionId,
   hostedShareToken,
   hostedSandboxToken,
+  persistedSnapshotToolCallIds = [],
   messages,
 }: UseSharedChatWidgetCaptureOptions): void {
   const widgets = useWidgetDebugStore((state) => state.widgets);
@@ -197,6 +205,9 @@ export function useSharedChatWidgetCapture({
   const sessionIdRef = useRef(chatSessionId);
   const shareTokenRef = useRef(hostedShareToken);
   const sandboxTokenRef = useRef(hostedSandboxToken);
+  const persistedSnapshotToolCallIdsRef = useRef(
+    new Set(persistedSnapshotToolCallIds),
+  );
   const uploadAttemptRef = useRef<(toolCallId: string) => Promise<void>>(
     async () => {},
   );
@@ -208,6 +219,12 @@ export function useSharedChatWidgetCapture({
   useEffect(() => {
     widgetsRef.current = widgets;
   }, [widgets]);
+
+  useEffect(() => {
+    persistedSnapshotToolCallIdsRef.current = new Set(
+      persistedSnapshotToolCallIds,
+    );
+  }, [persistedSnapshotToolCallIds]);
 
   useEffect(() => {
     sessionIdRef.current = chatSessionId;
@@ -237,11 +254,9 @@ export function useSharedChatWidgetCapture({
   uploadAttemptRef.current = async (toolCallId: string) => {
     const shareToken = shareTokenRef.current;
     const sandboxToken = sandboxTokenRef.current;
-    if (
-      !enabled ||
-      (!shareToken && !sandboxToken) ||
-      inFlightRef.current.has(toolCallId)
-    ) {
+    const shouldUseWebHistoryApi =
+      directGuestMode && !shareToken && !sandboxToken;
+    if (!enabled || inFlightRef.current.has(toolCallId)) {
       return;
     }
 
@@ -251,7 +266,11 @@ export function useSharedChatWidgetCapture({
     if (!widget?.widgetHtml || !toolSource) {
       return;
     }
-    if (sandboxToken && !toolSource.serverId) {
+    if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
+      return;
+    }
+    // serverId is required by the snapshot schema for all modes
+    if (!toolSource.serverId) {
       return;
     }
 
@@ -266,10 +285,19 @@ export function useSharedChatWidgetCapture({
       content: BlobPart,
       contentType: string,
     ): Promise<string> => {
-      const uploadUrl = await generateSnapshotUploadUrl({
-        ...(shareToken ? { shareToken } : {}),
-        ...(sandboxToken ? { sandboxToken } : {}),
-      });
+      const uploadUrl = shouldUseWebHistoryApi
+        ? (
+            await generateWidgetSnapshotUploadUrl({
+              chatSessionId: sessionIdRef.current,
+            })
+          ).uploadUrl
+        : await generateSnapshotUploadUrl({
+            ...(shareToken ? { shareToken } : {}),
+            ...(sandboxToken ? { sandboxToken } : {}),
+            ...(!shareToken && !sandboxToken
+              ? { chatSessionId: sessionIdRef.current }
+              : {}),
+          });
       const response = await fetch(uploadUrl, {
         method: "POST",
         body: new Blob([content], { type: contentType }),
@@ -312,7 +340,7 @@ export function useSharedChatWidgetCapture({
         cachedBlobsRef.current.set(toolCallId, cached);
       }
 
-      const snapshotResult = await createWidgetSnapshot({
+      const snapshotPayload = {
         ...(shareToken ? { shareToken } : {}),
         ...(sandboxToken ? { sandboxToken } : {}),
         chatSessionId: sessionIdRef.current,
@@ -329,7 +357,27 @@ export function useSharedChatWidgetCapture({
         widgetPermissive: widget.csp?.mode === "permissive",
         prefersBorder: widget.prefersBorder,
         displayContext: toDisplayContext(widget.globals),
-      });
+      };
+      const snapshotResult = shouldUseWebHistoryApi
+        ? (
+            await createChatHistoryWidgetSnapshot({
+              chatSessionId: snapshotPayload.chatSessionId,
+              serverId: snapshotPayload.serverId,
+              toolCallId: snapshotPayload.toolCallId,
+              toolName: snapshotPayload.toolName,
+              widgetHtmlBlobId: snapshotPayload.widgetHtmlBlobId,
+              uiType: snapshotPayload.uiType,
+              resourceUri: snapshotPayload.resourceUri,
+              toolInputBlobId: snapshotPayload.toolInputBlobId,
+              toolOutputBlobId: snapshotPayload.toolOutputBlobId,
+              widgetCsp: snapshotPayload.widgetCsp,
+              widgetPermissions: snapshotPayload.widgetPermissions,
+              widgetPermissive: snapshotPayload.widgetPermissive,
+              prefersBorder: snapshotPayload.prefersBorder,
+              displayContext: snapshotPayload.displayContext,
+            })
+          ).snapshotId
+        : await createWidgetSnapshot(snapshotPayload);
 
       if (shouldRetryPendingSnapshot(snapshotResult, null)) {
         throw new Error("Session not found for chat session");
@@ -377,11 +425,19 @@ export function useSharedChatWidgetCapture({
   };
 
   useEffect(() => {
-    if (!enabled || (!hostedShareToken && !hostedSandboxToken)) {
+    if (!enabled) {
       return;
     }
 
     for (const [toolCallId, widget] of widgets) {
+      const existingTimer = pendingTimersRef.current.get(toolCallId);
+      if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
+        if (existingTimer) {
+          clearTimeout(existingTimer);
+          pendingTimersRef.current.delete(toolCallId);
+        }
+        continue;
+      }
       if (!widget.widgetHtml) {
         continue;
       }
@@ -394,7 +450,6 @@ export function useSharedChatWidgetCapture({
         continue;
       }
 
-      const existingTimer = pendingTimersRef.current.get(toolCallId);
       if (existingTimer) {
         clearTimeout(existingTimer);
       }
@@ -406,5 +461,12 @@ export function useSharedChatWidgetCapture({
 
       pendingTimersRef.current.set(toolCallId, timer);
     }
-  }, [enabled, hostedSandboxToken, hostedShareToken, widgets, messages]);
+  }, [
+    enabled,
+    hostedSandboxToken,
+    hostedShareToken,
+    persistedSnapshotToolCallIds,
+    widgets,
+    messages,
+  ]);
 }
