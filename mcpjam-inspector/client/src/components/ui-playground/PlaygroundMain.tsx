@@ -90,6 +90,8 @@ import {
   SandboxHostThemeProvider,
 } from "@/contexts/sandbox-host-style-context";
 import { useComposerOnboarding } from "@/hooks/use-composer-onboarding";
+import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
+import { useEscapeToStopChat } from "@/hooks/use-escape-to-stop-chat";
 import { HandDrawnSendHint } from "./HandDrawnSendHint";
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { LiveTraceRawEmptyState } from "@/components/evals/live-trace-raw-empty";
@@ -583,6 +585,22 @@ export function PlaygroundMain({
     Object.values(multiModelSummaries).some(
       (summary) => summary.status === "running",
     );
+  const stopActiveChat = useCallback(() => {
+    if (isMultiModelMode) {
+      setStopBroadcastRequestId((previous) => previous + 1);
+      return;
+    }
+
+    stop();
+  }, [isMultiModelMode, stop]);
+  const isStopShortcutEnabled = isMultiModelMode
+    ? isAnyMultiModelStreaming
+    : isStreaming;
+
+  useEscapeToStopChat({
+    enabled: isStopShortcutEnabled,
+    onStop: stopActiveChat,
+  });
 
   // Composer onboarding: typewriter effect, guided input, submit gating, NUX CTA
   const composer = useComposerOnboarding({
@@ -1092,9 +1110,7 @@ export function PlaygroundMain({
     value: composer.input,
     onChange: composer.handleInputChange,
     onSubmit,
-    stop: isMultiModelMode
-      ? () => setStopBroadcastRequestId((previous) => previous + 1)
-      : stop,
+    stop: stopActiveChat,
     disabled: inputDisabled,
     isLoading: isMultiModelMode ? isAnyMultiModelStreaming : isStreaming,
     placeholder,

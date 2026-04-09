@@ -100,6 +100,7 @@ import {
   resolveRestorableServerNames,
   shouldPreserveGuestServerSelection,
 } from "@/components/chat-v2/history/session-restore";
+import { useEscapeToStopChat } from "@/hooks/use-escape-to-stop-chat";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -1517,9 +1518,23 @@ export function ChatTabV2({
   const historyRailStreaming = isMultiModelMode
     ? isAnyMultiModelStreaming
     : isStreaming;
+  const stopActiveChat = useCallback(() => {
+    if (isMultiModelMode) {
+      setStopBroadcastRequestId((previous) => previous + 1);
+      return;
+    }
+
+    stop();
+  }, [isMultiModelMode, stop]);
+  const isStopShortcutEnabled = historyRailStreaming;
   const inputDisabled = isMultiModelMode
     ? isAnyMultiModelStreaming || submitBlocked || sandboxComposerBlocked
     : status !== "ready" || submitBlocked || sandboxComposerBlocked;
+
+  useEscapeToStopChat({
+    enabled: isStopShortcutEnabled,
+    onStop: stopActiveChat,
+  });
 
   let placeholder = minimalMode
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
@@ -1819,9 +1834,7 @@ export function ChatTabV2({
     value: input,
     onChange: setInput,
     onSubmit,
-    stop: isMultiModelMode
-      ? () => setStopBroadcastRequestId((previous) => previous + 1)
-      : stop,
+    stop: stopActiveChat,
     disabled: inputDisabled,
     isLoading: isMultiModelMode ? isAnyMultiModelStreaming : isStreaming,
     placeholder,
