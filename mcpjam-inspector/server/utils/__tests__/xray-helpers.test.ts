@@ -77,6 +77,62 @@ describe("buildXRayPayload", () => {
     expect(result.system).toBe("Base prompt.\n\n## Skills\n- foo");
   });
 
+  it("adds MCP tool inventory when requested", async () => {
+    const manager = mockManager({
+      read_me: {
+        description: "Read the docs",
+        _serverId: "server-1",
+      },
+    });
+
+    const result = await buildXRayPayload(
+      manager,
+      ["server-1"],
+      [],
+      "Base prompt.",
+      {
+        includeMcpToolInventory: true,
+      },
+    );
+
+    expect(result.system).toContain("Base prompt.");
+    expect(result.system).toContain("## Connected MCP Tools");
+    expect(result.system).toContain("Server server-1:\n- read_me: Read the docs");
+  });
+
+  it("adds an explicit no-tools MCP inventory when requested", async () => {
+    const result = await buildXRayPayload(mockManager(), [], [], "Base prompt.", {
+      includeMcpToolInventory: true,
+    });
+
+    expect(result.system).toContain("## Connected MCP Tools");
+    expect(result.system).toContain("No MCP tools are currently connected.");
+  });
+
+  it("omits skills when requested", async () => {
+    vi.mocked(getSkillToolsAndPrompt).mockResolvedValue({
+      tools: {
+        loadSkill: {
+          description: "Load a skill",
+        },
+      } as any,
+      systemPromptSection: "\n\n## Skills\n- loadSkill",
+    });
+
+    const result = await buildXRayPayload(
+      mockManager(),
+      [],
+      [],
+      "Base prompt.",
+      {
+        includeSkills: false,
+      },
+    );
+
+    expect(result.system).toBe("Base prompt.");
+    expect(result.tools).not.toHaveProperty("loadSkill");
+  });
+
   it("uses only skill prompt section when no system prompt given", async () => {
     vi.mocked(getSkillToolsAndPrompt).mockResolvedValue({
       tools: {},
@@ -85,7 +141,7 @@ describe("buildXRayPayload", () => {
 
     const result = await buildXRayPayload(mockManager(), [], [], undefined);
 
-    expect(result.system).toBe("\n\n## Skills\n- bar");
+    expect(result.system).toBe("## Skills\n- bar");
   });
 
   it("falls back to empty schema for MCP tools with plain inputSchema (known bug)", async () => {

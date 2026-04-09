@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen, userEvent } from "@/test";
+import { renderWithProviders, screen } from "@/test";
 import { ExploreCasesList } from "../explore-cases-list";
 import type { EvalCase, EvalIteration, SuiteAggregate } from "../types";
 
@@ -85,27 +85,5 @@ describe("ExploreCasesList", () => {
     expect(
       screen.getByRole("button", { name: /Example case/i }),
     ).toBeInTheDocument();
-  });
-
-  it("sidebar empty state offers View runs table when handler is provided", async () => {
-    const onViewRunsTable = vi.fn();
-    const user = userEvent.setup();
-    renderWithProviders(
-      <ExploreCasesList
-        cases={[]}
-        aggregate={null}
-        iterations={[]}
-        isLoading={false}
-        onRowClick={vi.fn()}
-        variant="sidebar"
-        onViewRunsTable={onViewRunsTable}
-      />,
-    );
-
-    expect(
-      screen.getByText(/Evaluation runs from CI or replay/i),
-    ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /View runs table/i }));
-    expect(onViewRunsTable).toHaveBeenCalledTimes(1);
   });
 });

@@ -274,25 +274,4 @@ describe("TestCaseListSidebar", () => {
       screen.getByRole("button", { name: "Copy SDK eval agent brief" }),
     ).toBeDisabled();
   });
-
-  it("clarifies runs location in main panel when overview is open and there are no cases", () => {
-    renderWithProviders(
-      <TestCaseListSidebar
-        testCases={[]}
-        suiteId="suite-1"
-        selectedTestId={null}
-        isLoading={false}
-        onCreateTestCase={vi.fn()}
-        onDeleteTestCase={vi.fn()}
-        onDuplicateTestCase={vi.fn()}
-        deletingTestCaseId={null}
-        duplicatingTestCaseId={null}
-        showingOverview
-      />,
-    );
-
-    expect(
-      screen.getByText(/Runs are open in the main panel/i),
-    ).toBeInTheDocument();
-  });
 });

@@ -1,5 +1,10 @@
 import { z, ZodTypeAny } from "zod";
-import { tool, type Tool as VercelTool, type ToolCallOptions } from "ai";
+import {
+  dynamicTool,
+  zodSchema,
+  type Tool as VercelTool,
+  type ToolCallOptions,
+} from "ai";
 
 type MastraToolExecuteArgs = {
   context?: unknown;
@@ -106,88 +111,42 @@ export function convertMastraToolToVercelTool(
   mastraTool: MastraToolInstance,
   options?: { originalName?: string },
 ): VercelTool {
-  const inputSchema = ensureInputSchema(mastraTool.inputSchema);
+  const inputSchema = zodSchema(ensureInputSchema(mastraTool.inputSchema));
   const outputSchema = ensureOutputSchema(mastraTool.outputSchema);
   const displayName = options?.originalName ?? toolName;
+  const execute = async (input: unknown, options: ToolCallOptions) => {
+    if (typeof mastraTool.execute !== "function") {
+      throw new Error(`Mastra tool '${displayName}' is missing an execute handler`);
+    }
 
-  const vercelToolConfig: {
-    type: "dynamic";
-    description?: string;
-    inputSchema: ZodTypeAny;
-    outputSchema?: ZodTypeAny;
-    execute?: (input: unknown, options: ToolCallOptions) => Promise<unknown>;
-  } = {
-    type: "dynamic",
-    description: mastraTool.description,
-    inputSchema,
+    const executionArgs: MastraToolExecuteArgs = { context: input };
+
+    if (options) {
+      executionArgs.runtimeContext = options;
+    }
+
+    const result = await mastraTool.execute(executionArgs, options);
+
+    if (outputSchema) {
+      const parsed = outputSchema.safeParse(result);
+
+      if (!parsed.success) {
+        throw new Error(
+          `Mastra tool '${displayName}' returned invalid output: ${parsed.error.message}`,
+        );
+      }
+
+      return parsed.data;
+    }
+
+    return result;
   };
 
-  if (outputSchema) {
-    vercelToolConfig.outputSchema = outputSchema;
-  }
-
-  if (typeof mastraTool.execute === "function") {
-    vercelToolConfig.execute = async (input, options) => {
-      const executionArgs: MastraToolExecuteArgs = { context: input };
-
-      if (options) {
-        executionArgs.runtimeContext = options;
-      }
-
-      const result = await mastraTool.execute?.(executionArgs, options);
-
-      if (outputSchema) {
-        const parsed = outputSchema.safeParse(result);
-
-        if (!parsed.success) {
-          throw new Error(
-            `Mastra tool '${displayName}' returned invalid output: ${parsed.error.message}`,
-          );
-        }
-
-        return parsed.data;
-      }
-
-      return result;
-    };
-  }
-
-  try {
-    return tool(vercelToolConfig);
-  } catch (error) {
-    if (!isUnrepresentableSchemaError(error)) {
-      throw error;
-    }
-
-    if (vercelToolConfig.outputSchema) {
-      const {
-        outputSchema: _unusedOutputSchema,
-        ...configWithoutOutputSchema
-      } = vercelToolConfig;
-
-      try {
-        return tool(configWithoutOutputSchema);
-      } catch (errorWithoutOutputSchema) {
-        if (!isUnrepresentableSchemaError(errorWithoutOutputSchema)) {
-          throw errorWithoutOutputSchema;
-        }
-
-        const fallbackConfig = {
-          ...configWithoutOutputSchema,
-          inputSchema: fallbackInputSchema,
-        };
-
-        return tool(fallbackConfig);
-      }
-    }
-
-    const fallbackConfig = {
-      ...vercelToolConfig,
-      inputSchema: fallbackInputSchema,
-    };
-
-    return tool(fallbackConfig);
-  }
+  return dynamicTool({
+    description: mastraTool.description,
+    inputSchema,
+    execute,
+  });
 }
 
 export function convertMastraToolsToVercelTools(

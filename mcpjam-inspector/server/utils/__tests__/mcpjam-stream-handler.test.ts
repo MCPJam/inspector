@@ -56,10 +56,17 @@ vi.mock("@/shared/http-tool-calls", () => ({
   executeToolCallsFromMessages: vi.fn(),
 }));
 
-vi.mock("../chat-helpers", () => ({
-  scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
-  scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
-}));
+vi.mock("../chat-helpers", async () => {
+  const actual =
+    await vi.importActual<typeof import("../chat-helpers")>(
+      "../chat-helpers",
+    );
+  return {
+    ...actual,
+    scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),
+    scrubChatGPTAppsToolResultsForBackend: vi.fn((messages) => messages),
+  };
+});
 
 vi.mock("../mcpjam-tool-helpers", () => ({
   serializeToolsForConvex: vi.fn(() => []),
@@ -122,7 +129,12 @@ describe("mcpjam-stream-handler", () => {
       messages,
       modelId: "gpt-4.1-mini",
       systemPrompt: "You are helpful",
-      tools: {},
+      tools: {
+        search: {
+          description: "Search the web",
+          inputSchema: {} as any,
+        },
+      },
       mcpClientManager: {
         getAllToolsMetadata: vi.fn().mockReturnValue({}),
       } as any,
@@ -150,6 +162,62 @@ describe("mcpjam-stream-handler", () => {
       },
     ]);
     expect(onConversationComplete).toHaveBeenCalledWith(messages);
+  });
+
+  it("removes stale disconnected tool history before sending the next turn to Convex", async () => {
+    await handleMCPJamFreeChatModel({
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "create_view",
+              input: { elements: [] },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "create_view",
+              output: {
+                type: "json",
+                value: { ok: true },
+              },
+            },
+          ],
+        },
+        {
+          role: "user",
+          content: "Draw a dog",
+        },
+      ] as any,
+      modelId: "gpt-4.1-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+    });
+
+    await lastExecution;
+
+    const fetchBody = JSON.parse(
+      ((global.fetch as any).mock.calls[0]?.[1]?.body as string) ?? "{}",
+    );
+    const scrubbedMessages = JSON.parse(fetchBody.messages);
+
+    expect(scrubbedMessages).toEqual([
+      {
+        role: "user",
+        content: "Draw a dog",
+      },
+    ]);
   });
 
   it("preserves spliced denial tool results in the completed conversation history", async () => {

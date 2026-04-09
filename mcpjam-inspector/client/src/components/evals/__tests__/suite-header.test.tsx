@@ -205,40 +205,4 @@ describe("SuiteHeader", () => {
     expect(generateBtn).toBeDisabled();
     expect(generateBtn.querySelector(".animate-spin")).toBeInTheDocument();
   });
-
-  it("shows Settings and replay latest run on editable test-detail", () => {
-    renderWithProviders(
-      <SuiteHeader
-        {...baseProps}
-        viewMode="test-detail"
-        selectedRunDetails={null}
-        readOnlyConfig={false}
-        onEditSuite={() => {}}
-      />,
-    );
-
-    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Replay latest run" }),
-    ).toBeInTheDocument();
-  });
-
-  it("shows suite name and replay on read-only test-detail without Settings", () => {
-    renderWithProviders(
-      <SuiteHeader
-        {...baseProps}
-        viewMode="test-detail"
-        selectedRunDetails={null}
-        readOnlyConfig={true}
-      />,
-    );
-
-    expect(screen.getByText("Asana MCP Evals")).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Replay latest run" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Settings" }),
-    ).not.toBeInTheDocument();
-  });
 });

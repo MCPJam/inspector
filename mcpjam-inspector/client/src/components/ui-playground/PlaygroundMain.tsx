@@ -15,6 +15,7 @@ import {
   FormEvent,
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useMemo,
   useRef,
@@ -22,6 +23,7 @@ import {
 import { Braces, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@workos-inc/authkit-react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import type { UIMessage } from "ai";
 import { ModelDefinition } from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { Thread } from "@/components/chat-v2/thread";
@@ -32,12 +34,16 @@ import {
   formatErrorMessage,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
+  cloneUiMessages,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
-import { useChatSession } from "@/hooks/use-chat-session";
+import {
+  type ChatSessionResetReason,
+  useChatSession,
+} from "@/hooks/use-chat-session";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -262,6 +268,18 @@ export function PlaygroundMain({
   const [multiModelHasMessages, setMultiModelHasMessages] = useState<
     Record<string, boolean>
   >({});
+  const [multiCompareEnterVersion, setMultiCompareEnterVersion] = useState(0);
+  const [multiCompareEnterMessages, setMultiCompareEnterMessages] = useState<
+    UIMessage[]
+  >([]);
+  const [multiAddColumnSeeds, setMultiAddColumnSeeds] = useState<
+    Record<string, { version: number; messages: UIMessage[] }>
+  >({});
+  const multiTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  const prevCompareModeRef = useRef(false);
+  const lastMultiLeadIdRef = useRef<string | null>(null);
+  const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
+  const multiAddColumnSeqRef = useRef(0);
   // Device config from store (managed by DisplayContextHeader)
   const storeDeviceType = useUIPlaygroundStore((s) => s.deviceType);
   const customViewport = useUIPlaygroundStore((s) => s.customViewport);
@@ -345,6 +363,7 @@ export function PlaygroundMain({
     toolServerMap,
     tokenUsage,
     resetChat,
+    startChatWithMessages,
     liveTraceEnvelope,
     hasTraceSnapshot,
     hasLiveTimelineContent,
@@ -360,7 +379,15 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => composerOnResetRef.current(),
+    onReset: (reason?: ChatSessionResetReason) => {
+      setModelContextQueue([]);
+      setPreludeTraceExecutions([]);
+      setInjectedToolRenderOverrides({});
+      if (reason === "servers-changed") {
+        return;
+      }
+      composerOnResetRef.current();
+    },
   });
 
   // Set playground active flag for widget renderers to read
@@ -436,6 +463,86 @@ export function PlaygroundMain({
   const canEnableMultiModel =
     enableMultiModelChat && availableModels.length > 1;
   const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+
+  useEffect(() => {
+    if (isMultiModelMode && resolvedSelectedModels[0]) {
+      lastMultiLeadIdRef.current = String(resolvedSelectedModels[0].id);
+    }
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
+  const handleMultiModelTranscriptSync = useCallback(
+    (modelId: string, transcript: UIMessage[]) => {
+      multiTranscriptsRef.current[modelId] = cloneUiMessages(transcript);
+    },
+    [],
+  );
+
+  const clearMultiModelUiState = useCallback(() => {
+    setBroadcastRequest(null);
+    setDeterministicExecutionRequest(null);
+    setStopBroadcastRequestId(0);
+    setMultiModelSummaries({});
+    setMultiModelHasMessages({});
+    setMultiAddColumnSeeds({});
+    prevCompareModelIdsRef.current = new Set();
+  }, []);
+
+  useLayoutEffect(() => {
+    const prev = prevCompareModeRef.current;
+    if (prev && !isMultiModelMode) {
+      const leadId = lastMultiLeadIdRef.current;
+      if (leadId) {
+        const transcript = multiTranscriptsRef.current[leadId];
+        const hasConversation =
+          transcript?.some(
+            (m) => m.role === "user" || m.role === "assistant",
+          ) ?? false;
+        if (hasConversation && transcript) {
+          startChatWithMessages(cloneUiMessages(transcript));
+        }
+      }
+      clearMultiModelUiState();
+    }
+    if (!prev && isMultiModelMode) {
+      setMultiCompareEnterVersion((v) => v + 1);
+      setMultiCompareEnterMessages(cloneUiMessages(messages));
+    }
+    prevCompareModeRef.current = isMultiModelMode;
+  }, [
+    isMultiModelMode,
+    messages,
+    startChatWithMessages,
+    clearMultiModelUiState,
+  ]);
+
+  useEffect(() => {
+    if (!isMultiModelMode) {
+      prevCompareModelIdsRef.current = new Set();
+      return;
+    }
+    const current = new Set(
+      resolvedSelectedModels.map((m) => String(m.id)),
+    );
+    const prev = prevCompareModelIdsRef.current;
+    const added = [...current].filter((id) => !prev.has(id));
+    const leadId = resolvedSelectedModels[0]
+      ? String(resolvedSelectedModels[0].id)
+      : null;
+    if (prev.size > 0 && added.length > 0 && leadId) {
+      const src = multiTranscriptsRef.current[leadId] ?? [];
+      multiAddColumnSeqRef.current += 1;
+      const v = multiAddColumnSeqRef.current;
+      setMultiAddColumnSeeds((s) => {
+        const next = { ...s };
+        for (const id of added) {
+          next[id] = { version: v, messages: cloneUiMessages(src) };
+        }
+        return next;
+      });
+    }
+    prevCompareModelIdsRef.current = current;
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
   const effectiveHasMessages = isMultiModelMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
@@ -704,13 +811,9 @@ export function PlaygroundMain({
   );
 
   const resetMultiModelSessions = useCallback(() => {
-    setBroadcastRequest(null);
-    setDeterministicExecutionRequest(null);
-    setStopBroadcastRequestId(0);
+    clearMultiModelUiState();
     setMultiModelSessionGeneration((previous) => previous + 1);
-    setMultiModelSummaries({});
-    setMultiModelHasMessages({});
-  }, []);
+  }, [clearMultiModelUiState]);
 
   const handleResetAllChats = useCallback(() => {
     composer.prepareForClearChat();
@@ -731,14 +834,8 @@ export function PlaygroundMain({
       setSelectedModel(model);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
-      handleResetAllChats();
     },
-    [
-      handleResetAllChats,
-      setMultiModelEnabled,
-      setSelectedModel,
-      setSelectedModelIds,
-    ],
+    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
   );
 
   const handleSelectedModelsChange = useCallback(
@@ -754,9 +851,8 @@ export function PlaygroundMain({
           String(selectedModelItem.id),
         ),
       );
-      handleResetAllChats();
     },
-    [handleResetAllChats, selectedModel, setSelectedModel, setSelectedModelIds],
+    [selectedModel, setSelectedModel, setSelectedModelIds],
   );
 
   const handleMultiModelEnabledChange = useCallback(
@@ -1464,6 +1560,12 @@ export function PlaygroundMain({
                       onHasMessagesChange={handleMultiModelHasMessagesChange}
                       showComparisonChrome={resolvedSelectedModels.length > 1}
                       suppressThreadEmptyHint={false}
+                      compareEnterVersion={multiCompareEnterVersion}
+                      compareEnterMessages={multiCompareEnterMessages}
+                      addColumnSeed={
+                        multiAddColumnSeeds[String(model.id)] ?? null
+                      }
+                      onTranscriptSync={handleMultiModelTranscriptSync}
                     />
                   ))}
                 </div>

@@ -20,12 +20,15 @@ vi.mock("convex/react", () => ({
     isAuthenticated: true,
     isLoading: false,
   }),
+  useQuery: (_name: string, args: unknown) =>
+    args === "skip" ? undefined : null,
 }));
 
 vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => false,
 }));
 
 vi.mock("@/lib/PosthogUtils", () => ({

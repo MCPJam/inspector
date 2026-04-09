@@ -5,6 +5,8 @@ import { useWidgetDebugStore } from "@/stores/widget-debug-store";
 
 const mockGenerateSnapshotUploadUrl = vi.fn();
 const mockCreateWidgetSnapshot = vi.fn();
+const mockGenerateWidgetSnapshotUploadUrlFromWeb = vi.fn();
+const mockCreateChatHistoryWidgetSnapshot = vi.fn();
 
 vi.mock("convex/react", () => ({
   useMutation: (name: string) => {
@@ -16,6 +18,13 @@ vi.mock("convex/react", () => ({
     }
     throw new Error(`Unexpected mutation: ${name}`);
   },
+}));
+
+vi.mock("@/lib/apis/web/chat-history-api", () => ({
+  generateWidgetSnapshotUploadUrl: (...args: unknown[]) =>
+    mockGenerateWidgetSnapshotUploadUrlFromWeb(...args),
+  createChatHistoryWidgetSnapshot: (...args: unknown[]) =>
+    mockCreateChatHistoryWidgetSnapshot(...args),
 }));
 
 const originalFetch = global.fetch;
@@ -39,6 +48,16 @@ describe("useSharedChatWidgetCapture", () => {
       return `https://upload.example.com/${uploadCounter}`;
     });
     mockCreateWidgetSnapshot.mockResolvedValue("snapshot-1");
+    mockGenerateWidgetSnapshotUploadUrlFromWeb.mockImplementation(
+      async () => ({
+        ok: true,
+        uploadUrl: "https://upload.example.com/web",
+      }),
+    );
+    mockCreateChatHistoryWidgetSnapshot.mockResolvedValue({
+      ok: true,
+      snapshotId: "snapshot-web-1",
+    });
 
     global.fetch = vi.fn(async () => {
       uploadCounter += 1;
@@ -68,17 +87,20 @@ describe("useSharedChatWidgetCapture", () => {
             id: "assistant-1",
             role: "assistant",
             parts: [
-              {
-                type: "tool-search",
-                toolCallId: "call-1",
-                input: { q: "hello" },
-                output: {
-                  result: "world",
-                  _meta: { "openai/outputTemplate": "ui://widget.html" },
+                {
+                  type: "tool-search",
+                  toolCallId: "call-1",
+                  input: { q: "hello" },
+                  output: {
+                    result: "world",
+                    _meta: {
+                      "openai/outputTemplate": "ui://widget.html",
+                      _serverId: "server-1",
+                    },
+                  },
                 },
-              },
-            ],
-          } as any,
+              ],
+            } as any,
         ],
       }),
     );
@@ -131,6 +153,7 @@ describe("useSharedChatWidgetCapture", () => {
     expect(mockCreateWidgetSnapshot).toHaveBeenCalledWith({
       shareToken: "share-token",
       chatSessionId: "chat-session-1",
+      serverId: "server-1",
       toolCallId: "call-1",
       toolName: "search",
       widgetHtmlBlobId: expect.stringMatching(/^blob-/),
@@ -183,7 +206,7 @@ describe("useSharedChatWidgetCapture", () => {
                   type: "tool-search",
                   toolCallId: "call-1",
                   input: { q: "hello" },
-                  output: { result: "world" },
+                  output: { result: "world", _serverId: "server-1" },
                 },
               ],
             } as any,
@@ -290,7 +313,7 @@ describe("useSharedChatWidgetCapture", () => {
                   type: "tool-search",
                   toolCallId: "call-pending",
                   input: { q: "hello" },
-                  output: { result: "world" },
+                  output: { result: "world", _serverId: "server-1" },
                 },
               ],
             } as any,
@@ -423,6 +446,155 @@ describe("useSharedChatWidgetCapture", () => {
         safeAreaInsets: undefined,
       },
     });
+
+    unmount();
+  });
+
+  it("uses the web chat-history snapshot endpoints for direct guests", async () => {
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        directGuestMode: true,
+        chatSessionId: "guest-chat-1",
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "guest-call-1",
+                input: { q: "guest" },
+                output: {
+                  result: "ok",
+                  _meta: { _serverId: "guest-server-1" },
+                },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "guest-call-1",
+            {
+              toolCallId: "guest-call-1",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: {
+                theme: "dark",
+                displayMode: "inline",
+              },
+              widgetHtml: "<div>Guest widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateWidgetSnapshotUploadUrlFromWeb).toHaveBeenCalledTimes(3);
+    expect(mockCreateChatHistoryWidgetSnapshot).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSnapshotUploadUrl).not.toHaveBeenCalled();
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+    expect(mockCreateChatHistoryWidgetSnapshot).toHaveBeenCalledWith({
+      chatSessionId: "guest-chat-1",
+      serverId: "guest-server-1",
+      toolCallId: "guest-call-1",
+      toolName: "search",
+      widgetHtmlBlobId: expect.any(String),
+      uiType: "mcp-apps",
+      resourceUri: undefined,
+      toolInputBlobId: expect.any(String),
+      toolOutputBlobId: expect.any(String),
+      widgetCsp: undefined,
+      widgetPermissions: undefined,
+      widgetPermissive: false,
+      prefersBorder: undefined,
+      displayContext: {
+        theme: "dark",
+        displayMode: "inline",
+        deviceType: undefined,
+        viewport: undefined,
+        locale: undefined,
+        timeZone: undefined,
+        capabilities: undefined,
+        safeAreaInsets: undefined,
+      },
+    });
+
+    unmount();
+  });
+
+  it("skips widget capture for tool calls that already have persisted snapshots", async () => {
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-history",
+        persistedSnapshotToolCallIds: ["call-existing"],
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-existing",
+                input: { q: "history" },
+                output: {
+                  result: "ok",
+                  _meta: { _serverId: "server-1" },
+                },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-existing",
+            {
+              toolCallId: "call-existing",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: {
+                theme: "dark",
+                displayMode: "inline",
+              },
+              widgetHtml: "<div>Existing widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+
+    await flushMicrotasks();
+
+    expect(mockGenerateSnapshotUploadUrl).not.toHaveBeenCalled();
+    expect(mockCreateWidgetSnapshot).not.toHaveBeenCalled();
+    expect(mockGenerateWidgetSnapshotUploadUrlFromWeb).not.toHaveBeenCalled();
+    expect(mockCreateChatHistoryWidgetSnapshot).not.toHaveBeenCalled();
 
     unmount();
   });
