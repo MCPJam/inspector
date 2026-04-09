@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import type { ModelDefinition } from "@/shared/types";
 import {
   ChatTraceViewModeHeaderBar,
@@ -102,6 +103,7 @@ export function ModelCompareCardHeader({
     !isErroredSummary &&
     currentToolCount > 0 &&
     currentToolCount === minToolCount;
+  const isRunningSummary = summary?.status === "running";
 
   const durationBarPct =
     maxDuration > 0
@@ -147,7 +149,15 @@ export function ModelCompareCardHeader({
                 {model.name}
               </div>
             </div>
-            {!compactCompareHeader ? (
+            {isRunningSummary ? (
+              <span
+                className="inline-flex shrink-0 text-muted-foreground"
+                aria-label={statusLabel}
+                title={statusLabel}
+              >
+                <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+              </span>
+            ) : !compactCompareHeader ? (
               <span
                 role="img"
                 className={cn(

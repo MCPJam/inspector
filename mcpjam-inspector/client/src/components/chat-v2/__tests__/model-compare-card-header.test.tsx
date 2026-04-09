@@ -111,6 +111,50 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("Tokens")).toBeInTheDocument();
   });
 
+  it("shows a running spinner in the top-right slot in compact mode", () => {
+    const runningSummary = makeSummary({
+      status: "running",
+      durationMs: null,
+      tokens: 0,
+      toolCount: 0,
+      hasMessages: false,
+    });
+
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={runningSummary}
+        allSummaries={[runningSummary]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+      />,
+    );
+
+    expect(screen.getByLabelText("Running")).toBeInTheDocument();
+    expect(screen.queryByText("Tools")).not.toBeInTheDocument();
+  });
+
+  it("does not render the running spinner for non-running summaries", () => {
+    const readySummary = makeSummary({});
+
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={readySummary}
+        allSummaries={[readySummary]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Running")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Ready")).not.toBeInTheDocument();
+  });
+
   it("shows status dot and Tools row when compactCompareHeader is false", () => {
     const withTools = makeSummary({
       toolCount: 2,

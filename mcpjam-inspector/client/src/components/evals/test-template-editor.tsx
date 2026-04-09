@@ -2534,6 +2534,7 @@ function RunColumn({
     toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
   const isFailedCompareRecord =
     record.status === "failed" || record.result === "failed";
+  const isRunningRecord = record.status === "running";
 
   // Compute relative metrics across all completed records for comparison bars
   const comparableRecords = allRecords.filter(
@@ -2563,8 +2564,10 @@ function RunColumn({
 
   const currentDuration = record.metrics.durationMs ?? 0;
   const hasComparison = comparableRecords.length > 1;
-  const hasRunningRecord = allRecords.some((item) => item.status === "running");
-  const canHighlightWinner = hasComparison && !hasRunningRecord;
+  const hasAnyRunningRecord = allRecords.some(
+    (item) => item.status === "running",
+  );
+  const canHighlightWinner = hasComparison && !hasAnyRunningRecord;
 
   const isFastest =
     canHighlightWinner &&
@@ -2600,15 +2603,25 @@ function RunColumn({
               {record.modelLabel}
             </div>
           </div>
-          <span
-            role="img"
-            className={cn(
-              "inline-flex shrink-0 rounded-full",
-              statusIndicatorClass,
-            )}
-            aria-label={statusLabel}
-            title={statusLabel}
-          />
+          {isRunningRecord ? (
+            <span
+              className="inline-flex shrink-0 text-muted-foreground"
+              aria-label={statusLabel}
+              title={statusLabel}
+            >
+              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            </span>
+          ) : (
+            <span
+              role="img"
+              className={cn(
+                "inline-flex shrink-0 rounded-full",
+                statusIndicatorClass,
+              )}
+              aria-label={statusLabel}
+              title={statusLabel}
+            />
+          )}
         </div>
 
         {/* Metric comparison bars */}
