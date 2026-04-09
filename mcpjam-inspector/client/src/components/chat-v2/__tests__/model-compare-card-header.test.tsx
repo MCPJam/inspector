@@ -172,6 +172,90 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("1 tool call")).toHaveClass("text-foreground");
   });
 
+  it("excludes errored models from winner selection", () => {
+    const winningSuccess = makeSummary({
+      durationMs: 1100,
+      tokens: 111,
+      toolCount: 2,
+    });
+    const slowerSuccess = makeSummary({
+      modelId: "openai/gpt-4",
+      durationMs: 2200,
+      tokens: 222,
+      toolCount: 3,
+    });
+    const errored = makeSummary({
+      modelId: "google/gemini-2.5-pro",
+      status: "error",
+      durationMs: 900,
+      tokens: 90,
+      toolCount: 1,
+    });
+
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={winningSuccess}
+        allSummaries={[winningSuccess, slowerSuccess, errored]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+        compactCompareHeader={false}
+      />,
+    );
+
+    expect(screen.getByText("1.1s")).toHaveClass("text-emerald-700");
+    expect(screen.getByText("111")).toHaveClass("text-emerald-700");
+    expect(screen.getByText("2 tool calls")).toHaveClass("text-emerald-700");
+  });
+
+  it("keeps winner accents neutral while another model is running even if an errored model is excluded", () => {
+    const fastestSuccess = makeSummary({
+      durationMs: 1100,
+      tokens: 111,
+      toolCount: 2,
+    });
+    const slowerSuccess = makeSummary({
+      modelId: "openai/gpt-4",
+      durationMs: 2200,
+      tokens: 222,
+      toolCount: 3,
+    });
+    const errored = makeSummary({
+      modelId: "google/gemini-2.5-pro",
+      status: "error",
+      durationMs: 900,
+      tokens: 90,
+      toolCount: 1,
+    });
+    const running = makeSummary({
+      modelId: "xai/grok-4",
+      status: "running",
+      durationMs: null,
+      tokens: 0,
+      toolCount: 0,
+      hasMessages: false,
+    });
+
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={fastestSuccess}
+        allSummaries={[fastestSuccess, slowerSuccess, errored, running]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+        compactCompareHeader={false}
+      />,
+    );
+
+    expect(screen.getByText("1.1s")).toHaveClass("text-foreground");
+    expect(screen.getByText("111")).toHaveClass("text-foreground");
+    expect(screen.getByText("2 tool calls")).toHaveClass("text-foreground");
+  });
+
   it("restores winner accents once all models are no longer running", () => {
     const fastest = makeSummary({
       durationMs: 1100,

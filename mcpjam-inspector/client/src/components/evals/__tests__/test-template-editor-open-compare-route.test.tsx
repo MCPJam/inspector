@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { TestTemplateEditor } from "../test-template-editor";
@@ -158,6 +158,8 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     tokensUsed: number;
     toolCallCount: number;
     compareRunId?: string;
+    status?: EvalIteration["status"];
+    result?: EvalIteration["result"];
   }): EvalIteration {
     const startedAt = 10_000;
 
@@ -167,6 +169,8 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
       createdAt: startedAt,
       startedAt,
       updatedAt: startedAt + params.durationMs,
+      status: params.status ?? "completed",
+      result: params.result ?? "passed",
       suiteRunId: undefined,
       actualToolCalls: Array.from(
         { length: params.toolCallCount },
@@ -185,6 +189,22 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
         model: params.model,
       },
     };
+  }
+
+  function getCompareCard(modelLabel: string): HTMLElement {
+    const card = screen
+      .getByText(modelLabel, { selector: "div" })
+      .closest(".rounded-2xl");
+    expect(card).not.toBeNull();
+    return card!;
+  }
+
+  function getMetricBar(card: HTMLElement, label: "Latency" | "Tokens") {
+    const row = within(card).getByText(label).parentElement;
+    expect(row).not.toBeNull();
+    const bar = row!.querySelector("div[style]");
+    expect(bar).not.toBeNull();
+    return bar as HTMLElement;
   }
 
   beforeEach(() => {
@@ -604,5 +624,139 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
       expect(screen.getByText("111")).toHaveClass("text-emerald-700");
       expect(screen.getByText("1 tool call")).toHaveClass("text-emerald-700");
     });
+  });
+
+  it("excludes failed eval rows from winners and comparison bar scaling", async () => {
+    const user = userEvent.setup();
+
+    streamEvalTestCaseMock.mockImplementation(
+      async (
+        request: {
+          model: string;
+          provider: string;
+          compareRunId?: string;
+        },
+        onEvent: (event: {
+          type: "complete";
+          iterationId: string;
+          iteration: EvalIteration;
+        }) => void,
+      ) => {
+        const complete = (params: {
+          id: string;
+          durationMs: number;
+          tokensUsed: number;
+          toolCallCount: number;
+          status?: EvalIteration["status"];
+          result?: EvalIteration["result"];
+        }) => {
+          const iteration = makeCompletedIteration({
+            ...params,
+            provider: request.provider,
+            model: request.model,
+            compareRunId: request.compareRunId,
+          });
+          onEvent({
+            type: "complete",
+            iterationId: iteration._id,
+            iteration,
+          });
+        };
+
+        if (request.provider === "openai") {
+          complete({
+            id: "iter-openai",
+            durationMs: 1100,
+            tokensUsed: 100,
+            toolCallCount: 2,
+          });
+          return;
+        }
+
+        if (request.provider === "anthropic") {
+          complete({
+            id: "iter-anthropic",
+            durationMs: 2200,
+            tokensUsed: 200,
+            toolCallCount: 4,
+          });
+          return;
+        }
+
+        complete({
+          id: "iter-google-failed",
+          durationMs: 9000,
+          tokensUsed: 900,
+          toolCallCount: 1,
+          result: "failed",
+        });
+      },
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+          {
+            provider: "anthropic",
+            id: "claude-4.5-sonnet",
+            model: "claude-4.5-sonnet",
+            name: "Claude 4.5 Sonnet",
+            label: "Claude 4.5 Sonnet",
+          } as any,
+          {
+            provider: "google",
+            id: "gemini-2.5-pro",
+            model: "gemini-2.5-pro",
+            name: "Gemini 2.5 Pro",
+            label: "Gemini 2.5 Pro",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /add model to compare/i }),
+    );
+    await user.click(screen.getByText("Claude 4.5 Sonnet"));
+    await user.click(
+      screen.getByRole("button", { name: /add model to compare/i }),
+    );
+    await user.click(screen.getByText("Gemini 2.5 Pro"));
+
+    await user.click(screen.getByRole("button", { name: /run compare/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(3);
+      expect(screen.getByText("9s")).toBeInTheDocument();
+    });
+
+    const openAiCard = getCompareCard("GPT-4");
+    const openAiScope = within(openAiCard);
+
+    await waitFor(() => {
+      expect(openAiScope.getByText("1.1s")).toHaveClass("text-emerald-700");
+      expect(openAiScope.getByText("100")).toHaveClass("text-emerald-700");
+      expect(openAiScope.getByText("2 tool calls")).toHaveClass(
+        "text-emerald-700",
+      );
+    });
+
+    expect(getMetricBar(openAiCard, "Latency")).toHaveStyle({ width: "50%" });
+    expect(getMetricBar(openAiCard, "Tokens")).toHaveStyle({ width: "50%" });
   });
 });
