@@ -360,6 +360,7 @@ export function PlaygroundMain({
     temperature,
     setTemperature,
     toolsMetadata,
+    toolDefinitions,
     toolServerMap,
     tokenUsage,
     resetChat,
@@ -1074,11 +1075,8 @@ export function PlaygroundMain({
   const playgroundRawXRayMirror = useDebouncedXRayPayload({
     systemPrompt,
     messages,
-    selectedServers,
-    enabled:
-      traceViewsSupported &&
-      showLiveTraceDiagnostics &&
-      (isMultiModelMode ? !effectiveHasMessages : !isThreadEmpty),
+    toolDefinitions,
+    toolServerMap,
   });
   const showLiveTracePending =
     activeTraceViewMode === "timeline" &&

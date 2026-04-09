@@ -316,6 +316,7 @@ export function ChatTabV2({
     temperature,
     setTemperature,
     toolsMetadata,
+    toolDefinitions,
     toolServerMap,
     tokenUsage,
     mcpToolsTokenCount,
@@ -1527,12 +1528,8 @@ export function ChatTabV2({
   const rawTraceXRayMirror = useDebouncedXRayPayload({
     systemPrompt,
     messages,
-    selectedServers: selectedConnectedServerNames,
-    enabled:
-      traceViewsSupported &&
-      !minimalMode &&
-      !isThreadEmpty &&
-      showLiveTraceDiagnostics,
+    toolDefinitions,
+    toolServerMap,
   });
   const resetMultiModelSessions = useCallback(() => {
     clearMultiModelUiState();

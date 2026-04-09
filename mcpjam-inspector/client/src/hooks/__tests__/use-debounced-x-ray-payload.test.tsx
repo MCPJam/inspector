@@ -1,21 +1,25 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act, render, renderHook } from "@testing-library/react";
+import { describe, it, expect } from "vitest";
+import { renderHook } from "@testing-library/react";
 import type { UIMessage } from "ai";
-
-const { mockGetXRayPayload } = vi.hoisted(() => ({
-  mockGetXRayPayload: vi.fn(),
-}));
-
-vi.mock("@/lib/apis/mcp-xray-api", () => ({
-  getXRayPayload: mockGetXRayPayload,
-}));
+import type { ToolDefinition } from "@/lib/apis/mcp-tools-api";
 
 import { useDebouncedXRayPayload } from "../use-debounced-x-ray-payload";
 
-const PAYLOAD_RESPONSE = {
-  system: "You are helpful",
-  tools: {},
-  messages: [{ role: "user", content: "hello" }],
+const TOOL_DEFS: Record<string, ToolDefinition> = {
+  greet: {
+    name: "greet",
+    description: "Say hello",
+    inputSchema: {
+      type: "object",
+      properties: { name: { type: "string" } },
+      required: ["name"],
+      additionalProperties: false,
+    },
+  },
+};
+
+const TOOL_SERVER_MAP: Record<string, string> = {
+  greet: "my-server",
 };
 
 function makeMessage(id: string, text: string): UIMessage {
@@ -26,160 +30,118 @@ function makeMessage(id: string, text: string): UIMessage {
   } as UIMessage;
 }
 
-function DebouncedPayloadProbe(
-  props: Parameters<typeof useDebouncedXRayPayload>[0],
-) {
-  useDebouncedXRayPayload(props);
-  return null;
-}
-
 describe("useDebouncedXRayPayload", () => {
-  beforeEach(() => {
-    mockGetXRayPayload.mockReset();
-    mockGetXRayPayload.mockResolvedValue(PAYLOAD_RESPONSE);
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  });
-
-  afterEach(() => {
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
-  });
-
-  it("does not fetch immediately — waits for debounce", () => {
-    render(
-      <DebouncedPayloadProbe
-        systemPrompt="test"
-        messages={[makeMessage("1", "hi")]}
-        selectedServers={["s1"]}
-        enabled
-      />,
+  it("returns null payload when messages is empty", () => {
+    const { result } = renderHook(() =>
+      useDebouncedXRayPayload({
+        systemPrompt: "test",
+        messages: [],
+        toolDefinitions: TOOL_DEFS,
+        toolServerMap: TOOL_SERVER_MAP,
+      }),
     );
 
-    expect(mockGetXRayPayload).not.toHaveBeenCalled();
+    expect(result.current.payload).toBeNull();
+    expect(result.current.hasMessages).toBe(false);
   });
 
-  it("fetches once after debounce period", async () => {
-    render(
-      <DebouncedPayloadProbe
-        systemPrompt="test"
-        messages={[makeMessage("1", "hi")]}
-        selectedServers={["s1"]}
-        enabled
-      />,
+  it("assembles payload from system prompt, tools, and messages", () => {
+    const msg = makeMessage("1", "hi");
+    const { result } = renderHook(() =>
+      useDebouncedXRayPayload({
+        systemPrompt: "You are helpful",
+        messages: [msg],
+        toolDefinitions: TOOL_DEFS,
+        toolServerMap: TOOL_SERVER_MAP,
+      }),
     );
 
-    await vi.advanceTimersByTimeAsync(1000);
-
-    expect(mockGetXRayPayload).toHaveBeenCalledTimes(1);
-  });
-
-  it("resets debounce on rapid message changes — only fetches once", async () => {
-    const { rerender } = render(
-      <DebouncedPayloadProbe
-        systemPrompt="test"
-        messages={[makeMessage("1", "h")]}
-        selectedServers={["s1"]}
-        enabled
-      />,
-    );
-
-    for (let i = 0; i < 10; i++) {
-      await vi.advanceTimersByTimeAsync(100);
-      rerender(
-        <DebouncedPayloadProbe
-          systemPrompt="test"
-          messages={[makeMessage("1", "hello".slice(0, i + 2))]}
-          selectedServers={["s1"]}
-          enabled
-        />,
-      );
-    }
-
-    expect(mockGetXRayPayload).not.toHaveBeenCalled();
-
-    await vi.advanceTimersByTimeAsync(1000);
-
-    expect(mockGetXRayPayload).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not fetch when messages is empty", async () => {
-    render(
-      <DebouncedPayloadProbe
-        systemPrompt="test"
-        messages={[]}
-        selectedServers={["s1"]}
-        enabled
-      />,
-    );
-
-    await vi.advanceTimersByTimeAsync(2000);
-
-    expect(mockGetXRayPayload).not.toHaveBeenCalled();
-  });
-
-  it("cancels pending fetch on unmount", async () => {
-    const { unmount } = render(
-      <DebouncedPayloadProbe
-        systemPrompt="test"
-        messages={[makeMessage("1", "hi")]}
-        selectedServers={["s1"]}
-        enabled
-      />,
-    );
-
-    unmount();
-    await vi.advanceTimersByTimeAsync(1000);
-
-    expect(mockGetXRayPayload).not.toHaveBeenCalled();
-  });
-
-  it("retains payload when disabled (e.g. Chat tab) so Raw shows it immediately", async () => {
-    const { result, rerender } = renderHook(
-      ({ enabled }: { enabled: boolean }) =>
-        useDebouncedXRayPayload({
-          systemPrompt: "test",
-          messages: [makeMessage("1", "hi")],
-          selectedServers: ["s1"],
-          enabled,
-        }),
-      { initialProps: { enabled: true } },
-    );
-
-    await act(async () => {
-      await vi.runAllTimersAsync();
+    expect(result.current.payload?.tools).toEqual({
+      greet: {
+        name: "greet",
+        description: "Say hello",
+        inputSchema: {
+          type: "object",
+          properties: { name: { type: "string" } },
+          required: ["name"],
+          additionalProperties: false,
+        },
+      },
     });
-
-    expect(result.current.payload).toEqual(PAYLOAD_RESPONSE);
-
-    rerender({ enabled: false });
-
-    expect(result.current.payload).toEqual(PAYLOAD_RESPONSE);
-
-    rerender({ enabled: true });
-
-    expect(result.current.payload).toEqual(PAYLOAD_RESPONSE);
+    expect(result.current.payload?.messages).toEqual([msg]);
+    expect(result.current.hasMessages).toBe(true);
+    expect(result.current.loading).toBe(false);
+    expect(result.current.error).toBeNull();
   });
 
-  it("clears payload when messages become empty", async () => {
+  it("includes tool inventory in system prompt", () => {
+    const msg = makeMessage("1", "hi");
+    const { result } = renderHook(() =>
+      useDebouncedXRayPayload({
+        systemPrompt: "You are helpful",
+        messages: [msg],
+        toolDefinitions: TOOL_DEFS,
+        toolServerMap: TOOL_SERVER_MAP,
+      }),
+    );
+
+    const system = result.current.payload?.system ?? "";
+    expect(system).toContain("You are helpful");
+    expect(system).toContain("## Connected MCP Tools");
+    expect(system).toContain("Server my-server:");
+    expect(system).toContain("- greet: Say hello");
+  });
+
+  it("clears payload when messages become empty", () => {
     const { result, rerender } = renderHook(
       ({ messages }: { messages: UIMessage[] }) =>
         useDebouncedXRayPayload({
           systemPrompt: "test",
           messages,
-          selectedServers: ["s1"],
-          enabled: true,
+          toolDefinitions: TOOL_DEFS,
+          toolServerMap: TOOL_SERVER_MAP,
         }),
       { initialProps: { messages: [makeMessage("1", "hi")] } },
     );
 
-    await act(async () => {
-      await vi.runAllTimersAsync();
-    });
-
-    expect(result.current.payload).toEqual(PAYLOAD_RESPONSE);
+    expect(result.current.payload).not.toBeNull();
 
     rerender({ messages: [] });
 
     expect(result.current.payload).toBeNull();
+  });
+
+  it("shows no tools connected when toolServerMap is empty", () => {
+    const { result } = renderHook(() =>
+      useDebouncedXRayPayload({
+        systemPrompt: undefined,
+        messages: [makeMessage("1", "hi")],
+        toolDefinitions: {},
+        toolServerMap: {},
+      }),
+    );
+
+    expect(result.current.payload?.system).toContain(
+      "No MCP tools are currently connected.",
+    );
+  });
+
+  it("provides default inputSchema when tool has none", () => {
+    const { result } = renderHook(() =>
+      useDebouncedXRayPayload({
+        systemPrompt: "test",
+        messages: [makeMessage("1", "hi")],
+        toolDefinitions: {
+          bare: { name: "bare", description: "no schema" },
+        },
+        toolServerMap: { bare: "s1" },
+      }),
+    );
+
+    expect(result.current.payload?.tools.bare.inputSchema).toEqual({
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    });
   });
 });

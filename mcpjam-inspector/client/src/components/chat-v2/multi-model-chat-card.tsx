@@ -123,6 +123,7 @@ export function MultiModelChatCard({
     error,
     chatSessionId,
     toolsMetadata,
+    toolDefinitions,
     toolServerMap,
     liveTraceEnvelope,
     hasLiveTimelineContent,
@@ -175,8 +176,8 @@ export function MultiModelChatCard({
   const cardRawXRayMirror = useDebouncedXRayPayload({
     systemPrompt,
     messages,
-    selectedServers,
-    enabled: showLiveTraceDiagnostics && !isThreadEmpty && traceViewsSupported,
+    toolDefinitions,
+    toolServerMap,
   });
   const errorMessage = formatErrorMessage(error);
 

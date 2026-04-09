@@ -189,6 +189,7 @@ export function MultiModelPlaygroundCard({
     error,
     chatSessionId,
     toolsMetadata,
+    toolDefinitions,
     toolServerMap,
     liveTraceEnvelope,
     hasTraceSnapshot,
@@ -289,8 +290,8 @@ export function MultiModelPlaygroundCard({
   const playgroundCardRawXRay = useDebouncedXRayPayload({
     systemPrompt,
     messages,
-    selectedServers,
-    enabled: showLiveTraceDiagnostics && !isThreadEmpty && traceViewsSupported,
+    toolDefinitions,
+    toolServerMap,
   });
   const latestTurn = effectiveLiveTraceEnvelope?.turns?.at(-1);
   const summary = useMemo<MultiModelCardSummary>(

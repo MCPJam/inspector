@@ -48,7 +48,7 @@ import {
   detectOllamaToolCapableModels,
 } from "@/lib/ollama-utils";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
-import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
+import { getToolsMetadata, ToolServerMap, type ToolDefinition } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import {
   authFetch,
@@ -168,6 +168,7 @@ export interface UseChatSessionReturn {
 
   // Tools metadata
   toolsMetadata: Record<string, Record<string, unknown>>;
+  toolDefinitions: Record<string, ToolDefinition>;
   toolServerMap: ToolServerMap;
 
   // Token counts
@@ -662,6 +663,7 @@ export function useChatSession({
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
+  const [toolDefinitions, setToolDefinitions] = useState<Record<string, ToolDefinition>>({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
   const [persistedSnapshotToolCallIds, setPersistedSnapshotToolCallIds] =
     useState<string[]>([]);
@@ -1451,6 +1453,9 @@ export function useChatSession({
         setToolsMetadata((previous) =>
           Object.keys(previous).length > 0 ? {} : previous,
         );
+        setToolDefinitions((previous) =>
+          Object.keys(previous).length > 0 ? {} : previous,
+        );
         setToolServerMap((previous) =>
           Object.keys(previous).length > 0 ? {} : previous,
         );
@@ -1473,11 +1478,12 @@ export function useChatSession({
       setMcpToolsTokenCountLoading(!!modelIdForTokens);
 
       try {
-        const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
+        const { metadata, toolServerMap, tokenCounts, toolDefinitions } = await getToolsMetadata(
           selectedServers,
           modelIdForTokens,
         );
         setToolsMetadata(metadata);
+        setToolDefinitions(toolDefinitions);
         setToolServerMap(toolServerMap);
         setMcpToolsTokenCount(
           tokenCounts && Object.keys(tokenCounts).length > 0
@@ -1497,6 +1503,7 @@ export function useChatSession({
           );
         }
         setToolsMetadata({});
+        setToolDefinitions({});
         setToolServerMap({});
         setMcpToolsTokenCount(null);
       } finally {
@@ -1659,6 +1666,7 @@ export function useChatSession({
 
     // Tools metadata
     toolsMetadata,
+    toolDefinitions,
     toolServerMap,
 
     // Token counts
