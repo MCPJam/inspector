@@ -51,6 +51,11 @@ const premiumModel = {
   name: "Claude Sonnet 4.5",
   provider: "anthropic" as const,
 };
+const nonGuestMcpjamModel = {
+  id: "openai/gpt-4o-mini",
+  name: "GPT-4o Mini",
+  provider: "openai" as const,
+};
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
@@ -59,6 +64,7 @@ vi.mock("@/lib/config", () => ({
 vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [
     premiumModel,
+    nonGuestMcpjamModel,
     freeParityGuestModel,
     guestModel,
   ]),
@@ -306,6 +312,33 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("shows ALL MCPJam models to anonymous shared-chat viewers (no guest-allowed filtering)", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+        hostedShareToken: "share-token",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.disableForAuthentication).toBe(false);
+    });
+
+    // All MCPJam-provided models should be available, including ones
+    // that were previously excluded from the guest-allowed list
+    expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "openai/gpt-4o-mini",
+      "openai/gpt-oss-120b",
+      "openai/gpt-5-mini",
+    ]);
+    unmount();
+  });
+
   it("treats anonymous shared-chat viewers as guest users", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
@@ -323,7 +356,9 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
+    // All MCPJam-provided models are now available (no guest-allowed filtering)
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "openai/gpt-4o-mini",
       "openai/gpt-oss-120b",
       "openai/gpt-5-mini",
     ]);
