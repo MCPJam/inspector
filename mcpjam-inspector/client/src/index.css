@@ -630,19 +630,9 @@
 
 .claude-loading-indicator__static {
   inset: 0;
-  display: none;
-}
-
-.claude-loading-indicator--static .claude-loading-indicator__static {
-  display: block;
-}
-
-.claude-loading-indicator--static .claude-loading-indicator__strip {
-  display: none;
 }
 
 .claude-loading-indicator__strip {
-  display: block;
   left: 0;
   top: 0;
   width: 100%;
@@ -703,12 +693,15 @@
   }
 }
 
+/* Keep these thresholds separated enough to survive CSS minification.
+   If they round to the same percentage in production, the browser turns
+   the intended handoff into a long crossfade. */
 @keyframes claude-strip-900-visibility {
   0%,
-  52.941176% {
+  52.9% {
     opacity: 1;
   }
-  52.941177%,
+  53%,
   100% {
     opacity: 0;
   }
@@ -751,10 +744,10 @@
 
 @keyframes claude-strip-800-visibility {
   0%,
-  52.941176% {
+  52.9% {
     opacity: 0;
   }
-  52.941177%,
+  53%,
   100% {
     opacity: 1;
   }
@@ -763,7 +756,7 @@
 @media (prefers-reduced-motion: reduce) {
   .claude-loading-indicator__strip {
     animation: none;
-    display: none;
+    opacity: 0;
   }
 
   .claude-loading-indicator__static {
