@@ -19,7 +19,9 @@ import { getModelById } from "@/shared/types";
 import { getInitials } from "@/lib/utils";
 import type { WorkspaceThreadOwnerAvatar } from "./workspace-thread-owner-avatar";
 
-function formatChatHistoryModelLabel(session: ChatHistorySession): string | null {
+function formatChatHistoryModelLabel(
+  session: ChatHistorySession,
+): string | null {
   const raw = session.modelId?.trim();
   if (!raw) return null;
   return getModelById(raw)?.name ?? raw;
@@ -146,10 +148,7 @@ export function ChatHistoryRow({
                 </>
               ) : (
                 <AvatarFallback className="bg-muted">
-                  <User
-                    className="size-2 text-muted-foreground"
-                    aria-hidden
-                  />
+                  <User className="size-2 text-muted-foreground" aria-hidden />
                 </AvatarFallback>
               )}
             </Avatar>
@@ -171,13 +170,7 @@ export function ChatHistoryRow({
   };
 
   const runAction = async (
-    action:
-      | "archive"
-      | "unarchive"
-      | "pin"
-      | "unpin"
-      | "share"
-      | "unshare",
+    action: "archive" | "unarchive" | "pin" | "unpin" | "share" | "unshare",
     operation: () => Promise<void>,
   ) => {
     await operation();
@@ -236,11 +229,7 @@ export function ChatHistoryRow({
               aria-label="Pinned"
               title="Pinned"
             >
-              <Pin
-                className="h-3 w-3 rotate-45"
-                strokeWidth={2}
-                aria-hidden
-              />
+              <Pin className="h-3 w-3 rotate-45" strokeWidth={2} aria-hidden />
             </span>
           </span>
         ) : (
@@ -256,11 +245,7 @@ export function ChatHistoryRow({
           {...(session.isPinned ? { "aria-label": "Pinned" as const } : {})}
         >
           {session.isPinned ? (
-            <Pin
-              className="h-3 w-3 rotate-45"
-              strokeWidth={2}
-              aria-hidden
-            />
+            <Pin className="h-3 w-3 rotate-45" strokeWidth={2} aria-hidden />
           ) : null}
         </span>
       )}
@@ -283,9 +268,7 @@ export function ChatHistoryRow({
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
-        <div
-          className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1"
-        >
+        <div className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1">
           <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
             {relativeTime}
           </span>

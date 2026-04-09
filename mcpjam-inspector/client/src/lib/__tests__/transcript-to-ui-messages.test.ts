@@ -83,7 +83,9 @@ describe("transcriptToUIMessages", () => {
       "assistant",
     ]);
 
-    const toolPart = messages[1].parts.find((p) => p.type === "dynamic-tool") as
+    const toolPart = messages[1].parts.find(
+      (p) => p.type === "dynamic-tool",
+    ) as
       | { type: "dynamic-tool"; toolCallId: string; output: unknown }
       | undefined;
     expect(toolPart).toBeDefined();
@@ -121,8 +123,11 @@ describe("transcriptToUIMessages", () => {
     ];
 
     const messages = transcriptToUIMessages(transcript);
-    const invocations = messages[1].parts.filter((p) => p.type === "dynamic-tool") as Array<{
-      toolCallId: string; output: unknown;
+    const invocations = messages[1].parts.filter(
+      (p) => p.type === "dynamic-tool",
+    ) as Array<{
+      toolCallId: string;
+      output: unknown;
     }>;
     expect(invocations).toHaveLength(2);
     expect(invocations[0].output).toEqual({ x: 1 });
@@ -145,7 +150,11 @@ describe("transcriptToUIMessages", () => {
       {
         role: "tool",
         content: [
-          { type: "tool-result", toolCallId: "legacy-id", result: { ok: true } },
+          {
+            type: "tool-result",
+            toolCallId: "legacy-id",
+            result: { ok: true },
+          },
         ],
       },
     ];

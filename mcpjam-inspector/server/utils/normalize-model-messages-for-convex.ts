@@ -15,7 +15,10 @@ export function normalizeModelMessagesForConvex(
 
   const pendingToolCallIds: string[] = [];
 
-  const normalizePart = (part: unknown, role: "assistant" | "tool"): unknown => {
+  const normalizePart = (
+    part: unknown,
+    role: "assistant" | "tool",
+  ): unknown => {
     if (!part || typeof part !== "object") return part;
     const p = part as Record<string, unknown>;
     const type = p.type;
@@ -89,7 +92,10 @@ export function normalizeModelMessagesForConvex(
         (c[0] as { type?: string }).type === "text" &&
         typeof (c[0] as { text?: string }).text === "string"
       ) {
-        return { ...msg, content: (c[0] as { text: string }).text } as ModelMessage;
+        return {
+          ...msg,
+          content: (c[0] as { text: string }).text,
+        } as ModelMessage;
       }
     }
     return msg;

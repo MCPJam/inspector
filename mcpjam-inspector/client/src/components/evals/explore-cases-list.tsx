@@ -144,8 +144,8 @@ export function ExploreCasesList({
             )}
           >
             <p>
-              No test cases in this suite. Evaluation runs from CI or replay
-              can still appear in the main panel.
+              No test cases in this suite. Evaluation runs from CI or replay can
+              still appear in the main panel.
             </p>
             {onViewRunsTable ? (
               <Button

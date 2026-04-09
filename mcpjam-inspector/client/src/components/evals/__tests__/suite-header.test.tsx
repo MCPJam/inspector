@@ -217,7 +217,9 @@ describe("SuiteHeader", () => {
       />,
     );
 
-    expect(screen.getByRole("button", { name: "Settings" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Settings" }),
+    ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Replay latest run" }),
     ).toBeInTheDocument();

@@ -13,7 +13,7 @@ const malformedWorkspaceTrace = [
     content: [
       {
         type: "text",
-        text: "I'll help you draw a \"go\" diagram! Let me first read the format reference, then create a hand-drawn style diagram for you.",
+        text: 'I\'ll help you draw a "go" diagram! Let me first read the format reference, then create a hand-drawn style diagram for you.',
       },
       { type: "tool-call", toolName: "invocation" },
     ],
@@ -36,7 +36,7 @@ const malformedWorkspaceTrace = [
     content: [
       {
         type: "text",
-        text: "Now let me create a hand-drawn \"go\" diagram for you! I'll interpret this as a \"Go\" game board with some game elements:",
+        text: 'Now let me create a hand-drawn "go" diagram for you! I\'ll interpret this as a "Go" game board with some game elements:',
       },
       { type: "tool-call", toolName: "invocation" },
     ],
