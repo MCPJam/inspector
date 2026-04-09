@@ -243,6 +243,30 @@ describe("web routes — chat-v2 guest mode", () => {
     );
   });
 
+  it("does NOT reject MCPJam models outside the old guest-allowed list", async () => {
+    const { app } = createWebTestApp();
+    const { token } = issueGuestToken();
+
+    // openai/gpt-4o-mini is MCPJam-provided but NOT in GUEST_ALLOWED_MODEL_IDS
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
+        model: {
+          id: "openai/gpt-4o-mini",
+          provider: "openai",
+          name: "GPT-4o Mini",
+        },
+      },
+      token,
+    );
+
+    // Should succeed, not return 403
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+  });
+
   it("accepts a hosted guest token in development when local signing is disabled", async () => {
     process.env.NODE_ENV = "development";
     process.env.MCPJAM_USE_LOCAL_GUEST_SIGNING = "false";

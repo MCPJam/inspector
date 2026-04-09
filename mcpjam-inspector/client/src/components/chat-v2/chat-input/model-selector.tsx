@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
-import { useConvexAuth } from "convex/react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -151,7 +150,6 @@ export function ModelSelector({
   const [pendingChange, setPendingChange] =
     useState<PendingSelectionChange | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
-  const { isAuthenticated } = useConvexAuth();
 
   const selectedModelsData =
     selectedModels && selectedModels.length > 0
@@ -354,19 +352,15 @@ export function ModelSelector({
 
   const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
     group.models.map((model) => {
-      const isMcpJamProvided = isMCPJamProvidedModel(String(model.id));
       const isDisabled =
         !!model.disabled ||
-        (isMcpJamProvided && !isAuthenticated) ||
         (multiModelEnabled &&
           !selectedIds.has(String(model.id)) &&
           selectedLimitReached);
       const disabledReason =
-        isMcpJamProvided && !isAuthenticated
-          ? "Sign in to use MCPJam provided models"
-          : !selectedIds.has(String(model.id)) && selectedLimitReached
-            ? `You can compare up to ${maxSelectedModels} models at once`
-            : model.disabledReason;
+        !selectedIds.has(String(model.id)) && selectedLimitReached
+          ? `You can compare up to ${maxSelectedModels} models at once`
+          : model.disabledReason;
       const isSelected = selectedIds.has(String(model.id));
 
       const row = (

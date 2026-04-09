@@ -9,7 +9,7 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
+import { isMCPJamProvidedModel } from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -460,16 +460,6 @@ chatV2.post("/", async (c) => {
       let authHeader = c.req.header("authorization");
 
       if (!authHeader) {
-        if (!isGuestAllowedModel(String(modelDefinition.id))) {
-          return c.json(
-            {
-              error:
-                "This MCPJam model is not available for guest access. Sign in to continue.",
-            },
-            403,
-          );
-        }
-
         try {
           authHeader = (await getProductionGuestAuthHeader()) ?? undefined;
         } catch {
