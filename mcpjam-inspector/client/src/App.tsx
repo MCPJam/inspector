@@ -639,8 +639,7 @@ export default function App() {
       activeTab === "resources" ||
       activeTab === "prompts" ||
       activeTab === "tasks" ||
-      activeTab === "auth" ||
-      activeTab === "views";
+      activeTab === "auth";
     if (!needsServer || selectedMCPConfig) return;
 
     const firstConnected = Object.entries(workspaceServers).find(

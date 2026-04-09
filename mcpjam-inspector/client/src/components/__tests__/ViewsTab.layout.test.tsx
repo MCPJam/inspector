@@ -179,15 +179,10 @@ describe("ViewsTab layout", () => {
 
     render(<ViewsTab selectedServer="selected-server" />);
 
-    expect(screen.getByText("No views yet")).toBeInTheDocument();
+    expect(screen.getByText("No saved views yet")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "No views for this server",
-      ),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(
-        "This server has no saved views yet. Save tool executions from the Chat tab to create reusable views.",
+        "Save tool executions from Chat or App Builder to create reusable views.",
       ),
     ).toBeInTheDocument();
   });
