@@ -7,13 +7,13 @@ import { ChatHistoryRail } from "../ChatHistoryRail";
 
 const {
   refetchMock,
-  archiveAllActiveMock,
+  archiveManySessionIdsMock,
   useChatHistoryMock,
   useWorkspaceMembersMock,
   chatHistoryRowPropsSpy,
 } = vi.hoisted(() => {
   const refetchMock = vi.fn();
-  const archiveAllActiveMock = vi.fn();
+  const archiveManySessionIdsMock = vi.fn();
   const chatHistoryRowPropsSpy = vi.fn();
   const useWorkspaceMembersMock = vi.fn(() => ({
     members: [],
@@ -28,6 +28,7 @@ const {
       workspace: [] as ChatHistorySession[],
       loading: false,
       error: null,
+      isReactive: false,
       refetch: refetchMock,
       actions: {
         rename: vi.fn(),
@@ -39,12 +40,13 @@ const {
         unpin: vi.fn(),
         markRead: vi.fn(),
         markUnread: vi.fn(),
-        archiveAllActive: archiveAllActiveMock,
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
       },
     }));
     return {
       refetchMock,
-      archiveAllActiveMock,
+      archiveManySessionIdsMock,
       useChatHistoryMock,
       useWorkspaceMembersMock,
       chatHistoryRowPropsSpy,
@@ -110,7 +112,7 @@ function sessionStub(
 describe("ChatHistoryRail", () => {
   beforeEach(() => {
     refetchMock.mockReset();
-    archiveAllActiveMock.mockReset();
+    archiveManySessionIdsMock.mockReset();
     chatHistoryRowPropsSpy.mockReset();
     useWorkspaceMembersMock.mockReset();
     useWorkspaceMembersMock.mockReturnValue({
@@ -126,6 +128,7 @@ describe("ChatHistoryRail", () => {
       workspace: [],
       loading: false,
       error: null,
+      isReactive: false,
       refetch: refetchMock,
       actions: {
         rename: vi.fn(),
@@ -137,7 +140,8 @@ describe("ChatHistoryRail", () => {
         unpin: vi.fn(),
         markRead: vi.fn(),
         markUnread: vi.fn(),
-        archiveAllActive: archiveAllActiveMock,
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
       },
     }));
   });
@@ -197,15 +201,14 @@ describe("ChatHistoryRail", () => {
     }
   });
 
-  it("archive all confirms then calls archiveAllActive", async () => {
-    const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
-
+  it("skips fallback refetch retries when history is reactive", async () => {
+    vi.useFakeTimers();
     useChatHistoryMock.mockImplementation(() => ({
-      personal: [sessionStub("p1")],
+      personal: [],
       workspace: [],
       loading: false,
       error: null,
+      isReactive: true,
       refetch: refetchMock,
       actions: {
         rename: vi.fn(),
@@ -217,11 +220,78 @@ describe("ChatHistoryRail", () => {
         unpin: vi.fn(),
         markRead: vi.fn(),
         markUnread: vi.fn(),
-        archiveAllActive: archiveAllActiveMock,
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
       },
     }));
 
-    archiveAllActiveMock.mockResolvedValue(undefined);
+    try {
+      const { rerender } = render(
+        <ChatHistoryRail
+          activeSessionId={null}
+          isAuthenticated
+          isStreaming={false}
+          workspaceId="workspace-1"
+          onSelectThread={vi.fn()}
+          onNewChat={vi.fn()}
+        />,
+      );
+
+      rerender(
+        <ChatHistoryRail
+          activeSessionId={null}
+          isAuthenticated
+          isStreaming
+          workspaceId="workspace-1"
+          onSelectThread={vi.fn()}
+          onNewChat={vi.fn()}
+        />,
+      );
+
+      rerender(
+        <ChatHistoryRail
+          activeSessionId={null}
+          isAuthenticated
+          isStreaming={false}
+          workspaceId="workspace-1"
+          onSelectThread={vi.fn()}
+          onNewChat={vi.fn()}
+        />,
+      );
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(refetchMock).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("archive from My Threads calls archiveManySessionIds with personal ids", async () => {
+    const user = userEvent.setup();
+
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("p1")],
+      workspace: [],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        markRead: vi.fn(),
+        markUnread: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    archiveManySessionIdsMock.mockResolvedValue(undefined);
 
     render(
       <ChatHistoryRail
@@ -234,10 +304,13 @@ describe("ChatHistoryRail", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /archive all threads/i }));
-    expect(confirmSpy).toHaveBeenCalled();
-    expect(archiveAllActiveMock).toHaveBeenCalledTimes(1);
-    confirmSpy.mockRestore();
+    await user.click(
+      screen.getByRole("button", {
+        name: /archive all threads in my threads/i,
+      }),
+    );
+    expect(archiveManySessionIdsMock).toHaveBeenCalledTimes(1);
+    expect(archiveManySessionIdsMock).toHaveBeenCalledWith(["p1"]);
   });
 
   it("passes workspaceThreadOwner into workspace rows from member roster", () => {
@@ -281,6 +354,7 @@ describe("ChatHistoryRail", () => {
       ],
       loading: false,
       error: null,
+      isReactive: false,
       refetch: refetchMock,
       actions: {
         rename: vi.fn(),
@@ -292,7 +366,8 @@ describe("ChatHistoryRail", () => {
         unpin: vi.fn(),
         markRead: vi.fn(),
         markUnread: vi.fn(),
-        archiveAllActive: archiveAllActiveMock,
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
       },
     }));
 
@@ -326,6 +401,7 @@ describe("ChatHistoryRail", () => {
       workspace: [],
       loading: false,
       error: null,
+      isReactive: false,
       refetch: refetchMock,
       actions: {
         rename: vi.fn(),
@@ -337,7 +413,8 @@ describe("ChatHistoryRail", () => {
         unpin: vi.fn(),
         markRead: vi.fn(),
         markUnread: vi.fn(),
-        archiveAllActive: archiveAllActiveMock,
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
       },
     }));
 
@@ -358,15 +435,15 @@ describe("ChatHistoryRail", () => {
     expect(personalCall?.[0]).not.toHaveProperty("workspaceThreadOwner");
   });
 
-  it("archive all does not call API when confirm is dismissed", async () => {
+  it("scopes archive buttons to personal vs workspace session ids when both sections exist", async () => {
     const user = userEvent.setup();
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(false);
 
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("p1")],
-      workspace: [],
+      workspace: [sessionStub("w1")],
       loading: false,
       error: null,
+      isReactive: false,
       refetch: refetchMock,
       actions: {
         rename: vi.fn(),
@@ -378,9 +455,12 @@ describe("ChatHistoryRail", () => {
         unpin: vi.fn(),
         markRead: vi.fn(),
         markUnread: vi.fn(),
-        archiveAllActive: archiveAllActiveMock,
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
       },
     }));
+
+    archiveManySessionIdsMock.mockResolvedValue(undefined);
 
     render(
       <ChatHistoryRail
@@ -393,8 +473,20 @@ describe("ChatHistoryRail", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: /archive all threads/i }));
-    expect(archiveAllActiveMock).not.toHaveBeenCalled();
-    confirmSpy.mockRestore();
+    await user.click(
+      screen.getByRole("button", {
+        name: /archive all threads in my threads/i,
+      }),
+    );
+    expect(archiveManySessionIdsMock).toHaveBeenLastCalledWith(["p1"]);
+
+    archiveManySessionIdsMock.mockClear();
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /archive all threads in shared threads/i,
+      }),
+    );
+    expect(archiveManySessionIdsMock).toHaveBeenLastCalledWith(["w1"]);
   });
 });

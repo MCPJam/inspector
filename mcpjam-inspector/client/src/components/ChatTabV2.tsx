@@ -359,7 +359,7 @@ export function ChatTabV2({
   // Chat history handlers
   const showHistoryRail =
     HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken;
-  const [isHistorySidebarVisible, setIsHistorySidebarVisible] = useState(true);
+  const [isHistorySidebarVisible, setIsHistorySidebarVisible] = useState(false);
 
   useEffect(() => {
     if (!showHistoryRail) {

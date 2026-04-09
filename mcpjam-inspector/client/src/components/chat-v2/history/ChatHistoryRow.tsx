@@ -38,6 +38,7 @@ function formatRelativeTime(timestamp: number): string {
   if (hours < 24) return `${hours}h`;
 
   const days = Math.floor(diff / 86_400_000);
+  if (days >= 7 && days < 30) return `${Math.floor(days / 7)}w`;
   if (days < 30) return `${days}d`;
 
   const months = Math.floor(days / 30);

@@ -1,12 +1,24 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Archive, Loader2, Plus } from "lucide-react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Archive, Folder, FolderOpen, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
@@ -18,6 +30,8 @@ import {
 
 /** Delays (ms) after a turn completes to re-fetch list while backend ingestion may still be running. */
 const HISTORY_REFETCH_RETRY_DELAYS_MS = [250, 800, 2000] as const;
+
+type ArchiveSectionScope = "personal" | "workspace";
 
 interface ChatHistoryRailProps {
   activeSessionId?: string | null;
@@ -48,6 +62,138 @@ interface ChatHistoryRailProps {
   }) => void | Promise<void>;
 }
 
+function ThreadSection({
+  headingId,
+  title,
+  triggerLabel,
+  archiveAriaLabel,
+  newChatAriaLabel,
+  archiveTooltip,
+  canArchive,
+  archiving,
+  onArchive,
+  onNewChat,
+  newChatDisabled,
+  defaultOpen = true,
+  children,
+}: {
+  headingId: string;
+  title: string;
+  /** Accessible name for the section header row (collapse/expand). */
+  triggerLabel: string;
+  archiveAriaLabel: string;
+  newChatAriaLabel: string;
+  archiveTooltip: string;
+  canArchive: boolean;
+  archiving: boolean;
+  onArchive: () => void;
+  onNewChat: () => void;
+  newChatDisabled: boolean;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen}>
+      <section aria-labelledby={headingId}>
+        <div
+          className={cn(
+            "sticky top-0 z-10 bg-background/95 supports-[backdrop-filter]:backdrop-blur-sm",
+          )}
+        >
+          <CollapsibleTrigger asChild>
+            <div
+              role="button"
+              tabIndex={0}
+              aria-label={triggerLabel}
+              className={cn(
+                "flex w-full min-w-0 cursor-pointer items-center gap-1.5 rounded-md px-1.5 py-1.5 text-left text-xs outline-none transition-[background-color,color] duration-150 ease-out",
+                "text-muted-foreground no-underline hover:bg-accent/60",
+                "focus-visible:ring-2 focus-visible:ring-ring/40",
+              )}
+            >
+              {open ? (
+                <FolderOpen
+                  className="size-3.5 shrink-0 stroke-[1.25] text-muted-foreground"
+                  aria-hidden
+                />
+              ) : (
+                <Folder
+                  className="size-3.5 shrink-0 stroke-[1.25] text-muted-foreground"
+                  aria-hidden
+                />
+              )}
+              <h2
+                id={headingId}
+                className="min-w-0 flex-1 truncate font-medium text-foreground/85"
+              >
+                {title}
+              </h2>
+              <div
+                className="flex shrink-0 items-center gap-px"
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-5 no-underline [&_svg]:size-3"
+                      aria-label={archiveAriaLabel}
+                      onClick={() => void onArchive()}
+                      disabled={!canArchive}
+                    >
+                      {archiving ? (
+                        <Loader2 className="size-3 animate-spin" />
+                      ) : (
+                        <Archive className="size-3" />
+                      )}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{archiveTooltip}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="size-5 no-underline [&_svg]:size-3"
+                      aria-label={newChatAriaLabel}
+                      onClick={() => onNewChat()}
+                      disabled={newChatDisabled}
+                    >
+                      <Plus className="size-3" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">New chat</TooltipContent>
+                </Tooltip>
+              </div>
+            </div>
+          </CollapsibleTrigger>
+        </div>
+        <CollapsibleContent
+          className={cn(
+            "grid overflow-hidden transition-[grid-template-rows] duration-200 ease-out",
+            "data-[state=closed]:grid-rows-[0fr]",
+            "data-[state=open]:grid-rows-[1fr]",
+          )}
+        >
+          <div className="min-h-0">
+            <div className="space-y-0.5 py-0.5 pl-2.5 md:pl-3.5">
+              {children}
+            </div>
+          </div>
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
+  );
+}
+
 export function ChatHistoryRail({
   activeSessionId,
   isAuthenticated,
@@ -62,8 +208,9 @@ export function ChatHistoryRail({
   onArchiveAllComplete,
   onSessionAction,
 }: ChatHistoryRailProps) {
-  const [archivingAll, setArchivingAll] = useState(false);
-  const { personal, workspace, loading, error, refetch, actions } =
+  const [archivingScope, setArchivingScope] =
+    useState<ArchiveSectionScope | null>(null);
+  const { personal, workspace, loading, error, isReactive, refetch, actions } =
     useChatHistory({
       workspaceId,
       enabled,
@@ -88,7 +235,7 @@ export function ChatHistoryRail({
 
     const timeoutIds: ReturnType<typeof window.setTimeout>[] = [];
 
-    if (wasStreaming && !isStreaming) {
+    if (wasStreaming && !isStreaming && !isReactive) {
       void refetch();
       for (const delayMs of HISTORY_REFETCH_RETRY_DELAYS_MS) {
         timeoutIds.push(
@@ -104,10 +251,10 @@ export function ChatHistoryRail({
         window.clearTimeout(id);
       }
     };
-  }, [isStreaming, refetch]);
+  }, [isStreaming, isReactive, refetch]);
 
   useEffect(() => {
-    if (!enabled) {
+    if (!enabled || isReactive) {
       return;
     }
 
@@ -117,82 +264,37 @@ export function ChatHistoryRail({
     }
 
     void refetch();
-  }, [enabled, refetch, refreshSignal]);
+  }, [enabled, isReactive, refetch, refreshSignal]);
 
-  const activeThreadCount = personal.length + workspace.length;
-  const canArchiveAll = activeThreadCount > 0 && !isStreaming && !archivingAll;
+  const archiveBusy = archivingScope !== null;
 
-  const handleArchiveAll = async () => {
-    if (!canArchiveAll) return;
+  const handleArchiveSection = async (
+    scope: ArchiveSectionScope,
+    sessions: ChatHistorySession[],
+  ) => {
+    const count = sessions.length;
+    const canStart = count > 0 && !isStreaming && !archiveBusy;
+    if (!canStart) return;
+
+    const activeInSection = sessions.some((s) => s._id === activeSessionId);
     if (
-      activeSessionId &&
+      activeInSection &&
       beforeResetChatAfterArchiveAll &&
       !beforeResetChatAfterArchiveAll()
     ) {
       return;
     }
-    if (
-      !window.confirm(
-        `Archive all ${activeThreadCount} thread${activeThreadCount === 1 ? "" : "s"}?`,
-      )
-    ) {
-      return;
-    }
-    setArchivingAll(true);
+    setArchivingScope(scope);
     try {
-      await actions.archiveAllActive();
-      onArchiveAllComplete?.(Boolean(activeSessionId));
+      await actions.archiveManySessionIds(sessions.map((s) => s._id));
+      onArchiveAllComplete?.(activeInSection);
     } finally {
-      setArchivingAll(false);
+      setArchivingScope(null);
     }
   };
 
   return (
     <div className="flex h-full min-h-0 flex-col border-r">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b">
-        <span className="text-xs font-medium text-foreground shrink-0">
-          Threads
-        </span>
-        <div className="flex items-center gap-px shrink-0">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-5 [&_svg]:size-3"
-                aria-label="Archive all threads"
-                onClick={() => void handleArchiveAll()}
-                disabled={!canArchiveAll}
-              >
-                {archivingAll ? (
-                  <Loader2 className="size-3 animate-spin" />
-                ) : (
-                  <Archive className="size-3" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">Archive all</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-5 [&_svg]:size-3"
-                aria-label="New chat"
-                onClick={onNewChat}
-                disabled={isStreaming}
-              >
-                <Plus className="size-3" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="bottom">New chat</TooltipContent>
-          </Tooltip>
-        </div>
-      </div>
-
-      {/* Content */}
       <ScrollArea className="min-h-0 flex-1">
         <div className="px-1 py-1">
           {loading && personal.length === 0 && workspace.length === 0 && (
@@ -220,61 +322,78 @@ export function ChatHistoryRail({
               </div>
             )}
 
-          {!loading &&
-            !error &&
-            personal.length === 0 &&
-            workspace.length === 0 && (
-              <p className="text-xs text-muted-foreground text-center py-8 px-4">
-                No chat history yet. Start a conversation to see it here.
-              </p>
-            )}
+          {enabled && !loading && !error && (
+            <>
+              <div className={isAuthenticated ? "mb-1" : undefined}>
+                <ThreadSection
+                  headingId="chat-history-my-threads-heading"
+                  title="My Threads"
+                  triggerLabel="My threads section"
+                  archiveAriaLabel="Archive all threads in My Threads"
+                  newChatAriaLabel="New chat in My Threads"
+                  archiveTooltip="Archive all in My Threads"
+                  canArchive={
+                    personal.length > 0 && !isStreaming && !archiveBusy
+                  }
+                  archiving={archivingScope === "personal"}
+                  onArchive={() =>
+                    void handleArchiveSection("personal", personal)
+                  }
+                  onNewChat={onNewChat}
+                  newChatDisabled={isStreaming}
+                >
+                  {personal.map((session) => (
+                    <ChatHistoryRow
+                      key={session._id}
+                      session={session}
+                      isActive={session._id === activeSessionId}
+                      isAuthenticated={isAuthenticated}
+                      isStreaming={isStreaming}
+                      onSelect={onSelectThread}
+                      onActionComplete={onSessionAction}
+                      actions={actions}
+                    />
+                  ))}
+                </ThreadSection>
+              </div>
 
-          {/* Personal section */}
-          {personal.length > 0 && (
-            <div>
-              {isAuthenticated && workspace.length > 0 && (
-                <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 pt-2 pb-1">
-                  Personal
-                </p>
-              )}
-              {personal.map((session) => (
-                <ChatHistoryRow
-                  key={session._id}
-                  session={session}
-                  isActive={session._id === activeSessionId}
-                  isAuthenticated={isAuthenticated}
-                  isStreaming={isStreaming}
-                  onSelect={onSelectThread}
-                  onActionComplete={onSessionAction}
-                  actions={actions}
-                />
-              ))}
-            </div>
-          )}
-
-          {/* Workspace section */}
-          {isAuthenticated && workspace.length > 0 && (
-            <div>
-              <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider px-2 pt-3 pb-1">
-                Workspace
-              </p>
-              {workspace.map((session) => (
-                <ChatHistoryRow
-                  key={session._id}
-                  session={session}
-                  isActive={session._id === activeSessionId}
-                  isAuthenticated={isAuthenticated}
-                  isStreaming={isStreaming}
-                  onSelect={onSelectThread}
-                  onActionComplete={onSessionAction}
-                  workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(
-                    session,
-                    ownerProfileByUserId,
-                  )}
-                  actions={actions}
-                />
-              ))}
-            </div>
+              {isAuthenticated ? (
+                <ThreadSection
+                  headingId="chat-history-shared-threads-heading"
+                  title="Shared Threads"
+                  triggerLabel="Shared threads section"
+                  archiveAriaLabel="Archive all threads in Shared Threads"
+                  newChatAriaLabel="New chat in Shared Threads"
+                  archiveTooltip="Archive all in Shared Threads"
+                  canArchive={
+                    workspace.length > 0 && !isStreaming && !archiveBusy
+                  }
+                  archiving={archivingScope === "workspace"}
+                  onArchive={() =>
+                    void handleArchiveSection("workspace", workspace)
+                  }
+                  onNewChat={onNewChat}
+                  newChatDisabled={isStreaming}
+                >
+                  {workspace.map((session) => (
+                    <ChatHistoryRow
+                      key={session._id}
+                      session={session}
+                      isActive={session._id === activeSessionId}
+                      isAuthenticated={isAuthenticated}
+                      isStreaming={isStreaming}
+                      onSelect={onSelectThread}
+                      onActionComplete={onSessionAction}
+                      workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(
+                        session,
+                        ownerProfileByUserId,
+                      )}
+                      actions={actions}
+                    />
+                  ))}
+                </ThreadSection>
+              ) : null}
+            </>
           )}
         </div>
       </ScrollArea>
