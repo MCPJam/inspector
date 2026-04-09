@@ -319,11 +319,17 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => {
   const tabs = ({
     mode,
     onModeChange,
+    activeVariant,
   }: {
     mode: "chat" | "timeline" | "raw";
     onModeChange: (mode: "chat" | "timeline" | "raw" | "tools") => void;
+    activeVariant?: "default" | "sidebar";
   }) => (
-    <div data-testid="trace-view-tabs" data-mode={mode}>
+    <div
+      data-testid="trace-view-tabs"
+      data-mode={mode}
+      data-active-variant={activeVariant ?? "default"}
+    >
       <button onClick={() => onModeChange("chat")}>Chat</button>
       <button onClick={() => onModeChange("timeline")}>Trace</button>
       <button onClick={() => onModeChange("raw")}>Raw</button>
@@ -335,12 +341,17 @@ vi.mock("@/components/evals/trace-view-mode-tabs", () => {
     ChatTraceViewModeHeaderBar: ({
       mode,
       onModeChange,
+      activeVariant,
     }: {
       mode: "chat" | "timeline" | "raw";
       onModeChange: (mode: "chat" | "timeline" | "raw" | "tools") => void;
+      activeVariant?: "default" | "sidebar";
     }) => (
-      <div data-testid="chat-trace-view-mode-header-bar">
-        {tabs({ mode, onModeChange })}
+      <div
+        data-testid="chat-trace-view-mode-header-bar"
+        data-active-variant={activeVariant ?? "default"}
+      >
+        {tabs({ mode, onModeChange, activeVariant })}
       </div>
     ),
   };
@@ -782,6 +793,21 @@ describe("PlaygroundMain", () => {
       render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
 
       expect(screen.getByTestId("trace-view-tabs")).toBeInTheDocument();
+    });
+
+    it("uses the sidebar active variant for the trace header tabs", () => {
+      mockUseChatSession.messages = [];
+      mockUseChatSession.traceViewsSupported = true;
+
+      render(<PlaygroundMain {...defaultProps} enableTraceViews={true} />);
+
+      expect(
+        screen.getByTestId("chat-trace-view-mode-header-bar"),
+      ).toHaveAttribute("data-active-variant", "sidebar");
+      expect(screen.getByTestId("trace-view-tabs")).toHaveAttribute(
+        "data-active-variant",
+        "sidebar",
+      );
     });
 
     it("shows the sample raw JSON empty state on an empty thread when Raw is selected", () => {
