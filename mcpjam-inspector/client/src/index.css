@@ -645,57 +645,29 @@
 .claude-loading-indicator__strip--900 {
   animation:
     claude-strip-900-position 1.7s linear infinite,
-    claude-strip-900-visibility 1.7s linear infinite;
+    claude-strip-900-visibility 1.7s step-end infinite;
 }
 
 .claude-loading-indicator__strip--800 {
   animation:
     claude-strip-800-position 1.7s linear infinite,
-    claude-strip-800-visibility 1.7s linear infinite;
+    claude-strip-800-visibility 1.7s step-end infinite;
 }
 
+/* Use step timing within wide keyframe ranges so production minification cannot
+   collapse adjacent boundaries, while keeping the original faster frame cadence. */
 @keyframes claude-strip-900-position {
-  0%,
-  5.882353% {
+  0% {
     transform: translateY(0%);
+    animation-timing-function: steps(8, end);
   }
-  5.882354%,
-  11.764706% {
-    transform: translateY(-11.1111%);
-  }
-  11.764707%,
-  17.647059% {
-    transform: translateY(-22.2222%);
-  }
-  17.64706%,
-  23.529412% {
-    transform: translateY(-33.3333%);
-  }
-  23.529413%,
-  29.411765% {
-    transform: translateY(-44.4444%);
-  }
-  29.411766%,
-  35.294118% {
-    transform: translateY(-55.5556%);
-  }
-  35.294119%,
-  41.176471% {
-    transform: translateY(-66.6667%);
-  }
-  41.176472%,
-  47.058824% {
-    transform: translateY(-77.7778%);
-  }
-  47.058825%,
+  47.058824%,
   100% {
     transform: translateY(-88.8889%);
   }
 }
 
-/* Keep these thresholds separated enough to survive CSS minification.
-   If they round to the same percentage in production, the browser turns
-   the intended handoff into a long crossfade. */
+/* Keep these thresholds separated enough to survive CSS minification. */
 @keyframes claude-strip-900-visibility {
   0%,
   52.9% {
@@ -711,32 +683,8 @@
   0%,
   58.823529% {
     transform: translateY(0%);
+    animation-timing-function: steps(7, end);
   }
-  58.82353%,
-  64.705882% {
-    transform: translateY(-12.5%);
-  }
-  64.705883%,
-  70.588235% {
-    transform: translateY(-25%);
-  }
-  70.588236%,
-  76.470588% {
-    transform: translateY(-37.5%);
-  }
-  76.470589%,
-  82.352941% {
-    transform: translateY(-50%);
-  }
-  82.352942%,
-  88.235294% {
-    transform: translateY(-62.5%);
-  }
-  88.235295%,
-  94.117647% {
-    transform: translateY(-75%);
-  }
-  94.117648%,
   100% {
     transform: translateY(-87.5%);
   }
