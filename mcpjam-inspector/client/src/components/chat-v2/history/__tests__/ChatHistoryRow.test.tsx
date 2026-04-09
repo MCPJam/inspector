@@ -32,8 +32,6 @@ const actions = {
   unshare: vi.fn(),
   pin: vi.fn(),
   unpin: vi.fn(),
-  markRead: vi.fn(),
-  markUnread: vi.fn(),
 };
 
 vi.mock("@/components/ui/dropdown-menu", () => ({
@@ -199,5 +197,51 @@ describe("ChatHistoryRow", () => {
 
     await user.click(screen.getByText("hello world"));
     expect(onSelect).toHaveBeenCalledWith(session);
+  });
+
+  it("shows Archive in the row menu for an active session", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ status: "active" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByText("Archive")).toBeInTheDocument();
+  });
+
+  it("shows Unarchive when the session is archived", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ status: "archived" })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByText("Unarchive")).toBeInTheDocument();
+  });
+
+  it("does not surface read/unread in the row menu", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ isUnread: true })}
+        isActive={false}
+        isAuthenticated={false}
+        isStreaming={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.queryByText("Mark read")).not.toBeInTheDocument();
+    expect(screen.queryByText("Mark unread")).not.toBeInTheDocument();
   });
 });

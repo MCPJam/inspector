@@ -132,9 +132,14 @@ export async function persistChatSessionToConvex(
     });
 
     if (!response.ok) {
-      logger.warn("[chat-session-persistence] Failed to persist chat session", {
+      const responsePreview = await readResponsePreview(response);
+      const logMessage =
+        response.status === 409 && responsePreview.includes("VERSION_CONFLICT")
+          ? "[chat-session-persistence] Chat session version conflict"
+          : "[chat-session-persistence] Failed to persist chat session";
+      logger.warn(logMessage, {
         status: response.status,
-        responsePreview: await readResponsePreview(response),
+        responsePreview,
       });
     }
   } catch (error) {

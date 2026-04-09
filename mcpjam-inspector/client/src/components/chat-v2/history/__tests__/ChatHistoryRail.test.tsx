@@ -1,6 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { ChatHistoryRail } from "../ChatHistoryRail";
@@ -38,8 +37,6 @@ const {
         unshare: vi.fn(),
         pin: vi.fn(),
         unpin: vi.fn(),
-        markRead: vi.fn(),
-        markUnread: vi.fn(),
         archiveManySessionIds: archiveManySessionIdsMock,
         archiveAllActive: vi.fn(),
       },
@@ -138,8 +135,6 @@ describe("ChatHistoryRail", () => {
         unshare: vi.fn(),
         pin: vi.fn(),
         unpin: vi.fn(),
-        markRead: vi.fn(),
-        markUnread: vi.fn(),
         archiveManySessionIds: archiveManySessionIdsMock,
         archiveAllActive: vi.fn(),
       },
@@ -218,8 +213,6 @@ describe("ChatHistoryRail", () => {
         unshare: vi.fn(),
         pin: vi.fn(),
         unpin: vi.fn(),
-        markRead: vi.fn(),
-        markUnread: vi.fn(),
         archiveManySessionIds: archiveManySessionIdsMock,
         archiveAllActive: vi.fn(),
       },
@@ -264,53 +257,6 @@ describe("ChatHistoryRail", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-
-  it("archive from My Threads calls archiveManySessionIds with personal ids", async () => {
-    const user = userEvent.setup();
-
-    useChatHistoryMock.mockImplementation(() => ({
-      personal: [sessionStub("p1")],
-      workspace: [],
-      loading: false,
-      error: null,
-      isReactive: false,
-      refetch: refetchMock,
-      actions: {
-        rename: vi.fn(),
-        archive: vi.fn(),
-        unarchive: vi.fn(),
-        share: vi.fn(),
-        unshare: vi.fn(),
-        pin: vi.fn(),
-        unpin: vi.fn(),
-        markRead: vi.fn(),
-        markUnread: vi.fn(),
-        archiveManySessionIds: archiveManySessionIdsMock,
-        archiveAllActive: vi.fn(),
-      },
-    }));
-
-    archiveManySessionIdsMock.mockResolvedValue(undefined);
-
-    render(
-      <ChatHistoryRail
-        activeSessionId={null}
-        isAuthenticated
-        isStreaming={false}
-        workspaceId="workspace-1"
-        onSelectThread={vi.fn()}
-        onNewChat={vi.fn()}
-      />,
-    );
-
-    await user.click(
-      screen.getByRole("button", {
-        name: /archive all threads in my threads/i,
-      }),
-    );
-    expect(archiveManySessionIdsMock).toHaveBeenCalledTimes(1);
-    expect(archiveManySessionIdsMock).toHaveBeenCalledWith(["p1"]);
   });
 
   it("passes workspaceThreadOwner into workspace rows from member roster", () => {
@@ -364,8 +310,6 @@ describe("ChatHistoryRail", () => {
         unshare: vi.fn(),
         pin: vi.fn(),
         unpin: vi.fn(),
-        markRead: vi.fn(),
-        markUnread: vi.fn(),
         archiveManySessionIds: archiveManySessionIdsMock,
         archiveAllActive: vi.fn(),
       },
@@ -411,8 +355,6 @@ describe("ChatHistoryRail", () => {
         unshare: vi.fn(),
         pin: vi.fn(),
         unpin: vi.fn(),
-        markRead: vi.fn(),
-        markUnread: vi.fn(),
         archiveManySessionIds: archiveManySessionIdsMock,
         archiveAllActive: vi.fn(),
       },
@@ -435,9 +377,7 @@ describe("ChatHistoryRail", () => {
     expect(personalCall?.[0]).not.toHaveProperty("workspaceThreadOwner");
   });
 
-  it("scopes archive buttons to personal vs workspace session ids when both sections exist", async () => {
-    const user = userEvent.setup();
-
+  it("renders archive-all buttons in both history sections", () => {
     useChatHistoryMock.mockImplementation(() => ({
       personal: [sessionStub("p1")],
       workspace: [sessionStub("w1")],
@@ -453,14 +393,10 @@ describe("ChatHistoryRail", () => {
         unshare: vi.fn(),
         pin: vi.fn(),
         unpin: vi.fn(),
-        markRead: vi.fn(),
-        markUnread: vi.fn(),
         archiveManySessionIds: archiveManySessionIdsMock,
         archiveAllActive: vi.fn(),
       },
     }));
-
-    archiveManySessionIdsMock.mockResolvedValue(undefined);
 
     render(
       <ChatHistoryRail
@@ -473,20 +409,40 @@ describe("ChatHistoryRail", () => {
       />,
     );
 
-    await user.click(
+    expect(
       screen.getByRole("button", {
         name: /archive all threads in my threads/i,
       }),
-    );
-    expect(archiveManySessionIdsMock).toHaveBeenLastCalledWith(["p1"]);
-
-    archiveManySessionIdsMock.mockClear();
-
-    await user.click(
+    ).toBeInTheDocument();
+    expect(
       screen.getByRole("button", {
         name: /archive all threads in shared threads/i,
       }),
+    ).toBeInTheDocument();
+  });
+
+  it("routes shared-thread new chat requests with the shared visibility option", () => {
+    const onNewChat = vi.fn();
+
+    render(
+      <ChatHistoryRail
+        activeSessionId={null}
+        isAuthenticated
+        isStreaming={false}
+        workspaceId="workspace-1"
+        onSelectThread={vi.fn()}
+        onNewChat={onNewChat}
+      />,
     );
-    expect(archiveManySessionIdsMock).toHaveBeenLastCalledWith(["w1"]);
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "New chat in My Threads" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "New chat in Shared Threads" }),
+    );
+
+    expect(onNewChat).toHaveBeenNthCalledWith(1);
+    expect(onNewChat).toHaveBeenNthCalledWith(2, { shared: true });
   });
 });

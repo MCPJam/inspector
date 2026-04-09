@@ -106,8 +106,14 @@ export interface UseChatSessionOptions {
   /** Initial tool approval mode for hosted sandbox sessions */
   initialRequireToolApproval?: boolean;
   /** Callback when chat is reset */
-  onReset?: () => void;
+  onReset?: (reason?: ChatSessionResetReason) => void;
 }
+
+export type ChatSessionResetReason =
+  | "auth-bootstrap"
+  | "hydrate"
+  | "fork"
+  | "reset";
 
 export interface TokenUsage {
   inputTokens: number;
@@ -178,31 +184,42 @@ export interface UseChatSessionReturn {
 
   // Actions
   resetChat: () => void;
-  startChatWithMessages: (messages: UIMessage[]) => void;
-  loadChatSession: (session: {
-    chatSessionId: string;
-    messagesBlobUrl: string | null;
-    resumeConfig?: {
-      systemPrompt?: string;
-      temperature?: number;
-      requireToolApproval?: boolean;
-      selectedServers?: string[];
-      draftInput?: string;
-    };
-    version: number;
-    widgetSnapshots?: Array<{
-      toolCallId: string;
-      toolName: string;
-      serverId: string;
-      uiType: "mcp-apps" | "openai-apps";
-      resourceUri?: string;
-      widgetCsp: Record<string, unknown> | null;
-      widgetPermissions: Record<string, unknown> | null;
-      widgetPermissive: boolean;
-      prefersBorder: boolean;
-      widgetHtmlUrl?: string | null;
-    }>;
-  }) => Promise<void>;
+  startChatWithMessages: (
+    messages: UIMessage[],
+    options?: {
+      toolRenderOverrides?: Record<string, ToolRenderOverride>;
+    },
+  ) => void;
+  loadChatSession: (
+    session: {
+      chatSessionId: string;
+      messagesBlobUrl: string | null;
+      resumeConfig?: {
+        systemPrompt?: string;
+        temperature?: number;
+        requireToolApproval?: boolean;
+        selectedServers?: string[];
+        draftInput?: string;
+      };
+      version: number;
+      widgetSnapshots?: Array<{
+        toolCallId: string;
+        toolName: string;
+        serverId: string;
+        uiType: "mcp-apps" | "openai-apps";
+        resourceUri?: string;
+        widgetCsp: Record<string, unknown> | null;
+        widgetPermissions: Record<string, unknown> | null;
+        widgetPermissive: boolean;
+        prefersBorder: boolean;
+        widgetHtmlUrl?: string | null;
+      }>;
+    },
+    options?: {
+      shouldRestoreResumeConfig?: () => boolean;
+      shouldApply?: () => boolean;
+    },
+  ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
 
   // Resumed thread version (for optimistic concurrency)
@@ -249,7 +266,11 @@ interface PendingSessionHydration {
   sessionId: string;
   messages: UIMessage[];
   resumedVersion: number | null;
-  toolRenderOverrides?: Record<string, import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride>;
+  toolRenderOverrides?: Record<
+    string,
+    import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride
+  >;
+  persistedSnapshotToolCallIds?: string[];
   resolve?: () => void;
 }
 
@@ -637,6 +658,8 @@ export function useChatSession({
     Record<string, Record<string, unknown>>
   >({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
+  const [persistedSnapshotToolCallIds, setPersistedSnapshotToolCallIds] =
+    useState<string[]>([]);
   const [mcpToolsTokenCount, setMcpToolsTokenCount] = useState<Record<
     string,
     number
@@ -942,6 +965,9 @@ export function useChatSession({
         baseSetMessages(hydration.messages);
         syncResumedVersion(hydration.resumedVersion);
         syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
+        setPersistedSnapshotToolCallIds(
+          hydration.persistedSnapshotToolCallIds ?? [],
+        );
         setHydrationTick((t) => t + 1);
         return Promise.resolve();
       }
@@ -1048,9 +1074,11 @@ export function useChatSession({
 
   useSharedChatWidgetCapture({
     enabled: HOSTED_MODE && (isAuthenticated || directGuestMode),
+    directGuestMode,
     chatSessionId,
     hostedShareToken,
     hostedSandboxToken,
+    persistedSnapshotToolCallIds,
     messages,
   });
 
@@ -1074,6 +1102,7 @@ export function useChatSession({
             sessionId: nextSessionId,
             messages: nextMessages,
             resumedVersion: null,
+            persistedSnapshotToolCallIds: [],
           };
           queueMicrotask(() => {
             if (
@@ -1100,8 +1129,9 @@ export function useChatSession({
 
     baseSetMessages(pendingHydration.messages);
     syncResumedVersion(pendingHydration.resumedVersion);
-    syncRestoredToolRenderOverrides(
-      pendingHydration.toolRenderOverrides ?? {},
+    syncRestoredToolRenderOverrides(pendingHydration.toolRenderOverrides ?? {});
+    setPersistedSnapshotToolCallIds(
+      pendingHydration.persistedSnapshotToolCallIds ?? [],
     );
     // Force a React state update so that useSyncExternalStore re-reads the
     // messages snapshot that was just written to the Chat store above.
@@ -1110,7 +1140,12 @@ export function useChatSession({
     // version value as before).
     setHydrationTick((t) => t + 1);
     pendingHydration.resolve?.();
-  }, [baseSetMessages, chatSessionId, syncResumedVersion, syncRestoredToolRenderOverrides]);
+  }, [
+    baseSetMessages,
+    chatSessionId,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  ]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -1140,49 +1175,68 @@ export function useChatSession({
     clearPendingSessionHydration();
     setChatSessionId(generateId());
     setMessages([]);
+    setPersistedSnapshotToolCallIds([]);
     syncResumedVersion(null);
     syncRestoredToolRenderOverrides({});
-    onResetRef.current?.();
-  }, [clearPendingSessionHydration, setMessages, syncResumedVersion, syncRestoredToolRenderOverrides]);
+    onResetRef.current?.("reset");
+  }, [
+    clearPendingSessionHydration,
+    setMessages,
+    syncResumedVersion,
+    syncRestoredToolRenderOverrides,
+  ]);
 
   const startChatWithMessages = useCallback(
-    (messages: UIMessage[]) => {
+    (
+      messages: UIMessage[],
+      options?: {
+        toolRenderOverrides?: Record<string, ToolRenderOverride>;
+      },
+    ) => {
       skipNextForkDetectionRef.current = true;
       void queueSessionHydration({
         sessionId: generateId(),
         messages,
         resumedVersion: null,
+        toolRenderOverrides: options?.toolRenderOverrides,
+        persistedSnapshotToolCallIds: [],
       });
-      onResetRef.current?.();
+      onResetRef.current?.("fork");
     },
     [queueSessionHydration],
   );
 
   const loadChatSession = useCallback(
-    async (session: {
-      chatSessionId: string;
-      messagesBlobUrl: string | null;
-      resumeConfig?: {
-        systemPrompt?: string;
-        temperature?: number;
-        requireToolApproval?: boolean;
-        selectedServers?: string[];
-        draftInput?: string;
-      };
-      version: number;
-      widgetSnapshots?: Array<{
-        toolCallId: string;
-        toolName: string;
-        serverId: string;
-        uiType: "mcp-apps" | "openai-apps";
-        resourceUri?: string;
-        widgetCsp: Record<string, unknown> | null;
-        widgetPermissions: Record<string, unknown> | null;
-        widgetPermissive: boolean;
-        prefersBorder: boolean;
-        widgetHtmlUrl?: string | null;
-      }>;
-    }) => {
+    async (
+      session: {
+        chatSessionId: string;
+        messagesBlobUrl: string | null;
+        resumeConfig?: {
+          systemPrompt?: string;
+          temperature?: number;
+          requireToolApproval?: boolean;
+          selectedServers?: string[];
+          draftInput?: string;
+        };
+        version: number;
+        widgetSnapshots?: Array<{
+          toolCallId: string;
+          toolName: string;
+          serverId: string;
+          uiType: "mcp-apps" | "openai-apps";
+          resourceUri?: string;
+          widgetCsp: Record<string, unknown> | null;
+          widgetPermissions: Record<string, unknown> | null;
+          widgetPermissive: boolean;
+          prefersBorder: boolean;
+          widgetHtmlUrl?: string | null;
+        }>;
+      },
+      options?: {
+        shouldRestoreResumeConfig?: () => boolean;
+        shouldApply?: () => boolean;
+      },
+    ) => {
       let uiMessages: UIMessage[] = [];
 
       if (session.messagesBlobUrl) {
@@ -1198,6 +1252,8 @@ export function useChatSession({
 
       // Build toolRenderOverrides from widget snapshots if available
       let overrides: Record<string, ToolRenderOverride> = {};
+      const persistedSnapshotToolCallIds =
+        session.widgetSnapshots?.map((snapshot) => snapshot.toolCallId) ?? [];
       if (session.widgetSnapshots && session.widgetSnapshots.length > 0) {
         const traceSnapshots = snapshotsToTraceWidgetSnapshots(
           session.widgetSnapshots,
@@ -1205,14 +1261,24 @@ export function useChatSession({
         overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
       }
 
-      if (session.resumeConfig?.systemPrompt !== undefined) {
-        setSystemPrompt(session.resumeConfig.systemPrompt);
+      if (options?.shouldApply && !options.shouldApply()) {
+        return;
       }
-      if (session.resumeConfig?.temperature !== undefined) {
-        setTemperature(session.resumeConfig.temperature);
+
+      if (options?.shouldRestoreResumeConfig?.() ?? true) {
+        if (session.resumeConfig?.systemPrompt !== undefined) {
+          setSystemPrompt(session.resumeConfig.systemPrompt);
+        }
+        if (session.resumeConfig?.temperature !== undefined) {
+          setTemperature(session.resumeConfig.temperature);
+        }
+        if (session.resumeConfig?.requireToolApproval !== undefined) {
+          setRequireToolApproval(session.resumeConfig.requireToolApproval);
+        }
       }
-      if (session.resumeConfig?.requireToolApproval !== undefined) {
-        setRequireToolApproval(session.resumeConfig.requireToolApproval);
+
+      if (options?.shouldApply && !options.shouldApply()) {
+        return;
       }
 
       skipNextForkDetectionRef.current = true;
@@ -1221,8 +1287,9 @@ export function useChatSession({
         messages: uiMessages,
         resumedVersion: session.version,
         toolRenderOverrides: overrides,
+        persistedSnapshotToolCallIds,
       });
-      onResetRef.current?.();
+      onResetRef.current?.("hydrate");
     },
     [queueSessionHydration],
   );
@@ -1295,9 +1362,10 @@ export function useChatSession({
         clearPendingSessionHydration();
         setChatSessionId(generateId());
         setMessages([]);
+        setPersistedSnapshotToolCallIds([]);
         syncResumedVersion(null);
         syncRestoredToolRenderOverrides({});
-        onResetRef.current?.();
+        onResetRef.current?.("auth-bootstrap");
         setIsSessionBootstrapComplete(true);
       }
     })();

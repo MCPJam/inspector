@@ -330,4 +330,49 @@ describe("useChatSession hosted mode", () => {
     expect(result.current.isAuthReady).toBe(true);
     unmount();
   });
+
+  it("passes persisted widget snapshot tool call ids to the capture hook after loading history", async () => {
+    mockState.useSharedChatWidgetCapture.mockClear();
+
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    await result.current.loadChatSession({
+      chatSessionId: "history-session-1",
+      messagesBlobUrl: null,
+      version: 3,
+      widgetSnapshots: [
+        {
+          toolCallId: "tool-call-1",
+          toolName: "search",
+          serverId: "server-id-1",
+          uiType: "mcp-apps",
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: false,
+          prefersBorder: false,
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(mockState.useSharedChatWidgetCapture).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          chatSessionId: "history-session-1",
+          persistedSnapshotToolCallIds: ["tool-call-1"],
+        }),
+      );
+    });
+
+    unmount();
+  });
 });

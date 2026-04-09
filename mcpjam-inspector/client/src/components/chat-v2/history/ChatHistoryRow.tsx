@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Pin, MoreVertical, Circle, User } from "lucide-react";
+import { Pin, MoreVertical, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -61,9 +61,7 @@ interface ChatHistoryRowProps {
       | "share"
       | "unshare"
       | "pin"
-      | "unpin"
-      | "mark-read"
-      | "mark-unread";
+      | "unpin";
     session: ChatHistorySession;
   }) => void | Promise<void>;
   /** Workspace list only: avatar for another member's shared thread. */
@@ -76,8 +74,6 @@ interface ChatHistoryRowProps {
     unshare: (sessionId: string) => Promise<void>;
     pin: (sessionId: string) => Promise<void>;
     unpin: (sessionId: string) => Promise<void>;
-    markRead: (sessionId: string) => Promise<void>;
-    markUnread: (sessionId: string) => Promise<void>;
   };
 }
 
@@ -176,12 +172,10 @@ export function ChatHistoryRow({
     action:
       | "archive"
       | "unarchive"
-      | "share"
-      | "unshare"
       | "pin"
       | "unpin"
-      | "mark-read"
-      | "mark-unread",
+      | "share"
+      | "unshare",
     operation: () => Promise<void>,
   ) => {
     await operation();
@@ -221,9 +215,6 @@ export function ChatHistoryRow({
         {ownerAvatar}
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-1">
-            {session.isUnread && (
-              <Circle className="h-1.5 w-1.5 fill-primary text-primary shrink-0" />
-            )}
             <span className="truncate font-medium">{title}</span>
           </div>
           {modelLabel ? (
@@ -272,19 +263,6 @@ export function ChatHistoryRow({
                 }
               >
                 {session.isPinned ? "Unpin" : "Pin"}
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={async () =>
-                  session.isUnread
-                    ? await runAction("mark-read", () =>
-                        actions.markRead(session._id),
-                      )
-                    : await runAction("mark-unread", () =>
-                        actions.markUnread(session._id),
-                      )
-                }
-              >
-                {session.isUnread ? "Mark read" : "Mark unread"}
               </DropdownMenuItem>
 
               {isAuthenticated && (

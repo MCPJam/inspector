@@ -161,4 +161,37 @@ describe("chat-ingestion", () => {
       },
     );
   });
+
+  it("logs version conflicts explicitly", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          ok: false,
+          error: "VERSION_CONFLICT",
+          currentVersion: 7,
+        }),
+        {
+          status: 409,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    await persistChatSessionToConvex({
+      chatSessionId: "session-4",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      startedAt: 1,
+      expectedVersion: 6,
+    });
+
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      "[chat-session-persistence] Chat session version conflict",
+      expect.objectContaining({
+        status: 409,
+        responsePreview: expect.stringContaining("VERSION_CONFLICT"),
+      }),
+    );
+  });
 });

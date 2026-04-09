@@ -6,6 +6,8 @@ export function hasSameStringArray(left: string[], right: string[]): boolean {
   return left.every((value, index) => value === right[index]);
 }
 
+export const DIRECT_GUEST_SERVER_SELECTION_SENTINEL = "__guest__";
+
 export function resolveRestorableServerNames(
   savedServers: string[] | undefined,
   serversById: Map<string, string>,
@@ -29,4 +31,17 @@ export function resolveRestorableServerNames(
   }
 
   return resolved;
+}
+
+export function shouldPreserveGuestServerSelection(
+  savedServers: string[] | undefined,
+  resolvedServerNames: string[],
+  currentServerNames: string[],
+): boolean {
+  return (
+    Array.isArray(savedServers) &&
+    savedServers.includes(DIRECT_GUEST_SERVER_SELECTION_SENTINEL) &&
+    resolvedServerNames.length === 0 &&
+    currentServerNames.length > 0
+  );
 }

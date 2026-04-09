@@ -42,7 +42,7 @@ interface ChatHistoryRailProps {
   enabled?: boolean;
   refreshSignal?: number;
   onSelectThread: (session: ChatHistorySession) => void;
-  onNewChat: () => void;
+  onNewChat: (options?: { shared?: boolean }) => void;
   /** If the user has an active thread selected, run before archiving all (e.g. draft discard confirm). */
   beforeResetChatAfterArchiveAll?: () => boolean;
   /** After a successful archive-all, use this to clear the main chat if a history thread was active. */
@@ -55,9 +55,7 @@ interface ChatHistoryRailProps {
       | "share"
       | "unshare"
       | "pin"
-      | "unpin"
-      | "mark-read"
-      | "mark-unread";
+      | "unpin";
     session: ChatHistorySession;
   }) => void | Promise<void>;
 }
@@ -87,7 +85,7 @@ function ThreadSection({
   canArchive: boolean;
   archiving: boolean;
   onArchive: () => void;
-  onNewChat: () => void;
+  onNewChat: (options?: { shared?: boolean }) => void;
   newChatDisabled: boolean;
   defaultOpen?: boolean;
   children: ReactNode;
@@ -372,7 +370,7 @@ export function ChatHistoryRail({
                   onArchive={() =>
                     void handleArchiveSection("workspace", workspace)
                   }
-                  onNewChat={onNewChat}
+                  onNewChat={() => onNewChat({ shared: true })}
                   newChatDisabled={isStreaming}
                 >
                   {workspace.map((session) => (

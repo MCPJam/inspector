@@ -66,12 +66,44 @@ export interface ChatHistoryDetailResponse {
   widgetSnapshots?: ChatHistoryWidgetSnapshot[];
 }
 
+export interface GenerateWidgetSnapshotUploadUrlRequest {
+  chatSessionId: string;
+}
+
+export interface GenerateWidgetSnapshotUploadUrlResponse {
+  ok: boolean;
+  uploadUrl: string;
+}
+
+export interface CreateChatHistoryWidgetSnapshotRequest {
+  chatSessionId: string;
+  serverId?: string;
+  toolCallId: string;
+  toolName: string;
+  widgetHtmlBlobId: string;
+  uiType: "mcp-apps" | "openai-apps";
+  resourceUri?: string;
+  toolInputBlobId?: string;
+  toolOutputBlobId?: string;
+  widgetCsp?: Record<string, unknown> | null;
+  widgetPermissions?: Record<string, unknown> | null;
+  widgetPermissive?: boolean;
+  prefersBorder?: boolean;
+  displayContext?: Record<string, unknown>;
+}
+
+export interface CreateChatHistoryWidgetSnapshotResponse {
+  ok: boolean;
+  snapshotId: string | null;
+}
+
 export interface UpsertChatHistoryDraftRequest {
   chatSessionId: string;
   workspaceId?: string;
   firstMessagePreview: string;
   modelId?: string;
   modelSource?: string;
+  directVisibility?: "private" | "workspace";
   resumeConfig?: ResumeConfig;
 }
 
@@ -221,4 +253,28 @@ export async function upsertChatHistoryDraft(
     payload,
     requestOptions,
   );
+}
+
+export async function generateWidgetSnapshotUploadUrl(
+  payload: GenerateWidgetSnapshotUploadUrlRequest,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<GenerateWidgetSnapshotUploadUrlResponse> {
+  return webPost<
+    GenerateWidgetSnapshotUploadUrlRequest,
+    GenerateWidgetSnapshotUploadUrlResponse
+  >(
+    "/api/web/chat-history/widget-snapshot/generate-upload-url",
+    payload,
+    requestOptions,
+  );
+}
+
+export async function createChatHistoryWidgetSnapshot(
+  payload: CreateChatHistoryWidgetSnapshotRequest,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<CreateChatHistoryWidgetSnapshotResponse> {
+  return webPost<
+    CreateChatHistoryWidgetSnapshotRequest,
+    CreateChatHistoryWidgetSnapshotResponse
+  >("/api/web/chat-history/widget-snapshot/create", payload, requestOptions);
 }

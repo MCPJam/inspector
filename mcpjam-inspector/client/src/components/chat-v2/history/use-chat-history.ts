@@ -36,8 +36,6 @@ interface UseChatHistoryReturn {
     unshare: (sessionId: string) => Promise<void>;
     pin: (sessionId: string) => Promise<void>;
     unpin: (sessionId: string) => Promise<void>;
-    markRead: (sessionId: string) => Promise<void>;
-    markUnread: (sessionId: string) => Promise<void>;
     /** Archives the given session ids in parallel, then refetches once. */
     archiveManySessionIds: (sessionIds: string[]) => Promise<void>;
     /** Archives every active thread in the current list (personal + workspace) in one refetch. */
@@ -52,9 +50,7 @@ type ChatHistoryActionName =
   | "share"
   | "unshare"
   | "pin"
-  | "unpin"
-  | "mark-read"
-  | "mark-unread";
+  | "unpin";
 
 export function useChatHistory({
   workspaceId,
@@ -114,12 +110,6 @@ export function useChatHistory({
   );
   const unpinCurrentSession = useMutation(
     "directChatHistory:unpinCurrentSession" as any,
-  );
-  const markCurrentSessionRead = useMutation(
-    "directChatHistory:markCurrentSessionRead" as any,
-  );
-  const markCurrentSessionUnread = useMutation(
-    "directChatHistory:markCurrentSessionUnread" as any,
   );
 
   const fetchHistory = useCallback(async () => {
@@ -206,18 +196,10 @@ export function useChatHistory({
         case "unpin":
           await unpinCurrentSession(payload);
           return;
-        case "mark-read":
-          await markCurrentSessionRead(payload);
-          return;
-        case "mark-unread":
-          await markCurrentSessionUnread(payload);
-          return;
       }
     },
     [
       archiveCurrentSession,
-      markCurrentSessionRead,
-      markCurrentSessionUnread,
       pinCurrentSession,
       renameCurrentSession,
       shareCurrentSession,
@@ -289,9 +271,6 @@ export function useChatHistory({
       unshare: (sessionId: string) => performAction("unshare", sessionId),
       pin: (sessionId: string) => performAction("pin", sessionId),
       unpin: (sessionId: string) => performAction("unpin", sessionId),
-      markRead: (sessionId: string) => performAction("mark-read", sessionId),
-      markUnread: (sessionId: string) =>
-        performAction("mark-unread", sessionId),
       archiveManySessionIds,
       archiveAllActive,
     }),

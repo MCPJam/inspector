@@ -53,6 +53,8 @@ import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
+import type { ChatSessionResetReason } from "@/hooks/use-chat-session";
+import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
@@ -84,7 +86,12 @@ import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-c
 import {
   hasSameStringArray,
   resolveRestorableServerNames,
+  shouldPreserveGuestServerSelection,
 } from "@/components/chat-v2/history/session-restore";
+import {
+  buildDraftHistoryPreview,
+  resolveRestoredDraftInput,
+} from "@/components/chat-v2/history/draft-history";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -121,38 +128,13 @@ interface ChatTabProps {
 }
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
-
-function buildDraftHistoryPreview(options: {
-  input: string;
-  mcpPromptResults: MCPPromptResult[];
-  skillResults: SkillResult[];
-  fileAttachments: FileAttachment[];
-}): string {
-  const trimmedInput = options.input.trim();
-  if (trimmedInput) {
-    return trimmedInput;
-  }
-
-  const firstPrompt = options.mcpPromptResults[0];
-  if (firstPrompt?.name) {
-    return firstPrompt.name;
-  }
-
-  const firstSkill = options.skillResults[0];
-  if (firstSkill?.name) {
-    return firstSkill.name;
-  }
-
-  return options.fileAttachments[0]?.file.name ?? "";
-}
+const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 function resolveDraftSelectedServers(
   selectedServerIds: string[],
   selectedServerNames: string[],
 ): string[] {
-  return selectedServerIds.length > 0
-    ? selectedServerIds
-    : selectedServerNames;
+  return selectedServerIds.length > 0 ? selectedServerIds : selectedServerNames;
 }
 
 export function ChatTabV2({
@@ -239,6 +221,9 @@ export function ChatTabV2({
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
+  const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
+    "private" | "workspace"
+  >("private");
   const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
 
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
@@ -246,6 +231,17 @@ export function ChatTabV2({
   const draftPersistenceSignatureRef = useRef<string | null>(null);
   const pendingHistoryServerSyncRef = useRef<string[] | null>(null);
   const historySelectionRequestIdRef = useRef(0);
+  const resumedThreadSendBaselineRef = useRef<{
+    sessionId: string;
+    version: number;
+  } | null>(null);
+  const activeHistorySessionIdRef = useRef<string | null>(null);
+  const reactiveHistoryLoadRequestIdRef = useRef(0);
+  const lastAppliedReactiveVersionRef = useRef<{
+    sessionId: string;
+    version: number;
+  } | null>(null);
+  const hasUnsavedDraftRef = useRef(false);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -285,6 +281,12 @@ export function ChatTabV2({
     hostedSelectedServerIdsOverride ?? hostedSelectedServerIds;
   const effectiveHostedOAuthTokens =
     hostedOAuthTokensOverride ?? hostedOAuthTokens;
+  const isHostedDirectGuest =
+    HOSTED_MODE &&
+    !isConvexAuthenticated &&
+    !effectiveHostedWorkspaceId &&
+    !hostedShareToken &&
+    !hostedSandboxToken;
 
   // Use shared chat session hook
   const {
@@ -344,7 +346,13 @@ export function ChatTabV2({
     initialTemperature,
     initialRequireToolApproval,
     minimalMode,
-    onReset: () => {
+    onReset: (reason?: ChatSessionResetReason) => {
+      if (reason === "auth-bootstrap") {
+        void archiveEmptyDraftSession(activeHistorySessionId);
+      }
+      if (reason === "hydrate") {
+        return;
+      }
       setInput("");
       setMcpPromptResults([]);
       setSkillResults([]);
@@ -359,6 +367,18 @@ export function ChatTabV2({
   // Chat history handlers
   const showHistoryRail =
     HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken;
+  const {
+    session: reactiveHistorySession,
+    widgetSnapshots: reactiveHistoryWidgetSnapshots,
+  } = useDirectChatSessionSubscription({
+    sessionId: activeHistorySessionId,
+    workspaceId: effectiveHostedWorkspaceId,
+    enabled:
+      showHistoryRail &&
+      isConvexAuthenticated &&
+      !!activeHistorySessionId &&
+      !isStreaming,
+  });
   const [isHistorySidebarVisible, setIsHistorySidebarVisible] = useState(false);
 
   useEffect(() => {
@@ -378,6 +398,11 @@ export function ChatTabV2({
     mcpPromptResults.length > 0 ||
     skillResults.length > 0 ||
     fileAttachments.length > 0;
+
+  useEffect(() => {
+    hasUnsavedDraftRef.current = hasUnsavedDraft;
+  }, [hasUnsavedDraft]);
+
   const draftHistoryPreview = buildDraftHistoryPreview({
     input,
     mcpPromptResults,
@@ -389,6 +414,34 @@ export function ChatTabV2({
     selectedConnectedServerNames,
   );
 
+  useEffect(() => {
+    activeHistorySessionIdRef.current = activeHistorySessionId;
+  }, [activeHistorySessionId]);
+
+  useEffect(() => {
+    reactiveHistoryLoadRequestIdRef.current += 1;
+    lastAppliedReactiveVersionRef.current = null;
+  }, [activeHistorySessionId]);
+
+  useEffect(() => {
+    if (!activeHistorySessionId || resumedVersion === null) {
+      return;
+    }
+
+    const lastApplied = lastAppliedReactiveVersionRef.current;
+    if (
+      lastApplied?.sessionId === activeHistorySessionId &&
+      lastApplied.version >= resumedVersion
+    ) {
+      return;
+    }
+
+    lastAppliedReactiveVersionRef.current = {
+      sessionId: activeHistorySessionId,
+      version: resumedVersion,
+    };
+  }, [activeHistorySessionId, resumedVersion]);
+
   const confirmDiscardDraftIfNeeded = useCallback(() => {
     if (!hasUnsavedDraft) {
       return true;
@@ -396,6 +449,7 @@ export function ChatTabV2({
 
     return window.confirm("Discard your current draft and switch chats?");
   }, [hasUnsavedDraft]);
+
   const clearComposerDraft = useCallback(() => {
     setInput("");
     setMcpPromptResults([]);
@@ -405,6 +459,44 @@ export function ChatTabV2({
     setModelContextQueue([]);
     setWidgetStateQueue([]);
   }, [fileAttachments]);
+
+  const archiveEmptyDraftSession = useCallback(
+    async (sessionId?: string | null) => {
+      if (!showHistoryRail || !sessionId || hasConversationMessages) {
+        return;
+      }
+
+      try {
+        await chatHistoryAction("archive", sessionId);
+        setHistoryRefreshSignal((current) => current + 1);
+      } catch (error) {
+        console.error("[ChatTabV2] Failed to archive empty draft chat", error);
+      }
+    },
+    [hasConversationMessages, showHistoryRail],
+  );
+
+  const detachHistorySession = useCallback(
+    (toastMessage: string) => {
+      resumedThreadSendBaselineRef.current = null;
+      setActiveHistorySessionId(null);
+      setPendingDirectVisibility("private");
+      syncResumedVersion(null);
+      if (hasConversationMessages) {
+        startChatWithMessages(cloneUiMessages(messages), {
+          toolRenderOverrides: restoredToolRenderOverrides,
+        });
+      }
+      toast.error(toastMessage);
+    },
+    [
+      hasConversationMessages,
+      messages,
+      restoredToolRenderOverrides,
+      startChatWithMessages,
+      syncResumedVersion,
+    ],
+  );
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
     try {
@@ -418,8 +510,30 @@ export function ChatTabV2({
     async (
       detail: ChatHistoryDetailSession,
       widgetSnapshots?: ChatHistoryWidgetSnapshot[],
+      options?: {
+        shouldRestoreComposerState?: () => boolean;
+        shouldApply?: () => boolean;
+      },
     ) => {
-      if (detail.modelId) {
+      await loadChatSession(
+        {
+          chatSessionId: detail.chatSessionId,
+          messagesBlobUrl: detail.messagesBlobUrl,
+          resumeConfig: detail.resumeConfig,
+          version: detail.version,
+          widgetSnapshots,
+        },
+        {
+          shouldRestoreResumeConfig: options?.shouldRestoreComposerState,
+          shouldApply: options?.shouldApply,
+        },
+      );
+      if (options?.shouldApply && !options.shouldApply()) {
+        return;
+      }
+      const shouldRestoreComposerState =
+        options?.shouldRestoreComposerState?.() ?? true;
+      if (shouldRestoreComposerState && detail.modelId) {
         const matchingModel = availableModels.find(
           (model) => String(model.id) === detail.modelId,
         );
@@ -427,20 +541,16 @@ export function ChatTabV2({
           setSelectedModel(matchingModel);
         }
       }
-
-      await loadChatSession({
-        chatSessionId: detail.chatSessionId,
-        messagesBlobUrl: detail.messagesBlobUrl,
-        resumeConfig: detail.resumeConfig,
-        version: detail.version,
-        widgetSnapshots,
-      });
-      setInput(
-        detail.resumeConfig?.draftInput ??
-          (detail.messageCount === 0 ? detail.firstMessagePreview : ""),
-      );
+      if (shouldRestoreComposerState) {
+        setInput(resolveRestoredDraftInput(detail.resumeConfig));
+      }
       setActiveHistorySessionId(detail._id);
+      setPendingDirectVisibility(detail.directVisibility);
       syncResumedVersion(detail.version);
+      lastAppliedReactiveVersionRef.current = {
+        sessionId: detail._id,
+        version: detail.version,
+      };
       void markHistorySessionRead(detail._id);
     },
     [
@@ -503,13 +613,110 @@ export function ChatTabV2({
     ],
   );
 
+  const refreshHistorySessionAfterStream = useCallback(
+    async (
+      resumedThreadSendBaseline: {
+        sessionId: string;
+        version: number;
+      } | null,
+    ) => {
+      const maxAttempts = resumedThreadSendBaseline
+        ? RESUMED_THREAD_REFRESH_RETRIES + 1
+        : 2;
+
+      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        try {
+          const detail = await refreshCurrentHistorySession({
+            markRead: true,
+          });
+
+          if (
+            !resumedThreadSendBaseline ||
+            (detail &&
+              detail._id === resumedThreadSendBaseline.sessionId &&
+              detail.version > resumedThreadSendBaseline.version)
+          ) {
+            return detail;
+          }
+        } catch (error) {
+          if (attempt >= maxAttempts - 1) {
+            throw error;
+          }
+        }
+
+        if (attempt < maxAttempts - 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 250));
+        }
+      }
+
+      return null;
+    },
+    [refreshCurrentHistorySession],
+  );
+
+  useEffect(() => {
+    if (!showHistoryRail || !activeHistorySessionId || isStreaming) {
+      return;
+    }
+
+    if (reactiveHistorySession === undefined) {
+      return;
+    }
+
+    if (reactiveHistorySession === null) {
+      historySelectionRequestIdRef.current += 1;
+      detachHistorySession(
+        "This chat is no longer available. Continuing locally in a new thread.",
+      );
+      return;
+    }
+
+    if (reactiveHistoryWidgetSnapshots === undefined) {
+      return;
+    }
+
+    const lastApplied = lastAppliedReactiveVersionRef.current;
+    if (
+      lastApplied?.sessionId === reactiveHistorySession._id &&
+      lastApplied.version >= reactiveHistorySession.version
+    ) {
+      return;
+    }
+
+    const requestId = reactiveHistoryLoadRequestIdRef.current + 1;
+    reactiveHistoryLoadRequestIdRef.current = requestId;
+
+    void loadHistorySession(
+      reactiveHistorySession,
+      reactiveHistoryWidgetSnapshots,
+      {
+        shouldRestoreComposerState: () =>
+          !hasUnsavedDraftRef.current &&
+          activeHistorySessionIdRef.current === reactiveHistorySession._id,
+        shouldApply: () =>
+          reactiveHistoryLoadRequestIdRef.current === requestId &&
+          activeHistorySessionIdRef.current === reactiveHistorySession._id,
+      },
+    ).catch((error) => {
+      console.error("[ChatTabV2] Failed to apply reactive chat history", error);
+    });
+  }, [
+    activeHistorySessionId,
+    detachHistorySession,
+    isStreaming,
+    loadHistorySession,
+    reactiveHistorySession,
+    reactiveHistoryWidgetSnapshots,
+    showHistoryRail,
+  ]);
+
   useEffect(() => {
     const shouldPersistDraft =
       showHistoryRail &&
       isSessionBootstrapComplete &&
       !isStreaming &&
       !hasConversationMessages &&
-      draftHistoryPreview.length > 0;
+      input.trim().length > 0;
 
     if (!shouldPersistDraft) {
       draftPersistenceSignatureRef.current = null;
@@ -525,6 +732,7 @@ export function ChatTabV2({
       systemPrompt,
       temperature,
       requireToolApproval,
+      directVisibility: pendingDirectVisibility,
       selectedServers: draftSelectedServers,
       draftInput: input,
     });
@@ -541,6 +749,7 @@ export function ChatTabV2({
         firstMessagePreview: draftHistoryPreview,
         modelId: selectedModel ? String(selectedModel.id) : undefined,
         modelSource: "mcpjam",
+        directVisibility: pendingDirectVisibility,
         resumeConfig: {
           systemPrompt,
           temperature,
@@ -556,6 +765,7 @@ export function ChatTabV2({
 
           draftPersistenceSignatureRef.current = signature;
           setActiveHistorySessionId(detail.session._id);
+          setPendingDirectVisibility(detail.session.directVisibility);
           syncResumedVersion(detail.session.version);
           setHistoryRefreshSignal((current) => current + 1);
         })
@@ -580,6 +790,7 @@ export function ChatTabV2({
     input,
     isSessionBootstrapComplete,
     isStreaming,
+    pendingDirectVisibility,
     requireToolApproval,
     selectedModel,
     showHistoryRail,
@@ -606,25 +817,70 @@ export function ChatTabV2({
 
     if (activeHistorySessionId) {
       historySelectionRequestIdRef.current += 1;
-      setActiveHistorySessionId(null);
-      syncResumedVersion(null);
-      baseResetChat();
-      toast.error("This chat is no longer available. Starting a new thread.");
+      detachHistorySession(
+        "This chat is no longer available. Your draft stayed local, and the next send will start a new thread.",
+      );
       return false;
+    }
+
+    // Eagerly flush draft when creating a workspace-visible thread so the
+    // ingestion pipeline finds the session with directVisibility already set.
+    // Without this, a fast send (before the 400ms debounce) would let the
+    // ingestion create the session from scratch without directVisibility.
+    if (
+      showHistoryRail &&
+      pendingDirectVisibility === "workspace" &&
+      draftHistoryPreview.length > 0
+    ) {
+      try {
+        const draftDetail = await upsertChatHistoryDraft({
+          chatSessionId,
+          workspaceId: effectiveHostedWorkspaceId ?? undefined,
+          firstMessagePreview: draftHistoryPreview,
+          modelId: selectedModel ? String(selectedModel.id) : undefined,
+          modelSource: "mcpjam",
+          directVisibility: "workspace",
+          resumeConfig: {
+            systemPrompt,
+            temperature,
+            requireToolApproval,
+            selectedServers: draftSelectedServers,
+            draftInput: input,
+          },
+        });
+        setActiveHistorySessionId(draftDetail.session._id);
+        syncResumedVersion(draftDetail.session.version);
+      } catch (error) {
+        console.error(
+          "[ChatTabV2] Failed to flush workspace draft before send",
+          error,
+        );
+        // Non-fatal: worst case the thread lands in personal
+      }
     }
 
     return true;
   }, [
     activeHistorySessionId,
-    baseResetChat,
+    chatSessionId,
+    detachHistorySession,
+    draftHistoryPreview,
+    draftSelectedServers,
+    effectiveHostedWorkspaceId,
+    input,
+    pendingDirectVisibility,
     refreshCurrentHistorySession,
+    requireToolApproval,
+    selectedModel,
+    showHistoryRail,
     syncResumedVersion,
+    systemPrompt,
+    temperature,
   ]);
 
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
       if (isStreaming) return;
-      if (!confirmDiscardDraftIfNeeded()) return;
       if (hasUnsavedDraft) {
         clearComposerDraft();
       }
@@ -650,6 +906,15 @@ export function ChatTabV2({
           serversById,
           Object.keys(appState.servers),
         );
+        const syncedServerNames =
+          isHostedDirectGuest &&
+          shouldPreserveGuestServerSelection(
+            detail.session.resumeConfig?.selectedServers,
+            desiredServerNames,
+            selectedServerNames,
+          )
+            ? [...selectedServerNames]
+            : desiredServerNames;
         const hasSavedServerSelection = Array.isArray(
           detail.session.resumeConfig?.selectedServers,
         );
@@ -660,13 +925,13 @@ export function ChatTabV2({
           historySelectionRequestIdRef.current !== selectionRequestId ||
           !hasSavedServerSelection ||
           !onSelectedServerNamesChange ||
-          hasSameStringArray(selectedServerNames, desiredServerNames)
+          hasSameStringArray(selectedServerNames, syncedServerNames)
         ) {
           return;
         }
 
-        pendingHistoryServerSyncRef.current = desiredServerNames;
-        onSelectedServerNamesChange(desiredServerNames);
+        pendingHistoryServerSyncRef.current = syncedServerNames;
+        onSelectedServerNamesChange(syncedServerNames);
       } catch (err) {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setActiveHistorySessionId(null);
@@ -678,9 +943,9 @@ export function ChatTabV2({
     [
       appState.servers,
       clearComposerDraft,
-      confirmDiscardDraftIfNeeded,
       effectiveHostedWorkspaceId,
       hasUnsavedDraft,
+      isHostedDirectGuest,
       isStreaming,
       loadHistorySession,
       onSelectedServerNamesChange,
@@ -689,25 +954,31 @@ export function ChatTabV2({
     ],
   );
 
-  const handleNewChat = useCallback(async () => {
-    if (isStreaming) return;
-    if (!confirmDiscardDraftIfNeeded()) return;
-    if (hasUnsavedDraft) {
-      clearComposerDraft();
-    }
-    historySelectionRequestIdRef.current += 1;
-    setActiveHistorySessionId(null);
-    pendingHistoryServerSyncRef.current = null;
-    syncResumedVersion(null);
-    baseResetChat();
-  }, [
-    baseResetChat,
-    clearComposerDraft,
-    confirmDiscardDraftIfNeeded,
-    hasUnsavedDraft,
-    isStreaming,
-    syncResumedVersion,
-  ]);
+  const handleNewChat = useCallback(
+    async (options?: { shared?: boolean }) => {
+      if (isStreaming) return;
+      if (hasUnsavedDraft) {
+        clearComposerDraft();
+      }
+      void archiveEmptyDraftSession(activeHistorySessionId);
+      resumedThreadSendBaselineRef.current = null;
+      historySelectionRequestIdRef.current += 1;
+      setActiveHistorySessionId(null);
+      pendingHistoryServerSyncRef.current = null;
+      syncResumedVersion(null);
+      baseResetChat();
+      setPendingDirectVisibility(options?.shared ? "workspace" : "private");
+    },
+    [
+      activeHistorySessionId,
+      archiveEmptyDraftSession,
+      baseResetChat,
+      clearComposerDraft,
+      hasUnsavedDraft,
+      isStreaming,
+      syncResumedVersion,
+    ],
+  );
 
   const handleArchiveAllComplete = useCallback(
     (hadActiveHistorySelection: boolean) => {
@@ -721,12 +992,7 @@ export function ChatTabV2({
       syncResumedVersion(null);
       baseResetChat();
     },
-    [
-      baseResetChat,
-      clearComposerDraft,
-      hasUnsavedDraft,
-      syncResumedVersion,
-    ],
+    [baseResetChat, clearComposerDraft, hasUnsavedDraft, syncResumedVersion],
   );
 
   const handleHistorySessionAction = useCallback(
@@ -741,9 +1007,7 @@ export function ChatTabV2({
         | "share"
         | "unshare"
         | "pin"
-        | "unpin"
-        | "mark-read"
-        | "mark-unread";
+        | "unpin";
       session: ChatHistorySession;
     }) => {
       if (action === "unshare" && session._id === activeHistorySessionId) {
@@ -751,9 +1015,9 @@ export function ChatTabV2({
           const detail = await refreshCurrentHistorySession();
           if (!detail) {
             historySelectionRequestIdRef.current += 1;
-            setActiveHistorySessionId(null);
-            syncResumedVersion(null);
-            baseResetChat();
+            detachHistorySession(
+              "This chat is no longer shared with you. Continuing locally in a new thread.",
+            );
           }
         } catch (error) {
           console.error("[ChatTabV2] Failed to refresh unshared chat", error);
@@ -762,9 +1026,8 @@ export function ChatTabV2({
     },
     [
       activeHistorySessionId,
-      baseResetChat,
+      detachHistorySession,
       refreshCurrentHistorySession,
-      syncResumedVersion,
     ],
   );
 
@@ -797,10 +1060,34 @@ export function ChatTabV2({
   useEffect(() => {
     const previousStatus = previousStatusRef.current;
     previousStatusRef.current = status;
+    const wasStreaming =
+      previousStatus === "submitted" || previousStatus === "streaming";
+    const isNowStreaming = status === "submitted" || status === "streaming";
+    const hasStartedStream = !wasStreaming && isNowStreaming;
 
-    const hasCompletedStream =
-      (previousStatus === "submitted" || previousStatus === "streaming") &&
-      status === "ready";
+    if (hasStartedStream) {
+      resumedThreadSendBaselineRef.current =
+        showHistoryRail && activeHistorySessionId && resumedVersion !== null
+          ? {
+              sessionId: activeHistorySessionId,
+              version: resumedVersion,
+            }
+          : null;
+      return;
+    }
+
+    if (!wasStreaming) {
+      return;
+    }
+
+    if (status === "error") {
+      resumedThreadSendBaselineRef.current = null;
+      return;
+    }
+
+    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
+    resumedThreadSendBaselineRef.current = null;
+    const hasCompletedStream = status === "ready";
 
     if (!hasCompletedStream || !showHistoryRail) {
       return;
@@ -811,18 +1098,33 @@ export function ChatTabV2({
     }
 
     const timerId = window.setTimeout(() => {
-      void refreshCurrentHistorySession({ retries: 1, markRead: true }).catch(
-        (error) => {
-          console.error("[ChatTabV2] Failed to refresh chat history", error);
-        },
-      );
+      void (async () => {
+        const detail = await refreshHistorySessionAfterStream(
+          resumedThreadSendBaseline,
+        );
+
+        if (
+          resumedThreadSendBaseline &&
+          (!detail ||
+            detail._id !== resumedThreadSendBaseline.sessionId ||
+            detail.version <= resumedThreadSendBaseline.version)
+        ) {
+          detachHistorySession(
+            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
+          );
+        }
+      })().catch((error) => {
+        console.error("[ChatTabV2] Failed to refresh chat history", error);
+      });
     }, 250);
 
     return () => window.clearTimeout(timerId);
   }, [
     activeHistorySessionId,
+    detachHistorySession,
     markHistorySessionRead,
-    refreshCurrentHistorySession,
+    refreshHistorySessionAfterStream,
+    resumedVersion,
     showHistoryRail,
     status,
   ]);
@@ -918,9 +1220,7 @@ export function ChatTabV2({
       prevCompareModelIdsRef.current = new Set();
       return;
     }
-    const current = new Set(
-      resolvedSelectedModels.map((m) => String(m.id)),
-    );
+    const current = new Set(resolvedSelectedModels.map((m) => String(m.id)));
     const prev = prevCompareModelIdsRef.current;
     const added = [...current].filter((id) => !prev.has(id));
     const leadId = resolvedSelectedModels[0]

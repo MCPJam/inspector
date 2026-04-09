@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   hasSameStringArray,
   resolveRestorableServerNames,
+  shouldPreserveGuestServerSelection,
 } from "../session-restore";
 
 describe("session restore helpers", () => {
@@ -42,6 +43,15 @@ describe("session restore helpers", () => {
         ["github"],
       ),
     ).toEqual(["github"]);
+  });
+
+  it("preserves the current guest server selection when only the guest sentinel was saved", () => {
+    expect(
+      shouldPreserveGuestServerSelection(["__guest__"], [], ["guest-server"]),
+    ).toBe(true);
+    expect(
+      shouldPreserveGuestServerSelection(["server_1"], [], ["guest-server"]),
+    ).toBe(false);
   });
 
   it("compares string arrays by value and order", () => {

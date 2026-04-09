@@ -17,6 +17,8 @@ vi.mock("@/lib/guest-session", () => ({
 
 import {
   chatHistoryAction,
+  createChatHistoryWidgetSnapshot,
+  generateWidgetSnapshotUploadUrl,
   listChatHistory,
   upsertChatHistoryDraft,
 } from "../chat-history-api";
@@ -106,6 +108,7 @@ describe("chat history API in non-hosted mode", () => {
     await upsertChatHistoryDraft({
       chatSessionId: "chat-session-1",
       firstMessagePreview: "hello",
+      directVisibility: "workspace",
       resumeConfig: { draftInput: "hello" },
     });
 
@@ -121,6 +124,9 @@ describe("chat history API in non-hosted mode", () => {
     const headers = mockAuthFetch.mock.calls[0]?.[1]?.headers as Headers;
     expect(headers.get("Authorization")).toBe("Bearer guest-token");
     expect(headers.get("Content-Type")).toBe("application/json");
+    expect(JSON.parse(String(mockAuthFetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      directVisibility: "workspace",
+    });
   });
 
   it("preserves an explicit authorization header", async () => {
@@ -139,5 +145,41 @@ describe("chat history API in non-hosted mode", () => {
     expect(mockGetGuestBearerToken).not.toHaveBeenCalled();
     const headers = mockAuthFetch.mock.calls[0]?.[1]?.headers as Headers;
     expect(headers.get("Authorization")).toBe("Bearer explicit-token");
+  });
+
+  it("attaches the guest bearer when generating a widget snapshot upload URL", async () => {
+    mockAuthFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, uploadUrl: "https://upload.test" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await generateWidgetSnapshotUploadUrl({ chatSessionId: "chat-session-1" });
+
+    const headers = mockAuthFetch.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer guest-token");
+    expect(headers.get("Content-Type")).toBe("application/json");
+  });
+
+  it("attaches the guest bearer when creating a widget snapshot", async () => {
+    mockAuthFetch.mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, snapshotId: "snapshot-1" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await createChatHistoryWidgetSnapshot({
+      chatSessionId: "chat-session-1",
+      toolCallId: "call-1",
+      toolName: "search",
+      widgetHtmlBlobId: "blob-1",
+      uiType: "mcp-apps",
+    });
+
+    const headers = mockAuthFetch.mock.calls[0]?.[1]?.headers as Headers;
+    expect(headers.get("Authorization")).toBe("Bearer guest-token");
+    expect(headers.get("Content-Type")).toBe("application/json");
   });
 });
