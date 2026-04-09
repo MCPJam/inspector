@@ -110,10 +110,7 @@ vi.mock("../views/ViewEditorPanel", () => ({
 
 const INVALID_LAYOUT_TOTAL_MESSAGE = "Invalid layout total size";
 
-function hasConsoleMessage(
-  spy: ReturnType<typeof vi.spyOn>,
-  message: string,
-) {
+function hasConsoleMessage(spy: ReturnType<typeof vi.spyOn>, message: string) {
   return spy.mock.calls.some((call) =>
     call.some((arg) => typeof arg === "string" && arg.includes(message)),
   );
@@ -155,12 +152,12 @@ describe("ViewsTab layout", () => {
       expect(screen.getByText("Views")).toBeInTheDocument();
       expect(screen.getByText("No views yet")).toBeInTheDocument();
       expect(screen.getByText("No views for this server")).toBeInTheDocument();
-      expect(
-        hasConsoleMessage(warnSpy, INVALID_LAYOUT_TOTAL_MESSAGE),
-      ).toBe(false);
-      expect(
-        hasConsoleMessage(errorSpy, INVALID_LAYOUT_TOTAL_MESSAGE),
-      ).toBe(false);
+      expect(hasConsoleMessage(warnSpy, INVALID_LAYOUT_TOTAL_MESSAGE)).toBe(
+        false,
+      );
+      expect(hasConsoleMessage(errorSpy, INVALID_LAYOUT_TOTAL_MESSAGE)).toBe(
+        false,
+      );
     } finally {
       warnSpy.mockRestore();
       errorSpy.mockRestore();
