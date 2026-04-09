@@ -1,4 +1,3 @@
-import { useReducedMotion } from "framer-motion";
 import type { CSSProperties } from "react";
 import { cn } from "@/lib/utils";
 
@@ -61,16 +60,12 @@ export function ClaudeLoadingIndicator({
   className,
   mode = "animated",
 }: ClaudeLoadingIndicatorProps) {
-  const shouldReduceMotion = useReducedMotion() ?? false;
   const isStatic = mode === "static";
-  const showStaticMark = shouldReduceMotion || isStatic;
-  const showAnimatedStrips = !shouldReduceMotion && !isStatic;
 
   return (
     <span
       className={cn(
         "claude-loading-indicator inline-flex min-h-8 items-center",
-        shouldReduceMotion && "claude-loading-indicator--reduced",
         isStatic && "claude-loading-indicator--static",
         className,
       )}
@@ -98,7 +93,6 @@ export function ClaudeLoadingIndicator({
                   pathData={CLAUDE_STATIC_PATH}
                   className="claude-loading-indicator__static absolute inset-0"
                   testId="loading-indicator-claude-static"
-                  hidden={!showStaticMark}
                 />
                 <ClaudeSvg
                   viewBox="0 0 100 900"
@@ -107,7 +101,6 @@ export function ClaudeLoadingIndicator({
                   preserveAspectRatio="xMidYMin meet"
                   style={{ aspectRatio: "1 / 9" }}
                   testId="loading-indicator-claude-strip-900"
-                  hidden={!showAnimatedStrips}
                 />
                 <ClaudeSvg
                   viewBox="0 0 100 800"
@@ -116,7 +109,6 @@ export function ClaudeLoadingIndicator({
                   preserveAspectRatio="xMidYMin meet"
                   style={{ aspectRatio: "1 / 8" }}
                   testId="loading-indicator-claude-strip-800"
-                  hidden={!showAnimatedStrips}
                 />
               </span>
             </span>

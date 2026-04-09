@@ -630,6 +630,15 @@
 
 .claude-loading-indicator__static {
   inset: 0;
+  display: none;
+}
+
+.claude-loading-indicator--static .claude-loading-indicator__static {
+  display: block;
+}
+
+.claude-loading-indicator--static .claude-loading-indicator__strip {
+  display: none;
 }
 
 .claude-loading-indicator__strip {
@@ -753,7 +762,7 @@
 @media (prefers-reduced-motion: reduce) {
   .claude-loading-indicator__strip {
     animation: none;
-    opacity: 0;
+    display: none;
   }
 
   .claude-loading-indicator__static {
