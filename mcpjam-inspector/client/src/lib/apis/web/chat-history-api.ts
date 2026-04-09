@@ -37,7 +37,6 @@ export interface ResumeConfig {
   temperature?: number;
   requireToolApproval?: boolean;
   selectedServers?: string[];
-  draftInput?: string;
 }
 
 export interface ChatHistoryDetailSession extends ChatHistorySession {
@@ -95,16 +94,6 @@ export interface CreateChatHistoryWidgetSnapshotRequest {
 export interface CreateChatHistoryWidgetSnapshotResponse {
   ok: boolean;
   snapshotId: string | null;
-}
-
-export interface UpsertChatHistoryDraftRequest {
-  chatSessionId: string;
-  workspaceId?: string;
-  firstMessagePreview: string;
-  modelId?: string;
-  modelSource?: string;
-  directVisibility?: "private" | "workspace";
-  resumeConfig?: ResumeConfig;
 }
 
 interface ChatHistoryRequestOptions {
@@ -240,17 +229,6 @@ export async function chatHistoryAction(
   return webPost<Record<string, unknown>, { ok: boolean }>(
     "/api/web/chat-history/action",
     { action, sessionId, ...params },
-    requestOptions,
-  );
-}
-
-export async function upsertChatHistoryDraft(
-  payload: UpsertChatHistoryDraftRequest,
-  requestOptions?: ChatHistoryRequestOptions,
-): Promise<ChatHistoryDetailResponse> {
-  return webPost<UpsertChatHistoryDraftRequest, ChatHistoryDetailResponse>(
-    "/api/web/chat-history/draft",
-    payload,
     requestOptions,
   );
 }

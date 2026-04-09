@@ -289,46 +289,4 @@ describe("chat-history routes", () => {
       expect(res.status).toBe(200);
     });
   });
-
-  describe("POST /chat-history/draft", () => {
-    it("proxies draft save requests to Convex backend", async () => {
-      fetchMock.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            ok: true,
-            session: {
-              _id: "session123",
-              chatSessionId: "chat-session-1",
-            },
-          }),
-          {
-            status: 200,
-            headers: { "content-type": "application/json" },
-          },
-        ),
-      );
-
-      const res = await app.request("/chat-history/draft", {
-        method: "POST",
-        headers: {
-          Authorization: "Bearer test-token",
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          chatSessionId: "chat-session-1",
-          firstMessagePreview: "hello",
-          resumeConfig: { draftInput: "hello" },
-        }),
-      });
-
-      expect(res.status).toBe(200);
-
-      const [fetchUrl, fetchOptions] = fetchMock.mock.calls[0];
-      expect(fetchUrl).toContain("/direct-chat/draft");
-      expect(JSON.parse(fetchOptions.body)).toMatchObject({
-        chatSessionId: "chat-session-1",
-        firstMessagePreview: "hello",
-      });
-    });
-  });
 });

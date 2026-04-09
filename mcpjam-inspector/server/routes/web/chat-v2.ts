@@ -200,6 +200,7 @@ chatV2.post("/", async (c) => {
                   modelId: String(modelDefinition.id),
                   modelSource: "mcpjam",
                   sourceType: "direct",
+                  directVisibility: body.directVisibility,
                   authHeader: c.req.header("authorization"),
                   sessionMessages: fullHistory,
                   startedAt: sessionStartedAt,
@@ -353,6 +354,7 @@ chatV2.post("/", async (c) => {
                 lastActivityAt: Date.now(),
                 ...(isDirectChat
                   ? {
+                      directVisibility: body.directVisibility,
                       resumeConfig: {
                         systemPrompt,
                         temperature,

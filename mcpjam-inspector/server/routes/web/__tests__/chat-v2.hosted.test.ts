@@ -154,4 +154,37 @@ describe("web routes — chat-v2 hosted mode", () => {
       }),
     );
   });
+
+  it("forwards directVisibility for hosted direct chats", async () => {
+    const { app, token } = createWebTestApp();
+
+    const response = await postJson(
+      app,
+      "/api/web/chat-v2",
+      {
+        workspaceId: "workspace-1",
+        selectedServerIds: ["server-1"],
+        chatSessionId: "chat-session-direct",
+        directVisibility: "workspace",
+        messages: [{ role: "user", content: "hello" }],
+        model: {
+          id: "openai/gpt-5-mini",
+          provider: "openai",
+          name: "GPT-5 Mini",
+        },
+      },
+      token,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe("ok");
+    expect(persistChatSessionToConvexMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chatSessionId: "chat-session-direct",
+        workspaceId: "workspace-1",
+        sourceType: "direct",
+        directVisibility: "workspace",
+      }),
+    );
+  });
 });

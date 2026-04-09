@@ -4,6 +4,7 @@ import type { ModelDefinition } from "./types";
 export interface ChatV2Request {
   messages: UIMessage[];
   chatSessionId?: string;
+  directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
   serverUrl?: string;
   serverHeaders?: Record<string, string>;

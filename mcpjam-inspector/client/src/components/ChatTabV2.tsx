@@ -74,7 +74,6 @@ import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import {
   chatHistoryAction,
   getChatHistoryDetail,
-  upsertChatHistoryDraft,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
   type ChatHistoryWidgetSnapshot,
@@ -98,10 +97,6 @@ import {
   resolveRestorableServerNames,
   shouldPreserveGuestServerSelection,
 } from "@/components/chat-v2/history/session-restore";
-import {
-  buildDraftHistoryPreview,
-  resolveRestoredDraftInput,
-} from "@/components/chat-v2/history/draft-history";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
@@ -139,13 +134,6 @@ interface ChatTabProps {
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 const RESUMED_THREAD_REFRESH_RETRIES = 2;
-
-function resolveDraftSelectedServers(
-  selectedServerIds: string[],
-  selectedServerNames: string[],
-): string[] {
-  return selectedServerIds.length > 0 ? selectedServerIds : selectedServerNames;
-}
 
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
@@ -235,11 +223,10 @@ export function ChatTabV2({
   const [pendingDirectVisibility, setPendingDirectVisibility] = useState<
     "private" | "workspace"
   >("private");
-  const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
+  const historyRefreshSignal = 0;
 
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
-  const draftPersistenceSignatureRef = useRef<string | null>(null);
   const pendingHistoryServerSyncRef = useRef<string[] | null>(null);
   const historySelectionRequestIdRef = useRef(0);
   const resumedThreadSendBaselineRef = useRef<{
@@ -353,6 +340,7 @@ export function ChatTabV2({
     addToolApprovalResponse,
   } = useChatSession({
     selectedServers: selectedConnectedServerNames,
+    directVisibility: pendingDirectVisibility,
     hostedWorkspaceId: effectiveHostedWorkspaceId,
     hostedSelectedServerIds: effectiveHostedSelectedServerIds,
     hostedOAuthTokens: effectiveHostedOAuthTokens,
@@ -365,10 +353,7 @@ export function ChatTabV2({
     initialRequireToolApproval,
     minimalMode,
     onReset: (reason?: ChatSessionResetReason) => {
-      if (reason === "auth-bootstrap") {
-        void archiveEmptyDraftSession(activeHistorySessionId);
-      }
-      if (reason === "hydrate") {
+      if (reason === "auth-bootstrap" || reason === "hydrate") {
         return;
       }
       setModelContextQueue([]);
@@ -388,7 +373,11 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail =
-    HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken && chatHistoryRailEnabled;
+    HOSTED_MODE &&
+    !minimalMode &&
+    !hostedShareToken &&
+    !hostedSandboxToken &&
+    chatHistoryRailEnabled;
   const {
     session: reactiveHistorySession,
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
@@ -424,17 +413,6 @@ export function ChatTabV2({
   useEffect(() => {
     hasUnsavedDraftRef.current = hasUnsavedDraft;
   }, [hasUnsavedDraft]);
-
-  const draftHistoryPreview = buildDraftHistoryPreview({
-    input,
-    mcpPromptResults,
-    skillResults,
-    fileAttachments,
-  });
-  const draftSelectedServers = resolveDraftSelectedServers(
-    effectiveHostedSelectedServerIds,
-    selectedConnectedServerNames,
-  );
 
   useEffect(() => {
     activeHistorySessionIdRef.current = activeHistorySessionId;
@@ -502,22 +480,6 @@ export function ChatTabV2({
     setWidgetStateQueue([]);
   }, [fileAttachments]);
 
-  const archiveEmptyDraftSession = useCallback(
-    async (sessionId?: string | null) => {
-      if (!showHistoryRail || !sessionId || hasConversationMessages) {
-        return;
-      }
-
-      try {
-        await chatHistoryAction("archive", sessionId);
-        setHistoryRefreshSignal((current) => current + 1);
-      } catch (error) {
-        console.error("[ChatTabV2] Failed to archive empty draft chat", error);
-      }
-    },
-    [hasConversationMessages, showHistoryRail],
-  );
-
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
@@ -584,9 +546,6 @@ export function ChatTabV2({
         if (matchingModel) {
           setSelectedModel(matchingModel);
         }
-      }
-      if (shouldRestoreComposerState) {
-        setInput(resolveRestoredDraftInput(detail.resumeConfig));
       }
       setActiveHistorySessionId(detail._id);
       setPendingDirectVisibility(detail.directVisibility);
@@ -754,95 +713,6 @@ export function ChatTabV2({
     showHistoryRail,
   ]);
 
-  useEffect(() => {
-    const shouldPersistDraft =
-      showHistoryRail &&
-      isSessionBootstrapComplete &&
-      !isStreaming &&
-      !hasConversationMessages &&
-      input.trim().length > 0;
-
-    if (!shouldPersistDraft) {
-      draftPersistenceSignatureRef.current = null;
-      return;
-    }
-
-    const signature = JSON.stringify({
-      activeHistorySessionId,
-      chatSessionId,
-      workspaceId: effectiveHostedWorkspaceId ?? null,
-      preview: draftHistoryPreview,
-      modelId: selectedModel ? String(selectedModel.id) : null,
-      systemPrompt,
-      temperature,
-      requireToolApproval,
-      directVisibility: pendingDirectVisibility,
-      selectedServers: draftSelectedServers,
-      draftInput: input,
-    });
-
-    if (draftPersistenceSignatureRef.current === signature) {
-      return;
-    }
-
-    let cancelled = false;
-    const timerId = window.setTimeout(() => {
-      void upsertChatHistoryDraft({
-        chatSessionId,
-        workspaceId: effectiveHostedWorkspaceId ?? undefined,
-        firstMessagePreview: draftHistoryPreview,
-        modelId: selectedModel ? String(selectedModel.id) : undefined,
-        modelSource: "mcpjam",
-        directVisibility: pendingDirectVisibility,
-        resumeConfig: {
-          systemPrompt,
-          temperature,
-          requireToolApproval,
-          selectedServers: draftSelectedServers,
-          draftInput: input,
-        },
-      })
-        .then((detail) => {
-          if (cancelled) {
-            return;
-          }
-
-          draftPersistenceSignatureRef.current = signature;
-          setActiveHistorySessionId(detail.session._id);
-          setPendingDirectVisibility(detail.session.directVisibility);
-          syncResumedVersion(detail.session.version);
-          setHistoryRefreshSignal((current) => current + 1);
-        })
-        .catch((error) => {
-          if (!cancelled) {
-            console.error("[ChatTabV2] Failed to persist draft chat", error);
-          }
-        });
-    }, 400);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timerId);
-    };
-  }, [
-    activeHistorySessionId,
-    chatSessionId,
-    draftHistoryPreview,
-    draftSelectedServers,
-    effectiveHostedWorkspaceId,
-    hasConversationMessages,
-    input,
-    isSessionBootstrapComplete,
-    isStreaming,
-    pendingDirectVisibility,
-    requireToolApproval,
-    selectedModel,
-    showHistoryRail,
-    syncResumedVersion,
-    systemPrompt,
-    temperature,
-  ]);
-
   const ensureThreadReadyForSend = useCallback(async () => {
     let detail: ChatHistoryDetailSession | null = null;
     try {
@@ -867,59 +737,11 @@ export function ChatTabV2({
       return false;
     }
 
-    // Eagerly flush draft when creating a workspace-visible thread so the
-    // ingestion pipeline finds the session with directVisibility already set.
-    // Without this, a fast send (before the 400ms debounce) would let the
-    // ingestion create the session from scratch without directVisibility.
-    if (
-      showHistoryRail &&
-      pendingDirectVisibility === "workspace" &&
-      draftHistoryPreview.length > 0
-    ) {
-      try {
-        const draftDetail = await upsertChatHistoryDraft({
-          chatSessionId,
-          workspaceId: effectiveHostedWorkspaceId ?? undefined,
-          firstMessagePreview: draftHistoryPreview,
-          modelId: selectedModel ? String(selectedModel.id) : undefined,
-          modelSource: "mcpjam",
-          directVisibility: "workspace",
-          resumeConfig: {
-            systemPrompt,
-            temperature,
-            requireToolApproval,
-            selectedServers: draftSelectedServers,
-            draftInput: input,
-          },
-        });
-        setActiveHistorySessionId(draftDetail.session._id);
-        syncResumedVersion(draftDetail.session.version);
-      } catch (error) {
-        console.error(
-          "[ChatTabV2] Failed to flush workspace draft before send",
-          error,
-        );
-        // Non-fatal: worst case the thread lands in personal
-      }
-    }
-
     return true;
   }, [
     activeHistorySessionId,
-    chatSessionId,
     detachHistorySession,
-    draftHistoryPreview,
-    draftSelectedServers,
-    effectiveHostedWorkspaceId,
-    input,
-    pendingDirectVisibility,
     refreshCurrentHistorySession,
-    requireToolApproval,
-    selectedModel,
-    showHistoryRail,
-    syncResumedVersion,
-    systemPrompt,
-    temperature,
   ]);
 
   const handleSelectThread = useCallback(
@@ -1013,7 +835,6 @@ export function ChatTabV2({
       if (hasUnsavedDraft) {
         clearComposerDraft();
       }
-      void archiveEmptyDraftSession(activeHistorySessionId);
       resumedThreadSendBaselineRef.current = null;
       historySelectionRequestIdRef.current += 1;
       invalidatePendingReactiveHistoryLoad();
@@ -1024,8 +845,6 @@ export function ChatTabV2({
       setPendingDirectVisibility(options?.shared ? "workspace" : "private");
     },
     [
-      activeHistorySessionId,
-      archiveEmptyDraftSession,
       baseResetChat,
       clearComposerDraft,
       ensureDiscardDraftConfirmed,
@@ -1048,6 +867,7 @@ export function ChatTabV2({
       pendingHistoryServerSyncRef.current = null;
       syncResumedVersion(null);
       baseResetChat();
+      setPendingDirectVisibility("private");
     },
     [
       baseResetChat,
@@ -1108,9 +928,7 @@ export function ChatTabV2({
       return;
     }
 
-    if (
-      hasSameStringArray(previousSelectedServerNames, selectedServerNames)
-    ) {
+    if (hasSameStringArray(previousSelectedServerNames, selectedServerNames)) {
       return;
     }
   }, [selectedServerNames]);
@@ -2658,8 +2476,8 @@ export function ChatTabV2({
           <AlertDialogHeader>
             <AlertDialogTitle>Discard unsaved draft?</AlertDialogTitle>
             <AlertDialogDescription>
-              Your composer has text that has not been sent. Discard your
-              current draft and continue?
+              Your chat has text that has not been sent. Discard your current
+              draft and continue?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

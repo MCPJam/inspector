@@ -84,6 +84,8 @@ import {
 export interface UseChatSessionOptions {
   /** Server names to connect to */
   selectedServers: string[];
+  /** Visibility to apply when persisting a new direct chat */
+  directVisibility?: "private" | "workspace";
   /** Active Convex workspace ID when running in hosted mode */
   hostedWorkspaceId?: string | null;
   /** Hosted server IDs mapped from selected server names */
@@ -202,7 +204,6 @@ export interface UseChatSessionReturn {
         temperature?: number;
         requireToolApproval?: boolean;
         selectedServers?: string[];
-        draftInput?: string;
       };
       version: number;
       widgetSnapshots?: Array<{
@@ -604,6 +605,7 @@ function isAuthDeniedError(error: unknown): boolean {
 
 export function useChatSession({
   selectedServers,
+  directVisibility = "private",
   hostedWorkspaceId,
   hostedSelectedServerIds = [],
   hostedOAuthTokens,
@@ -869,19 +871,23 @@ export function useChatSession({
         if (directGuestMode && selectedServers.length > 0) {
           return {
             chatSessionId,
+            directVisibility,
             ...buildHostedServerRequest(selectedServers[0]),
           };
         }
 
         return {
           chatSessionId,
+          directVisibility,
         };
       }
+      const isHostedDirectChat = !hostedShareToken && !hostedSandboxToken;
       return {
         workspaceId: hostedWorkspaceId,
         chatSessionId,
         selectedServerIds: hostedSelectedServerIds,
         accessScope: "chat_v2" as const,
+        ...(isHostedDirectChat ? { directVisibility } : {}),
         ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
         ...(hostedSandboxToken ? { sandboxToken: hostedSandboxToken } : {}),
         ...(hostedSandboxToken && hostedSandboxSurface
@@ -906,6 +912,7 @@ export function useChatSession({
           : {
               selectedServers,
               chatSessionId,
+              directVisibility,
               // Pass workspaceId for BYOK direct-chat history persistence
               ...(hostedWorkspaceId ? { workspaceId: hostedWorkspaceId } : {}),
             }),
@@ -928,6 +935,7 @@ export function useChatSession({
     temperature,
     systemPrompt,
     selectedServers,
+    directVisibility,
     directGuestMode,
     hostedWorkspaceId,
     chatSessionId,
@@ -945,7 +953,8 @@ export function useChatSession({
   latestTransportRef.current = transport;
   const proxyTransport = useMemo<ChatTransport<UIMessage>>(
     () => ({
-      sendMessages: (options) => latestTransportRef.current.sendMessages(options),
+      sendMessages: (options) =>
+        latestTransportRef.current.sendMessages(options),
       reconnectToStream: (options) =>
         latestTransportRef.current.reconnectToStream(options),
     }),
@@ -1233,7 +1242,6 @@ export function useChatSession({
           temperature?: number;
           requireToolApproval?: boolean;
           selectedServers?: string[];
-          draftInput?: string;
         };
         version: number;
         widgetSnapshots?: Array<{

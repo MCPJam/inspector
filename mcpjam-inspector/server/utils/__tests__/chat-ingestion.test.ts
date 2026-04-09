@@ -194,4 +194,22 @@ describe("chat-ingestion", () => {
       }),
     );
   });
+
+  it("includes directVisibility when persisting a direct chat", async () => {
+    await persistChatSessionToConvex({
+      chatSessionId: "session-5",
+      modelId: "openai/gpt-5-mini",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      directVisibility: "workspace",
+      startedAt: 1,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.sourceType).toBe("direct");
+    expect(body.directVisibility).toBe("workspace");
+  });
 });

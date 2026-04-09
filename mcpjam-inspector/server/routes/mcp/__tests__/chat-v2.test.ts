@@ -735,6 +735,7 @@ describe("POST /api/mcp/chat-v2", () => {
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
+          directVisibility: "workspace",
         });
 
         expect(res.status).toBe(200);
@@ -758,6 +759,7 @@ describe("POST /api/mcp/chat-v2", () => {
           modelId: "google/gemini-2.5-flash",
           modelSource: "mcpjam",
           sourceType: "direct",
+          directVisibility: "workspace",
         });
         expect(body.sessionMessages).toEqual([
           { role: "user", content: "Hello" },
@@ -845,23 +847,23 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async (messages: any[]) => {
-          // Simulate adding tool result to messages
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "orphaned-call-123",
-                output: { type: "json", value: { result: "executed" } },
-              },
-            ],
-          } as unknown as ModelMessage;
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        }) as any,
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool result to messages
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "orphaned-call-123",
+              output: { type: "json", value: { result: "executed" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
@@ -1017,33 +1019,33 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async (messages: any[]) => {
-          // Simulate adding tool results for both calls
-          const firstToolResult = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-1",
-                output: { type: "json", value: { result: "result1" } },
-              },
-            ],
-          } as unknown as ModelMessage;
-          const secondToolResult = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "call-2",
-                output: { type: "json", value: { result: "result2" } },
-              },
-            ],
-          } as unknown as ModelMessage;
-          messages.push(firstToolResult, secondToolResult);
-          return [firstToolResult, secondToolResult];
-        }) as any,
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool results for both calls
+        const firstToolResult = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              output: { type: "json", value: { result: "result1" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        const secondToolResult = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-2",
+              output: { type: "json", value: { result: "result2" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(firstToolResult, secondToolResult);
+        return [firstToolResult, secondToolResult];
+      }) as any);
 
       // Mock fetch for CONVEX_HTTP_URL - return fresh response each time
       const originalFetch = global.fetch;
@@ -1127,32 +1129,32 @@ describe("POST /api/mcp/chat-v2", () => {
         hasUnresolvedCallCount++;
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async (messages: any[]) => {
-          const msg1 = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "batch-call-1",
-                output: { type: "json", value: { stops: ["Berryessa"] } },
-              },
-            ],
-          } as unknown as ModelMessage;
-          const msg2 = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "batch-call-2",
-                output: { type: "json", value: { stops: ["Montgomery"] } },
-              },
-            ],
-          } as unknown as ModelMessage;
-          messages.push(msg1, msg2);
-          return [msg1, msg2];
-        }) as any,
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        const msg1 = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "batch-call-1",
+              output: { type: "json", value: { stops: ["Berryessa"] } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        const msg2 = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "batch-call-2",
+              output: { type: "json", value: { stops: ["Montgomery"] } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(msg1, msg2);
+        return [msg1, msg2];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;
@@ -1255,23 +1257,23 @@ describe("POST /api/mcp/chat-v2", () => {
         // Second call: false (tool result added, no more unresolved)
         return hasUnresolvedCallCount === 1;
       });
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async (messages: any[]) => {
-          // Simulate adding tool result for the new tool call
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: "new-call-from-step",
-                output: { type: "json", value: { result: "done" } },
-              },
-            ],
-          } as unknown as ModelMessage;
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        }) as any,
-      );
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        // Simulate adding tool result for the new tool call
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "new-call-from-step",
+              output: { type: "json", value: { result: "done" } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;
@@ -1339,37 +1341,37 @@ describe("POST /api/mcp/chat-v2", () => {
         return unresolvedChecks <= 2;
       });
 
-      vi.mocked(executeToolCallsFromMessages).mockImplementation(
-        (async (messages: any[]) => {
-          const latestAssistantWithToolCall = [...messages]
-            .reverse()
-            .find(
-              (msg) =>
-                msg?.role === "assistant" &&
-                Array.isArray(msg.content) &&
-                msg.content.some((part: any) => part?.type === "tool-call"),
-            );
-
-          const latestToolCall = latestAssistantWithToolCall?.content?.find(
-            (part: any) => part?.type === "tool-call",
+      vi.mocked(executeToolCallsFromMessages).mockImplementation((async (
+        messages: any[],
+      ) => {
+        const latestAssistantWithToolCall = [...messages]
+          .reverse()
+          .find(
+            (msg) =>
+              msg?.role === "assistant" &&
+              Array.isArray(msg.content) &&
+              msg.content.some((part: any) => part?.type === "tool-call"),
           );
 
-          if (!latestToolCall?.toolCallId) return [];
+        const latestToolCall = latestAssistantWithToolCall?.content?.find(
+          (part: any) => part?.type === "tool-call",
+        );
 
-          const toolResultMsg = {
-            role: "tool",
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: latestToolCall.toolCallId,
-                output: { type: "json", value: { ok: true } },
-              },
-            ],
-          } as unknown as ModelMessage;
-          messages.push(toolResultMsg);
-          return [toolResultMsg];
-        }) as any,
-      );
+        if (!latestToolCall?.toolCallId) return [];
+
+        const toolResultMsg = {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: latestToolCall.toolCallId,
+              output: { type: "json", value: { ok: true } },
+            },
+          ],
+        } as unknown as ModelMessage;
+        messages.push(toolResultMsg);
+        return [toolResultMsg];
+      }) as any);
 
       const originalFetch = global.fetch;
       let fetchCallCount = 0;

@@ -374,21 +374,22 @@ describe("useChatSession fork preservation", () => {
   });
 
   it("hydrates restored history into the new session store when loading a chat", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify([
-          { id: "restored-user", role: "user", content: "restored question" },
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { id: "restored-user", role: "user", content: "restored question" },
+            {
+              id: "restored-assistant",
+              role: "assistant",
+              content: "restored answer",
+            },
+          ]),
           {
-            id: "restored-assistant",
-            role: "assistant",
-            content: "restored answer",
+            status: 200,
+            headers: { "Content-Type": "application/json" },
           },
-        ]),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -416,7 +417,6 @@ describe("useChatSession fork preservation", () => {
         messagesBlobUrl: "https://storage.test/restored.json",
         resumeConfig: {
           systemPrompt: "Restored prompt",
-          draftInput: "restored draft",
         },
         version: 7,
       });
@@ -440,24 +440,27 @@ describe("useChatSession fork preservation", () => {
     ]);
     expect(result.current.resumedVersion).toBe(7);
     expect(result.current.systemPrompt).toBe("Restored prompt");
-    expect(fetchMock).toHaveBeenCalledWith("https://storage.test/restored.json");
+    expect(fetchMock).toHaveBeenCalledWith(
+      "https://storage.test/restored.json",
+    );
   });
 
   it("preserves a restored thread when selected servers change afterward", async () => {
-    const fetchMock = vi.fn(async () =>
-      new Response(
-        JSON.stringify([
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            {
+              id: "restored-user",
+              role: "user",
+              content: "restored question",
+            },
+          ]),
           {
-            id: "restored-user",
-            role: "user",
-            content: "restored question",
+            status: 200,
+            headers: { "Content-Type": "application/json" },
           },
-        ]),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        },
-      ),
+        ),
     );
     vi.stubGlobal("fetch", fetchMock);
 

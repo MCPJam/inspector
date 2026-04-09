@@ -6,13 +6,20 @@ import { ChatTabV2 } from "../ChatTabV2";
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
 const mockChatHistoryAction = vi.hoisted(() => vi.fn());
-const mockUpsertChatHistoryDraft = vi.hoisted(() => vi.fn());
 const mockReactiveHistoryState = vi.hoisted(() => ({
   session: undefined as any,
   widgetSnapshots: undefined as any,
 }));
 const chatSessionOnResetRef = vi.hoisted(() => ({
   current: undefined as undefined | ((reason?: string) => void),
+}));
+const lastUseChatSessionOptionsRef = vi.hoisted(() => ({
+  current: undefined as
+    | undefined
+    | {
+        directVisibility?: "private" | "workspace";
+        onReset?: (reason?: string) => void;
+      },
 }));
 const mockHistorySession = vi.hoisted(() => ({
   _id: "history-1",
@@ -67,6 +74,7 @@ vi.mock("posthog-js/react", () => ({
   usePostHog: () => ({
     capture: vi.fn(),
   }),
+  useFeatureFlagEnabled: () => true,
 }));
 
 vi.mock("sonner", () => ({
@@ -353,8 +361,12 @@ const mockUseChatSession = {
 } as any;
 
 vi.mock("@/hooks/use-chat-session", () => ({
-  useChatSession: (options: { onReset?: (reason?: string) => void }) => {
+  useChatSession: (options: {
+    directVisibility?: "private" | "workspace";
+    onReset?: (reason?: string) => void;
+  }) => {
     chatSessionOnResetRef.current = options.onReset;
+    lastUseChatSessionOptionsRef.current = options;
 
     return {
       ...mockUseChatSession,
@@ -380,8 +392,6 @@ vi.mock("@/lib/apis/web/chat-history-api", () => ({
   getChatHistoryDetail: (...args: unknown[]) =>
     mockGetChatHistoryDetail(...args),
   chatHistoryAction: (...args: unknown[]) => mockChatHistoryAction(...args),
-  upsertChatHistoryDraft: (...args: unknown[]) =>
-    mockUpsertChatHistoryDraft(...args),
 }));
 
 describe("ChatTabV2 history sync", () => {
@@ -398,8 +408,12 @@ describe("ChatTabV2 history sync", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
-    vi.stubGlobal("confirm", vi.fn(() => true));
+    vi.stubGlobal(
+      "confirm",
+      vi.fn(() => true),
+    );
     chatSessionOnResetRef.current = undefined;
+    lastUseChatSessionOptionsRef.current = undefined;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
     Object.assign(mockUseChatSession, {
@@ -433,23 +447,6 @@ describe("ChatTabV2 history sync", () => {
       },
     });
     mockChatHistoryAction.mockResolvedValue({ ok: true });
-    mockUpsertChatHistoryDraft.mockImplementation(
-      async (payload: { directVisibility?: "private" | "workspace" }) => ({
-        ok: true,
-        session: {
-          ...mockHistorySession,
-          _id: "draft-session-1",
-          chatSessionId: "chat-session-1",
-          directVisibility: payload.directVisibility ?? "private",
-          messageCount: 0,
-          version: 1,
-          messagesBlobUrl: "https://storage.test/blob",
-          resumeConfig: {
-            draftInput: "Draft title",
-          },
-        },
-      }),
-    );
   });
 
   afterEach(() => {
@@ -458,9 +455,6 @@ describe("ChatTabV2 history sync", () => {
   });
 
   it("asks before discarding a draft when switching threads", async () => {
-    const confirmSpy = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirmSpy);
-
     render(<ChatTabV2 {...defaultProps} />);
 
     fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
@@ -471,9 +465,10 @@ describe("ChatTabV2 history sync", () => {
     fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
     await flushMicrotasks();
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      "Discard your current draft and switch chats?",
-    );
+    expect(screen.getByText("Discard unsaved draft?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await flushMicrotasks();
+
     expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
       "Unsaved draft",
@@ -481,9 +476,6 @@ describe("ChatTabV2 history sync", () => {
   });
 
   it("asks before discarding a draft when starting a new chat", async () => {
-    const confirmSpy = vi.fn(() => false);
-    vi.stubGlobal("confirm", confirmSpy);
-
     render(<ChatTabV2 {...defaultProps} />);
 
     fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
@@ -496,9 +488,10 @@ describe("ChatTabV2 history sync", () => {
     );
     await flushMicrotasks();
 
-    expect(confirmSpy).toHaveBeenCalledWith(
-      "Discard your current draft and switch chats?",
-    );
+    expect(screen.getByText("Discard unsaved draft?")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    await flushMicrotasks();
+
     expect(mockUseChatSession.resetChat).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
       "Unsaved draft",
@@ -605,12 +598,7 @@ describe("ChatTabV2 history sync", () => {
       "history-1",
     );
 
-    view.rerender(
-      <ChatTabV2
-        {...defaultProps}
-        selectedServerNames={[]}
-      />,
-    );
+    view.rerender(<ChatTabV2 {...defaultProps} selectedServerNames={[]} />);
     await flushMicrotasks();
 
     expect(screen.getByTestId("history-rail")).toHaveAttribute(
@@ -624,32 +612,17 @@ describe("ChatTabV2 history sync", () => {
     expect(mockToastError).not.toHaveBeenCalled();
   });
 
-  it("persists shared drafts with workspace visibility after Shared Threads new chat", async () => {
-    mockUseChatSession.messages = [];
-
+  it("switches new shared threads to workspace visibility without persisting a draft", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
     fireEvent.click(screen.getByRole("button", { name: "New shared thread" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
-      target: { value: "Shared draft" },
-    });
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(500);
-    });
     await flushMicrotasks();
 
-    expect(mockUpsertChatHistoryDraft).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chatSessionId: "chat-session-1",
-        firstMessagePreview: "Shared draft",
-        directVisibility: "workspace",
-        resumeConfig: expect.objectContaining({
-          draftInput: "Shared draft",
-        }),
-      }),
+    expect(lastUseChatSessionOptionsRef.current?.directVisibility).toBe(
+      "workspace",
     );
+    expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
   });
 
   it("preserves a local draft while applying a reactive history refresh", async () => {
@@ -660,7 +633,6 @@ describe("ChatTabV2 history sync", () => {
         messagesBlobUrl: "https://storage.test/blob",
         resumeConfig: {
           selectedServers: ["server-1"],
-          draftInput: "Original remote draft",
         },
       },
       widgetSnapshots: [],
@@ -685,7 +657,6 @@ describe("ChatTabV2 history sync", () => {
       version: 5,
       resumeConfig: {
         selectedServers: ["server-1"],
-        draftInput: "Updated remote draft",
       },
     };
     mockReactiveHistoryState.widgetSnapshots = [];
@@ -699,81 +670,24 @@ describe("ChatTabV2 history sync", () => {
     );
   });
 
-  it("archives an empty draft when starting a new personal thread", async () => {
-    mockUseChatSession.messages = [];
-
-    const emptyDraftDetail = {
-      ok: true,
-      session: {
-        ...mockHistorySession,
-        messageCount: 0,
-        messagesBlobUrl: "https://storage.test/blob",
-        resumeConfig: {
-          selectedServers: ["server-1"],
-          draftInput: "Draft title",
-        },
-      },
-      widgetSnapshots: [],
-    };
-
-    mockGetChatHistoryDetail.mockResolvedValue(emptyDraftDetail);
-
+  it("preserves a local draft across auth bootstrap resets", async () => {
     render(<ChatTabV2 {...defaultProps} />);
 
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
-    await flushMicrotasks();
-
-    mockChatHistoryAction.mockClear();
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "New personal thread" }),
-    );
-    await flushMicrotasks();
-
-    expect(mockChatHistoryAction).toHaveBeenCalledWith("archive", "history-1");
-    expect(screen.getByTestId("history-rail")).toHaveAttribute(
-      "data-active-session-id",
-      "none",
-    );
-  });
-
-  it("archives an empty draft when auth bootstrap replaces the session", async () => {
-    mockUseChatSession.messages = [];
-
-    const emptyDraftDetail = {
-      ok: true,
-      session: {
-        ...mockHistorySession,
-        messageCount: 0,
-        messagesBlobUrl: "https://storage.test/blob",
-        resumeConfig: {
-          selectedServers: ["server-1"],
-          draftInput: "Draft title",
-        },
-      },
-      widgetSnapshots: [],
-    };
-
-    mockGetChatHistoryDetail.mockResolvedValue(emptyDraftDetail);
-
-    render(<ChatTabV2 {...defaultProps} />);
-
-    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
-    await flushMicrotasks();
-
-    mockChatHistoryAction.mockClear();
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
+      target: { value: "Unsaved local draft" },
+    });
 
     act(() => {
       chatSessionOnResetRef.current?.("auth-bootstrap");
     });
     await flushMicrotasks();
 
-    expect(mockChatHistoryAction).toHaveBeenCalledWith("archive", "history-1");
-    expect(screen.getByTestId("history-rail")).toHaveAttribute(
-      "data-active-session-id",
-      "none",
+    expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
+      "Unsaved local draft",
+    );
+    expect(mockChatHistoryAction).not.toHaveBeenCalledWith(
+      "archive",
+      "history-1",
     );
   });
 });

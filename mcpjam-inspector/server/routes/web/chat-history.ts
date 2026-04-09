@@ -158,16 +158,6 @@ chatHistory.get("/detail", async (c) =>
   }),
 );
 
-// POST /chat-history/draft
-// Body: { chatSessionId: string, firstMessagePreview: string, workspaceId?: string, ... }
-chatHistory.post("/draft", async (c) =>
-  handleRoute(c, async () => {
-    const bearerToken = assertBearerToken(c);
-    const body = await readJsonBody<Record<string, unknown>>(c);
-    return await proxyPost(bearerToken, "/direct-chat/draft", body);
-  }),
-);
-
 // POST /chat-history/action
 // Body: { action: string, sessionId: string, ...params }
 chatHistory.post("/action", async (c) =>

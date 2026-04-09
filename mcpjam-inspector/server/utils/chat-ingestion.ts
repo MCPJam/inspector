@@ -17,6 +17,7 @@ interface PersistChatSessionOptions {
   authHeader?: string;
   workspaceId?: string;
   sourceType?: "serverShare" | "sandbox" | "direct";
+  directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
   shareToken?: string;
   sandboxToken?: string;
@@ -98,6 +99,9 @@ export async function persistChatSessionToConvex(
         modelSource: options.modelSource,
         ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
         ...(options.sourceType ? { sourceType: options.sourceType } : {}),
+        ...(options.directVisibility
+          ? { directVisibility: options.directVisibility }
+          : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options.sandboxToken ? { sandboxToken: options.sandboxToken } : {}),
