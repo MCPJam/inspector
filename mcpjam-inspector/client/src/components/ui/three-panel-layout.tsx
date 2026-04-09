@@ -47,15 +47,6 @@ export function ThreePanelLayout({
 }: ThreePanelLayoutProps) {
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
-  const leftPanelDefaultSize = 35;
-  const rightPanelDefaultSize = 30;
-  const centerPanelDefaultSize = sidebarVisible
-    ? isJsonRpcPanelVisible
-      ? 35
-      : 65
-    : isJsonRpcPanelVisible
-      ? 70
-      : 100;
 
   return (
     <div className="h-full flex flex-col">
@@ -66,7 +57,7 @@ export function ThreePanelLayout({
             <ResizablePanel
               id={`${id}-left`}
               order={1}
-              defaultSize={leftPanelDefaultSize}
+              defaultSize={35}
               minSize={1}
               maxSize={55}
               collapsible={true}
@@ -89,7 +80,7 @@ export function ThreePanelLayout({
         <ResizablePanel
           id={`${id}-center`}
           order={2}
-          defaultSize={centerPanelDefaultSize}
+          defaultSize={isJsonRpcPanelVisible ? 40 : 65}
           minSize={30}
         >
           {content}
@@ -102,7 +93,7 @@ export function ThreePanelLayout({
             <ResizablePanel
               id={`${id}-right`}
               order={3}
-              defaultSize={rightPanelDefaultSize}
+              defaultSize={30}
               minSize={2}
               maxSize={50}
               collapsible={true}
