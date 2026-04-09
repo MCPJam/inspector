@@ -148,12 +148,12 @@ describe("ViewsTab layout", () => {
       expect(() =>
         render(<ViewsTab selectedServer="selected-server" />),
       ).not.toThrow();
-      expect(
-        hasConsoleMessage(warnSpy, INVALID_LAYOUT_TOTAL_MESSAGE),
-      ).toBe(false);
-      expect(
-        hasConsoleMessage(errorSpy, INVALID_LAYOUT_TOTAL_MESSAGE),
-      ).toBe(false);
+      expect(hasConsoleMessage(warnSpy, INVALID_LAYOUT_TOTAL_MESSAGE)).toBe(
+        false,
+      );
+      expect(hasConsoleMessage(errorSpy, INVALID_LAYOUT_TOTAL_MESSAGE)).toBe(
+        false,
+      );
     } finally {
       warnSpy.mockRestore();
       errorSpy.mockRestore();
