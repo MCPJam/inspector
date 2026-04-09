@@ -106,6 +106,7 @@ interface ChatTabProps {
   onServerToggle?: (serverName: string) => void;
   /** Reconnect a disconnected server. */
   onReconnectServer?: (serverName: string) => Promise<void>;
+  onSelectedServerNamesChange?: (names: string[]) => void;
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
@@ -145,6 +146,7 @@ export function ChatTabV2({
   allServerConfigs,
   onServerToggle,
   onReconnectServer,
+  onSelectedServerNamesChange,
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
