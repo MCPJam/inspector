@@ -9,8 +9,28 @@ vi.mock("@/components/ui/resizable", () => ({
   ResizablePanelGroup: ({ children }: { children: ReactNode }) => (
     <div data-testid="resizable-panel-group">{children}</div>
   ),
-  ResizablePanel: ({ children }: { children: ReactNode }) => (
-    <div data-testid="resizable-panel">{children}</div>
+  ResizablePanel: ({
+    children,
+    className,
+    defaultSize,
+    minSize,
+    maxSize,
+  }: {
+    children: ReactNode;
+    className?: string;
+    defaultSize?: number;
+    minSize?: number;
+    maxSize?: number;
+  }) => (
+    <div
+      data-testid="resizable-panel"
+      data-default-size={defaultSize}
+      data-min-size={minSize}
+      data-max-size={maxSize}
+      className={className}
+    >
+      {children}
+    </div>
   ),
   ResizableHandle: () => <div data-testid="resizable-handle" />,
 }));
@@ -42,6 +62,36 @@ describe("selectAxisTickPercents", () => {
 });
 
 describe("TraceTimeline detail pane", () => {
+  it("allows the detail pane to expand to full height", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-a",
+        name: "read_me",
+        category: "tool",
+        startMs: 0,
+        endMs: 20,
+        toolName: "read_me",
+      },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={[{ role: "user", content: "hi" }]}
+      />,
+    );
+
+    const [timelinePanel, detailPanel] = screen.getAllByTestId(
+      "resizable-panel",
+    );
+
+    expect(timelinePanel).toHaveAttribute("data-default-size", "65");
+    expect(timelinePanel).toHaveAttribute("data-min-size", "0");
+    expect(detailPanel).toHaveAttribute("data-default-size", "35");
+    expect(detailPanel).toHaveAttribute("data-min-size", "20");
+    expect(detailPanel).not.toHaveAttribute("data-max-size");
+  });
+
   it("shows tool input from transcript when span has toolName but no toolCallId", () => {
     const spans: EvalTraceSpan[] = [
       {
