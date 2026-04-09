@@ -520,9 +520,7 @@ export function PlaygroundMain({
       prevCompareModelIdsRef.current = new Set();
       return;
     }
-    const current = new Set(
-      resolvedSelectedModels.map((m) => String(m.id)),
-    );
+    const current = new Set(resolvedSelectedModels.map((m) => String(m.id)));
     const prev = prevCompareModelIdsRef.current;
     const added = [...current].filter((id) => !prev.has(id));
     const leadId = resolvedSelectedModels[0]

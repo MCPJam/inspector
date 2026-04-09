@@ -114,10 +114,7 @@ export const createLlmModel = (
 
 const ANTHROPIC_TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
-function readRecordString(
-  value: unknown,
-  key: string,
-): string | undefined {
+function readRecordString(value: unknown, key: string): string | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = (value as Record<string, unknown>)[key];
   return typeof candidate === "string" && candidate.length > 0

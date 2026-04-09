@@ -97,13 +97,21 @@ describe("buildXRayPayload", () => {
 
     expect(result.system).toContain("Base prompt.");
     expect(result.system).toContain("## Connected MCP Tools");
-    expect(result.system).toContain("Server server-1:\n- read_me: Read the docs");
+    expect(result.system).toContain(
+      "Server server-1:\n- read_me: Read the docs",
+    );
   });
 
   it("adds an explicit no-tools MCP inventory when requested", async () => {
-    const result = await buildXRayPayload(mockManager(), [], [], "Base prompt.", {
-      includeMcpToolInventory: true,
-    });
+    const result = await buildXRayPayload(
+      mockManager(),
+      [],
+      [],
+      "Base prompt.",
+      {
+        includeMcpToolInventory: true,
+      },
+    );
 
     expect(result.system).toContain("## Connected MCP Tools");
     expect(result.system).toContain("No MCP tools are currently connected.");

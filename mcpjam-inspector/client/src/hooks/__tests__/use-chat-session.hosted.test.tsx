@@ -400,8 +400,11 @@ describe("useChatSession hosted mode", () => {
     expect(
       JSON.parse(
         String(
-          (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
-            ?.body ?? "{}",
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
         ),
       ),
     ).toMatchObject({
@@ -427,8 +430,11 @@ describe("useChatSession hosted mode", () => {
     expect(
       JSON.parse(
         String(
-          (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
-            ?.body ?? "{}",
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
         ),
       ),
     ).toMatchObject({
@@ -439,18 +445,19 @@ describe("useChatSession hosted mode", () => {
 
   it("uses the latest direct-guest server request on the next send without changing chatSessionId", async () => {
     mockState.convexAuth.isAuthenticated = false;
-    mockState.buildHostedServerRequest.mockImplementation((serverName: string) =>
-      serverName === "Excalidraw (App)"
-        ? {
-            serverUrl: "https://mcp.excalidraw.com/mcp",
-            serverHeaders: { "X-Api-Key": "guest-key-1" },
-            oauthAccessToken: "guest-oauth-token-1",
-          }
-        : {
-            serverUrl: "https://mcp.learn.com/mcp",
-            serverHeaders: { "X-Api-Key": "guest-key-2" },
-            oauthAccessToken: "guest-oauth-token-2",
-          },
+    mockState.buildHostedServerRequest.mockImplementation(
+      (serverName: string) =>
+        serverName === "Excalidraw (App)"
+          ? {
+              serverUrl: "https://mcp.excalidraw.com/mcp",
+              serverHeaders: { "X-Api-Key": "guest-key-1" },
+              oauthAccessToken: "guest-oauth-token-1",
+            }
+          : {
+              serverUrl: "https://mcp.learn.com/mcp",
+              serverHeaders: { "X-Api-Key": "guest-key-2" },
+              oauthAccessToken: "guest-oauth-token-2",
+            },
     );
 
     const { result, rerender } = renderHook(
@@ -483,8 +490,11 @@ describe("useChatSession hosted mode", () => {
     expect(
       JSON.parse(
         String(
-          (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
-            ?.body ?? "{}",
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
         ),
       ),
     ).toMatchObject({
@@ -511,8 +521,11 @@ describe("useChatSession hosted mode", () => {
     expect(
       JSON.parse(
         String(
-          (mockState.authFetch.mock.calls.at(-1)?.[1] as RequestInit | undefined)
-            ?.body ?? "{}",
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
         ),
       ),
     ).toMatchObject({

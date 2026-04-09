@@ -116,7 +116,9 @@ export function convertMastraToolToVercelTool(
   const displayName = options?.originalName ?? toolName;
   const execute = async (input: unknown, options: ToolCallOptions) => {
     if (typeof mastraTool.execute !== "function") {
-      throw new Error(`Mastra tool '${displayName}' is missing an execute handler`);
+      throw new Error(
+        `Mastra tool '${displayName}' is missing an execute handler`,
+      );
     }
 
     const executionArgs: MastraToolExecuteArgs = { context: input };

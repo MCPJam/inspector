@@ -58,9 +58,7 @@ vi.mock("@/shared/http-tool-calls", () => ({
 
 vi.mock("../chat-helpers", async () => {
   const actual =
-    await vi.importActual<typeof import("../chat-helpers")>(
-      "../chat-helpers",
-    );
+    await vi.importActual<typeof import("../chat-helpers")>("../chat-helpers");
   return {
     ...actual,
     scrubMcpAppsToolResultsForBackend: vi.fn((messages) => messages),

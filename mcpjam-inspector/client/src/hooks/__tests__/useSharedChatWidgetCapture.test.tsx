@@ -48,12 +48,10 @@ describe("useSharedChatWidgetCapture", () => {
       return `https://upload.example.com/${uploadCounter}`;
     });
     mockCreateWidgetSnapshot.mockResolvedValue("snapshot-1");
-    mockGenerateWidgetSnapshotUploadUrlFromWeb.mockImplementation(
-      async () => ({
-        ok: true,
-        uploadUrl: "https://upload.example.com/web",
-      }),
-    );
+    mockGenerateWidgetSnapshotUploadUrlFromWeb.mockImplementation(async () => ({
+      ok: true,
+      uploadUrl: "https://upload.example.com/web",
+    }));
     mockCreateChatHistoryWidgetSnapshot.mockResolvedValue({
       ok: true,
       snapshotId: "snapshot-web-1",
@@ -87,20 +85,20 @@ describe("useSharedChatWidgetCapture", () => {
             id: "assistant-1",
             role: "assistant",
             parts: [
-                {
-                  type: "tool-search",
-                  toolCallId: "call-1",
-                  input: { q: "hello" },
-                  output: {
-                    result: "world",
-                    _meta: {
-                      "openai/outputTemplate": "ui://widget.html",
-                      _serverId: "server-1",
-                    },
+              {
+                type: "tool-search",
+                toolCallId: "call-1",
+                input: { q: "hello" },
+                output: {
+                  result: "world",
+                  _meta: {
+                    "openai/outputTemplate": "ui://widget.html",
+                    _serverId: "server-1",
                   },
                 },
-              ],
-            } as any,
+              },
+            ],
+          } as any,
         ],
       }),
     );
