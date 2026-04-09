@@ -1,6 +1,7 @@
-import { useLayoutEffect } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { HOSTED_MODE } from "@/lib/config";
 import { setHostedApiContext } from "@/lib/apis/web/context";
+import { clearGuestSession } from "@/lib/guest-session";
 
 interface UseHostedApiContextOptions {
   workspaceId: string | null;
@@ -32,6 +33,18 @@ export function useHostedApiContext({
   serverConfigs,
   enabled = true,
 }: UseHostedApiContextOptions): void {
+  // Track previous isAuthenticated to detect false→true transitions.
+  // When a guest signs in, clear the stale guest session from localStorage
+  // so no code path can accidentally reuse an expired guest bearer.
+  const prevAuthenticatedRef = useRef(isAuthenticated);
+  useLayoutEffect(() => {
+    const wasAuthenticated = prevAuthenticatedRef.current;
+    prevAuthenticatedRef.current = isAuthenticated;
+    if (!wasAuthenticated && isAuthenticated) {
+      clearGuestSession();
+    }
+  }, [isAuthenticated]);
+
   // useLayoutEffect so the global hosted context is set synchronously before
   // any child useEffect hooks fire (e.g. fetchToolsMetadata in useChatSession).
   // With useEffect, React's bottom-up ordering means child passive effects run
