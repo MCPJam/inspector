@@ -6,6 +6,7 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
+import { usePostHog } from "posthog-js/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +33,7 @@ import {
 } from "./recorded-trace-toolbar";
 import { cn } from "@/lib/utils";
 import { TraceViewModeTabs } from "./trace-view-mode-tabs";
+import { TraceRawView, type TraceRawXRayMirror } from "./trace-raw-view";
 
 const TraceTimelineLazy = lazy(() =>
   import("./trace-timeline").then((m) => ({ default: m.TraceTimeline })),
@@ -70,6 +72,8 @@ interface TraceViewerProps {
   hideToolbar?: boolean;
   /** Let the active panel fill the available height instead of clamping to a max height. */
   fillContent?: boolean;
+  /** Hide transcript reveal controls when the parent shell owns chat mode separately. */
+  hideTranscriptRevealControls?: boolean;
   /**
    * When `forcedViewMode` is set (e.g. parent tabs), internal `setViewMode("chat")` from
    * "Reveal in Chat" is ignored — call this so the shell can switch to its chat tab.
@@ -92,6 +96,16 @@ interface TraceViewerProps {
   enableFullscreenChatOverlay?: boolean;
   fullscreenChatPlaceholder?: string;
   fullscreenChatDisabled?: boolean;
+  /**
+   * When set (live chat), Raw tab shows the resolved model request payload
+   * (`system`, `tools`, `messages`) instead of the diagnostic trace blob.
+   */
+  rawXRayMirror?: TraceRawXRayMirror | null;
+  /**
+   * When true, Raw JSON uses `height: auto` and minimal wrappers so a parent
+   * `StickToBottom` (or similar) owns vertical scroll as the payload grows.
+   */
+  rawGrowWithContent?: boolean;
 }
 
 function getTraceMessages(
@@ -151,6 +165,7 @@ export function TraceViewer({
   forcedViewMode,
   hideToolbar = false,
   fillContent = false,
+  hideTranscriptRevealControls = false,
   onRevealNavigateToChat,
   sendFollowUpMessage = NOOP,
   onWidgetStateChange,
@@ -163,7 +178,10 @@ export function TraceViewer({
   enableFullscreenChatOverlay = false,
   fullscreenChatPlaceholder = "Message…",
   fullscreenChatDisabled = false,
+  rawXRayMirror = null,
+  rawGrowWithContent = false,
 }: TraceViewerProps) {
+  const posthog = usePostHog();
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
   >("timeline");
@@ -193,6 +211,12 @@ export function TraceViewer({
   const hasEvalToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
+  const shouldCaptureRawPayloadOpened =
+    trace != null && effectiveViewMode === "raw" && rawXRayMirror != null;
+  useEffect(() => {
+    if (!shouldCaptureRawPayloadOpened) return;
+    posthog?.capture("xray_opened");
+  }, [shouldCaptureRawPayloadOpened, posthog]);
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
@@ -335,7 +359,9 @@ export function TraceViewer({
   const timelineZoomMinMs = Math.max(1, Math.round(maxEndMsForToolbar / 50));
   const compactChrome = chromeDensity === "compact";
   const flexFillChrome =
-    fillContent || (effectiveViewMode === "tools" && hasEvalToolCalls);
+    fillContent ||
+    effectiveViewMode === "raw" ||
+    (effectiveViewMode === "tools" && hasEvalToolCalls);
 
   return (
     <div
@@ -462,18 +488,22 @@ export function TraceViewer({
         {effectiveViewMode === "raw" && (
           <div
             className={cn(
-              "min-w-0 rounded-md border border-border/30 bg-background/50",
-              fillContent
-                ? "min-h-0 flex-1 overflow-auto"
-                : "min-h-0 max-h-[min(70vh,36rem)] overflow-auto",
+              "min-w-0 flex flex-col",
+              rawGrowWithContent
+                ? ""
+                : cn(
+                    "overflow-hidden",
+                    flexFillChrome
+                      ? "min-h-0 flex-1"
+                      : "min-h-0 max-h-[min(70vh,36rem)]",
+                  ),
             )}
             data-testid="trace-viewer-raw-json"
           >
-            <JsonEditor
-              height="auto"
-              viewOnly
-              value={trace}
-              className="min-h-0"
+            <TraceRawView
+              trace={trace}
+              xRayMirror={rawXRayMirror}
+              growWithContent={rawGrowWithContent}
             />
           </div>
         )}
@@ -503,7 +533,11 @@ export function TraceViewer({
                 transcriptMessages={traceMessages}
                 traceStartedAtMs={traceStartedAtMs}
                 traceEndedAtMs={traceEndedAtMs}
-                onRevealInTranscript={handleRevealInTranscript}
+                onRevealInTranscript={
+                  hideTranscriptRevealControls
+                    ? undefined
+                    : handleRevealInTranscript
+                }
                 hideToolbar={hasRecordedSpans}
                 timelineFilter={hasRecordedSpans ? timelineFilter : undefined}
                 onTimelineFilterChange={

@@ -736,10 +736,16 @@ export default function App() {
   const createWorkspaceDisabledReason = guestWorkspaceLimitReached
     ? "Sign in to create more workspaces"
     : (workspaceCreationGate.denialMessage ?? undefined);
+  const [trialModalDismissedForOrg, setTrialModalDismissedForOrg] = useState<
+    string | null
+  >(null);
+  const trialModalDismissed =
+    trialModalDismissedForOrg === billingOrganizationId;
   const showTrialDecisionModal =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
-    shellBillingStatus?.isOwner === true;
+    shellBillingStatus?.isOwner === true &&
+    !trialModalDismissed;
   const showTrialDecisionNotice =
     billingUiEnabled &&
     shellBillingStatus?.decisionRequired === true &&
@@ -1574,6 +1580,7 @@ export default function App() {
               }
               selectedServerNames={appState.selectedMultipleServers}
               onHasMessagesChange={setChatHasMessages}
+              enableMultiModelChat
               evalChatHandoff={evalChatHandoff}
               onEvalChatHandoffConsumed={(id) =>
                 setEvalChatHandoff((current) =>
@@ -1593,6 +1600,7 @@ export default function App() {
               onConnect={handleConnect}
               onOnboardingChange={setAppBuilderOnboarding}
               playgroundServerSelectorProps={playgroundServerSelectorProps}
+              enableMultiModelChat
             />
           )}
           {activeTab === "client-config" && (
@@ -1634,7 +1642,13 @@ export default function App() {
           )}
         </div>
       </SidebarInset>
-      <Dialog open={showTrialDecisionModal}>
+      <Dialog
+        open={showTrialDecisionModal}
+        onOpenChange={(open) => {
+          if (!open)
+            setTrialModalDismissedForOrg(billingOrganizationId ?? null);
+        }}
+      >
         <DialogContent
           onPointerDownOutside={(e) => e.preventDefault()}
           onEscapeKeyDown={(e) => e.preventDefault()}
@@ -1647,7 +1661,7 @@ export default function App() {
               organization to the Free plan.
             </DialogDescription>
           </DialogHeader>
-          <DialogFooter className="gap-2 sm:gap-0">
+          <DialogFooter className="gap-2">
             <Button
               type="button"
               variant="outline"
@@ -1668,6 +1682,7 @@ export default function App() {
             <Button
               type="button"
               onClick={() => {
+                setTrialModalDismissedForOrg(billingOrganizationId ?? null);
                 if (billingOrganizationId) {
                   applyNavigation(
                     `organizations/${billingOrganizationId}/billing`,

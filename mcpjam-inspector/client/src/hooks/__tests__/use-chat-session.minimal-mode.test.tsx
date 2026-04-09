@@ -83,6 +83,10 @@ vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
     selectedModelId: mockModelState.selectedModelId,
     setSelectedModelId: vi.fn(),
+    selectedModelIds: [mockModelState.selectedModelId],
+    setSelectedModelIds: vi.fn(),
+    multiModelEnabled: false,
+    setMultiModelEnabled: vi.fn(),
   }),
 }));
 

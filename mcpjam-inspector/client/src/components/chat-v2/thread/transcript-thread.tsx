@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   useEffect,
   useMemo,
   useRef,
@@ -24,6 +25,10 @@ const TRANSCRIPT_SCROLL_MAX_OBSERVE_MS = 1500;
 const TRANSCRIPT_TALL_MESSAGE_RATIO = 0.55;
 const TRANSCRIPT_TOP_INSET_MIN_PX = 12;
 const TRANSCRIPT_TOP_INSET_MAX_PX = 24;
+const TRANSCRIPT_MESSAGE_VISIBILITY_STYLE: CSSProperties = {
+  contentVisibility: "auto",
+  containIntrinsicSize: "0 160px",
+};
 
 type MessageWrapperArgs = {
   message: UIMessage;
@@ -203,6 +208,8 @@ export function TranscriptThread({
     () => new Set(highlightedMessageIds),
     [highlightedMessageIds],
   );
+  const shouldUseContentVisibility =
+    focusMessageId === null && highlightedMessageIds.length === 0;
 
   useEffect(() => {
     if (!focusMessageId) {
@@ -373,6 +380,11 @@ export function TranscriptThread({
                 "relative rounded-xl border border-primary/30 bg-primary/5 p-2",
               className,
             )}
+            style={
+              shouldUseContentVisibility && !isFocused && !isHighlighted
+                ? TRANSCRIPT_MESSAGE_VISIBILITY_STYLE
+                : undefined
+            }
             {...restWrapperProps}
           >
             {isFocused ? (
