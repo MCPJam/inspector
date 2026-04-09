@@ -1308,10 +1308,8 @@ export default function App() {
     activeTab === "tasks" ||
     activeTab === "oauth-flow" ||
     activeTab === "chat" ||
-    activeTab === "chat-v2" ||
     activeTab === "evals" ||
-    activeTab === "views" ||
-    activeTab === "app-builder";
+    activeTab === "views";
 
   const activeServerSelectorProps: ActiveServerSelectorProps | undefined =
     shouldShowActiveServerSelector
@@ -1322,13 +1320,13 @@ export default function App() {
           onServerChange: setSelectedServer,
           onConnect: handleConnect,
           onReconnect: handleReconnect,
-          isMultiSelectEnabled: activeTab === "chat" || activeTab === "chat-v2",
+          isMultiSelectEnabled: activeTab === "chat",
           onMultiServerToggle: toggleServerSelection,
           selectedMultipleServers: appState.selectedMultipleServers,
           showOnlyOAuthServers: false,
           showOnlyServersWithViews: activeTab === "views",
           serversWithViews: serversWithViews,
-          hasMessages: activeTab === "chat-v2" ? chatHasMessages : false,
+          hasMessages: false,
         }
       : undefined;
 
