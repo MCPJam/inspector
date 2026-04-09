@@ -12,9 +12,7 @@ import {
   type OAuthFlowState,
   type OAuthFlowStep,
 } from "@mcpjam/sdk/browser";
-import {
-  cn,
-} from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import {
   AlertCircle,
   ChevronDown,
