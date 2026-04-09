@@ -288,6 +288,16 @@ describe("AppBuilderTab", () => {
       args: ["server.js"],
     }) as MCPServerConfig;
 
+  const connectedServer = (name: string) => ({
+    [name]: {
+      name,
+      config: createServerConfig(),
+      connectionStatus: "connected" as const,
+      lastConnectionTime: new Date(),
+      retryCount: 0,
+    },
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     mockListTools.mockResolvedValue({ tools: [], toolsMetadata: {} });
@@ -341,7 +351,7 @@ describe("AppBuilderTab", () => {
       });
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -353,7 +363,7 @@ describe("AppBuilderTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -373,7 +383,7 @@ describe("AppBuilderTab", () => {
       });
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -387,7 +397,7 @@ describe("AppBuilderTab", () => {
       mockListTools.mockRejectedValue(new Error("Network error"));
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -404,7 +414,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = true;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -417,7 +427,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = false;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -429,7 +439,7 @@ describe("AppBuilderTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -441,7 +451,7 @@ describe("AppBuilderTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" servers={connectedServer("my-server")} />,
       );
 
       await waitFor(() => {
@@ -456,7 +466,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.hostStyle = "claude";
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" servers={connectedServer("my-server")} />,
       );
 
       await waitFor(() => {
@@ -471,7 +481,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.hostStyle = "chatgpt";
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="my-server" servers={connectedServer("my-server")} />,
       );
 
       await waitFor(() => {
@@ -490,7 +500,7 @@ describe("AppBuilderTab", () => {
       };
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -511,7 +521,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = true;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -528,7 +538,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = false;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -545,7 +555,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.isSidebarVisible = true;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -568,7 +578,7 @@ describe("AppBuilderTab", () => {
       mockUIPlaygroundStore.isExecuting = true;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -582,7 +592,7 @@ describe("AppBuilderTab", () => {
       const serverConfig = createServerConfig();
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -633,7 +643,7 @@ describe("AppBuilderTab", () => {
       mockOnboarding.isBootstrappingFirstRunConnection = false;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       expect(screen.getByTestId("playground-main")).toBeInTheDocument();
@@ -648,7 +658,7 @@ describe("AppBuilderTab", () => {
       mockOnboarding.isGuidedPostConnect = true;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -664,7 +674,7 @@ describe("AppBuilderTab", () => {
       mockOnboarding.isGuidedPostConnect = true;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -685,7 +695,7 @@ describe("AppBuilderTab", () => {
       mockOnboarding.isBootstrappingFirstRunConnection = false;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -708,7 +718,7 @@ describe("AppBuilderTab", () => {
       mockOnboarding.isGuidedPostConnect = false;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -726,7 +736,7 @@ describe("AppBuilderTab", () => {
       mockOnboarding.isGuidedPostConnect = true;
 
       render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="test-server" servers={connectedServer("test-server")} />,
       );
 
       await waitFor(() => {
@@ -776,7 +786,7 @@ describe("AppBuilderTab", () => {
       const serverConfig = createServerConfig();
 
       const { rerender } = render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="server-1" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="server-1" servers={connectedServer("server-1")} />,
       );
 
       await waitFor(() => {
@@ -786,7 +796,7 @@ describe("AppBuilderTab", () => {
       });
 
       rerender(
-        <AppBuilderTab serverConfig={serverConfig} serverName="server-2" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="server-2" servers={connectedServer("server-2")} />,
       );
 
       await waitFor(() => {
@@ -800,7 +810,7 @@ describe("AppBuilderTab", () => {
       const serverConfig = createServerConfig();
 
       const { rerender } = render(
-        <AppBuilderTab serverConfig={serverConfig} serverName="server-1" />,
+        <AppBuilderTab serverConfig={serverConfig} serverName="server-1" servers={connectedServer("server-1")} />,
       );
 
       await waitFor(() => {
