@@ -28,6 +28,10 @@ xrayPayload.post("/", async (c) => {
       selectedServers ?? [],
       messages ?? [],
       systemPrompt,
+      {
+        includeSkills: true,
+        includeMcpToolInventory: true,
+      },
     );
 
     return c.json(response);

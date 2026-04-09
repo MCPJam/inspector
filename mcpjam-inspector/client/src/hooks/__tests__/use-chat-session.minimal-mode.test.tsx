@@ -11,6 +11,12 @@ const mockAuthFetch = vi.fn();
 const mockGetSessionAuthHeaders = vi.fn(() => ({}));
 const mockGetAccessToken = vi.fn(async () => null);
 const mockGetGuestBearerToken = vi.fn(async () => "guest-token");
+const mockHasToken = vi.fn(() => false);
+const mockGetToken = vi.fn(() => "");
+const mockGetOpenRouterSelectedModels = vi.fn(() => []);
+const mockGetOllamaBaseUrl = vi.fn(() => "http://127.0.0.1:11434");
+const mockGetAzureBaseUrl = vi.fn(() => "");
+const mockGetCustomProviderByName = vi.fn();
 const mockConvexAuth = {
   isAuthenticated: true,
   isLoading: false,
@@ -18,6 +24,7 @@ const mockConvexAuth = {
 const mockTransportInstances: Array<{
   options: any;
   sendMessages: ReturnType<typeof vi.fn>;
+  requests: any[];
 }> = [];
 
 const baseModel = {
@@ -39,6 +46,17 @@ const mockModelState = {
   availableModels: [baseModel],
   selectedModelId: "gpt-4",
 };
+const mockAiProviderKeysState = {
+  hasToken: mockHasToken,
+  getToken: mockGetToken,
+  getOpenRouterSelectedModels: mockGetOpenRouterSelectedModels,
+  getOllamaBaseUrl: mockGetOllamaBaseUrl,
+  getAzureBaseUrl: mockGetAzureBaseUrl,
+};
+const mockCustomProvidersState = {
+  customProviders: [],
+  getCustomProviderByName: mockGetCustomProviderByName,
+};
 
 async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
   return typeof value === "function"
@@ -54,6 +72,10 @@ function getUsedTransport() {
   return transport!;
 }
 
+function getTransportRequests() {
+  return mockTransportInstances.flatMap((instance) => instance.requests);
+}
+
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
 }));
@@ -64,20 +86,11 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
 }));
 
 vi.mock("@/hooks/use-ai-provider-keys", () => ({
-  useAiProviderKeys: () => ({
-    hasToken: vi.fn(() => false),
-    getToken: vi.fn(() => ""),
-    getOpenRouterSelectedModels: vi.fn(() => []),
-    getOllamaBaseUrl: vi.fn(() => "http://127.0.0.1:11434"),
-    getAzureBaseUrl: vi.fn(() => ""),
-  }),
+  useAiProviderKeys: () => mockAiProviderKeysState,
 }));
 
 vi.mock("@/hooks/use-custom-providers", () => ({
-  useCustomProviders: () => ({
-    customProviders: [],
-    getCustomProviderByName: vi.fn(),
-  }),
+  useCustomProviders: () => mockCustomProvidersState,
 }));
 
 vi.mock("@/hooks/use-persisted-model", () => ({
@@ -190,9 +203,11 @@ vi.mock("ai", () => ({
   DefaultChatTransport: class MockTransport {
     options: any;
     sendMessages: ReturnType<typeof vi.fn>;
+    requests: any[];
 
     constructor(options: any) {
       this.options = options;
+      this.requests = [];
       this.sendMessages = vi.fn(async (requestOptions: any) => {
         const resolvedBody = await resolveConfig(this.options.body);
         const resolvedHeaders = await resolveConfig(this.options.headers);
@@ -203,6 +218,7 @@ vi.mock("ai", () => ({
           trigger: requestOptions.trigger,
           messageId: requestOptions.messageId,
         };
+        this.requests.push(requestBody);
         await this.options.fetch?.(this.options.api, {
           method: "POST",
           headers: resolvedHeaders,
@@ -340,6 +356,65 @@ describe("useChatSession minimal mode parity", () => {
     });
     expect(getUsedTransport().options.api).toBe("/api/mcp/chat-v2");
     expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {
+    const { result, rerender } = renderHook(
+      ({ selectedServers }: { selectedServers: string[] }) =>
+        useChatSession({
+          selectedServers,
+          minimalMode: true,
+          initialSystemPrompt: "Prompt",
+        }),
+      {
+        initialProps: {
+          selectedServers: ["server-1"],
+        },
+      },
+    );
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(0);
+    });
+
+    const initialChatSessionId = result.current.chatSessionId;
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(1);
+    });
+
+    expect(getTransportRequests().at(-1)).toMatchObject({
+      selectedServers: ["server-1"],
+      chatSessionId: initialChatSessionId,
+    });
+
+    rerender({
+      selectedServers: ["server-2"],
+    });
+
+    await waitFor(() => {
+      expect(mockTransportInstances.length).toBeGreaterThan(1);
+    });
+
+    expect(result.current.chatSessionId).toBe(initialChatSessionId);
+    const requestsBeforeSecondSend = getTransportRequests().length;
+
+    act(() => {
+      result.current.sendMessage({ text: "hello again" });
+    });
+
+    await waitFor(() => {
+      expect(getTransportRequests()).toHaveLength(requestsBeforeSecondSend + 1);
+    });
+
+    expect(getTransportRequests().at(-1)).toMatchObject({
+      selectedServers: ["server-2"],
+      chatSessionId: initialChatSessionId,
+    });
   });
 
   it("keeps guest-parity MCPJam models on the unauthenticated non-hosted path", async () => {

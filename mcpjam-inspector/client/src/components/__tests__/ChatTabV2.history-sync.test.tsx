@@ -364,7 +364,8 @@ vi.mock("@/hooks/use-chat-session", () => ({
       },
       startChatWithMessages: (...args: unknown[]) => {
         mockUseChatSession.startChatWithMessages(...args);
-        chatSessionOnResetRef.current?.("fork");
+        const options = args[1] as { resetReason?: string } | undefined;
+        chatSessionOnResetRef.current?.(options?.resetReason ?? "fork");
       },
       loadChatSession: async (...args: unknown[]) => {
         const result = await mockUseChatSession.loadChatSession(...args);
@@ -397,6 +398,7 @@ describe("ChatTabV2 history sync", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.clearAllMocks();
+    vi.stubGlobal("confirm", vi.fn(() => true));
     chatSessionOnResetRef.current = undefined;
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
@@ -453,6 +455,54 @@ describe("ChatTabV2 history sync", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+
+  it("asks before discarding a draft when switching threads", async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirmSpy);
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
+      target: { value: "Unsaved draft" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Discard your current draft and switch chats?",
+    );
+    expect(mockGetChatHistoryDetail).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
+      "Unsaved draft",
+    );
+  });
+
+  it("asks before discarding a draft when starting a new chat", async () => {
+    const confirmSpy = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirmSpy);
+
+    render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.change(screen.getByRole("textbox", { name: "Chat input" }), {
+      target: { value: "Unsaved draft" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "New personal thread" }),
+    );
+    await flushMicrotasks();
+
+    expect(confirmSpy).toHaveBeenCalledWith(
+      "Discard your current draft and switch chats?",
+    );
+    expect(mockUseChatSession.resetChat).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Chat input" })).toHaveValue(
+      "Unsaved draft",
+    );
   });
 
   it("detaches a resumed thread after the refreshed version never advances", async () => {
@@ -527,6 +577,51 @@ describe("ChatTabV2 history sync", () => {
     expect(mockToastError).toHaveBeenCalledWith(
       "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread.",
     );
+  });
+
+  it("keeps the active resumed thread selected when servers change", async () => {
+    const detailResponse = {
+      ok: true,
+      session: {
+        ...mockHistorySession,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: {
+          selectedServers: ["server-1"],
+        },
+      },
+      widgetSnapshots: [],
+    };
+
+    mockGetChatHistoryDetail.mockResolvedValue(detailResponse);
+
+    const view = render(<ChatTabV2 {...defaultProps} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Show threads" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+    await flushMicrotasks();
+
+    expect(screen.getByTestId("history-rail")).toHaveAttribute(
+      "data-active-session-id",
+      "history-1",
+    );
+
+    view.rerender(
+      <ChatTabV2
+        {...defaultProps}
+        selectedServerNames={[]}
+      />,
+    );
+    await flushMicrotasks();
+
+    expect(screen.getByTestId("history-rail")).toHaveAttribute(
+      "data-active-session-id",
+      "history-1",
+    );
+    expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+    expect(mockUseChatSession.syncResumedVersion).not.toHaveBeenCalledWith(
+      null,
+    );
+    expect(mockToastError).not.toHaveBeenCalled();
   });
 
   it("persists shared drafts with workspace visibility after Shared Threads new chat", async () => {

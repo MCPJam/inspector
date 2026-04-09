@@ -5,6 +5,7 @@ import { useChatSession } from "../use-chat-session";
 const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   stop: vi.fn(),
+  status: "ready" as "submitted" | "streaming" | "ready" | "error",
   addToolApprovalResponse: vi.fn(),
   getAccessToken: vi.fn(() => new Promise<string | null>(() => {})),
   hasToken: vi.fn(() => false),
@@ -172,7 +173,7 @@ vi.mock("@ai-sdk/react", async () => {
         messages,
         sendMessage: mockState.sendMessage,
         stop: mockState.stop,
-        status: "ready",
+        status: mockState.status,
         error: undefined,
         setMessages,
         addToolApprovalResponse: mockState.addToolApprovalResponse,
@@ -200,6 +201,7 @@ describe("useChatSession fork preservation", () => {
     mockState.sessionListeners.clear();
     mockState.nextSessionNumber = 1;
     mockState.lastTransportOptions = null;
+    mockState.status = "ready";
   });
 
   it("preserves trimmed messages across a fork and updates the hosted transport body", async () => {
@@ -502,6 +504,47 @@ describe("useChatSession fork preservation", () => {
     ]);
     expect(result.current.resumedVersion).toBe(7);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves a fresh thread and leaves in-flight responses alone when selected servers change", async () => {
+    const onReset = vi.fn();
+    const { result, rerender } = renderHook(
+      ({ selectedServers }: { selectedServers: string[] }) =>
+        useChatSession({
+          selectedServers,
+          hostedWorkspaceId: "workspace-1",
+          hostedSelectedServerIds: [],
+          onReset,
+        }),
+      {
+        initialProps: {
+          selectedServers: ["server-1"],
+        },
+      },
+    );
+    const initialChatSessionId = result.current.chatSessionId;
+    const message = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "keep this thread" }],
+    } as any;
+
+    act(() => {
+      result.current.setMessages([message]);
+    });
+
+    mockState.status = "streaming";
+    rerender({
+      selectedServers: ["server-2"],
+    });
+
+    await waitFor(() => {
+      expect(onReset).toHaveBeenCalledWith("servers-changed");
+    });
+
+    expect(mockState.stop).not.toHaveBeenCalled();
+    expect(result.current.chatSessionId).toBe(initialChatSessionId);
+    expect(result.current.messages).toEqual([message]);
   });
 
   it("restores empty sessions even when the transcript blob URL is missing", async () => {

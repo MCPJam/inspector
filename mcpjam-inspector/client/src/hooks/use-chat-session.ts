@@ -23,6 +23,7 @@ import {
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import {
   convertToModelMessages,
+  type ChatTransport,
   DefaultChatTransport,
   generateId,
   lastAssistantMessageIsCompleteWithApprovalResponses,
@@ -113,6 +114,7 @@ export type ChatSessionResetReason =
   | "auth-bootstrap"
   | "hydrate"
   | "fork"
+  | "servers-changed"
   | "reset";
 
 export interface TokenUsage {
@@ -187,6 +189,7 @@ export interface UseChatSessionReturn {
   startChatWithMessages: (
     messages: UIMessage[],
     options?: {
+      resetReason?: ChatSessionResetReason;
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     },
   ) => void;
@@ -935,6 +938,19 @@ export function useChatSession({
     hostedSandboxSurface,
     // requireToolApproval read from ref at request time
   ]);
+  // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
+  // Keep one stable transport object so server-selection changes affect the
+  // next request without forcing a new thread.
+  const latestTransportRef = useRef<ChatTransport<UIMessage>>(transport);
+  latestTransportRef.current = transport;
+  const proxyTransport = useMemo<ChatTransport<UIMessage>>(
+    () => ({
+      sendMessages: (options) => latestTransportRef.current.sendMessages(options),
+      reconnectToStream: (options) =>
+        latestTransportRef.current.reconnectToStream(options),
+    }),
+    [],
+  );
 
   // useChat hook
   const {
@@ -947,7 +963,7 @@ export function useChatSession({
     addToolApprovalResponse,
   } = useChat({
     id: chatSessionId,
-    transport: transport!,
+    transport: proxyTransport,
     onData: handleTraceDataPart,
     sendAutomaticallyWhen: requireToolApproval
       ? lastAssistantMessageIsCompleteWithApprovalResponses
@@ -1190,6 +1206,7 @@ export function useChatSession({
     (
       messages: UIMessage[],
       options?: {
+        resetReason?: ChatSessionResetReason;
         toolRenderOverrides?: Record<string, ToolRenderOverride>;
       },
     ) => {
@@ -1201,7 +1218,7 @@ export function useChatSession({
         toolRenderOverrides: options?.toolRenderOverrides,
         persistedSnapshotToolCallIds: [],
       });
-      onResetRef.current?.("fork");
+      onResetRef.current?.(options?.resetReason ?? "fork");
     },
     [queueSessionHydration],
   );
@@ -1524,7 +1541,6 @@ export function useChatSession({
     fetchSystemPromptTokenCount();
   }, [systemPrompt, selectedModel, hostedShareToken, hostedSandboxToken]);
 
-  // Reset chat when selected servers change
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
   useEffect(() => {
     const previousNames = previousSelectedServersRef.current;
@@ -1534,16 +1550,11 @@ export function useChatSession({
       previousNames.some((name, index) => name !== currentNames[index]);
 
     if (hasChanged) {
-      const isRestoringExistingSession =
-        resumedVersionRef.current !== null ||
-        pendingSessionHydrationRef.current !== null;
-      if (!isRestoringExistingSession) {
-        resetChat();
-      }
+      onResetRef.current?.("servers-changed");
     }
 
     previousSelectedServersRef.current = currentNames;
-  }, [selectedServers, resetChat]);
+  }, [selectedServers]);
 
   // Token usage calculation
   const tokenUsage = useMemo<TokenUsage>(() => {

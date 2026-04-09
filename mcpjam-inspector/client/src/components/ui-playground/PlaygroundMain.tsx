@@ -40,7 +40,10 @@ import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
-import { useChatSession } from "@/hooks/use-chat-session";
+import {
+  type ChatSessionResetReason,
+  useChatSession,
+} from "@/hooks/use-chat-session";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -376,7 +379,15 @@ export function PlaygroundMain({
     hostedWorkspaceId: convexWorkspaceId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    onReset: () => composerOnResetRef.current(),
+    onReset: (reason?: ChatSessionResetReason) => {
+      setModelContextQueue([]);
+      setPreludeTraceExecutions([]);
+      setInjectedToolRenderOverrides({});
+      if (reason === "servers-changed") {
+        return;
+      }
+      composerOnResetRef.current();
+    },
   });
 
   // Set playground active flag for widget renderers to read

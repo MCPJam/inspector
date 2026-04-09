@@ -243,6 +243,13 @@ export function ChatTabV2({
   } | null>(null);
   const hasUnsavedDraftRef = useRef(false);
 
+  /** Invalidate reactive history loads immediately (refs otherwise lag behind state until useEffect). */
+  const invalidatePendingReactiveHistoryLoad = useCallback(() => {
+    activeHistorySessionIdRef.current = null;
+    reactiveHistoryLoadRequestIdRef.current += 1;
+    lastAppliedReactiveVersionRef.current = null;
+  }, []);
+
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
     () =>
@@ -353,13 +360,17 @@ export function ChatTabV2({
       if (reason === "hydrate") {
         return;
       }
+      setModelContextQueue([]);
+      setWidgetStateQueue([]);
+      if (reason === "servers-changed") {
+        return;
+      }
       setInput("");
       setMcpPromptResults([]);
       setSkillResults([]);
       revokeFileAttachmentUrls(fileAttachments);
       setFileAttachments([]);
-      setModelContextQueue([]);
-      setWidgetStateQueue([]);
+      invalidatePendingReactiveHistoryLoad();
       setActiveHistorySessionId(null);
     },
   });
@@ -479,6 +490,7 @@ export function ChatTabV2({
   const detachHistorySession = useCallback(
     (toastMessage: string) => {
       resumedThreadSendBaselineRef.current = null;
+      invalidatePendingReactiveHistoryLoad();
       setActiveHistorySessionId(null);
       setPendingDirectVisibility("private");
       syncResumedVersion(null);
@@ -495,6 +507,7 @@ export function ChatTabV2({
       restoredToolRenderOverrides,
       startChatWithMessages,
       syncResumedVersion,
+      invalidatePendingReactiveHistoryLoad,
     ],
   );
 
@@ -881,6 +894,9 @@ export function ChatTabV2({
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
       if (isStreaming) return;
+      if (hasUnsavedDraft && !confirmDiscardDraftIfNeeded()) {
+        return;
+      }
       if (hasUnsavedDraft) {
         clearComposerDraft();
       }
@@ -934,6 +950,7 @@ export function ChatTabV2({
         onSelectedServerNamesChange(syncedServerNames);
       } catch (err) {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
+          invalidatePendingReactiveHistoryLoad();
           setActiveHistorySessionId(null);
         }
         console.error("[ChatTabV2] Failed to load chat session", err);
@@ -943,6 +960,7 @@ export function ChatTabV2({
     [
       appState.servers,
       clearComposerDraft,
+      confirmDiscardDraftIfNeeded,
       effectiveHostedWorkspaceId,
       hasUnsavedDraft,
       isHostedDirectGuest,
@@ -951,18 +969,23 @@ export function ChatTabV2({
       onSelectedServerNamesChange,
       selectedServerNames,
       serversById,
+      invalidatePendingReactiveHistoryLoad,
     ],
   );
 
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
       if (isStreaming) return;
+      if (hasUnsavedDraft && !confirmDiscardDraftIfNeeded()) {
+        return;
+      }
       if (hasUnsavedDraft) {
         clearComposerDraft();
       }
       void archiveEmptyDraftSession(activeHistorySessionId);
       resumedThreadSendBaselineRef.current = null;
       historySelectionRequestIdRef.current += 1;
+      invalidatePendingReactiveHistoryLoad();
       setActiveHistorySessionId(null);
       pendingHistoryServerSyncRef.current = null;
       syncResumedVersion(null);
@@ -974,9 +997,11 @@ export function ChatTabV2({
       archiveEmptyDraftSession,
       baseResetChat,
       clearComposerDraft,
+      confirmDiscardDraftIfNeeded,
       hasUnsavedDraft,
       isStreaming,
       syncResumedVersion,
+      invalidatePendingReactiveHistoryLoad,
     ],
   );
 
@@ -987,12 +1012,19 @@ export function ChatTabV2({
         clearComposerDraft();
       }
       historySelectionRequestIdRef.current += 1;
+      invalidatePendingReactiveHistoryLoad();
       setActiveHistorySessionId(null);
       pendingHistoryServerSyncRef.current = null;
       syncResumedVersion(null);
       baseResetChat();
     },
-    [baseResetChat, clearComposerDraft, hasUnsavedDraft, syncResumedVersion],
+    [
+      baseResetChat,
+      clearComposerDraft,
+      hasUnsavedDraft,
+      syncResumedVersion,
+      invalidatePendingReactiveHistoryLoad,
+    ],
   );
 
   const handleHistorySessionAction = useCallback(
@@ -1046,15 +1078,11 @@ export function ChatTabV2({
     }
 
     if (
-      resumedVersion !== null ||
       hasSameStringArray(previousSelectedServerNames, selectedServerNames)
     ) {
       return;
     }
-
-    setActiveHistorySessionId(null);
-    syncResumedVersion(null);
-  }, [resumedVersion, selectedServerNames, syncResumedVersion]);
+  }, [selectedServerNames]);
 
   const previousStatusRef = useRef(status);
   useEffect(() => {

@@ -53,25 +53,6 @@ vi.mock("../connection/AddServerModal", () => ({
     ) : null,
 }));
 
-// Mock ConfirmChatResetDialog
-vi.mock("../chat-v2/chat-input/dialogs/confirm-chat-reset-dialog", () => ({
-  ConfirmChatResetDialog: ({
-    open,
-    onConfirm,
-    onCancel,
-  }: {
-    open: boolean;
-    onConfirm: () => void;
-    onCancel: () => void;
-  }) =>
-    open ? (
-      <div data-testid="confirm-dialog">
-        <button onClick={onConfirm}>Confirm</button>
-        <button onClick={onCancel}>Cancel</button>
-      </div>
-    ) : null,
-}));
-
 describe("ActiveServerSelector", () => {
   const createServer = (
     overrides: Partial<ServerWithName> = {},
@@ -408,52 +389,31 @@ describe("ActiveServerSelector", () => {
     });
   });
 
-  describe("confirmation dialog", () => {
-    it("shows confirmation dialog when changing server with messages", () => {
+  describe("server changes with existing messages", () => {
+    it("changes server immediately even when the chat already has messages", () => {
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
         "server-2": createServer({ name: "server-2" }),
       };
-
-      render(
-        <ActiveServerSelector
-          {...defaultProps}
-          serverConfigs={serverConfigs}
-          selectedServer="server-1"
-          hasMessages={true}
-        />,
-      );
-
-      fireEvent.click(screen.getByText("server-2"));
-
-      expect(screen.getByTestId("confirm-dialog")).toBeInTheDocument();
-    });
-
-    it("changes server after confirming dialog", () => {
       const onServerChange = vi.fn();
-      const serverConfigs = {
-        "server-1": createServer({ name: "server-1" }),
-        "server-2": createServer({ name: "server-2" }),
-      };
 
       render(
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
           selectedServer="server-1"
-          hasMessages={true}
           onServerChange={onServerChange}
+          hasMessages={true}
         />,
       );
 
       fireEvent.click(screen.getByText("server-2"));
-      fireEvent.click(screen.getByText("Confirm"));
 
       expect(onServerChange).toHaveBeenCalledWith("server-2");
     });
 
-    it("does not change server after canceling dialog", () => {
-      const onServerChange = vi.fn();
+    it("toggles servers immediately in multi-select mode when the chat already has messages", () => {
+      const onMultiServerToggle = vi.fn();
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
         "server-2": createServer({ name: "server-2" }),
@@ -463,16 +423,16 @@ describe("ActiveServerSelector", () => {
         <ActiveServerSelector
           {...defaultProps}
           serverConfigs={serverConfigs}
-          selectedServer="server-1"
+          isMultiSelectEnabled={true}
+          selectedMultipleServers={["server-1"]}
           hasMessages={true}
-          onServerChange={onServerChange}
+          onMultiServerToggle={onMultiServerToggle}
         />,
       );
 
       fireEvent.click(screen.getByText("server-2"));
-      fireEvent.click(screen.getByText("Cancel"));
 
-      expect(onServerChange).not.toHaveBeenCalled();
+      expect(onMultiServerToggle).toHaveBeenCalledWith("server-2");
     });
   });
 
