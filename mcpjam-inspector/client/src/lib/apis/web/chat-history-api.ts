@@ -1,4 +1,6 @@
 import { authFetch } from "@/lib/session-token";
+import { HOSTED_MODE } from "@/lib/config";
+import { getGuestBearerToken } from "@/lib/guest-session";
 import { WebApiError } from "./base";
 
 export interface ChatHistorySession {
@@ -35,6 +37,7 @@ export interface ResumeConfig {
   temperature?: number;
   requireToolApproval?: boolean;
   selectedServers?: string[];
+  draftInput?: string;
 }
 
 export interface ChatHistoryDetailSession extends ChatHistorySession {
@@ -47,8 +50,42 @@ export interface ChatHistoryDetailResponse {
   session: ChatHistoryDetailSession;
 }
 
-async function webGet<T>(path: string): Promise<T> {
-  const response = await authFetch(path, { method: "GET" });
+export interface UpsertChatHistoryDraftRequest {
+  chatSessionId: string;
+  workspaceId?: string;
+  firstMessagePreview: string;
+  modelId?: string;
+  modelSource?: string;
+  resumeConfig?: ResumeConfig;
+}
+
+interface ChatHistoryRequestOptions {
+  headers?: HeadersInit;
+}
+
+async function buildChatHistoryHeaders(
+  initHeaders?: HeadersInit,
+): Promise<HeadersInit | undefined> {
+  const headers = new Headers(initHeaders);
+
+  if (!HOSTED_MODE && !headers.has("Authorization")) {
+    const guestToken = await getGuestBearerToken();
+    if (guestToken) {
+      headers.set("Authorization", `Bearer ${guestToken}`);
+    }
+  }
+
+  return Array.from(headers.keys()).length > 0 ? headers : undefined;
+}
+
+async function webGet<T>(
+  path: string,
+  options?: ChatHistoryRequestOptions,
+): Promise<T> {
+  const response = await authFetch(path, {
+    method: "GET",
+    headers: await buildChatHistoryHeaders(options?.headers),
+  });
 
   let body: any = null;
   try {
@@ -74,10 +111,14 @@ async function webGet<T>(path: string): Promise<T> {
 async function webPost<TRequest, TResponse>(
   path: string,
   payload: TRequest,
+  options?: ChatHistoryRequestOptions,
 ): Promise<TResponse> {
+  const initHeaders = new Headers(options?.headers);
+  initHeaders.set("Content-Type", "application/json");
+  const headers = new Headers(await buildChatHistoryHeaders(initHeaders));
   const response = await authFetch(path, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(payload),
   });
 
@@ -102,12 +143,15 @@ async function webPost<TRequest, TResponse>(
   return body as TResponse;
 }
 
-export async function listChatHistory(params: {
-  workspaceId?: string;
-  status: "active" | "archived";
-  limit?: number;
-  before?: number;
-}): Promise<ChatHistoryListResponse> {
+export async function listChatHistory(
+  params: {
+    workspaceId?: string;
+    status: "active" | "archived";
+    limit?: number;
+    before?: number;
+  },
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<ChatHistoryListResponse> {
   const searchParams = new URLSearchParams();
   if (params.workspaceId) searchParams.set("workspaceId", params.workspaceId);
   searchParams.set("status", params.status);
@@ -115,20 +159,27 @@ export async function listChatHistory(params: {
   if (params.before) searchParams.set("before", String(params.before));
 
   return webGet<ChatHistoryListResponse>(
-    `/web/chat-history/list?${searchParams.toString()}`,
+    `/api/web/chat-history/list?${searchParams.toString()}`,
+    requestOptions,
   );
 }
 
-export async function getChatHistoryDetail(params: {
-  chatSessionId: string;
-  workspaceId?: string;
-}): Promise<ChatHistoryDetailResponse> {
+export async function getChatHistoryDetail(
+  params: {
+    sessionId?: string;
+    chatSessionId: string;
+    workspaceId?: string;
+  },
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<ChatHistoryDetailResponse> {
   const searchParams = new URLSearchParams();
+  if (params.sessionId) searchParams.set("sessionId", params.sessionId);
   searchParams.set("chatSessionId", params.chatSessionId);
   if (params.workspaceId) searchParams.set("workspaceId", params.workspaceId);
 
   return webGet<ChatHistoryDetailResponse>(
-    `/web/chat-history/detail?${searchParams.toString()}`,
+    `/api/web/chat-history/detail?${searchParams.toString()}`,
+    requestOptions,
   );
 }
 
@@ -136,9 +187,22 @@ export async function chatHistoryAction(
   action: string,
   sessionId: string,
   params?: Record<string, unknown>,
+  requestOptions?: ChatHistoryRequestOptions,
 ): Promise<{ ok: boolean }> {
   return webPost<Record<string, unknown>, { ok: boolean }>(
-    "/web/chat-history/action",
+    "/api/web/chat-history/action",
     { action, sessionId, ...params },
+    requestOptions,
+  );
+}
+
+export async function upsertChatHistoryDraft(
+  payload: UpsertChatHistoryDraftRequest,
+  requestOptions?: ChatHistoryRequestOptions,
+): Promise<ChatHistoryDetailResponse> {
+  return webPost<UpsertChatHistoryDraftRequest, ChatHistoryDetailResponse>(
+    "/api/web/chat-history/draft",
+    payload,
+    requestOptions,
   );
 }

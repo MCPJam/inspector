@@ -176,15 +176,17 @@ export interface UseChatSessionReturn {
   startChatWithMessages: (messages: UIMessage[]) => void;
   loadChatSession: (session: {
     chatSessionId: string;
-    messagesBlobUrl: string;
+    messagesBlobUrl: string | null;
     resumeConfig?: {
       systemPrompt?: string;
       temperature?: number;
       requireToolApproval?: boolean;
       selectedServers?: string[];
+      draftInput?: string;
     };
     version: number;
   }) => Promise<void>;
+  syncResumedVersion: (version: number | null) => void;
 
   // Resumed thread version (for optimistic concurrency)
   resumedVersion: number | null;
@@ -221,6 +223,13 @@ interface LiveTraceAccumulatorState {
   activeTurnId: string | null;
   activeTurnHasSnapshot: boolean;
   anySnapshotSeen: boolean;
+}
+
+interface PendingSessionHydration {
+  sessionId: string;
+  messages: UIMessage[];
+  resumedVersion: number | null;
+  resolve?: () => void;
 }
 
 const MAX_LIVE_TRACE_EVENTS = 400;
@@ -591,9 +600,13 @@ export function useChatSession({
   const [systemPrompt, setSystemPrompt] = useState(initialSystemPrompt);
   const [temperature, setTemperature] = useState(initialTemperature);
   const [chatSessionId, setChatSessionId] = useState(generateId());
+  const chatSessionIdRef = useRef(chatSessionId);
+  chatSessionIdRef.current = chatSessionId;
+  const [, setHydrationTick] = useState(0);
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
   const [liveTraceState, setLiveTraceState] =
     useState<LiveTraceAccumulatorState>(() => createEmptyLiveTraceState());
+  const resumedVersionRef = useRef<number | null>(null);
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -628,8 +641,9 @@ export function useChatSession({
     !!(hostedShareToken || hostedSandboxToken);
   const guestMode = directGuestMode || sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
-  const pendingForkSessionIdRef = useRef<string | null>(null);
-  const pendingForkMessagesRef = useRef<UIMessage[] | null>(null);
+  const pendingSessionHydrationRef = useRef<PendingSessionHydration | null>(
+    null,
+  );
   const selectedServersSignature = useMemo(
     () => selectedServers.join("\u0000"),
     [selectedServers],
@@ -660,6 +674,20 @@ export function useChatSession({
     }
 
     setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
+  }, []);
+
+  const syncResumedVersion = useCallback((version: number | null) => {
+    resumedVersionRef.current = version;
+    setResumedVersion(version);
+  }, []);
+  const clearPendingSessionHydration = useCallback(() => {
+    const pendingHydration = pendingSessionHydrationRef.current;
+    if (!pendingHydration) {
+      return;
+    }
+
+    pendingSessionHydrationRef.current = null;
+    pendingHydration.resolve?.();
   }, []);
 
   // Build available models
@@ -826,7 +854,9 @@ export function useChatSession({
         ...(!HOSTED_MODE && customProviders.length > 0
           ? { customProviders }
           : {}),
-        ...(resumedVersion !== null ? { expectedVersion: resumedVersion } : {}),
+        ...(resumedVersionRef.current !== null
+          ? { expectedVersion: resumedVersionRef.current }
+          : {}),
       }),
       headers: transportHeaders,
     });
@@ -847,7 +877,6 @@ export function useChatSession({
     hostedShareToken,
     hostedSandboxToken,
     hostedSandboxSurface,
-    resumedVersion,
     // requireToolApproval read from ref at request time
   ]);
 
@@ -868,6 +897,31 @@ export function useChatSession({
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
   });
+
+  const queueSessionHydration = useCallback(
+    (hydration: PendingSessionHydration) => {
+      clearPendingSessionHydration();
+
+      // If the chatSessionId is already the target value, setChatSessionId
+      // would be a no-op and the useLayoutEffect that processes the pending
+      // hydration would never fire.  Apply the hydration directly instead.
+      if (hydration.sessionId === chatSessionIdRef.current) {
+        baseSetMessages(hydration.messages);
+        syncResumedVersion(hydration.resumedVersion);
+        setHydrationTick((t) => t + 1);
+        return Promise.resolve();
+      }
+
+      return new Promise<void>((resolve) => {
+        pendingSessionHydrationRef.current = {
+          ...hydration,
+          resolve,
+        };
+        setChatSessionId(hydration.sessionId);
+      });
+    },
+    [clearPendingSessionHydration, baseSetMessages, syncResumedVersion],
+  );
 
   const [traceTranscriptFromUi, setTraceTranscriptFromUi] = useState<
     ModelMessage[] | null
@@ -984,10 +1038,16 @@ export function useChatSession({
           shouldForkChatSession(previousMessages, nextMessages)
         ) {
           const nextSessionId = generateId();
-          pendingForkSessionIdRef.current = nextSessionId;
-          pendingForkMessagesRef.current = nextMessages;
+          clearPendingSessionHydration();
+          pendingSessionHydrationRef.current = {
+            sessionId: nextSessionId,
+            messages: nextMessages,
+            resumedVersion: null,
+          };
           queueMicrotask(() => {
-            if (pendingForkSessionIdRef.current === nextSessionId) {
+            if (
+              pendingSessionHydrationRef.current?.sessionId === nextSessionId
+            ) {
               setChatSessionId(nextSessionId);
             }
           });
@@ -1000,18 +1060,23 @@ export function useChatSession({
   );
 
   useLayoutEffect(() => {
-    if (pendingForkSessionIdRef.current !== chatSessionId) {
+    const pendingHydration = pendingSessionHydrationRef.current;
+    if (!pendingHydration || pendingHydration.sessionId !== chatSessionId) {
       return;
     }
 
-    const pendingForkMessages = pendingForkMessagesRef.current;
-    pendingForkSessionIdRef.current = null;
-    pendingForkMessagesRef.current = null;
+    pendingSessionHydrationRef.current = null;
 
-    if (pendingForkMessages) {
-      baseSetMessages(pendingForkMessages);
-    }
-  }, [baseSetMessages, chatSessionId]);
+    baseSetMessages(pendingHydration.messages);
+    syncResumedVersion(pendingHydration.resumedVersion);
+    // Force a React state update so that useSyncExternalStore re-reads the
+    // messages snapshot that was just written to the Chat store above.
+    // Without this, the external-store change made by baseSetMessages may
+    // not trigger a re-render when syncResumedVersion is a no-op (same
+    // version value as before).
+    setHydrationTick((t) => t + 1);
+    pendingHydration.resolve?.();
+  }, [baseSetMessages, chatSessionId, syncResumedVersion]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -1038,41 +1103,52 @@ export function useChatSession({
   // Reset chat
   const resetChat = useCallback(() => {
     skipNextForkDetectionRef.current = true;
-    pendingForkSessionIdRef.current = null;
-    pendingForkMessagesRef.current = null;
+    clearPendingSessionHydration();
     setChatSessionId(generateId());
     setMessages([]);
-    setResumedVersion(null);
+    syncResumedVersion(null);
     onResetRef.current?.();
-  }, [setMessages]);
+  }, [clearPendingSessionHydration, setMessages, syncResumedVersion]);
 
-  const startChatWithMessages = useCallback((messages: UIMessage[]) => {
-    skipNextForkDetectionRef.current = true;
-    const nextSessionId = generateId();
-    pendingForkSessionIdRef.current = nextSessionId;
-    pendingForkMessagesRef.current = messages;
-    setChatSessionId(nextSessionId);
-    onResetRef.current?.();
-  }, []);
+  const startChatWithMessages = useCallback(
+    (messages: UIMessage[]) => {
+      skipNextForkDetectionRef.current = true;
+      void queueSessionHydration({
+        sessionId: generateId(),
+        messages,
+        resumedVersion: null,
+      });
+      onResetRef.current?.();
+    },
+    [queueSessionHydration],
+  );
 
   const loadChatSession = useCallback(
     async (session: {
       chatSessionId: string;
-      messagesBlobUrl: string;
+      messagesBlobUrl: string | null;
       resumeConfig?: {
         systemPrompt?: string;
         temperature?: number;
         requireToolApproval?: boolean;
         selectedServers?: string[];
+        draftInput?: string;
       };
       version: number;
     }) => {
-      // Fetch transcript blob
-      const response = await fetch(session.messagesBlobUrl);
-      const transcript = await response.json();
-      const uiMessages = transcriptToUIMessages(transcript);
+      let uiMessages: UIMessage[] = [];
 
-      // Restore session config
+      if (session.messagesBlobUrl) {
+        const response = await fetch(session.messagesBlobUrl);
+        if (!response.ok) {
+          throw new Error(
+            `Failed to fetch chat transcript (${response.status})`,
+          );
+        }
+        const transcript = await response.json();
+        uiMessages = transcriptToUIMessages(transcript);
+      }
+
       if (session.resumeConfig?.systemPrompt !== undefined) {
         setSystemPrompt(session.resumeConfig.systemPrompt);
       }
@@ -1083,15 +1159,15 @@ export function useChatSession({
         setRequireToolApproval(session.resumeConfig.requireToolApproval);
       }
 
-      // Set the same chatSessionId to continue the thread
       skipNextForkDetectionRef.current = true;
-      pendingForkSessionIdRef.current = null;
-      pendingForkMessagesRef.current = null;
-      setChatSessionId(session.chatSessionId);
-      setMessages(uiMessages);
-      setResumedVersion(session.version);
+      await queueSessionHydration({
+        sessionId: session.chatSessionId,
+        messages: uiMessages,
+        resumedVersion: session.version,
+      });
+      onResetRef.current?.();
     },
-    [setMessages],
+    [queueSessionHydration],
   );
 
   useEffect(() => {
@@ -1124,10 +1200,20 @@ export function useChatSession({
         // getAccessToken threw (e.g. LoginRequiredError) — not authenticated
       }
 
-      // Only fall back to a guest token for explicit guest surfaces:
-      // direct guest chat and shared-chat guests. A regular hosted workspace
-      // should never silently downgrade to guest auth.
-      if (
+      // In non-hosted mode, attach a guest bearer so local chat persistence and
+      // history lookups use the same Convex identity as the active thread.
+      // In hosted mode, only fall back to guest auth for explicit guest
+      // surfaces. A regular hosted workspace should never silently downgrade.
+      if (!resolved && active && !HOSTED_MODE) {
+        const guestToken = await getGuestBearerToken();
+        if (!active) return;
+        if (guestToken) {
+          setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+          resolved = true;
+        } else {
+          setAuthHeaders(undefined);
+        }
+      } else if (
         !resolved &&
         active &&
         !isAuthenticated &&
@@ -1138,6 +1224,7 @@ export function useChatSession({
         if (!active) return;
         if (guestToken) {
           setAuthHeaders({ Authorization: `Bearer ${guestToken}` });
+          resolved = true;
         } else {
           setAuthHeaders(undefined);
         }
@@ -1148,10 +1235,10 @@ export function useChatSession({
       // Reset chat to force new session with updated auth headers
       if (active) {
         skipNextForkDetectionRef.current = true;
-        pendingForkSessionIdRef.current = null;
-        pendingForkMessagesRef.current = null;
+        clearPendingSessionHydration();
         setChatSessionId(generateId());
         setMessages([]);
+        syncResumedVersion(null);
         onResetRef.current?.();
         setIsSessionBootstrapComplete(true);
       }
@@ -1165,7 +1252,9 @@ export function useChatSession({
     hostedSandboxToken,
     hostedWorkspaceId,
     isAuthenticated,
+    clearPendingSessionHydration,
     setMessages,
+    syncResumedVersion,
   ]);
 
   // Ollama model detection
@@ -1318,7 +1407,12 @@ export function useChatSession({
       previousNames.some((name, index) => name !== currentNames[index]);
 
     if (hasChanged) {
-      resetChat();
+      const isRestoringExistingSession =
+        resumedVersionRef.current !== null ||
+        pendingSessionHydrationRef.current !== null;
+      if (!isRestoringExistingSession) {
+        resetChat();
+      }
     }
 
     previousSelectedServersRef.current = currentNames;
@@ -1437,6 +1531,7 @@ export function useChatSession({
     resetChat,
     startChatWithMessages,
     loadChatSession,
+    syncResumedVersion,
 
     // Resumed thread version
     resumedVersion,

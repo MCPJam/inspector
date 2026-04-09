@@ -7,16 +7,6 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 
@@ -47,11 +37,23 @@ interface ChatHistoryRowProps {
   isAuthenticated: boolean;
   isStreaming: boolean;
   onSelect: (session: ChatHistorySession) => void;
+  onActionComplete?: (event: {
+    action:
+      | "rename"
+      | "archive"
+      | "unarchive"
+      | "share"
+      | "unshare"
+      | "pin"
+      | "unpin"
+      | "mark-read"
+      | "mark-unread";
+    session: ChatHistorySession;
+  }) => void | Promise<void>;
   actions: {
     rename: (sessionId: string, customTitle: string) => Promise<void>;
     archive: (sessionId: string) => Promise<void>;
     unarchive: (sessionId: string) => Promise<void>;
-    deleteSession: (sessionId: string) => Promise<void>;
     share: (sessionId: string) => Promise<void>;
     unshare: (sessionId: string) => Promise<void>;
     pin: (sessionId: string) => Promise<void>;
@@ -67,6 +69,7 @@ export function ChatHistoryRow({
   isAuthenticated,
   isStreaming,
   onSelect,
+  onActionComplete,
   actions,
 }: ChatHistoryRowProps) {
   const [relativeTime, setRelativeTime] = useState(
@@ -74,7 +77,6 @@ export function ChatHistoryRow({
   );
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   // Refresh relative time every 60s
@@ -99,10 +101,27 @@ export function ChatHistoryRow({
 
   const handleRenameSubmit = async () => {
     const trimmed = renameValue.trim();
-    if (trimmed) {
+    if (trimmed || session.customTitle) {
       await actions.rename(session._id, trimmed);
+      await onActionComplete?.({ action: "rename", session });
     }
     setIsRenaming(false);
+  };
+
+  const runAction = async (
+    action:
+      | "archive"
+      | "unarchive"
+      | "share"
+      | "unshare"
+      | "pin"
+      | "unpin"
+      | "mark-read"
+      | "mark-unread",
+    operation: () => Promise<void>,
+  ) => {
+    await operation();
+    await onActionComplete?.({ action, session });
   };
 
   const handleClick = () => {
@@ -129,9 +148,8 @@ export function ChatHistoryRow({
   }
 
   return (
-    <>
-      <div
-        className={`group flex items-start gap-1.5 rounded-md px-2 py-1.5 text-xs cursor-pointer transition-colors ${
+    <div
+        className={`group relative flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
           isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
         } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
         onClick={handleClick}
@@ -143,29 +161,27 @@ export function ChatHistoryRow({
             )}
             <span className="font-medium truncate">{title}</span>
           </div>
-          <div className="flex items-center gap-1 mt-0.5 text-muted-foreground">
-            <span className="truncate text-[10px]">
-              {session.firstMessagePreview.slice(0, 50)}
-            </span>
-          </div>
         </div>
 
-        <div className="flex items-center gap-0.5 shrink-0">
+        <div className="flex shrink-0 items-center gap-1">
           {session.isPinned && (
             <Pin className="h-3 w-3 text-muted-foreground" />
           )}
-          <span className="text-[10px] text-muted-foreground">
-            {relativeTime}
-          </span>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className="opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded hover:bg-accent"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <MoreVertical className="h-3.5 w-3.5" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-40">
+          <div
+            className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1"
+          >
+            <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
+              {relativeTime}
+            </span>
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                disabled={isStreaming}
+                className="flex items-center justify-end rounded p-0.5 outline-none transition-opacity hover:bg-accent data-[state=open]:pointer-events-auto data-[state=open]:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 [@media(pointer:fine)]:pointer-events-none [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:z-10 [@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:group-hover:pointer-events-auto [@media(pointer:fine)]:group-hover:opacity-100 [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <MoreVertical className="h-3.5 w-3.5" />
+              </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-40">
               <DropdownMenuItem
                 onClick={() => {
                   setRenameValue(session.customTitle || "");
@@ -175,19 +191,23 @@ export function ChatHistoryRow({
                 Rename
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() =>
+                onClick={async () =>
                   session.isPinned
-                    ? actions.unpin(session._id)
-                    : actions.pin(session._id)
+                    ? await runAction("unpin", () => actions.unpin(session._id))
+                    : await runAction("pin", () => actions.pin(session._id))
                 }
               >
                 {session.isPinned ? "Unpin" : "Pin"}
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={() =>
+                onClick={async () =>
                   session.isUnread
-                    ? actions.markRead(session._id)
-                    : actions.markUnread(session._id)
+                    ? await runAction("mark-read", () =>
+                        actions.markRead(session._id),
+                      )
+                    : await runAction("mark-unread", () =>
+                        actions.markUnread(session._id),
+                      )
                 }
               >
                 {session.isUnread ? "Mark read" : "Mark unread"}
@@ -197,10 +217,14 @@ export function ChatHistoryRow({
                 <>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    onClick={() =>
+                    onClick={async () =>
                       session.directVisibility === "workspace"
-                        ? actions.unshare(session._id)
-                        : actions.share(session._id)
+                        ? await runAction("unshare", () =>
+                            actions.unshare(session._id),
+                          )
+                        : await runAction("share", () =>
+                            actions.share(session._id),
+                          )
                     }
                   >
                     {session.directVisibility === "workspace"
@@ -212,45 +236,22 @@ export function ChatHistoryRow({
 
               <DropdownMenuSeparator />
               <DropdownMenuItem
-                onClick={() =>
+                onClick={async () =>
                   session.status === "active"
-                    ? actions.archive(session._id)
-                    : actions.unarchive(session._id)
+                    ? await runAction("archive", () =>
+                        actions.archive(session._id),
+                      )
+                    : await runAction("unarchive", () =>
+                        actions.unarchive(session._id),
+                      )
                 }
               >
                 {session.status === "active" ? "Archive" : "Unarchive"}
               </DropdownMenuItem>
-              <DropdownMenuItem
-                className="text-destructive"
-                onClick={() => setShowDeleteConfirm(true)}
-              >
-                Delete
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </div>
-      </div>
-
-      <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete chat</AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently delete this chat and its transcript. This
-              action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => actions.deleteSession(session._id)}
-            >
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
+    </div>
   );
 }

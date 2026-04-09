@@ -172,7 +172,34 @@ describe("chat-history routes", () => {
       expect(body.session.chatSessionId).toBe("s1");
     });
 
-    it("returns 400 when chatSessionId is missing", async () => {
+    it("passes sessionId through when provided", async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            session: {
+              chatSessionId: "s1",
+              messagesBlobUrl: "https://storage.test/blob",
+              version: 3,
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+
+      const res = await app.request("/chat-history/detail?sessionId=session1", {
+        method: "GET",
+        headers: { Authorization: "Bearer test-token" },
+      });
+
+      expect(res.status).toBe(200);
+
+      const [fetchUrl] = fetchMock.mock.calls[0];
+      expect(fetchUrl).toContain("/direct-chat/detail");
+      expect(fetchUrl).toContain("sessionId=session1");
+    });
+
+    it("returns 400 when sessionId and chatSessionId are missing", async () => {
       const res = await app.request("/chat-history/detail", {
         method: "GET",
         headers: { Authorization: "Bearer test-token" },
@@ -228,7 +255,7 @@ describe("chat-history routes", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          action: "delete",
+          action: "pin",
           sessionId: "nonexistent",
         }),
       });
@@ -260,6 +287,48 @@ describe("chat-history routes", () => {
       });
 
       expect(res.status).toBe(200);
+    });
+  });
+
+  describe("POST /chat-history/draft", () => {
+    it("proxies draft save requests to Convex backend", async () => {
+      fetchMock.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            ok: true,
+            session: {
+              _id: "session123",
+              chatSessionId: "chat-session-1",
+            },
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          },
+        ),
+      );
+
+      const res = await app.request("/chat-history/draft", {
+        method: "POST",
+        headers: {
+          Authorization: "Bearer test-token",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          chatSessionId: "chat-session-1",
+          firstMessagePreview: "hello",
+          resumeConfig: { draftInput: "hello" },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+
+      const [fetchUrl, fetchOptions] = fetchMock.mock.calls[0];
+      expect(fetchUrl).toContain("/direct-chat/draft");
+      expect(JSON.parse(fetchOptions.body)).toMatchObject({
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "hello",
+      });
     });
   });
 });

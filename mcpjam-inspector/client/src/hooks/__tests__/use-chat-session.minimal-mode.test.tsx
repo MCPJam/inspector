@@ -10,6 +10,7 @@ const mockAddToolApprovalResponse = vi.fn();
 const mockAuthFetch = vi.fn();
 const mockGetSessionAuthHeaders = vi.fn(() => ({}));
 const mockGetAccessToken = vi.fn(async () => null);
+const mockGetGuestBearerToken = vi.fn(async () => "guest-token");
 const mockConvexAuth = {
   isAuthenticated: true,
   isLoading: false,
@@ -109,6 +110,10 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 vi.mock("@/lib/session-token", () => ({
   authFetch: (...args: unknown[]) => mockAuthFetch(...args),
   getAuthHeaders: () => mockGetSessionAuthHeaders(),
+}));
+
+vi.mock("@/lib/guest-session", () => ({
+  getGuestBearerToken: (...args: unknown[]) => mockGetGuestBearerToken(...args),
 }));
 
 vi.mock("@/hooks/useSharedChatWidgetCapture", () => ({
@@ -221,6 +226,8 @@ describe("useChatSession minimal mode parity", () => {
     mockModelState.selectedModelId = "gpt-4";
     mockGetSessionAuthHeaders.mockReturnValue({});
     mockGetAccessToken.mockResolvedValue(null);
+    mockGetGuestBearerToken.mockReset();
+    mockGetGuestBearerToken.mockResolvedValue("guest-token");
     mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockTransportInstances.length = 0;
     mockGetToolsMetadata.mockResolvedValue({
@@ -299,7 +306,7 @@ describe("useChatSession minimal mode parity", () => {
     warnSpy.mockRestore();
   });
 
-  it("keeps non-hosted chat off authFetch and omits transport headers by default", async () => {
+  it("keeps non-hosted chat off authFetch and includes a guest bearer header", async () => {
     const selectedServers = ["server-1"];
     const { result } = renderHook(() =>
       useChatSession({
@@ -316,9 +323,9 @@ describe("useChatSession minimal mode parity", () => {
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
     expect(latestTransport.options.fetch).toBeUndefined();
-    expect(
-      await resolveConfig(latestTransport.options.headers),
-    ).toBeUndefined();
+    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
+      Authorization: "Bearer guest-token",
+    });
 
     act(() => {
       result.current.sendMessage({ text: "hello" });
@@ -356,9 +363,9 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(
-      await resolveConfig(latestTransport.options.headers),
-    ).toBeUndefined();
+    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
+      Authorization: "Bearer guest-token",
+    });
     expect(result.current.disableForAuthentication).toBe(false);
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });

@@ -138,22 +138,33 @@ chatHistory.get("/list", async (c) =>
   }),
 );
 
-// GET /chat-history/detail?chatSessionId=...&workspaceId=...
+// GET /chat-history/detail?sessionId=...&chatSessionId=...&workspaceId=...
 chatHistory.get("/detail", async (c) =>
   handleRoute(c, async () => {
     const bearerToken = assertBearerToken(c);
-    const { chatSessionId, workspaceId } = c.req.query();
-    if (!chatSessionId) {
+    const { sessionId, chatSessionId, workspaceId } = c.req.query();
+    if (!sessionId && !chatSessionId) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "chatSessionId is required",
+        "sessionId or chatSessionId is required",
       );
     }
     return await proxyGet(bearerToken, "/direct-chat/detail", {
+      sessionId,
       chatSessionId,
       workspaceId,
     });
+  }),
+);
+
+// POST /chat-history/draft
+// Body: { chatSessionId: string, firstMessagePreview: string, workspaceId?: string, ... }
+chatHistory.post("/draft", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    return await proxyPost(bearerToken, "/direct-chat/draft", body);
   }),
 );
 

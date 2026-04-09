@@ -11,6 +11,7 @@ import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bott
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
+import { toast } from "sonner";
 import { ModelDefinition } from "@/shared/types";
 import { LoggerView } from "./logger-view";
 import {
@@ -53,10 +54,14 @@ import { useChatSession } from "@/hooks/use-chat-session";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
+import { WebApiError } from "@/lib/apis/web/base";
 import { useSharedAppState } from "@/state/app-state-context";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
 import {
+  chatHistoryAction,
   getChatHistoryDetail,
+  upsertChatHistoryDraft,
+  type ChatHistoryDetailSession,
   type ChatHistorySession,
 } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceServers } from "@/hooks/useViews";
@@ -73,10 +78,15 @@ import {
   MultiModelChatCard,
 } from "@/components/chat-v2/multi-model-chat-card";
 import type { MultiModelCardSummary } from "@/components/chat-v2/model-compare-card-header";
+import {
+  hasSameStringArray,
+  resolveRestorableServerNames,
+} from "@/components/chat-v2/history/session-restore";
 
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
+  onSelectedServerNamesChange?: (names: string[]) => void;
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
   minimalMode?: boolean;
@@ -109,9 +119,43 @@ interface ChatTabProps {
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
 
+function buildDraftHistoryPreview(options: {
+  input: string;
+  mcpPromptResults: MCPPromptResult[];
+  skillResults: SkillResult[];
+  fileAttachments: FileAttachment[];
+}): string {
+  const trimmedInput = options.input.trim();
+  if (trimmedInput) {
+    return trimmedInput;
+  }
+
+  const firstPrompt = options.mcpPromptResults[0];
+  if (firstPrompt?.name) {
+    return firstPrompt.name;
+  }
+
+  const firstSkill = options.skillResults[0];
+  if (firstSkill?.name) {
+    return firstSkill.name;
+  }
+
+  return options.fileAttachments[0]?.file.name ?? "";
+}
+
+function resolveDraftSelectedServers(
+  selectedServerIds: string[],
+  selectedServerNames: string[],
+): string[] {
+  return selectedServerIds.length > 0
+    ? selectedServerIds
+    : selectedServerNames;
+}
+
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
   selectedServerNames,
+  onSelectedServerNamesChange,
   onHasMessagesChange,
   enableMultiModelChat = false,
   minimalMode = false,
@@ -177,9 +221,16 @@ export function ChatTabV2({
   const [multiModelHasMessages, setMultiModelHasMessages] = useState<
     Record<string, boolean>
   >({});
+  const [activeHistorySessionId, setActiveHistorySessionId] = useState<
+    string | null
+  >(null);
+  const [historyRefreshSignal, setHistoryRefreshSignal] = useState(0);
 
   const [traceViewMode, setTraceViewMode] = useState<ChatTraceViewMode>("chat");
   const [revealedInChat, setRevealedInChat] = useState(false);
+  const draftPersistenceSignatureRef = useRef<string | null>(null);
+  const pendingHistoryServerSyncRef = useRef<string[] | null>(null);
+  const historySelectionRequestIdRef = useRef(0);
 
   // Filter to only connected servers
   const selectedConnectedServerNames = useMemo(
@@ -193,7 +244,7 @@ export function ChatTabV2({
   );
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
-  const { serversByName } = useWorkspaceServers({
+  const { serversById, serversByName } = useWorkspaceServers({
     isAuthenticated: isConvexAuthenticated,
     workspaceId: convexWorkspaceId,
   });
@@ -252,6 +303,8 @@ export function ChatTabV2({
     resetChat: baseResetChat,
     startChatWithMessages,
     loadChatSession,
+    syncResumedVersion,
+    resumedVersion,
     liveTraceEnvelope,
     hasTraceSnapshot,
     hasLiveTimelineContent,
@@ -277,47 +330,475 @@ export function ChatTabV2({
     minimalMode,
     onReset: () => {
       setInput("");
-      setWidgetStateQueue([]);
+      setMcpPromptResults([]);
+      setSkillResults([]);
+      revokeFileAttachmentUrls(fileAttachments);
+      setFileAttachments([]);
       setModelContextQueue([]);
+      setWidgetStateQueue([]);
+      setActiveHistorySessionId(null);
     },
   });
 
   // Chat history handlers
   const showHistoryRail =
     HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken;
+  const hasConversationMessages = messages.some(
+    (msg) => msg.role === "user" || msg.role === "assistant",
+  );
+
+  const hasUnsavedDraft =
+    !!input.trim() ||
+    mcpPromptResults.length > 0 ||
+    skillResults.length > 0 ||
+    fileAttachments.length > 0;
+  const draftHistoryPreview = buildDraftHistoryPreview({
+    input,
+    mcpPromptResults,
+    skillResults,
+    fileAttachments,
+  });
+  const draftSelectedServers = resolveDraftSelectedServers(
+    effectiveHostedSelectedServerIds,
+    selectedConnectedServerNames,
+  );
+
+  const confirmDiscardDraftIfNeeded = useCallback(() => {
+    if (!hasUnsavedDraft) {
+      return true;
+    }
+
+    return window.confirm("Discard your current draft and switch chats?");
+  }, [hasUnsavedDraft]);
+  const clearComposerDraft = useCallback(() => {
+    setInput("");
+    setMcpPromptResults([]);
+    setSkillResults([]);
+    revokeFileAttachmentUrls(fileAttachments);
+    setFileAttachments([]);
+    setModelContextQueue([]);
+    setWidgetStateQueue([]);
+  }, [fileAttachments]);
+
+  const markHistorySessionRead = useCallback(async (sessionId: string) => {
+    try {
+      await chatHistoryAction("mark-read", sessionId);
+    } catch {
+      // Best-effort: unread state should not block chat usage.
+    }
+  }, []);
+
+  const loadHistorySession = useCallback(
+    async (detail: ChatHistoryDetailSession) => {
+      if (detail.modelId) {
+        const matchingModel = availableModels.find(
+          (model) => String(model.id) === detail.modelId,
+        );
+        if (matchingModel) {
+          setSelectedModel(matchingModel);
+        }
+      }
+
+      await loadChatSession({
+        chatSessionId: detail.chatSessionId,
+        messagesBlobUrl: detail.messagesBlobUrl,
+        resumeConfig: detail.resumeConfig,
+        version: detail.version,
+      });
+      setInput(
+        detail.resumeConfig?.draftInput ??
+          (detail.messageCount === 0 ? detail.firstMessagePreview : ""),
+      );
+      setActiveHistorySessionId(detail._id);
+      syncResumedVersion(detail.version);
+      void markHistorySessionRead(detail._id);
+    },
+    [
+      availableModels,
+      loadChatSession,
+      markHistorySessionRead,
+      setSelectedModel,
+      syncResumedVersion,
+    ],
+  );
+
+  const refreshCurrentHistorySession = useCallback(
+    async ({ retries = 0, markRead = false } = {}) => {
+      if (!showHistoryRail) {
+        return null;
+      }
+
+      if (!hasConversationMessages && !activeHistorySessionId) {
+        return null;
+      }
+
+      for (let attempt = 0; attempt <= retries; attempt += 1) {
+        try {
+          const detail = await getChatHistoryDetail({
+            sessionId: activeHistorySessionId ?? undefined,
+            chatSessionId,
+            workspaceId: effectiveHostedWorkspaceId ?? undefined,
+          });
+          setActiveHistorySessionId(detail.session._id);
+          syncResumedVersion(detail.session.version);
+          if (markRead) {
+            void markHistorySessionRead(detail.session._id);
+          }
+          return detail.session;
+        } catch (error) {
+          if (attempt < retries) {
+            await new Promise((resolve) => window.setTimeout(resolve, 250));
+            continue;
+          }
+          if (
+            error instanceof WebApiError &&
+            (error.status === 403 || error.status === 404)
+          ) {
+            return null;
+          }
+          throw error;
+        }
+      }
+
+      return null;
+    },
+    [
+      activeHistorySessionId,
+      chatSessionId,
+      effectiveHostedWorkspaceId,
+      hasConversationMessages,
+      markHistorySessionRead,
+      showHistoryRail,
+      syncResumedVersion,
+    ],
+  );
+
+  useEffect(() => {
+    const shouldPersistDraft =
+      showHistoryRail &&
+      isSessionBootstrapComplete &&
+      !isStreaming &&
+      !hasConversationMessages &&
+      draftHistoryPreview.length > 0;
+
+    if (!shouldPersistDraft) {
+      draftPersistenceSignatureRef.current = null;
+      return;
+    }
+
+    const signature = JSON.stringify({
+      activeHistorySessionId,
+      chatSessionId,
+      workspaceId: effectiveHostedWorkspaceId ?? null,
+      preview: draftHistoryPreview,
+      modelId: selectedModel ? String(selectedModel.id) : null,
+      systemPrompt,
+      temperature,
+      requireToolApproval,
+      selectedServers: draftSelectedServers,
+      draftInput: input,
+    });
+
+    if (draftPersistenceSignatureRef.current === signature) {
+      return;
+    }
+
+    let cancelled = false;
+    const timerId = window.setTimeout(() => {
+      void upsertChatHistoryDraft({
+        chatSessionId,
+        workspaceId: effectiveHostedWorkspaceId ?? undefined,
+        firstMessagePreview: draftHistoryPreview,
+        modelId: selectedModel ? String(selectedModel.id) : undefined,
+        modelSource: "mcpjam",
+        resumeConfig: {
+          systemPrompt,
+          temperature,
+          requireToolApproval,
+          selectedServers: draftSelectedServers,
+          draftInput: input,
+        },
+      })
+        .then((detail) => {
+          if (cancelled) {
+            return;
+          }
+
+          draftPersistenceSignatureRef.current = signature;
+          setActiveHistorySessionId(detail.session._id);
+          syncResumedVersion(detail.session.version);
+          setHistoryRefreshSignal((current) => current + 1);
+        })
+        .catch((error) => {
+          if (!cancelled) {
+            console.error("[ChatTabV2] Failed to persist draft chat", error);
+          }
+        });
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timerId);
+    };
+  }, [
+    activeHistorySessionId,
+    chatSessionId,
+    draftHistoryPreview,
+    draftSelectedServers,
+    effectiveHostedWorkspaceId,
+    hasConversationMessages,
+    input,
+    isSessionBootstrapComplete,
+    isStreaming,
+    requireToolApproval,
+    selectedModel,
+    showHistoryRail,
+    syncResumedVersion,
+    systemPrompt,
+    temperature,
+  ]);
+
+  const ensureThreadReadyForSend = useCallback(async () => {
+    let detail: ChatHistoryDetailSession | null = null;
+    try {
+      detail = await refreshCurrentHistorySession();
+    } catch (error) {
+      console.error(
+        "[ChatTabV2] Failed to sync chat history before send",
+        error,
+      );
+      toast.error("Failed to sync chat history. Try again.");
+      return false;
+    }
+    if (detail) {
+      return true;
+    }
+
+    if (activeHistorySessionId) {
+      historySelectionRequestIdRef.current += 1;
+      setActiveHistorySessionId(null);
+      syncResumedVersion(null);
+      baseResetChat();
+      toast.error("This chat is no longer available. Starting a new thread.");
+      return false;
+    }
+
+    return true;
+  }, [
+    activeHistorySessionId,
+    baseResetChat,
+    refreshCurrentHistorySession,
+    syncResumedVersion,
+  ]);
 
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
       if (isStreaming) return;
+      if (!confirmDiscardDraftIfNeeded()) return;
+      if (hasUnsavedDraft) {
+        clearComposerDraft();
+      }
+
+      const selectionRequestId = historySelectionRequestIdRef.current + 1;
+      historySelectionRequestIdRef.current = selectionRequestId;
+      pendingHistoryServerSyncRef.current = null;
+      setActiveHistorySessionId(session._id);
+
       try {
         const detail = await getChatHistoryDetail({
+          sessionId: session._id,
           chatSessionId: session.chatSessionId,
           workspaceId: effectiveHostedWorkspaceId ?? undefined,
         });
-        if (detail.session.messagesBlobUrl) {
-          await loadChatSession({
-            chatSessionId: detail.session.chatSessionId,
-            messagesBlobUrl: detail.session.messagesBlobUrl,
-            resumeConfig: detail.session.resumeConfig,
-            version: detail.session.version,
-          });
+
+        if (historySelectionRequestIdRef.current !== selectionRequestId) {
+          return;
         }
+
+        const desiredServerNames = resolveRestorableServerNames(
+          detail.session.resumeConfig?.selectedServers,
+          serversById,
+          Object.keys(appState.servers),
+        );
+        const hasSavedServerSelection = Array.isArray(
+          detail.session.resumeConfig?.selectedServers,
+        );
+
+        await loadHistorySession(detail.session);
+
+        if (
+          historySelectionRequestIdRef.current !== selectionRequestId ||
+          !hasSavedServerSelection ||
+          !onSelectedServerNamesChange ||
+          hasSameStringArray(selectedServerNames, desiredServerNames)
+        ) {
+          return;
+        }
+
+        pendingHistoryServerSyncRef.current = desiredServerNames;
+        onSelectedServerNamesChange(desiredServerNames);
       } catch (err) {
+        if (historySelectionRequestIdRef.current === selectionRequestId) {
+          setActiveHistorySessionId(null);
+        }
         console.error("[ChatTabV2] Failed to load chat session", err);
+        toast.error("Failed to load chat history.");
       }
     },
-    [isStreaming, effectiveHostedWorkspaceId, loadChatSession],
+    [
+      appState.servers,
+      clearComposerDraft,
+      confirmDiscardDraftIfNeeded,
+      effectiveHostedWorkspaceId,
+      hasUnsavedDraft,
+      isStreaming,
+      loadHistorySession,
+      onSelectedServerNamesChange,
+      selectedServerNames,
+      serversById,
+    ],
   );
 
-  const handleNewChat = useCallback(() => {
+  const handleNewChat = useCallback(async () => {
     if (isStreaming) return;
+    if (!confirmDiscardDraftIfNeeded()) return;
+    if (hasUnsavedDraft) {
+      clearComposerDraft();
+    }
+    historySelectionRequestIdRef.current += 1;
+    setActiveHistorySessionId(null);
+    pendingHistoryServerSyncRef.current = null;
+    syncResumedVersion(null);
     baseResetChat();
-  }, [isStreaming, baseResetChat]);
+  }, [
+    baseResetChat,
+    clearComposerDraft,
+    confirmDiscardDraftIfNeeded,
+    hasUnsavedDraft,
+    isStreaming,
+    syncResumedVersion,
+  ]);
+
+  const handleArchiveAllComplete = useCallback(
+    (hadActiveHistorySelection: boolean) => {
+      if (!hadActiveHistorySelection) return;
+      if (hasUnsavedDraft) {
+        clearComposerDraft();
+      }
+      historySelectionRequestIdRef.current += 1;
+      setActiveHistorySessionId(null);
+      pendingHistoryServerSyncRef.current = null;
+      syncResumedVersion(null);
+      baseResetChat();
+    },
+    [
+      baseResetChat,
+      clearComposerDraft,
+      hasUnsavedDraft,
+      syncResumedVersion,
+    ],
+  );
+
+  const handleHistorySessionAction = useCallback(
+    async ({
+      action,
+      session,
+    }: {
+      action:
+        | "rename"
+        | "archive"
+        | "unarchive"
+        | "share"
+        | "unshare"
+        | "pin"
+        | "unpin"
+        | "mark-read"
+        | "mark-unread";
+      session: ChatHistorySession;
+    }) => {
+      if (action === "unshare" && session._id === activeHistorySessionId) {
+        try {
+          const detail = await refreshCurrentHistorySession();
+          if (!detail) {
+            historySelectionRequestIdRef.current += 1;
+            setActiveHistorySessionId(null);
+            syncResumedVersion(null);
+            baseResetChat();
+          }
+        } catch (error) {
+          console.error("[ChatTabV2] Failed to refresh unshared chat", error);
+        }
+      }
+    },
+    [
+      activeHistorySessionId,
+      baseResetChat,
+      refreshCurrentHistorySession,
+      syncResumedVersion,
+    ],
+  );
+
+  const previousSelectedServerNamesRef = useRef(selectedServerNames);
+  useEffect(() => {
+    const previousSelectedServerNames = previousSelectedServerNamesRef.current;
+    previousSelectedServerNamesRef.current = selectedServerNames;
+
+    const pendingHistoryServerSync = pendingHistoryServerSyncRef.current;
+    if (
+      pendingHistoryServerSync &&
+      hasSameStringArray(pendingHistoryServerSync, selectedServerNames)
+    ) {
+      pendingHistoryServerSyncRef.current = null;
+      return;
+    }
+
+    if (
+      resumedVersion !== null ||
+      hasSameStringArray(previousSelectedServerNames, selectedServerNames)
+    ) {
+      return;
+    }
+
+    setActiveHistorySessionId(null);
+    syncResumedVersion(null);
+  }, [resumedVersion, selectedServerNames, syncResumedVersion]);
+
+  const previousStatusRef = useRef(status);
+  useEffect(() => {
+    const previousStatus = previousStatusRef.current;
+    previousStatusRef.current = status;
+
+    const hasCompletedStream =
+      (previousStatus === "submitted" || previousStatus === "streaming") &&
+      status === "ready";
+
+    if (!hasCompletedStream || !showHistoryRail) {
+      return;
+    }
+
+    if (activeHistorySessionId) {
+      void markHistorySessionRead(activeHistorySessionId);
+    }
+
+    const timerId = window.setTimeout(() => {
+      void refreshCurrentHistorySession({ retries: 1, markRead: true }).catch(
+        (error) => {
+          console.error("[ChatTabV2] Failed to refresh chat history", error);
+        },
+      );
+    }, 250);
+
+    return () => window.clearTimeout(timerId);
+  }, [
+    activeHistorySessionId,
+    markHistorySessionRead,
+    refreshCurrentHistorySession,
+    showHistoryRail,
+    status,
+  ]);
 
   // Check if thread is empty
-  const isThreadEmpty = !messages.some(
-    (msg) => msg.role === "user" || msg.role === "assistant",
-  );
+  const isThreadEmpty = !hasConversationMessages;
   const multiModelAvailableModels = useMemo(
     () => new Map(availableModels.map((model) => [String(model.id), model])),
     [availableModels],
@@ -346,7 +827,11 @@ export function ChatTabV2({
     !hostedSandboxToken &&
     !hostedSandboxSurface &&
     availableModels.length > 1;
-  const isMultiModelMode = canEnableMultiModel && multiModelEnabled;
+  // When viewing a history session, fall back to single-model rendering so
+  // the ChatTabV2 messages (which hold the hydrated transcript) are displayed.
+  // The user can still toggle multi-model for new chats afterward.
+  const isMultiModelMode =
+    canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
   const effectiveHasMessages = isMultiModelMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
@@ -726,6 +1211,10 @@ export function ChatTabV2({
     Object.values(multiModelSummaries).some(
       (summary) => summary.status === "running",
     );
+  // History rail: any in-flight generation for this tab (matches composer blocking).
+  const historyRailStreaming = isMultiModelMode
+    ? isAnyMultiModelStreaming
+    : isStreaming;
   const inputDisabled = isMultiModelMode
     ? isAnyMultiModelStreaming || submitBlocked || sandboxComposerBlocked
     : status !== "ready" || submitBlocked || sandboxComposerBlocked;
@@ -929,6 +1418,10 @@ export function ChatTabV2({
       skillResults.length > 0 ||
       fileAttachments.length > 0;
     if (hasContent && !inputDisabled) {
+      const threadReady = await ensureThreadReadyForSend();
+      if (!threadReady) {
+        return;
+      }
       // Build messages from MCP prompts
       const promptMessages = buildMcpPromptMessages(
         mcpPromptResults,
@@ -1002,9 +1495,13 @@ export function ChatTabV2({
     }
   };
 
-  const handleStarterPrompt = (prompt: string) => {
+  const handleStarterPrompt = async (prompt: string) => {
     if (submitBlocked || inputDisabled) {
       setInput(prompt);
+      return;
+    }
+    const threadReady = await ensureThreadReadyForSend();
+    if (!threadReady) {
       return;
     }
     if (isMultiModelMode) {
@@ -1094,15 +1591,20 @@ export function ChatTabV2({
               minSize={15}
               maxSize={35}
               collapsible
-              className="min-w-0"
+              className="min-h-0 min-w-0 overflow-hidden"
             >
               <ChatHistoryRail
-                activeThreadId={chatSessionId}
+                activeSessionId={activeHistorySessionId}
                 isAuthenticated={isConvexAuthenticated}
-                isStreaming={isStreaming}
+                isStreaming={historyRailStreaming}
                 workspaceId={effectiveHostedWorkspaceId}
+                enabled={isSessionBootstrapComplete}
+                refreshSignal={historyRefreshSignal}
                 onSelectThread={handleSelectThread}
                 onNewChat={handleNewChat}
+                beforeResetChatAfterArchiveAll={confirmDiscardDraftIfNeeded}
+                onArchiveAllComplete={handleArchiveAllComplete}
+                onSessionAction={handleHistorySessionAction}
               />
             </ResizablePanel>
             <ResizableHandle />
