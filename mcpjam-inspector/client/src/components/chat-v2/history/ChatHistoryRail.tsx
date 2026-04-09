@@ -176,13 +176,15 @@ function ThreadSection({
         </div>
         <CollapsibleContent
           className={cn(
-            "grid overflow-hidden transition-[grid-template-rows] duration-200 ease-out",
+            // Explicit column + min-w-0 so thread rows cannot widen the grid past the rail
+            // (implicit grid tracks default to max-content and break truncation).
+            "grid min-w-0 grid-cols-1 overflow-hidden transition-[grid-template-rows] duration-200 ease-out",
             "data-[state=closed]:grid-rows-[0fr]",
             "data-[state=open]:grid-rows-[1fr]",
           )}
         >
-          <div className="min-h-0">
-            <div className="space-y-0.5 py-0.5 pl-2.5 md:pl-3.5">
+          <div className="min-h-0 min-w-0 overflow-x-hidden">
+            <div className="min-w-0 space-y-0.5 py-0.5 pl-1.5">
               {children}
             </div>
           </div>
@@ -292,9 +294,9 @@ export function ChatHistoryRail({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col border-r">
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="px-1 py-1">
+    <div className="flex h-full min-h-0 min-w-0 flex-col border-r">
+      <ScrollArea className="min-h-0 min-w-0 flex-1">
+        <div className="min-w-0 px-1 py-1">
           {loading && personal.length === 0 && workspace.length === 0 && (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />

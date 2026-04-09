@@ -123,29 +123,31 @@ export function ChatHistoryRow({
         ? "Workspace member"
         : null;
 
+  const hasWorkspaceOwner = workspaceThreadOwner != null;
+
   const ownerAvatar =
     workspaceThreadOwner != null ? (
       <Tooltip>
         <TooltipTrigger asChild>
           <div
-            className="shrink-0 pt-0.5"
+            className="flex size-4 shrink-0 cursor-default items-center justify-center p-0 leading-none"
             data-testid="chat-history-owner-avatar"
           >
-            <Avatar className="size-5 border border-border/60">
+            <Avatar className="size-4 border border-border/50">
               {workspaceThreadOwner.status === "show" ? (
                 <>
                   <AvatarImage
                     src={workspaceThreadOwner.imageUrl}
                     alt={workspaceThreadOwner.displayName}
                   />
-                  <AvatarFallback className="text-[9px]">
+                  <AvatarFallback className="text-[8px] leading-none">
                     {getInitials(workspaceThreadOwner.displayName)}
                   </AvatarFallback>
                 </>
               ) : (
                 <AvatarFallback className="bg-muted">
                   <User
-                    className="size-2.5 text-muted-foreground"
+                    className="size-2 text-muted-foreground"
                     aria-hidden
                   />
                 </AvatarFallback>
@@ -188,8 +190,8 @@ export function ChatHistoryRow({
   };
 
   if (isRenaming) {
-    return (
-      <div className="px-2 py-1.5">
+    const renameField = (
+      <div className="min-w-0 flex-1 py-1.5 pl-0 pr-2">
         <Input
           ref={renameInputRef}
           value={renameValue}
@@ -203,50 +205,99 @@ export function ChatHistoryRow({
         />
       </div>
     );
+
+    return hasWorkspaceOwner ? (
+      <div className="flex w-full max-w-full min-w-0 items-center gap-1">
+        <div className="flex size-4 shrink-0 items-center justify-center">
+          {ownerAvatar}
+        </div>
+        {renameField}
+      </div>
+    ) : (
+      renameField
+    );
   }
 
-  return (
+  const rowMain = (
     <div
-        className={`group relative flex items-start gap-1.5 rounded-md px-2 py-1.5 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
-          isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
-        } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
-        onClick={handleClick}
-      >
-        {ownerAvatar}
-        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <div className="flex min-w-0 items-center gap-1">
-            <span className="truncate font-medium">{title}</span>
-          </div>
-          {modelLabel ? (
-            <div
-              className="truncate text-[10px] text-muted-foreground"
-              data-testid="chat-history-model"
-              title={modelLabel}
-            >
-              {modelLabel}
-            </div>
-          ) : null}
-        </div>
-
-        <div className="flex shrink-0 items-center gap-1 pt-0.5">
-          {session.isPinned && (
-            <Pin className="h-3 w-3 text-muted-foreground" />
-          )}
-          <div
-            className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1"
-          >
-            <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
-              {relativeTime}
+      className={`group relative flex min-w-0 w-full max-w-full items-center gap-1.5 overflow-hidden rounded-md py-1.5 pl-0 pr-2 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
+        isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
+      } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
+      onClick={handleClick}
+    >
+      {hasWorkspaceOwner ? (
+        session.isPinned ? (
+          <span className="relative inline-flex size-4 shrink-0 items-center justify-center">
+            <span className="opacity-100 transition-opacity duration-150 group-hover:pointer-events-none group-hover:opacity-0 group-focus-within:pointer-events-none group-focus-within:opacity-0">
+              {ownerAvatar}
             </span>
-            <DropdownMenu>
-              <DropdownMenuTrigger
-                disabled={isStreaming}
-                className="flex items-center justify-end rounded p-0.5 outline-none transition-opacity hover:bg-accent data-[state=open]:pointer-events-auto data-[state=open]:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 [@media(pointer:fine)]:pointer-events-none [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:z-10 [@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:group-hover:pointer-events-auto [@media(pointer:fine)]:group-hover:opacity-100 [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <MoreVertical className="h-3.5 w-3.5" />
-              </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-40">
+            <span
+              className="pointer-events-none absolute inset-0 flex items-center justify-center text-muted-foreground opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+              aria-label="Pinned"
+              title="Pinned"
+            >
+              <Pin
+                className="h-3 w-3 rotate-45"
+                strokeWidth={2}
+                aria-hidden
+              />
+            </span>
+          </span>
+        ) : (
+          <span className="inline-flex size-4 shrink-0 items-center justify-center">
+            {ownerAvatar}
+          </span>
+        )
+      ) : (
+        <span
+          className="inline-flex size-3.5 shrink-0 items-center justify-center text-muted-foreground"
+          aria-hidden={!session.isPinned}
+          title={session.isPinned ? "Pinned" : undefined}
+          {...(session.isPinned ? { "aria-label": "Pinned" as const } : {})}
+        >
+          {session.isPinned ? (
+            <Pin
+              className="h-3 w-3 rotate-45"
+              strokeWidth={2}
+              aria-hidden
+            />
+          ) : null}
+        </span>
+      )}
+      <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+        <span
+          className="min-w-0 flex-[7_1_0%] truncate font-medium"
+          title={title}
+        >
+          {title}
+        </span>
+        {modelLabel ? (
+          <span
+            className="min-w-0 flex-[3_1_0%] truncate text-[10px] text-muted-foreground"
+            data-testid="chat-history-model"
+            title={modelLabel}
+          >
+            {modelLabel}
+          </span>
+        ) : null}
+      </div>
+
+      <div className="flex shrink-0 items-center gap-1">
+        <div
+          className="relative flex h-4 w-8 shrink-0 items-center justify-end tabular-nums [@media(pointer:coarse)]:w-auto [@media(pointer:coarse)]:gap-1"
+        >
+          <span className="chat-history-time pointer-events-none text-[10px] text-muted-foreground transition-opacity [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:flex [@media(pointer:fine)]:items-center [@media(pointer:fine)]:justify-end [@media(pointer:fine)]:group-hover:opacity-0">
+            {relativeTime}
+          </span>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              disabled={isStreaming}
+              className="flex items-center justify-end rounded p-0.5 outline-none transition-opacity hover:bg-accent data-[state=open]:pointer-events-auto data-[state=open]:opacity-100 focus-visible:pointer-events-auto focus-visible:opacity-100 [@media(pointer:fine)]:pointer-events-none [@media(pointer:fine)]:absolute [@media(pointer:fine)]:inset-y-0 [@media(pointer:fine)]:right-0 [@media(pointer:fine)]:z-10 [@media(pointer:fine)]:opacity-0 [@media(pointer:fine)]:group-hover:pointer-events-auto [@media(pointer:fine)]:group-hover:opacity-100 [@media(pointer:coarse)]:pointer-events-auto [@media(pointer:coarse)]:opacity-100"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <MoreVertical className="h-3.5 w-3.5" />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-40">
               <DropdownMenuItem
                 onClick={() => {
                   setRenameValue(session.customTitle || "");
@@ -300,10 +351,12 @@ export function ChatHistoryRow({
               >
                 {session.status === "active" ? "Archive" : "Unarchive"}
               </DropdownMenuItem>
-          </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
+      </div>
     </div>
   );
+
+  return rowMain;
 }

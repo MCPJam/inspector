@@ -85,7 +85,10 @@ describe("ChatHistoryRow", () => {
       />,
     );
 
-    expect(screen.getByText(def!.name)).toBeInTheDocument();
+    const modelEl = screen.getByTestId("chat-history-model");
+    expect(modelEl).toHaveTextContent(def!.name);
+    expect(modelEl).toHaveClass("truncate");
+    expect(modelEl).toHaveClass("min-w-0");
   });
 
   it("falls back to raw modelId when unknown to catalog", () => {
@@ -143,6 +146,38 @@ describe("ChatHistoryRow", () => {
     expect(wrap).toBeInTheDocument();
     // Radix Avatar keeps initials in fallback until the image has loaded in the browser.
     expect(wrap.textContent).toContain("JD");
+  });
+
+  it("does not render hover pin overlay when shared thread is unpinned", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ isPinned: false })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        workspaceThreadOwner={{ status: "generic" }}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.queryByLabelText("Pinned")).not.toBeInTheDocument();
+  });
+
+  it("renders hover pin target in the DOM when shared thread is pinned", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ isPinned: true })}
+        isActive={false}
+        isAuthenticated
+        isStreaming={false}
+        onSelect={vi.fn()}
+        workspaceThreadOwner={{ status: "generic" }}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByLabelText("Pinned")).toBeInTheDocument();
   });
 
   it("renders generic workspace thread owner placeholder", () => {
@@ -227,6 +262,44 @@ describe("ChatHistoryRow", () => {
     );
 
     expect(screen.getByText("Unarchive")).toBeInTheDocument();
+  });
+
+  it("shows a pinned indicator when isPinned", () => {
+    render(
+      <ChatHistoryRow
+        session={sessionStub({ isPinned: true })}
+        isActive={false}
+        isAuthenticated={false}
+        isStreaming={false}
+        onSelect={vi.fn()}
+        actions={actions}
+      />,
+    );
+
+    expect(screen.getByLabelText("Pinned")).toBeInTheDocument();
+  });
+
+  it("keeps long custom titles truncatable within a narrow rail", () => {
+    const longTitle = "suuuuuuuuuuper long prompt suuuuuuuuuupersuuuuuuuuuupersuuuu";
+    render(
+      <div style={{ width: 120 }}>
+        <ChatHistoryRow
+          session={sessionStub({ customTitle: longTitle })}
+          isActive={false}
+          isAuthenticated={false}
+          isStreaming={false}
+          onSelect={vi.fn()}
+          actions={actions}
+        />
+      </div>,
+    );
+
+    const title = screen.getByText(longTitle);
+    expect(title).toHaveClass("truncate");
+    expect(title).toHaveAttribute("title", longTitle);
+    const row = title.closest(".group");
+    expect(row?.className).toContain("overflow-hidden");
+    expect(title.closest(".max-w-full")?.className).toContain("w-full");
   });
 
   it("does not surface read/unread in the row menu", () => {
