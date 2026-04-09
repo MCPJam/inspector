@@ -1072,7 +1072,7 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
 
         {/* Right Panel - UI Preview or Empty State */}
         <ResizablePanel
-          defaultSize={50}
+          defaultSize={45}
           className="flex flex-col overflow-hidden"
         >
           {!selectedView ? (
