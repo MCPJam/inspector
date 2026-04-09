@@ -2559,13 +2559,15 @@ function RunColumn({
 
   const currentDuration = record.metrics.durationMs ?? 0;
   const hasComparison = completedRecords.length > 1;
+  const hasRunningRecord = allRecords.some((item) => item.status === "running");
+  const canHighlightWinner = hasComparison && !hasRunningRecord;
 
   const isFastest =
-    hasComparison && currentDuration === minDuration && currentDuration > 0;
+    canHighlightWinner && currentDuration === minDuration && currentDuration > 0;
   const isFewestTokens =
-    hasComparison && displayTokens === minTokens && displayTokens > 0;
+    canHighlightWinner && displayTokens === minTokens && displayTokens > 0;
   const isFewestTools =
-    hasComparison && toolCount === minToolCount && toolCount > 0;
+    canHighlightWinner && toolCount === minToolCount && toolCount > 0;
 
   const durationBarPct =
     maxDuration > 0 ? Math.max(4, (currentDuration / maxDuration) * 100) : 0;

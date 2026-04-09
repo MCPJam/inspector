@@ -14,6 +14,14 @@ function renderWithProviders(ui: ReactElement) {
   );
 }
 
+function createDeferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 const useMutationMock = vi.hoisted(() => vi.fn(() => vi.fn()));
 const useQueryMock = vi.hoisted(() => vi.fn());
 const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
@@ -141,6 +149,43 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     isNegativeTest: true,
     lastMessageRun: baseIteration._id,
   };
+
+  function makeCompletedIteration(params: {
+    id: string;
+    provider: string;
+    model: string;
+    durationMs: number;
+    tokensUsed: number;
+    toolCallCount: number;
+    compareRunId?: string;
+  }): EvalIteration {
+    const startedAt = 10_000;
+
+    return {
+      ...baseIteration,
+      _id: params.id,
+      createdAt: startedAt,
+      startedAt,
+      updatedAt: startedAt + params.durationMs,
+      suiteRunId: undefined,
+      actualToolCalls: Array.from(
+        { length: params.toolCallCount },
+        (_value, index) => ({
+          toolName: `tool-${index + 1}`,
+          arguments: { index: index + 1 },
+        }),
+      ),
+      tokensUsed: params.tokensUsed,
+      metadata: params.compareRunId
+        ? { compareRunId: params.compareRunId }
+        : undefined,
+      testCaseSnapshot: {
+        ...baseIteration.testCaseSnapshot!,
+        provider: params.provider,
+        model: params.model,
+      },
+    };
+  }
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -422,5 +467,142 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     expect(retryRequest.provider).toBe("openai");
     expect(retryRequest.model).toBe("gpt-4");
     expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps eval compare winner accents neutral until all models finish running", async () => {
+    const user = userEvent.setup();
+    const finalModelDeferred = createDeferred();
+
+    streamEvalTestCaseMock.mockImplementation(
+      async (
+        request: {
+          model: string;
+          provider: string;
+          compareRunId?: string;
+        },
+        onEvent: (event: {
+          type: "complete";
+          iterationId: string;
+          iteration: EvalIteration;
+        }) => void,
+      ) => {
+        const complete = (params: {
+          id: string;
+          durationMs: number;
+          tokensUsed: number;
+          toolCallCount: number;
+        }) => {
+          const iteration = makeCompletedIteration({
+            ...params,
+            provider: request.provider,
+            model: request.model,
+            compareRunId: request.compareRunId,
+          });
+          onEvent({
+            type: "complete",
+            iterationId: iteration._id,
+            iteration,
+          });
+        };
+
+        if (request.provider === "openai") {
+          complete({
+            id: "iter-openai",
+            durationMs: 1100,
+            tokensUsed: 111,
+            toolCallCount: 1,
+          });
+          return;
+        }
+
+        if (request.provider === "anthropic") {
+          complete({
+            id: "iter-anthropic",
+            durationMs: 2200,
+            tokensUsed: 222,
+            toolCallCount: 2,
+          });
+          return;
+        }
+
+        await finalModelDeferred.promise;
+        complete({
+          id: "iter-google",
+          durationMs: 1500,
+          tokensUsed: 333,
+          toolCallCount: 3,
+        });
+      },
+    );
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        workspaceId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            id: "gpt-4",
+            model: "gpt-4",
+            name: "GPT-4",
+            label: "GPT-4",
+          } as any,
+          {
+            provider: "anthropic",
+            id: "claude-4.5-sonnet",
+            model: "claude-4.5-sonnet",
+            name: "Claude 4.5 Sonnet",
+            label: "Claude 4.5 Sonnet",
+          } as any,
+          {
+            provider: "google",
+            id: "gemini-2.5-pro",
+            model: "gemini-2.5-pro",
+            name: "Gemini 2.5 Pro",
+            label: "Gemini 2.5 Pro",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /run$/i })).toBeInTheDocument();
+    });
+
+    await user.click(
+      screen.getByRole("button", { name: /add model to compare/i }),
+    );
+    await user.click(screen.getByText("Claude 4.5 Sonnet"));
+    await user.click(
+      screen.getByRole("button", { name: /add model to compare/i }),
+    );
+    await user.click(screen.getByText("Gemini 2.5 Pro"));
+
+    await user.click(screen.getByRole("button", { name: /run compare/i }));
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalledTimes(3);
+      expect(screen.getByText("1.1s")).toBeInTheDocument();
+      expect(screen.getByText("111")).toBeInTheDocument();
+      expect(screen.getByText("1 tool call")).toBeInTheDocument();
+    });
+
+    expect(screen.getByText("1.1s")).toHaveClass("text-foreground");
+    expect(screen.getByText("111")).toHaveClass("text-foreground");
+    expect(screen.getByText("1 tool call")).toHaveClass("text-foreground");
+
+    finalModelDeferred.resolve();
+
+    await waitFor(() => {
+      expect(screen.getByText("1.5s")).toBeInTheDocument();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("1.1s")).toHaveClass("text-emerald-700");
+      expect(screen.getByText("111")).toHaveClass("text-emerald-700");
+      expect(screen.getByText("1 tool call")).toHaveClass("text-emerald-700");
+    });
   });
 });

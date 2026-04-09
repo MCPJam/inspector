@@ -76,17 +76,23 @@ export function ModelCompareCardHeader({
   const minTokens = tokenValues.length > 0 ? Math.min(...tokenValues) : 0;
   const minToolCount = toolValues.length > 0 ? Math.min(...toolValues) : 0;
   const hasComparison = completedSummaries.length > 1;
+  const hasRunningSummary = allSummaries.some(
+    (item) => item.status === "running",
+  );
+  const canHighlightWinner = hasComparison && !hasRunningSummary;
 
   const currentDuration = summary?.durationMs ?? 0;
   const currentTokens = summary?.tokens ?? 0;
   const currentToolCount = summary?.toolCount ?? 0;
 
   const isFastest =
-    hasComparison && currentDuration > 0 && currentDuration === minDuration;
+    canHighlightWinner && currentDuration > 0 && currentDuration === minDuration;
   const isFewestTokens =
-    hasComparison && currentTokens > 0 && currentTokens === minTokens;
+    canHighlightWinner && currentTokens > 0 && currentTokens === minTokens;
   const isFewestTools =
-    hasComparison && currentToolCount > 0 && currentToolCount === minToolCount;
+    canHighlightWinner &&
+    currentToolCount > 0 &&
+    currentToolCount === minToolCount;
 
   const durationBarPct =
     maxDuration > 0 ? Math.max(4, (currentDuration / maxDuration) * 100) : 0;
