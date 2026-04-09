@@ -312,6 +312,17 @@ export function PlaygroundMain({
     serverName && servers[serverName]?.connectionStatus === "connected",
   );
 
+  const handlePlaygroundServerToggle = useCallback(
+    (name: string) => {
+      if (name === serverName) {
+        playgroundServerSelectorProps?.onServerChange("none");
+      } else {
+        playgroundServerSelectorProps?.onServerChange(name);
+      }
+    },
+    [serverName, playgroundServerSelectorProps],
+  );
+
   // Hosted mode context (workspaceId, serverIds, OAuth tokens)
   const activeWorkspace = appState.workspaces[appState.activeWorkspaceId];
   const convexWorkspaceId = activeWorkspace?.sharedWorkspaceId ?? null;
@@ -1119,6 +1130,9 @@ export function PlaygroundMain({
     pulseSubmit: composer.sendButtonOnboardingPulse,
     minimalMode: showPostConnectGuide,
     moveCaretToEndTrigger: composer.moveCaretToEndTrigger,
+    allServerConfigs: playgroundServerSelectorProps?.serverConfigs,
+    onServerToggle: handlePlaygroundServerToggle,
+    onReconnectServer: playgroundServerSelectorProps?.onReconnect,
   };
 
   // Check if widget should take over the full container

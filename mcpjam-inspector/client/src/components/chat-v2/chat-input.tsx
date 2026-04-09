@@ -17,7 +17,7 @@ import {
   ShieldCheck,
   Plus,
   Settings2,
-  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
@@ -598,8 +598,6 @@ export function ChatInput({
                                 server.connectionStatus === "connecting";
                               const isFailed =
                                 server.connectionStatus === "failed";
-                              const isDisconnected =
-                                !isConnected && !isConnecting;
                               const statusColor = isConnected
                                 ? "bg-green-500 dark:bg-green-400"
                                 : isConnecting
@@ -607,18 +605,6 @@ export function ChatInput({
                                   : isFailed
                                     ? "bg-red-500 dark:bg-red-400"
                                     : "bg-muted-foreground";
-
-                              const handleToggle = () => {
-                                const turningOn = !isSelected;
-                                onServerToggle(name);
-                                if (
-                                  turningOn &&
-                                  isDisconnected &&
-                                  onReconnectServer
-                                ) {
-                                  onReconnectServer(name).catch(() => {});
-                                }
-                              };
 
                               return (
                                 <div
@@ -635,8 +621,8 @@ export function ChatInput({
                                     <span
                                       className={cn(
                                         "text-sm font-medium truncate",
-                                        isDisconnected &&
-                                          !isSelected &&
+                                        !isConnected &&
+                                          !isConnecting &&
                                           "text-muted-foreground",
                                       )}
                                     >
@@ -646,34 +632,32 @@ export function ChatInput({
                                       {server.config.command ? "STDIO" : "HTTP"}
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    {isSelected &&
-                                      isFailed &&
-                                      onReconnectServer && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <button
-                                              type="button"
-                                              className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
-                                              onClick={(e) => {
-                                                e.stopPropagation();
-                                                onReconnectServer(
-                                                  name,
-                                                ).catch(() => {});
-                                              }}
-                                            >
-                                              <RefreshCw className="w-3 h-3" />
-                                            </button>
-                                          </TooltipTrigger>
-                                          <TooltipContent side="left">
-                                            Reconnect
-                                          </TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                    <Switch
-                                      checked={isSelected}
-                                      onCheckedChange={handleToggle}
-                                    />
+                                  <div className="flex items-center shrink-0">
+                                    {isConnecting ? (
+                                      <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+                                    ) : isConnected ? (
+                                      <Switch
+                                        checked={isSelected}
+                                        onCheckedChange={() =>
+                                          onServerToggle(name)
+                                        }
+                                      />
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        className="text-xs font-medium text-primary hover:text-primary/80 transition-colors cursor-pointer px-1.5 py-0.5 rounded hover:bg-primary/5"
+                                        onClick={() => {
+                                          if (!isSelected) {
+                                            onServerToggle(name);
+                                          }
+                                          onReconnectServer?.(name).catch(
+                                            () => {},
+                                          );
+                                        }}
+                                      >
+                                        {isFailed ? "Retry" : "Connect"}
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               );
