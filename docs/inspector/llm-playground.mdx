@@ -1,10 +1,10 @@
 ---
 title: "Chat"
-description: "Chat with your MCP server against any LLM"
+description: "Chat with your MCP server using MCPJam free models or your own provider"
 icon: "message-circle"
 ---
 
-The Chat tab lets you chat with your MCP server using any LLM. Test how different models interact with your tools, simulate agent behaviors, and render supported ChatGPT apps and MCP apps inline in the conversation. We provide frontier models like GPT-5 and Claude Sonnet for free, or bring your own API key.
+The Chat tab lets you chat with your MCP server using MCPJam-provided free models or, if needed, your own provider. Test how different models interact with your tools, simulate agent behaviors, and render supported ChatGPT apps and MCP apps inline in the conversation.
 
 <Frame>
   <img
@@ -17,90 +17,20 @@ The Chat tab lets you chat with your MCP server using any LLM. Test how differen
 
 ## Key Features
 
-- **Multi-LLM Support** - Test against OpenAI, Anthropic Claude, Google Gemini, Deepseek, Mistral, Ollama, OpenRouter, and LiteLLM
-- **Free Frontier Models** - Access GPT-5, Claude Sonnet, and Gemini 2.5 models for free
+- **MCPJam Free Models** - Start immediately with MCPJam-provided models without configuring your own provider
 - **Inline Tool Results and Widgets** - See tool calls, results, and supported app UIs directly in the chat thread
 - **Real-time Debugging** - Split-panel view with chat on the left and JSON-RPC logs on the right
-- **Prompt Library** - Use MCP prompts directly in chat by typing `/`
+- **Skills and Prompts** - Use `/` to inject skills and MCP prompts directly into chat
 - **Elicitation Support** - Interactive prompts and forms from your MCP server
-- **Customizable Agent** - Configure system prompts and temperature settings
+- **Agent Controls** - Tune system prompt, temperature, tool approval, context usage, and X-Ray from the chat toolbar
 
 ## Setup
 
-To use Chat, configure at least one LLM provider:
+Start with MCPJam free models:
 
-1. **Navigate to Settings** - Click the Settings tab in MCPJam Inspector
-2. **Choose a Provider** - Select from OpenAI, Anthropic, Gemini, Deepseek, Mistral, Ollama, OpenRouter, or LiteLLM
-3. **Add API Key** - Enter your API key for the selected provider
-4. **Select Model** - Go to the Chat tab and choose your model from the dropdown
-
-### Supported Providers
-
-**OpenAI**
-Get an API key from [OpenAI Platform](https://platform.openai.com/api-keys). Supports GPT-4, GPT-5, and o-series models.
-
-<Note>
-  GPT-5 models require organization verification and do not support temperature configuration.
-</Note>
-
-**Anthropic Claude**
-Get an API key from [Anthropic Console](https://console.anthropic.com/). Supports Claude Opus, Sonnet, and Haiku models.
-
-**Google Gemini**
-Get an API key from [Google AI Studio](https://aistudio.google.com/). Supports Gemini Pro, Flash, and Gemma models.
-
-**Deepseek**
-Get an API key from [Deepseek Platform](https://platform.deepseek.com/). Supports deepseek-chat and deepseek-reasoner.
-
-**Mistral AI**
-Get an API key from [Mistral AI Console](https://console.mistral.ai/api-keys/). Supports Mistral Large, Codestral, and Ministral models.
-
-**OpenRouter**
-Get an API key from [OpenRouter Console](https://openrouter.ai/settings/keys). Access 100+ models through a unified interface.
-
-**Ollama**
-Install [Ollama](https://ollama.com/) and start with `ollama serve <model>`. MCPJam automatically detects running models.
-
-**LiteLLM Proxy**
-Use [LiteLLM Proxy](https://docs.litellm.ai/docs/proxy/quick_start) to connect to 100+ LLMs through a unified OpenAI-compatible interface. Configure your proxy URL, API key, and model aliases in the Settings tab.
-
-## Chat Layout
-
-The Chat tab uses a split-panel interface:
-
-**Chat Panel (Left)**
-- Send messages and view LLM responses
-- See tool calls and results inline
-- View rendered UI from supported ChatGPT apps and MCP apps
-- Access MCP prompts by typing `/`
-
-**JSON-RPC Logger (Right)**
-- Real-time view of MCP protocol messages
-- Inspect requests and responses between the inspector and your servers
-- Debug tool invocations and error responses
-
-Resize panels by dragging the divider to focus on chat or debugging as needed.
-
-## System Prompt and Temperature
-
-Customize your LLM's behavior just like building an agent:
-
-- **System Prompt** - Set instructions and context for the LLM
-- **Temperature** - Control randomness (0 = deterministic, higher = more creative)
-
-<Info>
-  Higher temperature settings may cause more hallucinations with MCP tool interactions. Start with default values.
-</Info>
-
-## MCP Prompts
-
-Use MCP prompts directly in chat by typing `/` to trigger the prompts menu. When you select a prompt, it appears as an expandable card showing:
-
-- Server name and description
-- Required and optional arguments
-- Preview of the prompt content
-
-Click the card to expand details or remove it before sending. This helps you understand what will be sent to the LLM.
+1. **Open the Chat tab** - Connect your server and open Chat.
+2. **Select a model** - Choose an MCPJam-provided model from the model dropdown.
+3. **Start chatting** - Send a message and inspect tool calls, prompts, widgets, and logs inline.
 
 ## ChatGPT Apps and MCP Apps
 
@@ -114,10 +44,53 @@ Tools with `ui.resourceUri` metadata render custom UI components inline in the c
 
 Widgets can display interactive visualizations, trigger tool calls, send follow-up messages, and open external links.
 
-## Error Handling
+## Chat Layout
 
-When errors occur, you'll see an error message with a "Reset chat" button. Click "More details" to expand additional error information, including JSON-formatted responses. This helps you quickly identify and resolve issues with your MCP server or LLM configuration.
+The Chat tab uses a split-panel interface:
 
-## Elicitation Support
+**Chat Panel (Left)**
+- Send messages and view LLM responses
+- See tool calls and results inline
+- View rendered UI from supported ChatGPT apps and MCP apps
+- Access skills and MCP prompts by typing `/`
 
-MCPJam supports elicitation flows from MCP servers. Elicitation requests appear as popup modals, allowing you to provide additional input when the LLM needs more information to complete a task.
+**JSON-RPC Logger (Right)**
+- Real-time view of MCP protocol messages
+- Inspect requests and responses between the inspector and your servers
+- Debug tool invocations and error responses
+
+Resize panels by dragging the divider to focus on chat or debugging as needed.
+
+## Chat Controls
+
+Use the chat input toolbar to customize and inspect model behavior:
+
+- **Context Usage** - Open the context meter to see how much of the selected model's context window is being used
+- **System Prompt** - Set instructions and context for the LLM
+- **Temperature** - Control randomness (0 = deterministic, higher = more creative)
+- **Tool Approval** - Require manual approval before the model runs a tool
+- **X-Ray** - Open a read-only JSON view of what Chat sends to the model
+
+<Info>
+  Higher temperature settings may cause more hallucinations with MCP tool interactions. Start with default values.
+</Info>
+
+Open the context meter in the toolbar to inspect the token breakdown for the current conversation, including input, output, system prompt, and MCP tools usage.
+
+When X-Ray is open, the chat thread is replaced with a raw payload view so you can inspect the system prompt, tools, and message history being sent to the model.
+
+## Skills and Prompts
+
+Type `/` in chat to open the picker for skills and MCP prompts. Skills help the model use tools and complete workflows more effectively, and prompts let you insert reusable MCP prompt templates directly into the conversation.
+
+When you select a prompt, it appears as an expandable card showing:
+
+- Server name and description
+- Required and optional arguments
+- Preview of the prompt content
+
+Selected skills and prompts appear above the input before you send your message, so you can review or remove them first.
+
+### Optional: Bring Your Own Provider
+
+If you need a specific external model, go to **Settings** and configure your own provider. MCPJam supports built-in configuration for OpenAI, Anthropic, Google, DeepSeek, Mistral, xAI, Ollama, OpenRouter, and Azure OpenAI.
