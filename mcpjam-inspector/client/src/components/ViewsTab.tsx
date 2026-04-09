@@ -1014,6 +1014,19 @@ export function ViewsTab({ selectedServer }: ViewsTabProps) {
     );
   }
 
+  if (sortedViews.length === 0) {
+    return (
+      <div className="p-6">
+        <EmptyState
+          icon={Layers}
+          title="No saved views yet"
+          description="Save tool executions from Chat or App Builder to create reusable views."
+          className="h-[calc(100vh-200px)]"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       <ResizablePanelGroup

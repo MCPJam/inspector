@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewsTab } from "../ViewsTab";
 
@@ -109,6 +109,15 @@ vi.mock("../views/ViewEditorPanel", () => ({
 }));
 
 const INVALID_LAYOUT_TOTAL_MESSAGE = "Invalid layout total size";
+const DEFAULT_VIEW = {
+  _id: "view-1",
+  workspaceId: "workspace-1",
+  serverId: "server-1",
+  name: "Example view",
+  toolName: "search",
+  protocol: "mcp-apps",
+  updatedAt: 1,
+};
 
 function hasConsoleMessage(spy: ReturnType<typeof vi.spyOn>, message: string) {
   return spy.mock.calls.some((call) =>
@@ -131,7 +140,7 @@ describe("ViewsTab layout", () => {
     Object.values(mockViewMutations).forEach((value) => value.mockClear());
 
     mockUseViewQueries.mockReturnValue({
-      sortedViews: [],
+      sortedViews: [DEFAULT_VIEW],
       isLoading: false,
     });
     mockUseWorkspaceServers.mockReturnValue({
@@ -154,9 +163,27 @@ describe("ViewsTab layout", () => {
       expect(hasConsoleMessage(errorSpy, INVALID_LAYOUT_TOTAL_MESSAGE)).toBe(
         false,
       );
+      expect(screen.getByText("Example view")).toBeInTheDocument();
+      expect(screen.getByText("Select a view")).toBeInTheDocument();
     } finally {
       warnSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+
+  it("shows an empty state when the workspace has no saved views", () => {
+    mockUseViewQueries.mockReturnValue({
+      sortedViews: [],
+      isLoading: false,
+    });
+
+    render(<ViewsTab selectedServer="selected-server" />);
+
+    expect(screen.getByText("No saved views yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Save tool executions from Chat or App Builder to create reusable views.",
+      ),
+    ).toBeInTheDocument();
   });
 });

@@ -174,6 +174,47 @@ describe("ActiveServerSelector", () => {
 
       expect(screen.getByText("HTTP")).toBeInTheDocument();
     });
+
+    it("hides the selector when the views filter has no matching servers", () => {
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+          showOnlyServersWithViews={true}
+          serversWithViews={new Set()}
+        />,
+      );
+
+      expect(screen.queryByText("server-1")).not.toBeInTheDocument();
+      expect(screen.queryByText("server-2")).not.toBeInTheDocument();
+      expect(screen.queryByText("Add Server")).not.toBeInTheDocument();
+    });
+
+    it("filters to servers with saved views when saved views exist", () => {
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+          showOnlyServersWithViews={true}
+          serversWithViews={new Set(["server-2"])}
+        />,
+      );
+
+      expect(screen.queryByText("server-1")).not.toBeInTheDocument();
+      expect(screen.getByText("server-2")).toBeInTheDocument();
+    });
   });
 
   describe("server selection - single mode", () => {

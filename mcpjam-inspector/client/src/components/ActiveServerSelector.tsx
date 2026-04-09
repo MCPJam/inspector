@@ -99,6 +99,8 @@ export function ActiveServerSelector({
   const [canScrollRight, setCanScrollRight] = useState(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const posthog = usePostHog();
+  const hasNoServersWithViews =
+    showOnlyServersWithViews && (serversWithViews?.size ?? 0) === 0;
 
   // Helper function to check if a server uses OAuth
   const isOAuthServer = (server: ServerWithName): boolean => {
@@ -115,18 +117,13 @@ export function ActiveServerSelector({
 
   const servers = Object.entries(serverConfigs).filter(([name, server]) => {
     if (showOnlyOAuthServers && !isOAuthServer(server)) return false;
-    if (
-      showOnlyServersWithViews &&
-      serversWithViews &&
-      !serversWithViews.has(name)
-    )
-      return false;
+    if (showOnlyServersWithViews && !serversWithViews?.has(name)) return false;
     return true;
   });
 
   // Auto-select first available server if current selection is not in the list
   useEffect(() => {
-    if (isMultiSelectEnabled) return; // Don't auto-select in multi-select mode
+    if (isMultiSelectEnabled || hasNoServersWithViews) return;
 
     const serverNames = servers.map(([name]) => name);
     const isCurrentSelectionValid = serverNames.includes(selectedServer);
@@ -143,7 +140,13 @@ export function ActiveServerSelector({
       // No available servers and selection is stale — clear it
       onServerChange("none");
     }
-  }, [servers.length, selectedServer, isMultiSelectEnabled, onServerChange]);
+  }, [
+    servers.length,
+    selectedServer,
+    isMultiSelectEnabled,
+    onServerChange,
+    hasNoServersWithViews,
+  ]);
 
   const handleServerClick = (name: string) => {
     if (isMultiSelectEnabled) {
@@ -219,6 +222,10 @@ export function ActiveServerSelector({
       behavior: "smooth",
     });
   };
+
+  if (hasNoServersWithViews) {
+    return null;
+  }
 
   return (
     <div className={cn("relative h-full w-full min-w-0", className)}>
