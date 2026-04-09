@@ -86,7 +86,9 @@ export function ModelCompareCardHeader({
   const currentToolCount = summary?.toolCount ?? 0;
 
   const isFastest =
-    canHighlightWinner && currentDuration > 0 && currentDuration === minDuration;
+    canHighlightWinner &&
+    currentDuration > 0 &&
+    currentDuration === minDuration;
   const isFewestTokens =
     canHighlightWinner && currentTokens > 0 && currentTokens === minTokens;
   const isFewestTools =

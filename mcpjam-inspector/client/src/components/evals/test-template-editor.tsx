@@ -2563,7 +2563,9 @@ function RunColumn({
   const canHighlightWinner = hasComparison && !hasRunningRecord;
 
   const isFastest =
-    canHighlightWinner && currentDuration === minDuration && currentDuration > 0;
+    canHighlightWinner &&
+    currentDuration === minDuration &&
+    currentDuration > 0;
   const isFewestTokens =
     canHighlightWinner && displayTokens === minTokens && displayTokens > 0;
   const isFewestTools =
