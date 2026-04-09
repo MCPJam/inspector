@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ViewsTab } from "../ViewsTab";
 
@@ -158,5 +158,16 @@ describe("ViewsTab layout", () => {
       warnSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+
+  it("shows an empty state when the workspace has no saved views", () => {
+    render(<ViewsTab selectedServer="selected-server" />);
+
+    expect(screen.getByText("No saved views yet")).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Save tool executions from Chat or App Builder to create reusable views.",
+      ),
+    ).toBeInTheDocument();
   });
 });
