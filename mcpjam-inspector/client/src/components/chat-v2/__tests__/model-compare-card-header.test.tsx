@@ -86,6 +86,25 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("Latency")).toBeInTheDocument();
   });
 
+  it("uses the sidebar-selected styling for active trace tabs", () => {
+    render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={idleSummary}
+        allSummaries={[]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={true}
+        showComparisonChrome={false}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
+      "bg-sidebar-accent",
+      "text-sidebar-accent-foreground",
+    );
+  });
+
   it("hides status dot and Tools row in compact mode (default)", () => {
     const withTools: MultiModelCardSummary = {
       ...idleSummary,

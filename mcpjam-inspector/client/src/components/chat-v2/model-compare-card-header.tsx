@@ -251,6 +251,7 @@ export function ModelCompareCardHeader({
       {showTraceTabs ? (
         <ChatTraceViewModeHeaderBar
           mode={mode as TraceViewMode}
+          activeVariant="sidebar"
           onModeChange={(nextMode) => {
             if (nextMode === "tools") {
               return;
