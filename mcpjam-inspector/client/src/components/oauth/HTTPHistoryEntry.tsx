@@ -15,7 +15,7 @@ import {
 import type {
   LogErrorDetails,
   OAuthFlowStep,
-} from "@/lib/oauth/state-machines/types";
+} from "@mcpjam/sdk/browser";
 
 interface HTTPHistoryEntryProps {
   method: string;
