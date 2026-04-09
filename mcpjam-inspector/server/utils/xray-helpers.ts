@@ -5,7 +5,6 @@
 import { z } from "zod";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import { getSkillToolsAndPrompt } from "./skill-tools.js";
-import { buildMcpToolInventoryPrompt } from "./chat-v2-orchestration.js";
 
 export interface SerializedTool {
   name: string;
@@ -28,38 +27,21 @@ export async function buildXRayPayload(
   serverIds: string[],
   messages: unknown[],
   systemPrompt?: string,
-  options?: {
-    includeSkills?: boolean;
-    includeMcpToolInventory?: boolean;
-  },
 ): Promise<XRayPayloadResponse> {
-  const includeSkills = options?.includeSkills ?? true;
-  const includeMcpToolInventory = options?.includeMcpToolInventory ?? false;
-
   // Get MCP tools from selected servers
   const mcpTools = await manager.getToolsForAiSdk(serverIds);
 
   // Get skill tools and system prompt section
   const { tools: skillTools, systemPromptSection: skillsPromptSection } =
-    includeSkills
-      ? await getSkillToolsAndPrompt()
-      : { tools: {}, systemPromptSection: "" };
-  const toolInventoryPromptSection = includeMcpToolInventory
-    ? buildMcpToolInventoryPrompt(mcpTools, serverIds)
-    : "";
+    await getSkillToolsAndPrompt();
 
   // Merge MCP tools with skill tools (same as chat-v2.ts)
   const allTools = { ...mcpTools, ...skillTools };
 
-  // Build enhanced system prompt
-  const enhancedSystemPrompt = [
-    systemPrompt,
-    toolInventoryPromptSection,
-    skillsPromptSection,
-  ]
-    .filter((section): section is string => Boolean(section?.trim()))
-    .map((section) => section.trim())
-    .join("\n\n");
+  // Build enhanced system prompt (same as chat-v2.ts)
+  const enhancedSystemPrompt = systemPrompt
+    ? systemPrompt + skillsPromptSection
+    : skillsPromptSection;
 
   // Serialize tools to JSON-compatible format
   const serializedTools: Record<string, SerializedTool> = {};

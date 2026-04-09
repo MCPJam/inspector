@@ -55,10 +55,6 @@ xrayPayload.post("/", async (c) => {
           selectedServerIds,
           messages,
           systemPrompt,
-          {
-            includeSkills: false,
-            includeMcpToolInventory: true,
-          },
         );
       },
     );

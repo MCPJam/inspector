@@ -9,10 +9,7 @@ import type { ModelDefinition } from "@/shared/types";
 import { Thread } from "@/components/chat-v2/thread";
 import type { ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/reasoning-part";
 import { ErrorBox } from "@/components/chat-v2/error";
-import {
-  cloneUiMessages,
-  formatErrorMessage,
-} from "@/components/chat-v2/shared/chat-helpers";
+import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
 import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import {
   type MultiModelCardSummary,
@@ -114,10 +111,6 @@ interface MultiModelPlaygroundCardProps {
   showComparisonChrome?: boolean;
   /** Hide in-card “send a shared message” empty hint when the parent shows the shared starter strip + footer composer. */
   suppressThreadEmptyHint?: boolean;
-  compareEnterVersion?: number;
-  compareEnterMessages?: UIMessage[];
-  addColumnSeed?: { version: number; messages: UIMessage[] } | null;
-  onTranscriptSync?: (modelId: string, messages: UIMessage[]) => void;
 }
 
 export function MultiModelPlaygroundCard({
@@ -150,10 +143,6 @@ export function MultiModelPlaygroundCard({
   onHasMessagesChange,
   showComparisonChrome = true,
   suppressThreadEmptyHint = false,
-  compareEnterVersion = 0,
-  compareEnterMessages = [],
-  addColumnSeed = null,
-  onTranscriptSync,
 }: MultiModelPlaygroundCardProps) {
   const [modelContextQueue, setModelContextQueue] = useState<
     {
@@ -177,8 +166,6 @@ export function MultiModelPlaygroundCard({
   const lastExecutionRequestIdRef = useRef<number | null>(null);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
-  const lastAddColumnVersionRef = useRef(0);
-  const lastCompareEnterVersionRef = useRef(0);
 
   const {
     messages,
@@ -197,7 +184,6 @@ export function MultiModelPlaygroundCard({
     isStreaming,
     addToolApprovalResponse,
     systemPrompt,
-    startChatWithMessages,
   } = useChatSession({
     selectedServers,
     hostedWorkspaceId,
@@ -217,39 +203,6 @@ export function MultiModelPlaygroundCard({
   const isThreadEmpty = !messages.some(
     (message) => message.role === "user" || message.role === "assistant",
   );
-
-  useEffect(() => {
-    onTranscriptSync?.(String(model.id), messages);
-  }, [messages, model.id, onTranscriptSync]);
-
-  useEffect(() => {
-    if (
-      addColumnSeed &&
-      addColumnSeed.version > lastAddColumnVersionRef.current
-    ) {
-      lastAddColumnVersionRef.current = addColumnSeed.version;
-      lastCompareEnterVersionRef.current = compareEnterVersion;
-      if (addColumnSeed.messages.length > 0) {
-        void startChatWithMessages(cloneUiMessages(addColumnSeed.messages));
-      }
-      return;
-    }
-
-    if (
-      compareEnterVersion > 0 &&
-      compareEnterVersion > lastCompareEnterVersionRef.current &&
-      compareEnterMessages.length > 0
-    ) {
-      lastCompareEnterVersionRef.current = compareEnterVersion;
-      void startChatWithMessages(cloneUiMessages(compareEnterMessages));
-    }
-  }, [
-    addColumnSeed,
-    compareEnterMessages,
-    compareEnterVersion,
-    startChatWithMessages,
-  ]);
-
   const preludeTraceEnvelope = useMemo(
     () => buildPreludeTraceEnvelope(preludeTraceExecutions),
     [preludeTraceExecutions],

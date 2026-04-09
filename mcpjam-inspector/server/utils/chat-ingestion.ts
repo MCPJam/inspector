@@ -3,13 +3,6 @@ import { logger } from "./logger";
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
 
-interface ResumeConfig {
-  systemPrompt?: string;
-  temperature?: number;
-  requireToolApproval?: boolean;
-  selectedServers?: string[];
-}
-
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
@@ -17,7 +10,6 @@ interface PersistChatSessionOptions {
   authHeader?: string;
   workspaceId?: string;
   sourceType?: "serverShare" | "sandbox" | "direct";
-  directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
   shareToken?: string;
   sandboxToken?: string;
@@ -35,8 +27,6 @@ interface PersistChatSessionOptions {
   startedAt: number;
   lastActivityAt?: number;
   timeoutMs?: number;
-  resumeConfig?: ResumeConfig;
-  expectedVersion?: number;
 }
 
 function isAbortError(error: unknown): boolean {
@@ -99,9 +89,6 @@ export async function persistChatSessionToConvex(
         modelSource: options.modelSource,
         ...(options.workspaceId ? { workspaceId: options.workspaceId } : {}),
         ...(options.sourceType ? { sourceType: options.sourceType } : {}),
-        ...(options.directVisibility
-          ? { directVisibility: options.directVisibility }
-          : {}),
         ...(options.surface ? { surface: options.surface } : {}),
         ...(options.shareToken ? { shareToken: options.shareToken } : {}),
         ...(options.sandboxToken ? { sandboxToken: options.sandboxToken } : {}),
@@ -128,22 +115,13 @@ export async function persistChatSessionToConvex(
         ...(options.lastActivityAt
           ? { lastActivityAt: options.lastActivityAt }
           : {}),
-        ...(options.resumeConfig ? { resumeConfig: options.resumeConfig } : {}),
-        ...(options.expectedVersion !== undefined
-          ? { expectedVersion: options.expectedVersion }
-          : {}),
       }),
     });
 
     if (!response.ok) {
-      const responsePreview = await readResponsePreview(response);
-      const logMessage =
-        response.status === 409 && responsePreview.includes("VERSION_CONFLICT")
-          ? "[chat-session-persistence] Chat session version conflict"
-          : "[chat-session-persistence] Failed to persist chat session";
-      logger.warn(logMessage, {
+      logger.warn("[chat-session-persistence] Failed to persist chat session", {
         status: response.status,
-        responsePreview,
+        responsePreview: await readResponsePreview(response),
       });
     }
   } catch (error) {

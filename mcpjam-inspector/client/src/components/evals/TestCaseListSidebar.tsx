@@ -319,8 +319,15 @@ export function TestCaseListSidebar({
             <span>Generating cases...</span>
           </div>
         ) : testCases.length === 0 ? (
-          <div className="p-4 text-center text-xs text-muted-foreground">
-            {emptyLabel}
+          <div className="p-4 text-center text-xs text-muted-foreground space-y-2">
+            {showingOverview ? (
+              <>
+                <p>Runs are open in the main panel.</p>
+                <p className="text-muted-foreground/90">{emptyLabel}</p>
+              </>
+            ) : (
+              <p>{emptyLabel}</p>
+            )}
           </div>
         ) : (
           <div className="py-2">

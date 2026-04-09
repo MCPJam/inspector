@@ -29,6 +29,10 @@ vi.mock("../connection/AddServerModal", () => ({
   AddServerModal: () => null,
 }));
 
+vi.mock("../chat-v2/chat-input/dialogs/confirm-chat-reset-dialog", () => ({
+  ConfirmChatResetDialog: () => null,
+}));
+
 const HOSTED_HINT =
   "Hosted mode requires HTTPS server URLs. Edit this server to use https://.";
 

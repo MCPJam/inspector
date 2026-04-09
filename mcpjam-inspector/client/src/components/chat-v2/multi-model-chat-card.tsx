@@ -13,10 +13,7 @@ import {
   type MultiModelCardSummary,
   ModelCompareCardHeader,
 } from "@/components/chat-v2/model-compare-card-header";
-import {
-  cloneUiMessages,
-  formatErrorMessage,
-} from "@/components/chat-v2/shared/chat-helpers";
+import { formatErrorMessage } from "@/components/chat-v2/shared/chat-helpers";
 import { useChatSession } from "@/hooks/use-chat-session";
 import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import type { ModelDefinition } from "@/shared/types";
@@ -58,12 +55,6 @@ interface MultiModelChatCardProps {
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
   /** When false, hides per-card model title and Latency/Tokens/Tools (single selected model in compare mode). */
   showComparisonChrome?: boolean;
-  /** Bumps when entering compare from single; hydrate once per bump when `compareEnterMessages` is non-empty. */
-  compareEnterVersion?: number;
-  compareEnterMessages?: UIMessage[];
-  /** Seed a newly added compare column from the lead transcript. */
-  addColumnSeed?: { version: number; messages: UIMessage[] } | null;
-  onTranscriptSync?: (modelId: string, messages: UIMessage[]) => void;
 }
 
 export function MultiModelChatCard({
@@ -88,10 +79,6 @@ export function MultiModelChatCard({
   onHasMessagesChange,
   onOAuthRequired,
   showComparisonChrome = true,
-  compareEnterVersion = 0,
-  compareEnterMessages = [],
-  addColumnSeed = null,
-  onTranscriptSync,
 }: MultiModelChatCardProps) {
   const [widgetStateQueue, setWidgetStateQueue] = useState<
     { toolCallId: string; state: unknown }[]
@@ -111,8 +98,6 @@ export function MultiModelChatCard({
   const lastBroadcastRequestIdRef = useRef<number | null>(null);
   const onSummaryChangeRef = useRef(onSummaryChange);
   const onHasMessagesChangeRef = useRef(onHasMessagesChange);
-  const lastAddColumnVersionRef = useRef(0);
-  const lastCompareEnterVersionRef = useRef(0);
 
   const {
     messages,
@@ -130,7 +115,6 @@ export function MultiModelChatCard({
     isStreaming,
     addToolApprovalResponse,
     systemPrompt,
-    startChatWithMessages,
   } = useChatSession({
     selectedServers,
     hostedWorkspaceId,
@@ -214,38 +198,6 @@ export function MultiModelChatCard({
   useEffect(() => {
     onHasMessagesChangeRef.current?.(String(model.id), !isThreadEmpty);
   }, [isThreadEmpty, model.id]);
-
-  useEffect(() => {
-    onTranscriptSync?.(String(model.id), messages);
-  }, [messages, model.id, onTranscriptSync]);
-
-  useEffect(() => {
-    if (
-      addColumnSeed &&
-      addColumnSeed.version > lastAddColumnVersionRef.current
-    ) {
-      lastAddColumnVersionRef.current = addColumnSeed.version;
-      lastCompareEnterVersionRef.current = compareEnterVersion;
-      if (addColumnSeed.messages.length > 0) {
-        void startChatWithMessages(cloneUiMessages(addColumnSeed.messages));
-      }
-      return;
-    }
-
-    if (
-      compareEnterVersion > 0 &&
-      compareEnterVersion > lastCompareEnterVersionRef.current &&
-      compareEnterMessages.length > 0
-    ) {
-      lastCompareEnterVersionRef.current = compareEnterVersion;
-      void startChatWithMessages(cloneUiMessages(compareEnterMessages));
-    }
-  }, [
-    addColumnSeed,
-    compareEnterMessages,
-    compareEnterVersion,
-    startChatWithMessages,
-  ]);
 
   useEffect(() => {
     if (!traceViewsSupported) {

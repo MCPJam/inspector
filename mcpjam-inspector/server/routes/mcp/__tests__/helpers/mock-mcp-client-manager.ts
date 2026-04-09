@@ -1,7 +1,5 @@
 import { vi } from "vitest";
 
-type MockFn = ReturnType<typeof vi.fn>;
-
 /**
  * Type for the mock MCPClientManager - all methods are vi.fn() mocks
  */
@@ -27,7 +25,6 @@ const defaultMocks = {
 
   // Tools
   listTools: vi.fn().mockResolvedValue({ tools: [] }),
-  getToolsForAiSdk: vi.fn().mockResolvedValue({}),
   executeTool: vi.fn().mockResolvedValue({
     content: [{ type: "text", text: "Tool executed successfully" }],
   }),
@@ -71,28 +68,18 @@ const defaultMocks = {
  * manager.listTools.mockResolvedValue({ tools: [{ name: "custom" }] });
  */
 export function createMockMcpClientManager(
-  overrides: Partial<Record<keyof typeof defaultMocks, MockFn>> = {},
+  overrides: Partial<
+    Record<keyof typeof defaultMocks, ReturnType<typeof vi.fn>>
+  > = {},
 ) {
-  const freshMocks = Object.fromEntries(
-    (Object.keys(defaultMocks) as Array<keyof typeof defaultMocks>).map(
-      (key) => {
-        const mockFn = defaultMocks[key];
-        const implementation = mockFn.getMockImplementation();
-        const freshMock = vi.fn();
-        if (implementation) {
-          freshMock.mockImplementation(implementation as any);
-        }
-        return [
-          key,
-          // Create a fresh mock for each call to avoid state pollution.
-          freshMock,
-        ];
-      },
-    ),
-  ) as typeof defaultMocks;
-
   return {
-    ...freshMocks,
+    ...Object.fromEntries(
+      Object.entries(defaultMocks).map(([key, mockFn]) => [
+        key,
+        // Create a fresh mock for each call to avoid state pollution
+        vi.fn().mockImplementation(mockFn.getMockImplementation()),
+      ]),
+    ),
     ...overrides,
   } as typeof defaultMocks;
 }

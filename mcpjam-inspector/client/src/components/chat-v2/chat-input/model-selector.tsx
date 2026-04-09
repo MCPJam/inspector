@@ -8,6 +8,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
+import { ConfirmChatResetDialog } from "./dialogs/confirm-chat-reset-dialog";
 import { ProviderLogo } from "./model/provider-logo";
 import {
   Command,
@@ -33,7 +34,6 @@ interface ModelSelectorProps {
   disabled?: boolean;
   isLoading?: boolean;
   hideProvidedModels?: boolean;
-  /** @deprecated Model changes no longer reset the thread; kept for API compatibility. */
   hasMessages?: boolean;
   enableMultiModel?: boolean;
   multiModelEnabled?: boolean;
@@ -139,7 +139,7 @@ export function ModelSelector({
   disabled,
   isLoading,
   hideProvidedModels = false,
-  hasMessages: _hasMessages = false,
+  hasMessages = false,
   enableMultiModel = false,
   multiModelEnabled = false,
   selectedModels,
@@ -148,6 +148,9 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [pendingChange, setPendingChange] =
+    useState<PendingSelectionChange | null>(null);
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const { isAuthenticated } = useConvexAuth();
 
   const selectedModelsData =
@@ -252,6 +255,13 @@ export function ModelSelector({
       return;
     }
 
+    if (hasMessages) {
+      setPendingChange(nextChange);
+      setShowConfirmDialog(true);
+      setIsOpen(false);
+      return;
+    }
+
     if (nextChange.type === "single") {
       onModelChange(nextChange.nextModel);
       setIsOpen(false);
@@ -259,6 +269,27 @@ export function ModelSelector({
       onSelectedModelsChange?.(nextChange.selectedModels);
       onMultiModelEnabledChange?.(nextChange.enabled);
     }
+  };
+
+  const handleConfirmSelectionChange = () => {
+    if (!pendingChange) {
+      return;
+    }
+
+    if (pendingChange.type === "single") {
+      onModelChange(pendingChange.nextModel);
+    } else {
+      onSelectedModelsChange?.(pendingChange.selectedModels);
+      onMultiModelEnabledChange?.(pendingChange.enabled);
+    }
+
+    setPendingChange(null);
+    setShowConfirmDialog(false);
+  };
+
+  const handleCancelSelectionChange = () => {
+    setPendingChange(null);
+    setShowConfirmDialog(false);
   };
 
   const handleToggleMultiModel = (enabled: boolean) => {
@@ -539,6 +570,13 @@ export function ModelSelector({
           </Command>
         </PopoverContent>
       </Popover>
+
+      <ConfirmChatResetDialog
+        open={showConfirmDialog}
+        onConfirm={handleConfirmSelectionChange}
+        onCancel={handleCancelSelectionChange}
+        message="Changing the selected model set will clear the current chat session. This action cannot be undone."
+      />
     </>
   );
 }

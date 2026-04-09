@@ -1,4 +1,5 @@
 import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalCase, EvalIteration, SuiteAggregate } from "./types";
 import { cn } from "@/lib/utils";
@@ -96,6 +97,8 @@ export interface ExploreCasesListProps {
   /** Narrow CI/Runs sidebar: single-column scroll, optional selection highlight. */
   variant?: "default" | "sidebar";
   selectedCaseId?: string | null;
+  /** Hosted CI sidebar: opens the suite runs table in the main panel. */
+  onViewRunsTable?: () => void;
 }
 
 export function ExploreCasesList({
@@ -106,6 +109,7 @@ export function ExploreCasesList({
   onRowClick,
   variant = "default",
   selectedCaseId = null,
+  onViewRunsTable,
 }: ExploreCasesListProps) {
   const isSidebar = variant === "sidebar";
 
@@ -128,11 +132,41 @@ export function ExploreCasesList({
   }
 
   if (cases.length === 0) {
+    if (isSidebar) {
+      return (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="shrink-0 border-b px-3 py-1.5 text-[10px] font-medium text-muted-foreground">
+            Cases
+          </div>
+          <div
+            className={cn(
+              "min-h-0 flex-1 space-y-3 px-3 py-6 text-center text-sm text-muted-foreground",
+            )}
+          >
+            <p>
+              No test cases in this suite. Evaluation runs from CI or replay
+              can still appear in the main panel.
+            </p>
+            {onViewRunsTable ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-1"
+                onClick={onViewRunsTable}
+              >
+                View runs table
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      );
+    }
     return (
       <div
         className={cn(
           "text-center text-sm text-muted-foreground",
-          isSidebar ? "px-3 py-8" : "rounded-xl border bg-card px-4 py-12",
+          "rounded-xl border bg-card px-4 py-12",
         )}
       >
         No cases yet.

@@ -31,11 +31,9 @@ import {
   executeToolCallsFromMessages,
 } from "@/shared/http-tool-calls";
 import {
-  scrubUnavailableToolHistoryForBackend,
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
-import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -312,7 +310,6 @@ function setStepSpanMessageRanges(
  */
 function scrubMessagesForBackend(
   messages: ModelMessage[],
-  tools: ToolSet,
   mcpClientManager: MCPClientManager,
   selectedServers?: string[],
 ): ModelMessage[] {
@@ -345,21 +342,15 @@ function scrubMessagesForBackend(
     return msg;
   });
 
-  const withoutUnavailableToolHistory = scrubUnavailableToolHistoryForBackend(
-    stripped,
-    Object.keys(tools as Record<string, unknown>),
-  );
-
-  const scrubbed = scrubChatGPTAppsToolResultsForBackend(
+  return scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
-      withoutUnavailableToolHistory,
+      stripped,
       mcpClientManager,
       selectedServers,
     ),
     mcpClientManager,
     selectedServers,
   );
-  return normalizeModelMessagesForConvex(scrubbed);
 }
 
 /**
@@ -888,7 +879,6 @@ async function processOneStep(
   // Scrub messages before sending to backend
   const scrubbedMessages = scrubMessagesForBackend(
     messageHistory,
-    tools,
     mcpClientManager,
     selectedServers,
   );

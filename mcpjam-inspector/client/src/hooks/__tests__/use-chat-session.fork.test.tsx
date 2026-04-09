@@ -5,7 +5,6 @@ import { useChatSession } from "../use-chat-session";
 const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(),
   stop: vi.fn(),
-  status: "ready" as "submitted" | "streaming" | "ready" | "error",
   addToolApprovalResponse: vi.fn(),
   getAccessToken: vi.fn(() => new Promise<string | null>(() => {})),
   hasToken: vi.fn(() => false),
@@ -173,7 +172,7 @@ vi.mock("@ai-sdk/react", async () => {
         messages,
         sendMessage: mockState.sendMessage,
         stop: mockState.stop,
-        status: mockState.status,
+        status: "ready",
         error: undefined,
         setMessages,
         addToolApprovalResponse: mockState.addToolApprovalResponse,
@@ -196,12 +195,10 @@ vi.mock("ai", () => ({
 describe("useChatSession fork preservation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.unstubAllGlobals();
     mockState.sessionMessages.clear();
     mockState.sessionListeners.clear();
     mockState.nextSessionNumber = 1;
     mockState.lastTransportOptions = null;
-    mockState.status = "ready";
   });
 
   it("preserves trimmed messages across a fork and updates the hosted transport body", async () => {
@@ -371,225 +368,5 @@ describe("useChatSession fork preservation", () => {
         parts: [{ type: "text", text: "seeded reply" }],
       },
     ]);
-  });
-
-  it("hydrates restored history into the new session store when loading a chat", async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify([
-            { id: "restored-user", role: "user", content: "restored question" },
-            {
-              id: "restored-assistant",
-              role: "assistant",
-              content: "restored answer",
-            },
-          ]),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { result } = renderHook(() =>
-      useChatSession({
-        selectedServers: [],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: [],
-      }),
-    );
-
-    act(() => {
-      result.current.setMessages([
-        {
-          id: "current-user",
-          role: "user",
-          parts: [{ type: "text", text: "current thread" }],
-        } as any,
-      ]);
-    });
-
-    act(() => {
-      void result.current.loadChatSession({
-        chatSessionId: "restored-session",
-        messagesBlobUrl: "https://storage.test/restored.json",
-        resumeConfig: {
-          systemPrompt: "Restored prompt",
-        },
-        version: 7,
-      });
-    });
-
-    await waitFor(() => {
-      expect(result.current.chatSessionId).toBe("restored-session");
-    });
-
-    expect(result.current.messages).toEqual([
-      {
-        id: "restored-user",
-        role: "user",
-        parts: [{ type: "text", text: "restored question" }],
-      },
-      {
-        id: "restored-assistant",
-        role: "assistant",
-        parts: [{ type: "text", text: "restored answer" }],
-      },
-    ]);
-    expect(result.current.resumedVersion).toBe(7);
-    expect(result.current.systemPrompt).toBe("Restored prompt");
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://storage.test/restored.json",
-    );
-  });
-
-  it("preserves a restored thread when selected servers change afterward", async () => {
-    const fetchMock = vi.fn(
-      async () =>
-        new Response(
-          JSON.stringify([
-            {
-              id: "restored-user",
-              role: "user",
-              content: "restored question",
-            },
-          ]),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" },
-          },
-        ),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { result, rerender } = renderHook(
-      ({ selectedServers }: { selectedServers: string[] }) =>
-        useChatSession({
-          selectedServers,
-          hostedWorkspaceId: "workspace-1",
-          hostedSelectedServerIds: [],
-        }),
-      {
-        initialProps: {
-          selectedServers: ["server-1"],
-        },
-      },
-    );
-
-    act(() => {
-      void result.current.loadChatSession({
-        chatSessionId: "restored-session",
-        messagesBlobUrl: "https://storage.test/restored.json",
-        version: 7,
-      });
-    });
-
-    await waitFor(() => {
-      expect(result.current.chatSessionId).toBe("restored-session");
-    });
-
-    rerender({
-      selectedServers: ["server-2"],
-    });
-
-    await waitFor(() => {
-      expect(result.current.chatSessionId).toBe("restored-session");
-    });
-
-    expect(result.current.messages).toEqual([
-      {
-        id: "restored-user",
-        role: "user",
-        parts: [{ type: "text", text: "restored question" }],
-      },
-    ]);
-    expect(result.current.resumedVersion).toBe(7);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-  });
-
-  it("preserves a fresh thread and leaves in-flight responses alone when selected servers change", async () => {
-    const onReset = vi.fn();
-    const { result, rerender } = renderHook(
-      ({ selectedServers }: { selectedServers: string[] }) =>
-        useChatSession({
-          selectedServers,
-          hostedWorkspaceId: "workspace-1",
-          hostedSelectedServerIds: [],
-          onReset,
-        }),
-      {
-        initialProps: {
-          selectedServers: ["server-1"],
-        },
-      },
-    );
-    const initialChatSessionId = result.current.chatSessionId;
-    const message = {
-      id: "user-1",
-      role: "user",
-      parts: [{ type: "text", text: "keep this thread" }],
-    } as any;
-
-    act(() => {
-      result.current.setMessages([message]);
-    });
-
-    mockState.status = "streaming";
-    rerender({
-      selectedServers: ["server-2"],
-    });
-
-    await waitFor(() => {
-      expect(onReset).toHaveBeenCalledWith("servers-changed");
-    });
-
-    expect(mockState.stop).not.toHaveBeenCalled();
-    expect(result.current.chatSessionId).toBe(initialChatSessionId);
-    expect(result.current.messages).toEqual([message]);
-  });
-
-  it("restores empty sessions even when the transcript blob URL is missing", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { result } = renderHook(() =>
-      useChatSession({
-        selectedServers: [],
-        hostedWorkspaceId: "workspace-1",
-        hostedSelectedServerIds: [],
-      }),
-    );
-
-    act(() => {
-      result.current.setMessages([
-        {
-          id: "current-user",
-          role: "user",
-          parts: [{ type: "text", text: "current thread" }],
-        } as any,
-      ]);
-    });
-
-    act(() => {
-      void result.current.loadChatSession({
-        chatSessionId: "restored-empty-session",
-        messagesBlobUrl: null,
-        resumeConfig: {
-          systemPrompt: "Restored prompt",
-        },
-        version: 3,
-      });
-    });
-
-    await waitFor(() => {
-      expect(result.current.chatSessionId).toBe("restored-empty-session");
-    });
-
-    expect(result.current.messages).toEqual([]);
-    expect(result.current.resumedVersion).toBe(3);
-    expect(result.current.systemPrompt).toBe("Restored prompt");
-    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

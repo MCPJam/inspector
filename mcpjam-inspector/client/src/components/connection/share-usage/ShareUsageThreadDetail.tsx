@@ -8,7 +8,6 @@ import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import { TranscriptThread } from "@/components/chat-v2/thread/transcript-thread";
 import {
   adaptTraceToUiMessages,
-  snapshotsToTraceWidgetSnapshots,
   type TraceWidgetSnapshot,
 } from "@/components/evals/trace-viewer-adapter";
 import {
@@ -79,7 +78,30 @@ export function ShareUsageThreadDetail({
   // Transform snapshots to TraceWidgetSnapshot format
   const widgetSnapshots: TraceWidgetSnapshot[] = useMemo(() => {
     if (!snapshots || !thread) return [];
-    return snapshotsToTraceWidgetSnapshots(snapshots);
+    return snapshots.map((snap) => {
+      // Reconstruct toolMetadata so detectUIType returns the correct widget type.
+      // Without this, PartSwitch won't enter the widget rendering path.
+      const toolMetadata: Record<string, unknown> =
+        snap.uiType === "mcp-apps" && snap.resourceUri
+          ? { ui: { resourceUri: snap.resourceUri } }
+          : snap.uiType === "openai-apps"
+            ? { "openai/outputTemplate": "__cached__" }
+            : {};
+
+      return {
+        toolCallId: snap.toolCallId,
+        toolName: snap.toolName,
+        protocol: snap.uiType,
+        serverId: snap.serverId,
+        resourceUri: snap.resourceUri ?? "",
+        toolMetadata,
+        widgetCsp: snap.widgetCsp,
+        widgetPermissions: snap.widgetPermissions,
+        widgetPermissive: snap.widgetPermissive,
+        prefersBorder: snap.prefersBorder,
+        widgetHtmlUrl: snap.widgetHtmlUrl,
+      };
+    });
   }, [snapshots, thread]);
 
   // Adapt trace to UI messages

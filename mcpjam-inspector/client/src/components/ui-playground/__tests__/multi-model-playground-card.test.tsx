@@ -42,8 +42,6 @@ vi.mock("@/hooks/use-chat-session", () => ({
     traceViewsSupported: true,
     isStreaming: false,
     addToolApprovalResponse: vi.fn(),
-    systemPrompt: "",
-    startChatWithMessages: vi.fn(),
   }),
 }));
 
@@ -59,16 +57,9 @@ vi.mock("@/components/chat-v2/error", () => ({
   ErrorBox: () => <div data-testid="error-box" />,
 }));
 
-vi.mock("@/components/chat-v2/shared/chat-helpers", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("@/components/chat-v2/shared/chat-helpers")
-    >();
-  return {
-    ...actual,
-    formatErrorMessage: () => null,
-  };
-});
+vi.mock("@/components/chat-v2/shared/chat-helpers", () => ({
+  formatErrorMessage: () => null,
+}));
 
 vi.mock("@/components/chat-v2/model-compare-card-header", () => ({
   ModelCompareCardHeader: ({

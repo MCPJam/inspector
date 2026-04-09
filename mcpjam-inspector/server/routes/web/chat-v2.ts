@@ -164,7 +164,6 @@ chatV2.post("/", async (c) => {
             systemPrompt,
             temperature,
             requireToolApproval,
-            includeMcpToolInventory: true,
           });
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -200,17 +199,10 @@ chatV2.post("/", async (c) => {
                   modelId: String(modelDefinition.id),
                   modelSource: "mcpjam",
                   sourceType: "direct",
-                  directVisibility: body.directVisibility,
                   authHeader: c.req.header("authorization"),
                   sessionMessages: fullHistory,
                   startedAt: sessionStartedAt,
                   lastActivityAt: Date.now(),
-                  resumeConfig: {
-                    systemPrompt,
-                    temperature,
-                    requireToolApproval,
-                    selectedServers: hasServer ? ["__guest__"] : [],
-                  },
                 });
               }
             : undefined,
@@ -289,7 +281,6 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
-          includeMcpToolInventory: true,
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
@@ -331,7 +322,6 @@ chatV2.post("/", async (c) => {
         requireToolApproval,
         onConversationComplete: hostedChatSessionId
           ? async (fullHistory) => {
-              const isDirectChat = !shareToken && !sandboxToken;
               await persistChatSessionToConvex({
                 chatSessionId: hostedChatSessionId,
                 modelId: String(modelDefinition.id),
@@ -352,17 +342,6 @@ chatV2.post("/", async (c) => {
                 sessionMessages: fullHistory,
                 startedAt: sessionStartedAt,
                 lastActivityAt: Date.now(),
-                ...(isDirectChat
-                  ? {
-                      directVisibility: body.directVisibility,
-                      resumeConfig: {
-                        systemPrompt,
-                        temperature,
-                        requireToolApproval,
-                        selectedServers: selectedServerIds,
-                      },
-                    }
-                  : {}),
               });
             }
           : undefined,
