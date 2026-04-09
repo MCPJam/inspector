@@ -136,7 +136,6 @@ export const isMCPJamProvidedModel = (modelId: string): boolean => {
   return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
 };
 
-
 export const isGPT5Model = (modelId: string | Model): boolean => {
   const id = String(modelId);
   // Only disable temperature for OpenAI GPT-5 models (not MCPJam provided ones)

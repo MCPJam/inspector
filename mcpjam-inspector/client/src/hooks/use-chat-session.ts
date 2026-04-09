@@ -656,9 +656,7 @@ export function useChatSession({
       customProviders,
     });
     if (HOSTED_MODE) {
-      return models.filter((model) =>
-        isMCPJamProvidedModel(String(model.id)),
-      );
+      return models.filter((model) => isMCPJamProvidedModel(String(model.id)));
     }
     return models;
   }, [
