@@ -143,8 +143,11 @@ describe("ChatInput", () => {
       expect(screen.getByTestId("model-selector")).toHaveTextContent("GPT-4");
     });
 
-    it("renders system prompt selector", () => {
+    it("renders system prompt selector inside plus dropdown", async () => {
       render(<ChatInput {...defaultProps} />);
+
+      const plusButton = screen.getByRole("button", { name: "Options" });
+      fireEvent.click(plusButton);
 
       expect(screen.getByTestId("system-prompt-selector")).toBeInTheDocument();
     });
@@ -522,14 +525,17 @@ describe("ChatInput", () => {
   });
 
   describe("minimal mode", () => {
-    it("hides file attachments, system prompt, model selector, and tool approval in minimal mode", () => {
+    it("hides plus dropdown, model selector, and context in minimal mode", () => {
       render(<ChatInput {...defaultProps} minimalMode={true} />);
 
       expect(screen.getByTestId("prompts-popover")).toBeInTheDocument();
       expect(
+        screen.queryByRole("button", { name: "Options" }),
+      ).not.toBeInTheDocument();
+      expect(screen.queryByTestId("model-selector")).not.toBeInTheDocument();
+      expect(
         screen.queryByTestId("system-prompt-selector"),
       ).not.toBeInTheDocument();
-      expect(screen.queryByText("Tool Approval")).not.toBeInTheDocument();
     });
 
     it("hides context usage UI in minimal mode", () => {

@@ -1578,7 +1578,9 @@ export default function App() {
                 connectedOrConnectingServerConfigs
               }
               selectedServerNames={appState.selectedMultipleServers}
-              onSelectedServerNamesChange={setSelectedMCPConfigs}
+              allServerConfigs={workspaceServers}
+              onServerToggle={toggleServerSelection}
+              onReconnectServer={handleReconnect}
               onHasMessagesChange={setChatHasMessages}
               enableMultiModelChat
               evalChatHandoff={evalChatHandoff}

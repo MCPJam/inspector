@@ -31,6 +31,8 @@ interface SystemPromptSelectorProps {
   currentModel: ModelDefinition;
   multiModelEnabled?: boolean;
   selectedModels?: ModelDefinition[];
+  /** Custom trigger element to replace the default toolbar button. */
+  renderTrigger?: React.ReactNode;
 }
 
 export function SystemPromptSelector({
@@ -45,6 +47,7 @@ export function SystemPromptSelector({
   currentModel,
   multiModelEnabled = false,
   selectedModels,
+  renderTrigger,
 }: SystemPromptSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [draftPrompt, setDraftPrompt] = useState(systemPrompt);
@@ -98,24 +101,30 @@ export function SystemPromptSelector({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DialogTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={disabled || isLoading}
-              className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[180px] @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0 @max-2xl/toolbar:max-w-none"
-            >
-              <Settings2 className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0" />
-              <span className="text-[10px] font-medium truncate @max-2xl/toolbar:hidden">
-                System Prompt & Temperature
-              </span>
-            </Button>
-          </DialogTrigger>
-        </TooltipTrigger>
-        <TooltipContent side="top">System Prompt & Temperature</TooltipContent>
-      </Tooltip>
+      {renderTrigger ? (
+        <DialogTrigger asChild>{renderTrigger}</DialogTrigger>
+      ) : (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DialogTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={disabled || isLoading}
+                className="h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer max-w-[180px] @max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0 @max-2xl/toolbar:max-w-none"
+              >
+                <Settings2 className="h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0" />
+                <span className="text-[10px] font-medium truncate @max-2xl/toolbar:hidden">
+                  System Prompt & Temperature
+                </span>
+              </Button>
+            </DialogTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            System Prompt & Temperature
+          </TooltipContent>
+        </Tooltip>
+      )}
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>System Prompt & Temperature</DialogTitle>

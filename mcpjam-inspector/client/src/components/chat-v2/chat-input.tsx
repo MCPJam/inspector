@@ -10,7 +10,16 @@ import { cn } from "@/lib/chat-utils";
 import { Button } from "@/components/ui/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PromptsPopover } from "@/components/chat-v2/chat-input/prompts/mcp-prompts-popover";
-import { ArrowUp, Square, Paperclip, ShieldCheck, Plus } from "lucide-react";
+import {
+  ArrowUp,
+  Square,
+  Paperclip,
+  ShieldCheck,
+  Plus,
+  Settings2,
+  RefreshCw,
+} from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { FileAttachmentCard } from "@/components/chat-v2/chat-input/attachments/file-attachment-card";
 import {
   type FileAttachment,
@@ -26,6 +35,7 @@ import {
 } from "@/components/ui/tooltip";
 import { ModelSelector } from "@/components/chat-v2/chat-input/model-selector";
 import { ModelDefinition } from "@/shared/types";
+import type { ServerWithName } from "@/hooks/use-app-state";
 import { SystemPromptSelector } from "@/components/chat-v2/chat-input/system-prompt-selector";
 import { useTextareaCaretPosition } from "@/hooks/use-textarea-caret-position";
 import {
@@ -112,6 +122,12 @@ interface ChatInputProps {
   pulseSubmit?: boolean;
   /** Move the textarea caret to the end when this trigger changes */
   moveCaretToEndTrigger?: number;
+  /** All workspace servers for the "+" dropdown server toggles. */
+  allServerConfigs?: Record<string, ServerWithName>;
+  /** Toggle a server on/off for the current chat session. */
+  onServerToggle?: (serverName: string) => void;
+  /** Reconnect a disconnected server. */
+  onReconnectServer?: (serverName: string) => Promise<void>;
   /** Hosted sandbox: optional servers not yet connected (Add server popover). */
   sandboxAttachableServers?: Array<{
     serverId: string;
@@ -163,6 +179,9 @@ export function ChatInput({
   minimalMode = false,
   pulseSubmit = false,
   moveCaretToEndTrigger,
+  allServerConfigs,
+  onServerToggle,
+  onReconnectServer,
   sandboxAttachableServers,
   onAttachSandboxServer,
 }: ChatInputProps) {
@@ -180,6 +199,7 @@ export function ChatInput({
     string | null
   >(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [plusPopoverOpen, setPlusPopoverOpen] = useState(false);
 
   const caret = useTextareaCaretPosition(
     textareaRef,
@@ -535,88 +555,213 @@ export function ChatInput({
 
         <div className="@container/toolbar flex items-center justify-between gap-2 px-2 min-w-0">
           <div className="flex items-center gap-1 min-w-0 flex-shrink overflow-hidden">
-            {!minimalMode && onChangeFileAttachments && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 rounded-full"
-                    onClick={openFilePicker}
-                    disabled={disabled}
-                  >
-                    <Paperclip className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Attach files</TooltipContent>
-              </Tooltip>
-            )}
             {!minimalMode && (
-              <>
-                <ModelSelector
-                  currentModel={currentModel}
-                  availableModels={availableModels}
-                  onModelChange={onModelChange}
-                  isLoading={isLoading}
-                  hasMessages={hasMessages}
-                  enableMultiModel={enableMultiModel}
-                  multiModelEnabled={multiModelEnabled}
-                  selectedModels={effectiveSelectedModels}
-                  onSelectedModelsChange={onSelectedModelsChange}
-                  onMultiModelEnabledChange={onMultiModelEnabledChange}
-                />
-                <SystemPromptSelector
-                  systemPrompt={
-                    systemPrompt ||
-                    "You are a helpful assistant with access to MCP tools."
-                  }
-                  onSystemPromptChange={onSystemPromptChange}
-                  temperature={temperature}
-                  onTemperatureChange={onTemperatureChange}
-                  isLoading={isLoading}
-                  hasMessages={hasMessages}
-                  onResetChat={onResetChat}
-                  currentModel={currentModel}
-                  multiModelEnabled={multiModelEnabled}
-                  selectedModels={effectiveSelectedModels}
-                />
-              </>
-            )}
-            {!minimalMode && onRequireToolApprovalChange && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant={requireToolApproval ? "secondary" : "ghost"}
-                    size="sm"
-                    onClick={() =>
-                      onRequireToolApprovalChange(!requireToolApproval)
-                    }
+              <Popover open={plusPopoverOpen} onOpenChange={setPlusPopoverOpen}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <PopoverTrigger asChild>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-full"
+                        disabled={disabled}
+                        aria-label="Options"
+                      >
+                        <Plus className="h-4 w-4" />
+                      </Button>
+                    </PopoverTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent>Options</TooltipContent>
+                </Tooltip>
+                <PopoverContent
+                  className="w-72 p-0"
+                  align="start"
+                  side="top"
+                  sideOffset={8}
+                >
+                  {allServerConfigs &&
+                    onServerToggle &&
+                    Object.keys(allServerConfigs).length > 0 && (
+                      <div className="px-1 pt-1 pb-0">
+                        <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground uppercase tracking-wider">
+                          Servers
+                        </p>
+                        <div className="max-h-48 overflow-y-auto">
+                          {Object.entries(allServerConfigs).map(
+                            ([name, server]) => {
+                              const isSelected =
+                                selectedServers?.includes(name) ?? false;
+                              const isConnected =
+                                server.connectionStatus === "connected";
+                              const isConnecting =
+                                server.connectionStatus === "connecting";
+                              const isFailed =
+                                server.connectionStatus === "failed";
+                              const isDisconnected =
+                                !isConnected && !isConnecting;
+                              const statusColor = isConnected
+                                ? "bg-green-500 dark:bg-green-400"
+                                : isConnecting
+                                  ? "bg-yellow-500 dark:bg-yellow-400 animate-pulse"
+                                  : isFailed
+                                    ? "bg-red-500 dark:bg-red-400"
+                                    : "bg-muted-foreground";
+
+                              const handleToggle = () => {
+                                const turningOn = !isSelected;
+                                onServerToggle(name);
+                                if (
+                                  turningOn &&
+                                  isDisconnected &&
+                                  onReconnectServer
+                                ) {
+                                  onReconnectServer(name).catch(() => {});
+                                }
+                              };
+
+                              return (
+                                <div
+                                  key={name}
+                                  className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div
+                                      className={cn(
+                                        "w-2 h-2 rounded-full shrink-0",
+                                        statusColor,
+                                      )}
+                                    />
+                                    <span
+                                      className={cn(
+                                        "text-sm font-medium truncate",
+                                        isDisconnected &&
+                                          !isSelected &&
+                                          "text-muted-foreground",
+                                      )}
+                                    >
+                                      {name}
+                                    </span>
+                                    <span className="text-[10px] text-muted-foreground shrink-0">
+                                      {server.config.command ? "STDIO" : "HTTP"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    {isSelected &&
+                                      isFailed &&
+                                      onReconnectServer && (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <button
+                                              type="button"
+                                              className="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/80 transition-colors"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                onReconnectServer(
+                                                  name,
+                                                ).catch(() => {});
+                                              }}
+                                            >
+                                              <RefreshCw className="w-3 h-3" />
+                                            </button>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="left">
+                                            Reconnect
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      )}
+                                    <Switch
+                                      checked={isSelected}
+                                      onCheckedChange={handleToggle}
+                                    />
+                                  </div>
+                                </div>
+                              );
+                            },
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                  <div
                     className={cn(
-                      "h-8 px-2 rounded-full hover:bg-muted/80 transition-colors text-xs cursor-pointer",
-                      "@max-2xl/toolbar:w-8 @max-2xl/toolbar:px-0",
-                      requireToolApproval &&
-                        "bg-success/10 hover:bg-success/15",
+                      "px-1 pb-1",
+                      allServerConfigs &&
+                        Object.keys(allServerConfigs).length > 0 &&
+                        "border-t border-border mt-1 pt-1",
                     )}
                   >
-                    <ShieldCheck
-                      className={cn(
-                        "h-2 w-2 mr-1 flex-shrink-0 @max-2xl/toolbar:h-4 @max-2xl/toolbar:w-4 @max-2xl/toolbar:mr-0",
-                        requireToolApproval && "text-success",
-                      )}
+                    {onChangeFileAttachments && (
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
+                        onClick={() => {
+                          setPlusPopoverOpen(false);
+                          openFilePicker();
+                        }}
+                      >
+                        <Paperclip className="h-4 w-4 text-muted-foreground" />
+                        Attach files
+                      </button>
+                    )}
+
+                    <SystemPromptSelector
+                      systemPrompt={
+                        systemPrompt ||
+                        "You are a helpful assistant with access to MCP tools."
+                      }
+                      onSystemPromptChange={onSystemPromptChange}
+                      temperature={temperature}
+                      onTemperatureChange={onTemperatureChange}
+                      isLoading={isLoading}
+                      hasMessages={hasMessages}
+                      onResetChat={onResetChat}
+                      currentModel={currentModel}
+                      multiModelEnabled={multiModelEnabled}
+                      selectedModels={effectiveSelectedModels}
+                      renderTrigger={
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
+                          onClick={() => setPlusPopoverOpen(false)}
+                        >
+                          <Settings2 className="h-4 w-4 text-muted-foreground" />
+                          System Prompt & Temperature
+                        </button>
+                      }
                     />
-                    <span className="text-[10px] font-medium @max-2xl/toolbar:hidden">
-                      Tool Approval
-                    </span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {requireToolApproval
-                    ? "Turn off tool approval"
-                    : "Require approval before tools run"}
-                </TooltipContent>
-              </Tooltip>
+
+                    {onRequireToolApprovalChange && (
+                      <div className="flex items-center justify-between gap-2 rounded-md px-2 py-2 hover:bg-muted/60">
+                        <div className="flex items-center gap-2 text-sm">
+                          <ShieldCheck className="h-4 w-4 text-muted-foreground" />
+                          Tool Approval
+                        </div>
+                        <Switch
+                          checked={requireToolApproval}
+                          onCheckedChange={(checked) =>
+                            onRequireToolApprovalChange(checked)
+                          }
+                        />
+                      </div>
+                    )}
+                  </div>
+                </PopoverContent>
+              </Popover>
+            )}
+            {!minimalMode && (
+              <ModelSelector
+                currentModel={currentModel}
+                availableModels={availableModels}
+                onModelChange={onModelChange}
+                isLoading={isLoading}
+                hasMessages={hasMessages}
+                enableMultiModel={enableMultiModel}
+                multiModelEnabled={multiModelEnabled}
+                selectedModels={effectiveSelectedModels}
+                onSelectedModelsChange={onSelectedModelsChange}
+                onMultiModelEnabledChange={onMultiModelEnabledChange}
+              />
             )}
           </div>
 
