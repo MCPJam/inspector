@@ -71,9 +71,7 @@ describe("authFetch stale guest bearer retry", () => {
     // peekStoredGuestToken returns the same token — confirming it's a guest token
     vi.mocked(peekStoredGuestToken).mockReturnValue(staleGuestToken);
 
-    vi.mocked(forceRefreshGuestSession).mockResolvedValue(
-      "fresh-guest-token",
-    );
+    vi.mocked(forceRefreshGuestSession).mockResolvedValue("fresh-guest-token");
 
     vi.mocked(global.fetch)
       .mockResolvedValueOnce({ status: 401, ok: false } as Response)

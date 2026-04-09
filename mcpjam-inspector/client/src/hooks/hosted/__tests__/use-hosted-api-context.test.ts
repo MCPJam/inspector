@@ -30,12 +30,11 @@ vi.mock("@/lib/apis/web/context", async () => {
 
 import { useHostedApiContext } from "../use-hosted-api-context";
 import { clearGuestSession } from "@/lib/guest-session";
-import {
-  setHostedApiContext,
-  resetTokenCache,
-} from "@/lib/apis/web/context";
+import { setHostedApiContext, resetTokenCache } from "@/lib/apis/web/context";
 
-function buildProps(overrides: Partial<Parameters<typeof useHostedApiContext>[0]> = {}) {
+function buildProps(
+  overrides: Partial<Parameters<typeof useHostedApiContext>[0]> = {},
+) {
   return {
     workspaceId: null as string | null,
     serverIdsByName: {} as Record<string, string>,
