@@ -109,10 +109,7 @@ xrayPayload.post("/", async (c) => {
     }
 
     // ── Authenticated path: Convex authorization ──
-    const body = parseWithSchema(
-      xrayPayloadSchema,
-      rawBody,
-    );
+    const body = parseWithSchema(xrayPayloadSchema, rawBody);
 
     const { messages, systemPrompt, selectedServerIds } = body;
 
