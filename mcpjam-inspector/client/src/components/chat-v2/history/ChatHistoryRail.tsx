@@ -43,8 +43,8 @@ interface ChatHistoryRailProps {
   refreshSignal?: number;
   onSelectThread: (session: ChatHistorySession) => void;
   onNewChat: (options?: { shared?: boolean }) => void;
-  /** If the user has an active thread selected, run before archiving all (e.g. draft discard confirm). */
-  beforeResetChatAfterArchiveAll?: () => boolean;
+  /** If the user has an active thread selected, run before archiving all (e.g. draft-confirm modal). */
+  beforeResetChatAfterArchiveAll?: () => boolean | Promise<boolean>;
   /** After a successful archive-all, use this to clear the main chat if a history thread was active. */
   onArchiveAllComplete?: (hadActiveHistorySelection: boolean) => void;
   onSessionAction?: (event: {
@@ -277,12 +277,13 @@ export function ChatHistoryRail({
     if (!canStart) return;
 
     const activeInSection = sessions.some((s) => s._id === activeSessionId);
-    if (
-      activeInSection &&
-      beforeResetChatAfterArchiveAll &&
-      !beforeResetChatAfterArchiveAll()
-    ) {
-      return;
+    if (activeInSection && beforeResetChatAfterArchiveAll) {
+      const allowed = await Promise.resolve(
+        beforeResetChatAfterArchiveAll(),
+      );
+      if (!allowed) {
+        return;
+      }
     }
     setArchivingScope(scope);
     try {

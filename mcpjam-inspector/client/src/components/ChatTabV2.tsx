@@ -21,6 +21,16 @@ import {
   ResizableHandle,
 } from "./ui/resizable";
 import { ElicitationDialog } from "@/components/ElicitationDialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { DialogElicitation } from "@/components/ToolsTab";
 import { ChatInput } from "@/components/chat-v2/chat-input";
 import { Thread } from "@/components/chat-v2/thread";
@@ -28,7 +38,7 @@ import { type ReasoningDisplayMode } from "@/components/chat-v2/thread/parts/rea
 import type { LoadingIndicatorVariant } from "@/components/chat-v2/shared/loading-indicator-content";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { MCPJamFreeModelsPrompt } from "@/components/chat-v2/mcpjam-free-models-prompt";
-import { usePostHog } from "posthog-js/react";
+import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { detectEnvironment, detectPlatform } from "@/lib/PosthogUtils";
 import { ErrorBox } from "@/components/chat-v2/error";
 import { StickToBottom } from "use-stick-to-bottom";
@@ -170,6 +180,7 @@ export function ChatTabV2({
   const { isVisible: isJsonRpcPanelVisible, toggle: toggleJsonRpcPanel } =
     useJsonRpcPanelVisibility();
   const posthog = usePostHog();
+  const chatHistoryRailEnabled = useFeatureFlagEnabled("chat-history-rail");
 
   // Local state for ChatTabV2-specific features
   const [input, setInput] = useState("");
@@ -377,7 +388,7 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail =
-    HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken;
+    HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken && chatHistoryRailEnabled;
   const {
     session: reactiveHistorySession,
     widgetSnapshots: reactiveHistoryWidgetSnapshots,
@@ -453,12 +464,32 @@ export function ChatTabV2({
     };
   }, [activeHistorySessionId, resumedVersion]);
 
-  const confirmDiscardDraftIfNeeded = useCallback(() => {
-    if (!hasUnsavedDraft) {
-      return true;
-    }
+  const [discardDraftDialogOpen, setDiscardDraftDialogOpen] = useState(false);
+  const discardDraftResolveRef = useRef<((allow: boolean) => void) | null>(
+    null,
+  );
+  const discardDraftSettledRef = useRef(false);
 
-    return window.confirm("Discard your current draft and switch chats?");
+  const settleDiscardDraft = useCallback((confirmed: boolean) => {
+    if (discardDraftSettledRef.current) {
+      return;
+    }
+    discardDraftSettledRef.current = true;
+    const resolve = discardDraftResolveRef.current;
+    discardDraftResolveRef.current = null;
+    resolve?.(confirmed);
+    setDiscardDraftDialogOpen(false);
+  }, []);
+
+  const ensureDiscardDraftConfirmed = useCallback((): Promise<boolean> => {
+    if (!hasUnsavedDraft) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      discardDraftSettledRef.current = false;
+      discardDraftResolveRef.current = resolve;
+      setDiscardDraftDialogOpen(true);
+    });
   }, [hasUnsavedDraft]);
 
   const clearComposerDraft = useCallback(() => {
@@ -894,7 +925,7 @@ export function ChatTabV2({
   const handleSelectThread = useCallback(
     async (session: ChatHistorySession) => {
       if (isStreaming) return;
-      if (hasUnsavedDraft && !confirmDiscardDraftIfNeeded()) {
+      if (!(await ensureDiscardDraftConfirmed())) {
         return;
       }
       if (hasUnsavedDraft) {
@@ -960,7 +991,7 @@ export function ChatTabV2({
     [
       appState.servers,
       clearComposerDraft,
-      confirmDiscardDraftIfNeeded,
+      ensureDiscardDraftConfirmed,
       effectiveHostedWorkspaceId,
       hasUnsavedDraft,
       isHostedDirectGuest,
@@ -976,7 +1007,7 @@ export function ChatTabV2({
   const handleNewChat = useCallback(
     async (options?: { shared?: boolean }) => {
       if (isStreaming) return;
-      if (hasUnsavedDraft && !confirmDiscardDraftIfNeeded()) {
+      if (!(await ensureDiscardDraftConfirmed())) {
         return;
       }
       if (hasUnsavedDraft) {
@@ -997,7 +1028,7 @@ export function ChatTabV2({
       archiveEmptyDraftSession,
       baseResetChat,
       clearComposerDraft,
-      confirmDiscardDraftIfNeeded,
+      ensureDiscardDraftConfirmed,
       hasUnsavedDraft,
       isStreaming,
       syncResumedVersion,
@@ -2033,7 +2064,7 @@ export function ChatTabV2({
                 refreshSignal={historyRefreshSignal}
                 onSelectThread={handleSelectThread}
                 onNewChat={handleNewChat}
-                beforeResetChatAfterArchiveAll={confirmDiscardDraftIfNeeded}
+                beforeResetChatAfterArchiveAll={ensureDiscardDraftConfirmed}
                 onArchiveAllComplete={handleArchiveAllComplete}
                 onSessionAction={handleHistorySessionAction}
               />
@@ -2611,6 +2642,46 @@ export function ChatTabV2({
           <CollapsedPanelStrip onOpen={toggleJsonRpcPanel} />
         )}
       </ResizablePanelGroup>
+      <AlertDialog
+        open={discardDraftDialogOpen}
+        onOpenChange={(open) => {
+          setDiscardDraftDialogOpen(open);
+          if (!open && !discardDraftSettledRef.current) {
+            discardDraftSettledRef.current = true;
+            const resolve = discardDraftResolveRef.current;
+            discardDraftResolveRef.current = null;
+            resolve?.(false);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Discard unsaved draft?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your composer has text that has not been sent. Discard your
+              current draft and continue?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              onClick={(event) => {
+                event.preventDefault();
+                settleDiscardDraft(false);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                settleDiscardDraft(true);
+              }}
+            >
+              Discard and continue
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import type { ButtonHTMLAttributes, ReactNode } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
 import { ChatHistoryRail } from "../ChatHistoryRail";
@@ -444,5 +444,96 @@ describe("ChatHistoryRail", () => {
 
     expect(onNewChat).toHaveBeenNthCalledWith(1);
     expect(onNewChat).toHaveBeenNthCalledWith(2, { shared: true });
+  });
+
+  it("awaits async beforeResetChatAfterArchiveAll and skips archive-all when false", async () => {
+    archiveManySessionIdsMock.mockResolvedValue(undefined);
+    const beforeReset = vi.fn().mockResolvedValue(false);
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("p1")],
+      workspace: [],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    render(
+      <ChatHistoryRail
+        activeSessionId="p1"
+        isAuthenticated
+        isStreaming={false}
+        workspaceId="workspace-1"
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+        beforeResetChatAfterArchiveAll={beforeReset}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /archive all threads in my threads/i,
+      }),
+    );
+
+    await waitFor(() => expect(beforeReset).toHaveBeenCalledTimes(1));
+    expect(archiveManySessionIdsMock).not.toHaveBeenCalled();
+  });
+
+  it("awaits async beforeResetChatAfterArchiveAll and archives when true", async () => {
+    archiveManySessionIdsMock.mockResolvedValue(undefined);
+    const beforeReset = vi.fn().mockResolvedValue(true);
+    useChatHistoryMock.mockImplementation(() => ({
+      personal: [sessionStub("p1")],
+      workspace: [],
+      loading: false,
+      error: null,
+      isReactive: false,
+      refetch: refetchMock,
+      actions: {
+        rename: vi.fn(),
+        archive: vi.fn(),
+        unarchive: vi.fn(),
+        share: vi.fn(),
+        unshare: vi.fn(),
+        pin: vi.fn(),
+        unpin: vi.fn(),
+        archiveManySessionIds: archiveManySessionIdsMock,
+        archiveAllActive: vi.fn(),
+      },
+    }));
+
+    render(
+      <ChatHistoryRail
+        activeSessionId="p1"
+        isAuthenticated
+        isStreaming={false}
+        workspaceId="workspace-1"
+        onSelectThread={vi.fn()}
+        onNewChat={vi.fn()}
+        beforeResetChatAfterArchiveAll={beforeReset}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /archive all threads in my threads/i,
+      }),
+    );
+
+    await waitFor(() =>
+      expect(archiveManySessionIdsMock).toHaveBeenCalledWith(["p1"]),
+    );
   });
 });
