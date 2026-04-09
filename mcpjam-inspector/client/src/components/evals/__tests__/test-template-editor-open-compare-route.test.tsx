@@ -200,11 +200,16 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
   }
 
   function getMetricBar(card: HTMLElement, label: "Latency" | "Tokens") {
-    const row = within(card).getByText(label).parentElement;
+    const row = within(card).getByText(label).closest("div.flex.items-center.gap-2");
     expect(row).not.toBeNull();
     const bar = row!.querySelector("div[style]");
     expect(bar).not.toBeNull();
     return bar as HTMLElement;
+  }
+
+  function getMetricRunningSpinnerCount(container: ParentNode): number {
+    return container.querySelectorAll('[data-testid="metric-running-spinner"]')
+      .length;
   }
 
   beforeEach(() => {
@@ -489,7 +494,7 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     expect(updateTestCaseMutationMock).toHaveBeenCalledTimes(1);
   });
 
-  it("renders a running spinner in the eval compare card header", async () => {
+  it("renders running spinners in the eval compare metric bars", async () => {
     const user = userEvent.setup();
     const finalModelDeferred = createDeferred();
 
@@ -607,12 +612,13 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     });
 
     const runningCard = getCompareCard("Gemini 2.5 Pro");
+    expect(getMetricRunningSpinnerCount(runningCard)).toBe(2);
     expect(within(runningCard).getByLabelText("Running")).toBeInTheDocument();
 
     finalModelDeferred.resolve();
   });
 
-  it("restores the eval compare status dot after a running record completes", async () => {
+  it("removes the eval compare metric bar spinners after a running record completes", async () => {
     const user = userEvent.setup();
     const finalModelDeferred = createDeferred();
 
@@ -730,11 +736,13 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     });
 
     const compareCard = getCompareCard("Gemini 2.5 Pro");
+    expect(getMetricRunningSpinnerCount(compareCard)).toBe(2);
     expect(within(compareCard).getByLabelText("Running")).toBeInTheDocument();
 
     finalModelDeferred.resolve();
 
     await waitFor(() => {
+      expect(getMetricRunningSpinnerCount(compareCard)).toBe(0);
       expect(
         within(compareCard).queryByLabelText("Running"),
       ).not.toBeInTheDocument();

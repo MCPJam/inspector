@@ -2603,33 +2603,30 @@ function RunColumn({
               {record.modelLabel}
             </div>
           </div>
-          {isRunningRecord ? (
-            <span
-              className="inline-flex shrink-0 text-muted-foreground"
-              aria-label={statusLabel}
-              title={statusLabel}
-            >
-              <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-            </span>
-          ) : (
-            <span
-              role="img"
-              className={cn(
-                "inline-flex shrink-0 rounded-full",
-                statusIndicatorClass,
-              )}
-              aria-label={statusLabel}
-              title={statusLabel}
-            />
-          )}
+          <span
+            role="img"
+            className={cn(
+              "inline-flex shrink-0 rounded-full",
+              statusIndicatorClass,
+            )}
+            aria-label={statusLabel}
+            title={statusLabel}
+          />
         </div>
 
         {/* Metric comparison bars */}
         <div className="mt-2 space-y-1.5">
           {/* Latency */}
           <div className="flex items-center gap-2">
-            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-              Latency
+            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+              <span>Latency</span>
+              {isRunningRecord ? (
+                <Loader2
+                  data-testid="metric-running-spinner"
+                  className="h-3 w-3 shrink-0 animate-spin"
+                  aria-hidden
+                />
+              ) : null}
             </span>
             <div className="relative flex min-w-0 flex-1 items-center">
               <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
@@ -2662,8 +2659,15 @@ function RunColumn({
 
           {/* Tokens */}
           <div className="flex items-center gap-2">
-            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-              Tokens
+            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+              <span>Tokens</span>
+              {isRunningRecord ? (
+                <Loader2
+                  data-testid="metric-running-spinner"
+                  className="h-3 w-3 shrink-0 animate-spin"
+                  aria-hidden
+                />
+              ) : null}
             </span>
             <div className="relative flex min-w-0 flex-1 items-center">
               <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">

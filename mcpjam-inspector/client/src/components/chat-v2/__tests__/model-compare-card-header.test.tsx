@@ -34,6 +34,11 @@ function makeSummary(
   };
 }
 
+function getMetricRunningSpinnerCount(container: ParentNode): number {
+  return container.querySelectorAll('[data-testid="metric-running-spinner"]')
+    .length;
+}
+
 describe("ModelCompareCardHeader", () => {
   it("renders nothing when comparison chrome is off and trace tabs are hidden", () => {
     const { container } = render(
@@ -130,7 +135,7 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("Tokens")).toBeInTheDocument();
   });
 
-  it("shows a running spinner in the top-right slot in compact mode", () => {
+  it("shows running spinners in the latency and tokens rows in compact mode", () => {
     const runningSummary = makeSummary({
       status: "running",
       durationMs: null,
@@ -139,7 +144,7 @@ describe("ModelCompareCardHeader", () => {
       hasMessages: false,
     });
 
-    render(
+    const { container } = render(
       <ModelCompareCardHeader
         model={model}
         summary={runningSummary}
@@ -151,14 +156,15 @@ describe("ModelCompareCardHeader", () => {
       />,
     );
 
-    expect(screen.getByLabelText("Running")).toBeInTheDocument();
+    expect(getMetricRunningSpinnerCount(container)).toBe(2);
+    expect(screen.queryByLabelText("Running")).not.toBeInTheDocument();
     expect(screen.queryByText("Tools")).not.toBeInTheDocument();
   });
 
-  it("does not render the running spinner for non-running summaries", () => {
+  it("does not render metric bar spinners for non-running summaries", () => {
     const readySummary = makeSummary({});
 
-    render(
+    const { container } = render(
       <ModelCompareCardHeader
         model={model}
         summary={readySummary}
@@ -170,6 +176,7 @@ describe("ModelCompareCardHeader", () => {
       />,
     );
 
+    expect(getMetricRunningSpinnerCount(container)).toBe(0);
     expect(screen.queryByLabelText("Running")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Ready")).not.toBeInTheDocument();
   });
