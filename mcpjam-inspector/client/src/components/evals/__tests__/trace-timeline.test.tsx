@@ -81,9 +81,8 @@ describe("TraceTimeline detail pane", () => {
       />,
     );
 
-    const [timelinePanel, detailPanel] = screen.getAllByTestId(
-      "resizable-panel",
-    );
+    const [timelinePanel, detailPanel] =
+      screen.getAllByTestId("resizable-panel");
 
     expect(timelinePanel).toHaveAttribute("data-default-size", "65");
     expect(timelinePanel).toHaveAttribute("data-min-size", "0");
