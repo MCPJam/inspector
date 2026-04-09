@@ -34,6 +34,7 @@ import {
   scrubMcpAppsToolResultsForBackend,
   scrubChatGPTAppsToolResultsForBackend,
 } from "./chat-helpers";
+import { normalizeModelMessagesForConvex } from "./normalize-model-messages-for-convex";
 import {
   serializeToolsForConvex,
   type ToolDefinition,
@@ -342,7 +343,7 @@ function scrubMessagesForBackend(
     return msg;
   });
 
-  return scrubChatGPTAppsToolResultsForBackend(
+  const scrubbed = scrubChatGPTAppsToolResultsForBackend(
     scrubMcpAppsToolResultsForBackend(
       stripped,
       mcpClientManager,
@@ -351,6 +352,7 @@ function scrubMessagesForBackend(
     mcpClientManager,
     selectedServers,
   );
+  return normalizeModelMessagesForConvex(scrubbed);
 }
 
 /**

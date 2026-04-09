@@ -56,6 +56,11 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { transcriptToUIMessages } from "@/lib/transcript-to-ui-messages";
+import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
+import {
+  snapshotsToTraceWidgetSnapshots,
+  buildToolRenderOverridesFromSnapshots,
+} from "@/components/evals/trace-viewer-adapter";
 import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { buildHostedServerRequest } from "@/lib/apis/web/context";
@@ -185,11 +190,26 @@ export interface UseChatSessionReturn {
       draftInput?: string;
     };
     version: number;
+    widgetSnapshots?: Array<{
+      toolCallId: string;
+      toolName: string;
+      serverId: string;
+      uiType: "mcp-apps" | "openai-apps";
+      resourceUri?: string;
+      widgetCsp: Record<string, unknown> | null;
+      widgetPermissions: Record<string, unknown> | null;
+      widgetPermissive: boolean;
+      prefersBorder: boolean;
+      widgetHtmlUrl?: string | null;
+    }>;
   }) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
 
   // Resumed thread version (for optimistic concurrency)
   resumedVersion: number | null;
+
+  // Restored widget render overrides from loaded session
+  restoredToolRenderOverrides: Record<string, ToolRenderOverride>;
 
   // Live trace state
   liveTraceEnvelope: LiveChatTraceEnvelope | null;
@@ -229,6 +249,7 @@ interface PendingSessionHydration {
   sessionId: string;
   messages: UIMessage[];
   resumedVersion: number | null;
+  toolRenderOverrides?: Record<string, import("@/components/chat-v2/thread/tool-render-overrides").ToolRenderOverride>;
   resolve?: () => void;
 }
 
@@ -604,9 +625,14 @@ export function useChatSession({
   chatSessionIdRef.current = chatSessionId;
   const [, setHydrationTick] = useState(0);
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
+  const [restoredToolRenderOverrides, setRestoredToolRenderOverrides] =
+    useState<Record<string, ToolRenderOverride>>({});
   const [liveTraceState, setLiveTraceState] =
     useState<LiveTraceAccumulatorState>(() => createEmptyLiveTraceState());
   const resumedVersionRef = useRef<number | null>(null);
+  const restoredToolRenderOverridesRef = useRef<
+    Record<string, ToolRenderOverride>
+  >({});
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
@@ -680,6 +706,13 @@ export function useChatSession({
     resumedVersionRef.current = version;
     setResumedVersion(version);
   }, []);
+  const syncRestoredToolRenderOverrides = useCallback(
+    (overrides: Record<string, ToolRenderOverride>) => {
+      restoredToolRenderOverridesRef.current = overrides;
+      setRestoredToolRenderOverrides(overrides);
+    },
+    [],
+  );
   const clearPendingSessionHydration = useCallback(() => {
     const pendingHydration = pendingSessionHydrationRef.current;
     if (!pendingHydration) {
@@ -908,6 +941,7 @@ export function useChatSession({
       if (hydration.sessionId === chatSessionIdRef.current) {
         baseSetMessages(hydration.messages);
         syncResumedVersion(hydration.resumedVersion);
+        syncRestoredToolRenderOverrides(hydration.toolRenderOverrides ?? {});
         setHydrationTick((t) => t + 1);
         return Promise.resolve();
       }
@@ -1013,10 +1047,7 @@ export function useChatSession({
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    enabled:
-      HOSTED_MODE &&
-      !!(hostedShareToken || hostedSandboxToken) &&
-      isAuthenticated,
+    enabled: HOSTED_MODE && (isAuthenticated || directGuestMode),
     chatSessionId,
     hostedShareToken,
     hostedSandboxToken,
@@ -1069,6 +1100,9 @@ export function useChatSession({
 
     baseSetMessages(pendingHydration.messages);
     syncResumedVersion(pendingHydration.resumedVersion);
+    syncRestoredToolRenderOverrides(
+      pendingHydration.toolRenderOverrides ?? {},
+    );
     // Force a React state update so that useSyncExternalStore re-reads the
     // messages snapshot that was just written to the Chat store above.
     // Without this, the external-store change made by baseSetMessages may
@@ -1076,7 +1110,7 @@ export function useChatSession({
     // version value as before).
     setHydrationTick((t) => t + 1);
     pendingHydration.resolve?.();
-  }, [baseSetMessages, chatSessionId, syncResumedVersion]);
+  }, [baseSetMessages, chatSessionId, syncResumedVersion, syncRestoredToolRenderOverrides]);
 
   // Wrapped sendMessage that accepts FileUIPart[]
   const sendMessage = useCallback(
@@ -1107,8 +1141,9 @@ export function useChatSession({
     setChatSessionId(generateId());
     setMessages([]);
     syncResumedVersion(null);
+    syncRestoredToolRenderOverrides({});
     onResetRef.current?.();
-  }, [clearPendingSessionHydration, setMessages, syncResumedVersion]);
+  }, [clearPendingSessionHydration, setMessages, syncResumedVersion, syncRestoredToolRenderOverrides]);
 
   const startChatWithMessages = useCallback(
     (messages: UIMessage[]) => {
@@ -1135,6 +1170,18 @@ export function useChatSession({
         draftInput?: string;
       };
       version: number;
+      widgetSnapshots?: Array<{
+        toolCallId: string;
+        toolName: string;
+        serverId: string;
+        uiType: "mcp-apps" | "openai-apps";
+        resourceUri?: string;
+        widgetCsp: Record<string, unknown> | null;
+        widgetPermissions: Record<string, unknown> | null;
+        widgetPermissive: boolean;
+        prefersBorder: boolean;
+        widgetHtmlUrl?: string | null;
+      }>;
     }) => {
       let uiMessages: UIMessage[] = [];
 
@@ -1147,6 +1194,15 @@ export function useChatSession({
         }
         const transcript = await response.json();
         uiMessages = transcriptToUIMessages(transcript);
+      }
+
+      // Build toolRenderOverrides from widget snapshots if available
+      let overrides: Record<string, ToolRenderOverride> = {};
+      if (session.widgetSnapshots && session.widgetSnapshots.length > 0) {
+        const traceSnapshots = snapshotsToTraceWidgetSnapshots(
+          session.widgetSnapshots,
+        );
+        overrides = buildToolRenderOverridesFromSnapshots(traceSnapshots);
       }
 
       if (session.resumeConfig?.systemPrompt !== undefined) {
@@ -1164,6 +1220,7 @@ export function useChatSession({
         sessionId: session.chatSessionId,
         messages: uiMessages,
         resumedVersion: session.version,
+        toolRenderOverrides: overrides,
       });
       onResetRef.current?.();
     },
@@ -1239,6 +1296,7 @@ export function useChatSession({
         setChatSessionId(generateId());
         setMessages([]);
         syncResumedVersion(null);
+        syncRestoredToolRenderOverrides({});
         onResetRef.current?.();
         setIsSessionBootstrapComplete(true);
       }
@@ -1255,6 +1313,7 @@ export function useChatSession({
     clearPendingSessionHydration,
     setMessages,
     syncResumedVersion,
+    syncRestoredToolRenderOverrides,
   ]);
 
   // Ollama model detection
@@ -1535,6 +1594,9 @@ export function useChatSession({
 
     // Resumed thread version
     resumedVersion,
+
+    // Restored widget render overrides
+    restoredToolRenderOverrides,
 
     // Live trace state
     liveTraceEnvelope,

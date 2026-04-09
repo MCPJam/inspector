@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Pin, MoreVertical, Circle } from "lucide-react";
+import { Pin, MoreVertical, Circle, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,7 +8,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
+import { getModelById } from "@/shared/types";
+import { getInitials } from "@/lib/utils";
+import type { WorkspaceThreadOwnerAvatar } from "./workspace-thread-owner-avatar";
+
+function formatChatHistoryModelLabel(session: ChatHistorySession): string | null {
+  const raw = session.modelId?.trim();
+  if (!raw) return null;
+  return getModelById(raw)?.name ?? raw;
+}
 
 function formatRelativeTime(timestamp: number): string {
   const now = Date.now();
@@ -50,6 +65,8 @@ interface ChatHistoryRowProps {
       | "mark-unread";
     session: ChatHistorySession;
   }) => void | Promise<void>;
+  /** Workspace list only: avatar for another member's shared thread. */
+  workspaceThreadOwner?: WorkspaceThreadOwnerAvatar;
   actions: {
     rename: (sessionId: string, customTitle: string) => Promise<void>;
     archive: (sessionId: string) => Promise<void>;
@@ -70,6 +87,7 @@ export function ChatHistoryRow({
   isStreaming,
   onSelect,
   onActionComplete,
+  workspaceThreadOwner,
   actions,
 }: ChatHistoryRowProps) {
   const [relativeTime, setRelativeTime] = useState(
@@ -98,6 +116,51 @@ export function ChatHistoryRow({
     session.customTitle ||
     session.firstMessagePreview.slice(0, 60) ||
     "Untitled chat";
+
+  const modelLabel = formatChatHistoryModelLabel(session);
+
+  const ownerAvatarTooltip =
+    workspaceThreadOwner?.status === "show"
+      ? workspaceThreadOwner.displayName
+      : workspaceThreadOwner?.status === "generic"
+        ? "Workspace member"
+        : null;
+
+  const ownerAvatar =
+    workspaceThreadOwner != null ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div
+            className="shrink-0 pt-0.5"
+            data-testid="chat-history-owner-avatar"
+          >
+            <Avatar className="size-5 border border-border/60">
+              {workspaceThreadOwner.status === "show" ? (
+                <>
+                  <AvatarImage
+                    src={workspaceThreadOwner.imageUrl}
+                    alt={workspaceThreadOwner.displayName}
+                  />
+                  <AvatarFallback className="text-[9px]">
+                    {getInitials(workspaceThreadOwner.displayName)}
+                  </AvatarFallback>
+                </>
+              ) : (
+                <AvatarFallback className="bg-muted">
+                  <User
+                    className="size-2.5 text-muted-foreground"
+                    aria-hidden
+                  />
+                </AvatarFallback>
+              )}
+            </Avatar>
+          </div>
+        </TooltipTrigger>
+        {ownerAvatarTooltip ? (
+          <TooltipContent side="right">{ownerAvatarTooltip}</TooltipContent>
+        ) : null}
+      </Tooltip>
+    ) : null;
 
   const handleRenameSubmit = async () => {
     const trimmed = renameValue.trim();
@@ -149,21 +212,31 @@ export function ChatHistoryRow({
 
   return (
     <div
-        className={`group relative flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
+        className={`group relative flex items-start gap-1.5 rounded-md px-2 py-1.5 text-xs cursor-pointer transition-colors has-[[data-slot=dropdown-menu-trigger][data-state=open]]:[&_.chat-history-time]:opacity-0 has-[[data-slot=dropdown-menu-trigger]:focus-visible]:[&_.chat-history-time]:opacity-0 ${
           isActive ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"
         } ${isStreaming ? "opacity-50 cursor-not-allowed" : ""}`}
         onClick={handleClick}
       >
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1">
+        {ownerAvatar}
+        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <div className="flex min-w-0 items-center gap-1">
             {session.isUnread && (
               <Circle className="h-1.5 w-1.5 fill-primary text-primary shrink-0" />
             )}
-            <span className="font-medium truncate">{title}</span>
+            <span className="truncate font-medium">{title}</span>
           </div>
+          {modelLabel ? (
+            <div
+              className="truncate text-[10px] text-muted-foreground"
+              data-testid="chat-history-model"
+              title={modelLabel}
+            >
+              {modelLabel}
+            </div>
+          ) : null}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-1 pt-0.5">
           {session.isPinned && (
             <Pin className="h-3 w-3 text-muted-foreground" />
           )}

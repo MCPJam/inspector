@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Archive, Loader2, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,6 +10,11 @@ import {
 import { ChatHistoryRow } from "./ChatHistoryRow";
 import { useChatHistory } from "./use-chat-history";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
+import { useWorkspaceMembers } from "@/hooks/useWorkspaces";
+import {
+  buildWorkspaceOwnerProfileByUserId,
+  resolveWorkspaceThreadOwnerAvatar,
+} from "./workspace-thread-owner-avatar";
 
 /** Delays (ms) after a turn completes to re-fetch list while backend ingestion may still be running. */
 const HISTORY_REFETCH_RETRY_DELAYS_MS = [250, 800, 2000] as const;
@@ -64,6 +69,15 @@ export function ChatHistoryRail({
       enabled,
       requestHeaders,
     });
+
+  const { activeMembers } = useWorkspaceMembers({
+    isAuthenticated,
+    workspaceId: workspaceId ?? null,
+  });
+  const ownerProfileByUserId = useMemo(
+    () => buildWorkspaceOwnerProfileByUserId(activeMembers),
+    [activeMembers],
+  );
 
   const wasStreamingRef = useRef(isStreaming);
   const didMountRefreshRef = useRef(false);
@@ -253,6 +267,10 @@ export function ChatHistoryRail({
                   isStreaming={isStreaming}
                   onSelect={onSelectThread}
                   onActionComplete={onSessionAction}
+                  workspaceThreadOwner={resolveWorkspaceThreadOwnerAvatar(
+                    session,
+                    ownerProfileByUserId,
+                  )}
                   actions={actions}
                 />
               ))}

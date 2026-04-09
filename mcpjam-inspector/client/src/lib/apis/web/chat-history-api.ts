@@ -45,9 +45,25 @@ export interface ChatHistoryDetailSession extends ChatHistorySession {
   resumeConfig?: ResumeConfig;
 }
 
+export interface ChatHistoryWidgetSnapshot {
+  _id: string;
+  sessionId: string;
+  toolCallId: string;
+  toolName: string;
+  serverId: string;
+  uiType: "mcp-apps" | "openai-apps";
+  resourceUri?: string;
+  widgetCsp: Record<string, unknown> | null;
+  widgetPermissions: Record<string, unknown> | null;
+  widgetPermissive: boolean;
+  prefersBorder: boolean;
+  widgetHtmlUrl?: string | null;
+}
+
 export interface ChatHistoryDetailResponse {
   ok: boolean;
   session: ChatHistoryDetailSession;
+  widgetSnapshots?: ChatHistoryWidgetSnapshot[];
 }
 
 export interface UpsertChatHistoryDraftRequest {

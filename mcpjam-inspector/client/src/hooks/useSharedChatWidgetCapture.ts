@@ -237,11 +237,7 @@ export function useSharedChatWidgetCapture({
   uploadAttemptRef.current = async (toolCallId: string) => {
     const shareToken = shareTokenRef.current;
     const sandboxToken = sandboxTokenRef.current;
-    if (
-      !enabled ||
-      (!shareToken && !sandboxToken) ||
-      inFlightRef.current.has(toolCallId)
-    ) {
+    if (!enabled || inFlightRef.current.has(toolCallId)) {
       return;
     }
 
@@ -251,7 +247,8 @@ export function useSharedChatWidgetCapture({
     if (!widget?.widgetHtml || !toolSource) {
       return;
     }
-    if (sandboxToken && !toolSource.serverId) {
+    // serverId is required by the snapshot schema for all modes
+    if (!toolSource.serverId) {
       return;
     }
 
@@ -269,6 +266,9 @@ export function useSharedChatWidgetCapture({
       const uploadUrl = await generateSnapshotUploadUrl({
         ...(shareToken ? { shareToken } : {}),
         ...(sandboxToken ? { sandboxToken } : {}),
+        ...(!shareToken && !sandboxToken
+          ? { chatSessionId: sessionIdRef.current }
+          : {}),
       });
       const response = await fetch(uploadUrl, {
         method: "POST",
@@ -377,7 +377,7 @@ export function useSharedChatWidgetCapture({
   };
 
   useEffect(() => {
-    if (!enabled || (!hostedShareToken && !hostedSandboxToken)) {
+    if (!enabled) {
       return;
     }
 

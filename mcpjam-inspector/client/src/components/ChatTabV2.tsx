@@ -3,6 +3,7 @@ import {
   useMemo,
   useState,
   useEffect,
+  useLayoutEffect,
   useCallback,
   useRef,
 } from "react";
@@ -45,6 +46,7 @@ import {
   buildSkillToolMessages,
   DEFAULT_CHAT_COMPOSER_PLACEHOLDER,
   MINIMAL_CHAT_COMPOSER_PLACEHOLDER,
+  cloneUiMessages,
 } from "@/components/chat-v2/shared/chat-helpers";
 import { MultiModelEmptyTraceDiagnosticsPanel } from "@/components/chat-v2/multi-model-empty-trace-diagnostics";
 import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-starters-empty";
@@ -63,6 +65,7 @@ import {
   upsertChatHistoryDraft,
   type ChatHistoryDetailSession,
   type ChatHistorySession,
+  type ChatHistoryWidgetSnapshot,
 } from "@/lib/apis/web/chat-history-api";
 import { useWorkspaceServers } from "@/hooks/useViews";
 import { HOSTED_MODE } from "@/lib/config";
@@ -221,6 +224,18 @@ export function ChatTabV2({
   const [multiModelHasMessages, setMultiModelHasMessages] = useState<
     Record<string, boolean>
   >({});
+  const [multiCompareEnterVersion, setMultiCompareEnterVersion] = useState(0);
+  const [multiCompareEnterMessages, setMultiCompareEnterMessages] = useState<
+    UIMessage[]
+  >([]);
+  const [multiAddColumnSeeds, setMultiAddColumnSeeds] = useState<
+    Record<string, { version: number; messages: UIMessage[] }>
+  >({});
+  const multiTranscriptsRef = useRef<Record<string, UIMessage[]>>({});
+  const prevCompareModeRef = useRef(false);
+  const lastMultiLeadIdRef = useRef<string | null>(null);
+  const prevCompareModelIdsRef = useRef<Set<string>>(new Set());
+  const multiAddColumnSeqRef = useRef(0);
   const [activeHistorySessionId, setActiveHistorySessionId] = useState<
     string | null
   >(null);
@@ -305,6 +320,7 @@ export function ChatTabV2({
     loadChatSession,
     syncResumedVersion,
     resumedVersion,
+    restoredToolRenderOverrides,
     liveTraceEnvelope,
     hasTraceSnapshot,
     hasLiveTimelineContent,
@@ -343,6 +359,16 @@ export function ChatTabV2({
   // Chat history handlers
   const showHistoryRail =
     HOSTED_MODE && !minimalMode && !hostedShareToken && !hostedSandboxToken;
+  const [isHistorySidebarVisible, setIsHistorySidebarVisible] = useState(true);
+
+  useEffect(() => {
+    if (!showHistoryRail) {
+      setIsHistorySidebarVisible(true);
+    }
+  }, [showHistoryRail]);
+
+  const historyRailTakesLayoutSpace =
+    showHistoryRail && isHistorySidebarVisible;
   const hasConversationMessages = messages.some(
     (msg) => msg.role === "user" || msg.role === "assistant",
   );
@@ -389,7 +415,10 @@ export function ChatTabV2({
   }, []);
 
   const loadHistorySession = useCallback(
-    async (detail: ChatHistoryDetailSession) => {
+    async (
+      detail: ChatHistoryDetailSession,
+      widgetSnapshots?: ChatHistoryWidgetSnapshot[],
+    ) => {
       if (detail.modelId) {
         const matchingModel = availableModels.find(
           (model) => String(model.id) === detail.modelId,
@@ -404,6 +433,7 @@ export function ChatTabV2({
         messagesBlobUrl: detail.messagesBlobUrl,
         resumeConfig: detail.resumeConfig,
         version: detail.version,
+        widgetSnapshots,
       });
       setInput(
         detail.resumeConfig?.draftInput ??
@@ -624,7 +654,7 @@ export function ChatTabV2({
           detail.session.resumeConfig?.selectedServers,
         );
 
-        await loadHistorySession(detail.session);
+        await loadHistorySession(detail.session, detail.widgetSnapshots);
 
         if (
           historySelectionRequestIdRef.current !== selectionRequestId ||
@@ -832,6 +862,85 @@ export function ChatTabV2({
   // The user can still toggle multi-model for new chats afterward.
   const isMultiModelMode =
     canEnableMultiModel && multiModelEnabled && !activeHistorySessionId;
+
+  useEffect(() => {
+    if (isMultiModelMode && resolvedSelectedModels[0]) {
+      lastMultiLeadIdRef.current = String(resolvedSelectedModels[0].id);
+    }
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
+  const handleMultiModelTranscriptSync = useCallback(
+    (modelId: string, transcript: UIMessage[]) => {
+      multiTranscriptsRef.current[modelId] = cloneUiMessages(transcript);
+    },
+    [],
+  );
+
+  const clearMultiModelUiState = useCallback(() => {
+    setBroadcastRequest(null);
+    setStopBroadcastRequestId(0);
+    setMultiModelSummaries({});
+    setMultiModelHasMessages({});
+    setMultiAddColumnSeeds({});
+    prevCompareModelIdsRef.current = new Set();
+  }, []);
+
+  useLayoutEffect(() => {
+    const prev = prevCompareModeRef.current;
+    if (prev && !isMultiModelMode) {
+      const leadId = lastMultiLeadIdRef.current;
+      if (leadId) {
+        const transcript = multiTranscriptsRef.current[leadId];
+        const hasConversation =
+          transcript?.some(
+            (m) => m.role === "user" || m.role === "assistant",
+          ) ?? false;
+        if (hasConversation && transcript) {
+          startChatWithMessages(cloneUiMessages(transcript));
+        }
+      }
+      clearMultiModelUiState();
+    }
+    if (!prev && isMultiModelMode) {
+      setMultiCompareEnterVersion((v) => v + 1);
+      setMultiCompareEnterMessages(cloneUiMessages(messages));
+    }
+    prevCompareModeRef.current = isMultiModelMode;
+  }, [
+    isMultiModelMode,
+    messages,
+    startChatWithMessages,
+    clearMultiModelUiState,
+  ]);
+
+  useEffect(() => {
+    if (!isMultiModelMode) {
+      prevCompareModelIdsRef.current = new Set();
+      return;
+    }
+    const current = new Set(
+      resolvedSelectedModels.map((m) => String(m.id)),
+    );
+    const prev = prevCompareModelIdsRef.current;
+    const added = [...current].filter((id) => !prev.has(id));
+    const leadId = resolvedSelectedModels[0]
+      ? String(resolvedSelectedModels[0].id)
+      : null;
+    if (prev.size > 0 && added.length > 0 && leadId) {
+      const src = multiTranscriptsRef.current[leadId] ?? [];
+      multiAddColumnSeqRef.current += 1;
+      const v = multiAddColumnSeqRef.current;
+      setMultiAddColumnSeeds((s) => {
+        const next = { ...s };
+        for (const id of added) {
+          next[id] = { version: v, messages: cloneUiMessages(src) };
+        }
+        return next;
+      });
+    }
+    prevCompareModelIdsRef.current = current;
+  }, [isMultiModelMode, resolvedSelectedModels]);
+
   const effectiveHasMessages = isMultiModelMode
     ? Object.values(multiModelHasMessages).some(Boolean)
     : !isThreadEmpty;
@@ -1249,12 +1358,9 @@ export function ChatTabV2({
       showLiveTraceDiagnostics,
   });
   const resetMultiModelSessions = useCallback(() => {
-    setBroadcastRequest(null);
-    setStopBroadcastRequestId(0);
+    clearMultiModelUiState();
     setMultiModelSessionGeneration((previous) => previous + 1);
-    setMultiModelSummaries({});
-    setMultiModelHasMessages({});
-  }, []);
+  }, [clearMultiModelUiState]);
 
   const handleResetAllChats = useCallback(() => {
     baseResetChat();
@@ -1266,14 +1372,8 @@ export function ChatTabV2({
       setSelectedModel(model);
       setSelectedModelIds([String(model.id)]);
       setMultiModelEnabled(false);
-      handleResetAllChats();
     },
-    [
-      handleResetAllChats,
-      setMultiModelEnabled,
-      setSelectedModel,
-      setSelectedModelIds,
-    ],
+    [setMultiModelEnabled, setSelectedModel, setSelectedModelIds],
   );
 
   const handleSelectedModelsChange = useCallback(
@@ -1289,9 +1389,8 @@ export function ChatTabV2({
           String(selectedModelItem.id),
         ),
       );
-      handleResetAllChats();
     },
-    [handleResetAllChats, selectedModel, setSelectedModel, setSelectedModelIds],
+    [selectedModel, setSelectedModel, setSelectedModelIds],
   );
 
   const handleMultiModelEnabledChange = useCallback(
@@ -1584,13 +1683,17 @@ export function ChatTabV2({
         direction="horizontal"
         className="flex-1 min-h-0 h-full"
       >
-        {showHistoryRail && (
+        {showHistoryRail && isHistorySidebarVisible ? (
           <>
             <ResizablePanel
+              id="chat-history-rail"
+              order={1}
               defaultSize={22}
               minSize={15}
               maxSize={35}
               collapsible
+              collapsedSize={0}
+              onCollapse={() => setIsHistorySidebarVisible(false)}
               className="min-h-0 min-w-0 overflow-hidden"
             >
               <ChatHistoryRail
@@ -1607,12 +1710,20 @@ export function ChatTabV2({
                 onSessionAction={handleHistorySessionAction}
               />
             </ResizablePanel>
-            <ResizableHandle />
+            <ResizableHandle withHandle />
           </>
-        )}
+        ) : showHistoryRail ? (
+          <CollapsedPanelStrip
+            side="left"
+            onOpen={() => setIsHistorySidebarVisible(true)}
+            tooltipText="Show threads"
+          />
+        ) : null}
         <ResizablePanel
+          id="chat-main"
+          order={2}
           defaultSize={
-            showHistoryRail
+            historyRailTakesLayoutSpace
               ? isJsonRpcPanelVisible
                 ? 48
                 : 78
@@ -1824,6 +1935,12 @@ export function ChatTabV2({
                           showComparisonChrome={
                             resolvedSelectedModels.length > 1
                           }
+                          compareEnterVersion={multiCompareEnterVersion}
+                          compareEnterMessages={multiCompareEnterMessages}
+                          addColumnSeed={
+                            multiAddColumnSeeds[String(model.id)] ?? null
+                          }
+                          onTranscriptSync={handleMultiModelTranscriptSync}
                         />
                       ))}
                     </div>
@@ -1999,6 +2116,7 @@ export function ChatTabV2({
                           fullscreenChatPlaceholder={placeholder}
                           fullscreenChatDisabled={inputDisabled}
                           onToolApprovalResponse={addToolApprovalResponse}
+                          toolRenderOverrides={restoredToolRenderOverrides}
                           minimalMode={minimalMode}
                           loadingIndicatorVariant={loadingIndicatorVariant}
                           reasoningDisplayMode={reasoningDisplayMode}
@@ -2146,6 +2264,8 @@ export function ChatTabV2({
           <>
             <ResizableHandle withHandle />
             <ResizablePanel
+              id="chat-json-rpc-logger"
+              order={3}
               defaultSize={30}
               minSize={4}
               maxSize={50}

@@ -178,4 +178,32 @@ chatHistory.post("/action", async (c) =>
   }),
 );
 
+// POST /chat-history/widget-snapshot/generate-upload-url
+// Body: { chatSessionId: string }
+chatHistory.post("/widget-snapshot/generate-upload-url", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    return await proxyPost(
+      bearerToken,
+      "/direct-chat/widget-snapshot/generate-upload-url",
+      body,
+    );
+  }),
+);
+
+// POST /chat-history/widget-snapshot/create
+// Body: { chatSessionId, toolCallId, toolName, serverId, widgetHtmlBlobId, ... }
+chatHistory.post("/widget-snapshot/create", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    return await proxyPost(
+      bearerToken,
+      "/direct-chat/widget-snapshot/create",
+      body,
+    );
+  }),
+);
+
 export default chatHistory;
