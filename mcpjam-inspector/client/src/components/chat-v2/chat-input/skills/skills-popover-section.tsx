@@ -9,6 +9,7 @@ import { useEffect, useState, useCallback } from "react";
 import { listSkills, getSkill } from "@/lib/apis/mcp-skills-api";
 import type { SkillListItem, SkillResult } from "./skill-types";
 import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 
 interface SkillsPopoverSectionProps {
   onSkillSelected: (skillResult: SkillResult) => void;
@@ -62,7 +63,10 @@ export function SkillsPopoverSection({
       try {
         setLoadingSkillName(skill.name);
         const fullSkill = await getSkill(skill.name);
-        posthog.capture("skill_injected", { skill_name: skill.name });
+        posthog.capture("skill_injected", {
+          skill_name: skill.name,
+          ...standardEventProps("chat_input_skills_popover"),
+        });
         onSkillSelected(fullSkill);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

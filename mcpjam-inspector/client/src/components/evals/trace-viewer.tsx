@@ -6,7 +6,6 @@ import {
   useEffect,
   type ReactNode,
 } from "react";
-import { usePostHog } from "posthog-js/react";
 import type { ContentBlock } from "@modelcontextprotocol/sdk/types.js";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -184,7 +183,6 @@ export function TraceViewer({
   rawRequestPayloadHistory = null,
   rawGrowWithContent = false,
 }: TraceViewerProps) {
-  const posthog = usePostHog();
   const [viewMode, setViewMode] = useState<
     "timeline" | "chat" | "raw" | "tools"
   >("timeline");
@@ -214,14 +212,6 @@ export function TraceViewer({
   const hasEvalToolCalls =
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const effectiveViewMode = forcedViewMode ?? viewMode;
-  const shouldCaptureRawPayloadOpened =
-    trace != null &&
-    effectiveViewMode === "raw" &&
-    rawRequestPayloadHistory != null;
-  useEffect(() => {
-    if (!shouldCaptureRawPayloadOpened) return;
-    posthog?.capture("xray_opened");
-  }, [shouldCaptureRawPayloadOpened, posthog]);
   const recordedSpans = useMemo(() => getRecordedSpans(trace), [trace]);
   const promptGroups = useMemo(
     () => (recordedSpans?.length ? buildPromptGroups(recordedSpans) : []),
