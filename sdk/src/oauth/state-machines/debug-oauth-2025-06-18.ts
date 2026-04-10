@@ -446,6 +446,7 @@ export const createDebugOAuthStateMachine = (
             // Step 1: Make initial MCP request without token
             const initialRequestHeaders = mergeHeaders(customHeaders, {
               "Content-Type": "application/json",
+              Accept: "application/json, text/event-stream",
             });
 
             const initialRequest = {
@@ -501,6 +502,7 @@ export const createDebugOAuthStateMachine = (
                 method: "POST",
                 headers: mergeHeaders(customHeaders, {
                   "Content-Type": "application/json",
+                  Accept: "application/json, text/event-stream",
                 }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
@@ -1777,6 +1779,7 @@ export const createDebugOAuthStateMachine = (
               headers: {
                 Authorization: `Bearer ${state.accessToken}`,
                 "Content-Type": "application/json",
+                Accept: "application/json, text/event-stream",
                 "MCP-Protocol-Version": "2025-06-18",
               },
               body: {
@@ -1841,6 +1844,7 @@ export const createDebugOAuthStateMachine = (
                 headers: mergeHeaders(customHeaders, {
                   Authorization: `Bearer ${state.accessToken}`,
                   "Content-Type": "application/json",
+                  Accept: "application/json, text/event-stream",
                 }),
                 body: JSON.stringify({
                   jsonrpc: "2.0",
