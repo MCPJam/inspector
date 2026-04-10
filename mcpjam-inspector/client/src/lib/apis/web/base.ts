@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/session-token";
+import { ingestHostedRpcLogsFromPayload, stripHostedRpcLogs } from "./rpc-logs";
 
 export class WebApiError extends Error {
   code: string | null;
@@ -14,12 +15,12 @@ export class WebApiError extends Error {
 
 export async function webPost<TRequest, TResponse>(
   path: string,
-  payload: TRequest,
+  requestBody: TRequest,
 ): Promise<TResponse> {
   const response = await authFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(requestBody),
   });
 
   let body: any = null;
@@ -29,21 +30,24 @@ export async function webPost<TRequest, TResponse>(
     // ignored
   }
 
+  const { payload: sanitizedPayload } = stripHostedRpcLogs(body);
+  ingestHostedRpcLogsFromPayload(body);
+
   if (!response.ok) {
     const code =
-      typeof body?.code === "string"
-        ? body.code
-        : typeof body?.error === "string"
-          ? body.error
+      typeof (sanitizedPayload as any)?.code === "string"
+        ? (sanitizedPayload as any).code
+        : typeof (sanitizedPayload as any)?.error === "string"
+          ? (sanitizedPayload as any).error
           : null;
     const message =
-      typeof body?.message === "string"
-        ? body.message
-        : typeof body?.error === "string"
-          ? body.error
+      typeof (sanitizedPayload as any)?.message === "string"
+        ? (sanitizedPayload as any).message
+        : typeof (sanitizedPayload as any)?.error === "string"
+          ? (sanitizedPayload as any).error
           : `Request failed (${response.status})`;
     throw new WebApiError(response.status, code, message);
   }
 
-  return body as TResponse;
+  return sanitizedPayload as TResponse;
 }

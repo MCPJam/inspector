@@ -83,6 +83,9 @@ export interface MCPJamHandlerOptions {
     fullHistory: ModelMessage[],
   ) => Promise<void> | void;
   onStreamComplete?: () => Promise<void> | void;
+  onStreamWriterReady?: (writer: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => void;
 }
 
 interface StepContext {
@@ -1237,6 +1240,7 @@ export async function handleMCPJamFreeChatModel(
     requireToolApproval,
     onConversationComplete,
     onStreamComplete,
+    onStreamWriterReady,
   } = options;
 
   const toolDefs = serializeToolsForConvex(tools);
@@ -1261,6 +1265,8 @@ export async function handleMCPJamFreeChatModel(
       let finishEmitted = false;
 
       try {
+        onStreamWriterReady?.(writer);
+
         writeTraceEvent(writer, {
           type: "turn_start",
           turnId: traceTurn.turnId,

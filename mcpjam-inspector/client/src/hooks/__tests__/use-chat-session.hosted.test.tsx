@@ -1,6 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useChatSession } from "../use-chat-session";
+import { useTrafficLogStore } from "@/stores/traffic-log-store";
 
 const mockState = vi.hoisted(() => ({
   sendMessage: vi.fn(),
@@ -19,6 +20,7 @@ const mockState = vi.hoisted(() => ({
   getCustomProviderByName: vi.fn(),
   setSelectedModelId: vi.fn(),
   useSharedChatWidgetCapture: vi.fn(),
+  latestOnData: undefined as ((part: unknown) => void) | undefined,
   convexAuth: {
     isAuthenticated: true,
     isLoading: false,
@@ -139,6 +141,7 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 vi.mock("@/lib/session-token", () => ({
   authFetch: (...args: unknown[]) => mockState.authFetch(...args),
   getAuthHeaders: vi.fn(() => ({})),
+  addTokenToUrl: vi.fn((url: string) => url),
 }));
 
 vi.mock("@/lib/guest-session", () => ({
@@ -167,14 +170,17 @@ vi.mock("@ai-sdk/react", async () => {
       ({
         id,
         transport,
+        onData,
       }: {
         id: string;
         transport: {
           sendMessages: (options: any) => Promise<unknown>;
         };
+        onData?: (part: unknown) => void;
       }) => {
         const latchedIdRef = React.useRef(id);
         const latchedTransportRef = React.useRef(transport);
+        mockState.latestOnData = onData;
 
         if (latchedIdRef.current !== id) {
           latchedIdRef.current = id;
@@ -258,6 +264,8 @@ describe("useChatSession hosted mode", () => {
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
     mockState.selectedModelId = "anthropic/claude-haiku-4.5";
+    mockState.latestOnData = undefined;
+    useTrafficLogStore.getState().clear();
   });
 
   it("includes chatSessionId in the hosted transport body", async () => {
@@ -276,6 +284,7 @@ describe("useChatSession hosted mode", () => {
       workspaceId: "workspace-1",
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
+      selectedServerNames: ["server-1"],
       shareToken: "share-token",
       accessScope: "chat_v2",
     });
@@ -298,6 +307,7 @@ describe("useChatSession hosted mode", () => {
       workspaceId: "workspace-1",
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
+      selectedServerNames: ["server-1"],
       sandboxToken: "sandbox-token",
       accessScope: "chat_v2",
     });
@@ -352,6 +362,7 @@ describe("useChatSession hosted mode", () => {
   it("includes the selected direct-guest server in hosted chat bodies", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.buildHostedServerRequest.mockReturnValue({
+      serverName: "Excalidraw (App)",
       serverUrl: "https://mcp.excalidraw.com/mcp",
       serverHeaders: { "X-Api-Key": "guest-key" },
       oauthAccessToken: "guest-oauth-token",
@@ -372,6 +383,7 @@ describe("useChatSession hosted mode", () => {
     );
     expect(body).toMatchObject({
       chatSessionId: "chat-session-id",
+      serverName: "Excalidraw (App)",
       serverUrl: "https://mcp.excalidraw.com/mcp",
       serverHeaders: { "X-Api-Key": "guest-key" },
       oauthAccessToken: "guest-oauth-token",
@@ -469,11 +481,13 @@ describe("useChatSession hosted mode", () => {
       (serverName: string) =>
         serverName === "Excalidraw (App)"
           ? {
+              serverName: "Excalidraw (App)",
               serverUrl: "https://mcp.excalidraw.com/mcp",
               serverHeaders: { "X-Api-Key": "guest-key-1" },
               oauthAccessToken: "guest-oauth-token-1",
             }
           : {
+              serverName: "Learn (App)",
               serverUrl: "https://mcp.learn.com/mcp",
               serverHeaders: { "X-Api-Key": "guest-key-2" },
               oauthAccessToken: "guest-oauth-token-2",
@@ -519,6 +533,7 @@ describe("useChatSession hosted mode", () => {
       ),
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
+      serverName: "Excalidraw (App)",
       serverUrl: "https://mcp.excalidraw.com/mcp",
       serverHeaders: { "X-Api-Key": "guest-key-1" },
       oauthAccessToken: "guest-oauth-token-1",
@@ -550,6 +565,7 @@ describe("useChatSession hosted mode", () => {
       ),
     ).toMatchObject({
       chatSessionId: initialChatSessionId,
+      serverName: "Learn (App)",
       serverUrl: "https://mcp.learn.com/mcp",
       serverHeaders: { "X-Api-Key": "guest-key-2" },
       oauthAccessToken: "guest-oauth-token-2",
@@ -574,6 +590,100 @@ describe("useChatSession hosted mode", () => {
     });
     expect(body.serverUrl).toBeUndefined();
     unmount();
+  });
+
+  it("ingests hosted rpc logs from chat error responses", async () => {
+    mockState.authFetch.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          code: "INTERNAL_ERROR",
+          message: "chat failed",
+          _rpcLogs: [
+            {
+              serverId: "server-id-1",
+              serverName: "server-1",
+              direction: "send",
+              timestamp: "2026-04-10T12:00:00.000Z",
+              message: {
+                jsonrpc: "2.0",
+                id: 1,
+                method: "tools/list",
+              },
+            },
+          ],
+        }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    act(() => {
+      result.current.sendMessage({ text: "hello" });
+    });
+
+    await waitFor(() => {
+      expect(useTrafficLogStore.getState().mcpServerItems).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            serverId: "server-id-1",
+            serverName: "server-1",
+            method: "tools/list",
+          }),
+        ]),
+      );
+    });
+  });
+
+  it("ingests hosted rpc log data parts from the chat stream", async () => {
+    renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+      }),
+    );
+
+    act(() => {
+      mockState.latestOnData?.({
+        type: "data-rpc-log",
+        data: {
+          serverId: "server-id-1",
+          serverName: "server-1",
+          direction: "receive",
+          timestamp: "2026-04-10T12:00:00.000Z",
+          message: {
+            jsonrpc: "2.0",
+            id: 1,
+            result: { tools: [] },
+          },
+        },
+      });
+    });
+
+    expect(useTrafficLogStore.getState().mcpServerItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          serverId: "server-id-1",
+          serverName: "server-1",
+          direction: "RECEIVE",
+          method: "result",
+        }),
+      ]),
+    );
   });
 
   it("keeps only the three premium hosted models disabled for anonymous hosted viewers", async () => {

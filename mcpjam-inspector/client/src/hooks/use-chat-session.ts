@@ -71,6 +71,7 @@ import {
 } from "@/components/evals/trace-viewer-adapter";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { buildHostedServerRequest } from "@/lib/apis/web/context";
+import { ingestHostedRpcLogs } from "@/stores/traffic-log-store";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
   getTraceSpansDurationMs,
@@ -87,6 +88,8 @@ import {
   buildLiveChatPreviewSpans,
   pickTranscriptForLiveTracePreview,
 } from "@/shared/live-chat-trace-preview";
+import { isHostedRpcLogDataPart } from "@/shared/hosted-rpc-log";
+import { ingestHostedRpcLogsFromResponse } from "@/lib/apis/web/rpc-logs";
 
 export interface UseChatSessionOptions {
   /** Server names to connect to */
@@ -820,8 +823,11 @@ export function useChatSession({
     liveTraceState.activeTurnHasSnapshot,
     liveTraceState.events,
   ]);
-  const handleTraceDataPart = useCallback((part: unknown) => {
+  const handleStreamDataPart = useCallback((part: unknown) => {
     if (!isTraceEventDataPart(part)) {
+      if (isHostedRpcLogDataPart(part)) {
+        ingestHostedRpcLogs([part.data]);
+      }
       return;
     }
 
@@ -957,6 +963,17 @@ export function useChatSession({
   }, [selectedModel]);
   const traceViewsSupported = HOSTED_MODE ? isMcpJamModel : true;
 
+  const hostedChatFetch = useCallback(
+    async (input: RequestInfo | URL, init?: RequestInit) => {
+      const response = await authFetch(input, init);
+      if (!response.ok) {
+        await ingestHostedRpcLogsFromResponse(response);
+      }
+      return response;
+    },
+    [],
+  );
+
   // Create transport
   const transport = useMemo(() => {
     let apiKey: string;
@@ -1009,6 +1026,7 @@ export function useChatSession({
         workspaceId: hostedWorkspaceId,
         chatSessionId,
         selectedServerIds: hostedSelectedServerIds,
+        selectedServerNames: selectedServers,
         accessScope: "chat_v2" as const,
         ...(isHostedDirectChat ? { directVisibility } : {}),
         ...(hostedShareToken ? { shareToken: hostedShareToken } : {}),
@@ -1024,7 +1042,7 @@ export function useChatSession({
 
     return new DefaultChatTransport({
       api: chatApi,
-      fetch: HOSTED_MODE ? authFetch : undefined,
+      fetch: HOSTED_MODE ? hostedChatFetch : undefined,
       body: () => ({
         model: selectedModel,
         ...(HOSTED_MODE ? {} : { apiKey }),
@@ -1067,6 +1085,7 @@ export function useChatSession({
     hostedShareToken,
     hostedSandboxToken,
     hostedSandboxSurface,
+    hostedChatFetch,
     // requireToolApproval read from ref at request time
   ]);
   // `@ai-sdk/react` only recreates its internal Chat when the chat id changes.
@@ -1096,7 +1115,7 @@ export function useChatSession({
   } = useChat({
     id: chatSessionId,
     transport: proxyTransport,
-    onData: handleTraceDataPart,
+    onData: handleStreamDataPart,
     sendAutomaticallyWhen: requireToolApproval
       ? lastAssistantMessageIsCompleteWithApprovalResponses
       : undefined,
