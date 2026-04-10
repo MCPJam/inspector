@@ -618,6 +618,11 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
     expect(within(runningCard).getByLabelText("Running")).toBeInTheDocument();
 
     finalModelDeferred.resolve();
+
+    await waitFor(() => {
+      expect(getMetricRunningSpinnerCount(runningCard)).toBe(0);
+      expect(within(runningCard).getByLabelText("Passed")).toBeInTheDocument();
+    });
   });
 
   it("removes the eval compare metric bar spinners after a running record completes", async () => {
