@@ -21,7 +21,6 @@ import {
 import { LiveTraceTimelineEmptyState } from "@/components/evals/live-trace-timeline-empty";
 import { TraceViewer } from "@/components/evals/trace-viewer";
 import { useChatSession } from "@/hooks/use-chat-session";
-import { useDebouncedXRayPayload } from "@/hooks/use-debounced-x-ray-payload";
 import { createDeterministicToolMessages } from "@/components/ui-playground/playground-helpers";
 import {
   buildPreludeTraceEnvelope,
@@ -189,15 +188,14 @@ export function MultiModelPlaygroundCard({
     error,
     chatSessionId,
     toolsMetadata,
-    toolDefinitions,
     toolServerMap,
     liveTraceEnvelope,
+    requestPayloadHistory,
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
     addToolApprovalResponse,
-    systemPrompt,
     startChatWithMessages,
   } = useChatSession({
     selectedServers,
@@ -287,12 +285,6 @@ export function MultiModelPlaygroundCard({
     traceVersion: 1 as const,
     messages: [],
   };
-  const playgroundCardRawXRay = useDebouncedXRayPayload({
-    systemPrompt,
-    messages,
-    toolDefinitions,
-    toolServerMap,
-  });
   const latestTurn = effectiveLiveTraceEnvelope?.turns?.at(-1);
   const summary = useMemo<MultiModelCardSummary>(
     () => ({
@@ -621,12 +613,9 @@ export function MultiModelPlaygroundCard({
                   enableFullscreenChatOverlay
                   fullscreenChatPlaceholder="Message…"
                   onToolApprovalResponse={addToolApprovalResponse}
-                  rawXRayMirror={{
-                    payload: playgroundCardRawXRay.payload,
-                    loading: playgroundCardRawXRay.loading,
-                    error: playgroundCardRawXRay.error,
-                    refetch: playgroundCardRawXRay.refetch,
-                    hasUiMessages: playgroundCardRawXRay.hasMessages,
+                  rawRequestPayloadHistory={{
+                    entries: requestPayloadHistory,
+                    hasUiMessages: !isThreadEmpty,
                   }}
                 />
               ) : showLiveTracePending ? (
@@ -649,12 +638,9 @@ export function MultiModelPlaygroundCard({
                   hideToolbar
                   fillContent
                   onRevealNavigateToChat={navigateTraceRevealToChat}
-                  rawXRayMirror={{
-                    payload: playgroundCardRawXRay.payload,
-                    loading: playgroundCardRawXRay.loading,
-                    error: playgroundCardRawXRay.error,
-                    refetch: playgroundCardRawXRay.refetch,
-                    hasUiMessages: playgroundCardRawXRay.hasMessages,
+                  rawRequestPayloadHistory={{
+                    entries: requestPayloadHistory,
+                    hasUiMessages: !isThreadEmpty,
                   }}
                 />
               )}

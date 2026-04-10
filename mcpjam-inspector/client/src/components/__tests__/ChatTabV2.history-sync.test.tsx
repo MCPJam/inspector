@@ -103,10 +103,6 @@ vi.mock("@/hooks/useViews", () => ({
   }),
 }));
 
-vi.mock("@/hooks/use-debounced-x-ray-payload", () => ({
-  useDebouncedXRayPayload: () => null,
-}));
-
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
 }));
@@ -352,6 +348,7 @@ const mockUseChatSession = {
     },
   },
   liveTraceEnvelope: null,
+  requestPayloadHistory: [],
   hasTraceSnapshot: false,
   hasLiveTimelineContent: false,
   traceViewsSupported: false,

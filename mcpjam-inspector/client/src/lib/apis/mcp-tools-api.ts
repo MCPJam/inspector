@@ -176,18 +176,10 @@ export async function respondToElicitationApi(
   return body as ToolExecutionResponse;
 }
 
-export interface ToolDefinition {
-  name: string;
-  description?: string;
-  inputSchema?: Record<string, unknown>;
-}
-
 export interface ToolsMetadataAggregate {
   metadata: Record<string, Record<string, any>>;
   toolServerMap: ToolServerMap;
   tokenCounts: Record<string, number> | null;
-  /** Tool definitions keyed by tool name (name, description, inputSchema). */
-  toolDefinitions: Record<string, ToolDefinition>;
 }
 
 export function getToolServerId(
@@ -205,7 +197,6 @@ export async function getToolsMetadata(
     metadata: {},
     toolServerMap: {},
     tokenCounts: modelId ? {} : null,
-    toolDefinitions: {},
   };
 
   await Promise.all(
@@ -216,17 +207,6 @@ export async function getToolsMetadata(
       for (const [toolName, meta] of Object.entries(toolsMetadata)) {
         aggregate.metadata[toolName] = meta as Record<string, unknown>;
         aggregate.toolServerMap[toolName] = serverId;
-      }
-
-      // Capture tool definitions (name, description, inputSchema)
-      if (data.tools) {
-        for (const tool of data.tools) {
-          aggregate.toolDefinitions[tool.name] = {
-            name: tool.name,
-            description: tool.description,
-            inputSchema: tool.inputSchema as Record<string, unknown> | undefined,
-          };
-        }
       }
 
       // Collect token counts if modelId was provided

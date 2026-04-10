@@ -40,6 +40,7 @@ vi.mock("@/hooks/use-chat-session", () => ({
     toolsMetadata: {},
     toolServerMap: {},
     liveTraceEnvelope: null,
+    requestPayloadHistory: [],
     hasTraceSnapshot: false,
     hasLiveTimelineContent: false,
     traceViewsSupported: true,

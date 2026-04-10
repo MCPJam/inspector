@@ -48,7 +48,7 @@ import {
   detectOllamaToolCapableModels,
 } from "@/lib/ollama-utils";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
-import { getToolsMetadata, ToolServerMap, type ToolDefinition } from "@/lib/apis/mcp-tools-api";
+import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import {
   authFetch,
@@ -72,6 +72,7 @@ import {
   rebaseTraceSpans,
   type LiveChatTraceEnvelope,
   type LiveChatTraceEvent,
+  type LiveChatTraceRequestPayloadEntry,
   type LiveChatTraceToolCall,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
@@ -168,7 +169,6 @@ export interface UseChatSessionReturn {
 
   // Tools metadata
   toolsMetadata: Record<string, Record<string, unknown>>;
-  toolDefinitions: Record<string, ToolDefinition>;
   toolServerMap: ToolServerMap;
 
   // Token counts
@@ -235,6 +235,7 @@ export interface UseChatSessionReturn {
 
   // Live trace state
   liveTraceEnvelope: LiveChatTraceEnvelope | null;
+  requestPayloadHistory: LiveChatTraceRequestPayloadEntry[];
   hasTraceSnapshot: boolean;
   /** True when Timeline can show recorded and/or preview waterfall rows. */
   hasLiveTimelineContent: boolean;
@@ -262,6 +263,7 @@ interface LiveTraceAccumulatorState {
   turns: Record<string, LiveTraceTurnState>;
   messages: ModelMessage[];
   events: LiveChatTraceEvent[];
+  requestPayloadHistory: LiveChatTraceRequestPayloadEntry[];
   activeTurnId: string | null;
   activeTurnHasSnapshot: boolean;
   anySnapshotSeen: boolean;
@@ -287,6 +289,7 @@ function createEmptyLiveTraceState(): LiveTraceAccumulatorState {
     turns: {},
     messages: [],
     events: [],
+    requestPayloadHistory: [],
     activeTurnId: null,
     activeTurnHasSnapshot: false,
     anySnapshotSeen: false,
@@ -335,6 +338,24 @@ function dedupeTraceToolCalls(
   return deduped;
 }
 
+function upsertRequestPayloadEntry(
+  entries: LiveChatTraceRequestPayloadEntry[],
+  nextEntry: LiveChatTraceRequestPayloadEntry,
+): LiveChatTraceRequestPayloadEntry[] {
+  const existingIndex = entries.findIndex(
+    (entry) =>
+      entry.turnId === nextEntry.turnId && entry.stepIndex === nextEntry.stepIndex,
+  );
+
+  if (existingIndex < 0) {
+    return [...entries, nextEntry];
+  }
+
+  return entries.map((entry, index) =>
+    index === existingIndex ? nextEntry : entry,
+  );
+}
+
 function applyLiveTraceEvent(
   state: LiveTraceAccumulatorState,
   event: LiveChatTraceEvent,
@@ -381,6 +402,32 @@ function applyLiveTraceEvent(
         },
         activeTurnId: event.turnId,
         activeTurnHasSnapshot: false,
+      };
+    }
+    case "request_payload": {
+      const turnState = ensureTurnState(event.turnId, event.promptIndex);
+      const turnExists = baseState.turnOrder.includes(event.turnId);
+      return {
+        ...baseState,
+        turnOrder: turnExists
+          ? baseState.turnOrder
+          : [...baseState.turnOrder, event.turnId],
+        turns: {
+          ...baseState.turns,
+          [event.turnId]: {
+            ...turnState,
+            promptIndex: event.promptIndex,
+          },
+        },
+        requestPayloadHistory: upsertRequestPayloadEntry(
+          baseState.requestPayloadHistory,
+          {
+            turnId: event.turnId,
+            promptIndex: event.promptIndex,
+            stepIndex: event.stepIndex,
+            payload: event.payload,
+          },
+        ),
       };
     }
     case "trace_snapshot": {
@@ -503,6 +550,10 @@ function buildLiveTraceEnvelope(
     actualToolCalls: dedupeTraceToolCalls(actualToolCalls),
     events: state.events,
     turns,
+    requestPayloads:
+      state.requestPayloadHistory.length > 0
+        ? state.requestPayloadHistory
+        : undefined,
   };
 
   if (
@@ -663,7 +714,6 @@ export function useChatSession({
   const [toolsMetadata, setToolsMetadata] = useState<
     Record<string, Record<string, unknown>>
   >({});
-  const [toolDefinitions, setToolDefinitions] = useState<Record<string, ToolDefinition>>({});
   const [toolServerMap, setToolServerMap] = useState<ToolServerMap>({});
   const [persistedSnapshotToolCallIds, setPersistedSnapshotToolCallIds] =
     useState<string[]>([]);
@@ -1453,9 +1503,6 @@ export function useChatSession({
         setToolsMetadata((previous) =>
           Object.keys(previous).length > 0 ? {} : previous,
         );
-        setToolDefinitions((previous) =>
-          Object.keys(previous).length > 0 ? {} : previous,
-        );
         setToolServerMap((previous) =>
           Object.keys(previous).length > 0 ? {} : previous,
         );
@@ -1478,12 +1525,11 @@ export function useChatSession({
       setMcpToolsTokenCountLoading(!!modelIdForTokens);
 
       try {
-        const { metadata, toolServerMap, tokenCounts, toolDefinitions } = await getToolsMetadata(
+        const { metadata, toolServerMap, tokenCounts } = await getToolsMetadata(
           selectedServers,
           modelIdForTokens,
         );
         setToolsMetadata(metadata);
-        setToolDefinitions(toolDefinitions);
         setToolServerMap(toolServerMap);
         setMcpToolsTokenCount(
           tokenCounts && Object.keys(tokenCounts).length > 0
@@ -1503,7 +1549,6 @@ export function useChatSession({
           );
         }
         setToolsMetadata({});
-        setToolDefinitions({});
         setToolServerMap({});
         setMcpToolsTokenCount(null);
       } finally {
@@ -1666,7 +1711,6 @@ export function useChatSession({
 
     // Tools metadata
     toolsMetadata,
-    toolDefinitions,
     toolServerMap,
 
     // Token counts
@@ -1695,6 +1739,7 @@ export function useChatSession({
 
     // Live trace state
     liveTraceEnvelope,
+    requestPayloadHistory: liveTraceState.requestPayloadHistory,
     hasTraceSnapshot,
     hasLiveTimelineContent,
     traceViewsSupported,
