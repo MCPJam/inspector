@@ -452,6 +452,22 @@ chatV2.post("/", async (c) => {
       return c.json({ error: "model is not supported" }, 400);
     }
 
+    const requestAuthHeader = c.req.header("authorization");
+    if (
+      modelDefinition.id &&
+      isMCPJamProvidedModel(modelDefinition.id) &&
+      !requestAuthHeader &&
+      !isMCPJamGuestAllowedModel(modelDefinition.id)
+    ) {
+      return c.json(
+        {
+          error:
+            "This MCPJam model is not available for guest access. Sign in to continue.",
+        },
+        403,
+      );
+    }
+
     let prepared;
     try {
       prepared = await prepareChatV2({
@@ -483,17 +499,7 @@ chatV2.post("/", async (c) => {
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
-      let authHeader = c.req.header("authorization");
-
-      if (!authHeader && !isMCPJamGuestAllowedModel(modelDefinition.id)) {
-        return c.json(
-          {
-            error:
-              "This MCPJam model is not available for guest access. Sign in to continue.",
-          },
-          403,
-        );
-      }
+      let authHeader = requestAuthHeader;
 
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(

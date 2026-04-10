@@ -149,11 +149,18 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [hoveredLockedModelId, setHoveredLockedModelId] = useState<string | null>(
+    null,
+  );
 
   const selectedModelsData =
     selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
+
+  const lockedRowHighlightId =
+    hoveredLockedModelId ??
+    (!multiModelEnabled && currentModel.disabled ? String(currentModel.id) : null);
 
   const groupedModels = useMemo(
     () => groupModelsByProvider(availableModels),
@@ -333,6 +340,8 @@ export function ModelSelector({
         (!selectedIds.has(String(model.id)) && selectedLimitReached
             ? `You can compare up to ${maxSelectedModels} models at once`
             : undefined);
+      const isLockedRowHighlight =
+        lockedRowHighlightId === String(model.id) && !!disabledReason;
       const isSelected = selectedIds.has(String(model.id));
 
       const row = (
@@ -350,7 +359,11 @@ export function ModelSelector({
             }
           }}
           disabled={isDisabled}
-          className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+          className={cn(
+            "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
+            lockedRowHighlightId &&
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
+          )}
         >
           <ProviderLogo
             provider={getLogoProvider(group.provider)}
@@ -386,7 +399,14 @@ export function ModelSelector({
       return disabledReason ? (
         <Tooltip key={String(model.id)}>
           <TooltipTrigger asChild>
-            <div className="rounded-sm transition-colors hover:bg-accent/60">
+            <div
+              className={cn(
+                "rounded-sm transition-colors",
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
+              )}
+              onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
+              onMouseLeave={() => setHoveredLockedModelId(null)}
+            >
               {row}
             </div>
           </TooltipTrigger>
@@ -399,7 +419,15 @@ export function ModelSelector({
 
   return (
     <>
-      <Popover open={isOpen} onOpenChange={setIsOpen}>
+      <Popover
+        open={isOpen}
+        onOpenChange={(nextOpen) => {
+          setIsOpen(nextOpen);
+          if (!nextOpen) {
+            setHoveredLockedModelId(null);
+          }
+        }}
+      >
         <Tooltip>
           <TooltipTrigger asChild>
             <PopoverTrigger asChild>
