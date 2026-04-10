@@ -4,6 +4,7 @@ import type { ModelDefinition } from "./types";
 export interface ChatV2Request {
   messages: UIMessage[];
   chatSessionId?: string;
+  directVisibility?: "private" | "workspace";
   surface?: "preview" | "share_link";
   serverUrl?: string;
   serverHeaders?: Record<string, string>;
@@ -25,4 +26,8 @@ export interface ChatV2Request {
   }>;
   selectedServers?: string[];
   requireToolApproval?: boolean;
+  /** Workspace ID for direct-chat history persistence */
+  workspaceId?: string;
+  /** Version for optimistic concurrency on resumed threads */
+  expectedVersion?: number;
 }

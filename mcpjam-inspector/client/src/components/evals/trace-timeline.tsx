@@ -19,6 +19,7 @@ import {
   MessageSquareQuote,
   Minus,
   Plus,
+  User,
   Wrench,
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
@@ -1026,7 +1027,7 @@ function CategoryGlyph({
   );
   switch (category) {
     case "prompt":
-      return <Layers className={iconClass} aria-hidden />;
+      return <User className={iconClass} aria-hidden />;
     case "llm":
       return <Bot className={iconClass} aria-hidden />;
     case "tool":
@@ -2104,7 +2105,7 @@ export function TraceTimeline({
         >
           <ResizablePanel
             defaultSize={65}
-            minSize={0}
+            minSize={40}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <ScrollArea
@@ -2525,6 +2526,7 @@ export function TraceTimeline({
           <ResizablePanel
             defaultSize={35}
             minSize={20}
+            maxSize={50}
             className="min-h-0 min-w-0 overflow-hidden"
           >
             <div

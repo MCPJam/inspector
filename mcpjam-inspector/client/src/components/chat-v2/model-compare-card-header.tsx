@@ -1,3 +1,4 @@
+import { Loader2 } from "lucide-react";
 import type { ModelDefinition } from "@/shared/types";
 import {
   ChatTraceViewModeHeaderBar,
@@ -102,6 +103,7 @@ export function ModelCompareCardHeader({
     !isErroredSummary &&
     currentToolCount > 0 &&
     currentToolCount === minToolCount;
+  const isRunningSummary = summary?.status === "running";
 
   const durationBarPct =
     maxDuration > 0
@@ -162,8 +164,15 @@ export function ModelCompareCardHeader({
 
           <div className="mt-2 space-y-1.5">
             <div className="flex items-center gap-2">
-              <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-                Latency
+              <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                <span>Latency</span>
+                {isRunningSummary ? (
+                  <Loader2
+                    data-testid="metric-running-spinner"
+                    className="h-3 w-3 shrink-0 animate-spin"
+                    aria-hidden
+                  />
+                ) : null}
               </span>
               <div className="relative flex min-w-0 flex-1 items-center">
                 <div className="h-[14px] w-full overflow-hidden rounded-sm bg-muted/40">
@@ -195,8 +204,15 @@ export function ModelCompareCardHeader({
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-                Tokens
+              <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+                <span>Tokens</span>
+                {isRunningSummary ? (
+                  <Loader2
+                    data-testid="metric-running-spinner"
+                    className="h-3 w-3 shrink-0 animate-spin"
+                    aria-hidden
+                  />
+                ) : null}
               </span>
               <div className="relative flex min-w-0 flex-1 items-center">
                 <div className="h-[14px] w-full overflow-hidden rounded-sm bg-muted/40">

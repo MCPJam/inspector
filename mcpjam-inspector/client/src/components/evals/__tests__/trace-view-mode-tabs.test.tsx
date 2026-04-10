@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { TraceViewModeTabs } from "../trace-view-mode-tabs";
 
 describe("TraceViewModeTabs", () => {
-  it("keeps the existing default active styling", () => {
+  it("keeps the default active styling when no variant is requested", () => {
     render(
       <TraceViewModeTabs
         mode="chat"
@@ -18,7 +18,7 @@ describe("TraceViewModeTabs", () => {
     );
   });
 
-  it("can use the sidebar active styling for chat surfaces", () => {
+  it("can opt into the sidebar active styling when explicitly requested", () => {
     render(
       <TraceViewModeTabs
         mode="chat"

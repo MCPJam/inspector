@@ -2534,6 +2534,7 @@ function RunColumn({
     toolCount === 1 ? "1 tool call" : `${toolCount} tool calls`;
   const isFailedCompareRecord =
     record.status === "failed" || record.result === "failed";
+  const isRunningRecord = record.status === "running";
 
   // Compute relative metrics across all completed records for comparison bars
   const comparableRecords = allRecords.filter(
@@ -2563,8 +2564,10 @@ function RunColumn({
 
   const currentDuration = record.metrics.durationMs ?? 0;
   const hasComparison = comparableRecords.length > 1;
-  const hasRunningRecord = allRecords.some((item) => item.status === "running");
-  const canHighlightWinner = hasComparison && !hasRunningRecord;
+  const hasAnyRunningRecord = allRecords.some(
+    (item) => item.status === "running",
+  );
+  const canHighlightWinner = hasComparison && !hasAnyRunningRecord;
 
   const isFastest =
     canHighlightWinner &&
@@ -2615,8 +2618,15 @@ function RunColumn({
         <div className="mt-2 space-y-1.5">
           {/* Latency */}
           <div className="flex items-center gap-2">
-            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-              Latency
+            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+              <span>Latency</span>
+              {isRunningRecord ? (
+                <Loader2
+                  data-testid="metric-running-spinner"
+                  className="h-3 w-3 shrink-0 animate-spin"
+                  aria-hidden
+                />
+              ) : null}
             </span>
             <div className="relative flex min-w-0 flex-1 items-center">
               <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">
@@ -2649,8 +2659,15 @@ function RunColumn({
 
           {/* Tokens */}
           <div className="flex items-center gap-2">
-            <span className="w-[52px] shrink-0 text-[10px] text-muted-foreground">
-              Tokens
+            <span className="flex w-[52px] shrink-0 items-center gap-1 text-[10px] text-muted-foreground">
+              <span>Tokens</span>
+              {isRunningRecord ? (
+                <Loader2
+                  data-testid="metric-running-spinner"
+                  className="h-3 w-3 shrink-0 animate-spin"
+                  aria-hidden
+                />
+              ) : null}
             </span>
             <div className="relative flex min-w-0 flex-1 items-center">
               <div className="h-[14px] w-full rounded-sm bg-muted/40 overflow-hidden">

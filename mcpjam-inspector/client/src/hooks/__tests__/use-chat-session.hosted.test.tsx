@@ -1,5 +1,5 @@
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
 import { useChatSession } from "../use-chat-session";
 
 const mockState = vi.hoisted(() => ({
@@ -7,6 +7,7 @@ const mockState = vi.hoisted(() => ({
   stop: vi.fn(),
   setMessages: vi.fn(),
   addToolApprovalResponse: vi.fn(),
+  authFetch: vi.fn(),
   buildHostedServerRequest: vi.fn(),
   getAccessToken: vi.fn(async () => "access-token"),
   getGuestBearerToken: vi.fn(async () => "guest-token"),
@@ -36,6 +37,12 @@ const mockState = vi.hoisted(() => ({
   selectedModelId: "anthropic/claude-haiku-4.5",
 }));
 let lastTransportOptions: any;
+
+async function resolveConfig<T>(value: T | (() => T | Promise<T>)) {
+  return typeof value === "function"
+    ? await (value as () => T | Promise<T>)()
+    : value;
+}
 
 const guestModel = {
   id: "anthropic/claude-haiku-4.5",
@@ -118,7 +125,7 @@ vi.mock("@/lib/apis/mcp-tokenizer-api", () => ({
 }));
 
 vi.mock("@/lib/session-token", () => ({
-  authFetch: vi.fn(),
+  authFetch: (...args: unknown[]) => mockState.authFetch(...args),
   getAuthHeaders: vi.fn(() => ({})),
 }));
 
@@ -140,22 +147,87 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => mockState.convexAuth,
 }));
 
-vi.mock("@ai-sdk/react", () => ({
-  useChat: vi.fn(() => ({
-    messages: [],
-    sendMessage: mockState.sendMessage,
-    stop: mockState.stop,
-    status: "ready",
-    error: undefined,
-    setMessages: mockState.setMessages,
-    addToolApprovalResponse: mockState.addToolApprovalResponse,
-  })),
-}));
+vi.mock("@ai-sdk/react", async () => {
+  const React = await import("react");
+
+  return {
+    useChat: vi.fn(
+      ({
+        id,
+        transport,
+      }: {
+        id: string;
+        transport: {
+          sendMessages: (options: any) => Promise<unknown>;
+        };
+      }) => {
+        const latchedIdRef = React.useRef(id);
+        const latchedTransportRef = React.useRef(transport);
+
+        if (latchedIdRef.current !== id) {
+          latchedIdRef.current = id;
+          latchedTransportRef.current = transport;
+        }
+
+        return {
+          messages: [],
+          sendMessage: async (message: any) => {
+            await latchedTransportRef.current.sendMessages({
+              chatId: latchedIdRef.current,
+              messages: [
+                {
+                  id: "user-1",
+                  role: "user",
+                  parts:
+                    "text" in message
+                      ? [{ type: "text", text: message.text }]
+                      : [],
+                },
+              ],
+              abortSignal: new AbortController().signal,
+              metadata: undefined,
+              headers: undefined,
+              body: undefined,
+              trigger: "submit-message",
+              messageId: undefined,
+            });
+          },
+          stop: mockState.stop,
+          status: "ready",
+          error: undefined,
+          setMessages: mockState.setMessages,
+          addToolApprovalResponse: mockState.addToolApprovalResponse,
+        };
+      },
+    ),
+  };
+});
 
 vi.mock("ai", () => ({
   DefaultChatTransport: class MockTransport {
+    options: any;
+    sendMessages: ReturnType<typeof vi.fn>;
+
     constructor(options: unknown) {
       lastTransportOptions = options;
+      this.options = options;
+      this.sendMessages = vi.fn(async (requestOptions: any) => {
+        const resolvedBody = await resolveConfig(this.options.body);
+        const resolvedHeaders = await resolveConfig(this.options.headers);
+        const requestBody = {
+          ...resolvedBody,
+          id: requestOptions.chatId,
+          messages: requestOptions.messages,
+          trigger: requestOptions.trigger,
+          messageId: requestOptions.messageId,
+        };
+        await this.options.fetch?.(this.options.api, {
+          method: "POST",
+          headers: resolvedHeaders,
+          body: JSON.stringify(requestBody),
+        });
+        return new ReadableStream();
+      });
     }
   },
   generateId: vi.fn(() => "chat-session-id"),
@@ -166,6 +238,8 @@ describe("useChatSession hosted mode", () => {
   beforeEach(() => {
     mockState.convexAuth.isAuthenticated = true;
     mockState.convexAuth.isLoading = false;
+    mockState.authFetch.mockReset();
+    mockState.authFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockState.buildHostedServerRequest.mockReset();
     mockState.getAccessToken.mockReset();
     mockState.getAccessToken.mockResolvedValue("access-token");
@@ -294,6 +368,182 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
+  it("uses the latest hosted selectedServerIds on the next send without changing chatSessionId", async () => {
+    const { result, rerender } = renderHook(
+      ({
+        selectedServers,
+        hostedSelectedServerIds,
+      }: {
+        selectedServers: string[];
+        hostedSelectedServerIds: string[];
+      }) =>
+        useChatSession({
+          selectedServers,
+          hostedWorkspaceId: "workspace-1",
+          hostedSelectedServerIds,
+        }),
+      {
+        initialProps: {
+          selectedServers: ["server-1"],
+          hostedSelectedServerIds: ["server-id-1"],
+        },
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    const initialChatSessionId = result.current.chatSessionId;
+    mockState.authFetch.mockClear();
+
+    act(() => {
+      result.current.sendMessage({ text: "first" });
+    });
+
+    await waitFor(() => {
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+    });
+
+    expect(
+      JSON.parse(
+        String(
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
+        ),
+      ),
+    ).toMatchObject({
+      chatSessionId: initialChatSessionId,
+      selectedServerIds: ["server-id-1"],
+    });
+
+    rerender({
+      selectedServers: ["server-2"],
+      hostedSelectedServerIds: ["server-id-2"],
+    });
+
+    expect(result.current.chatSessionId).toBe(initialChatSessionId);
+
+    act(() => {
+      result.current.sendMessage({ text: "second" });
+    });
+
+    await waitFor(() => {
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+    });
+
+    expect(
+      JSON.parse(
+        String(
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
+        ),
+      ),
+    ).toMatchObject({
+      chatSessionId: initialChatSessionId,
+      selectedServerIds: ["server-id-2"],
+    });
+  });
+
+  it("uses the latest direct-guest server request on the next send without changing chatSessionId", async () => {
+    mockState.convexAuth.isAuthenticated = false;
+    mockState.buildHostedServerRequest.mockImplementation(
+      (serverName: string) =>
+        serverName === "Excalidraw (App)"
+          ? {
+              serverUrl: "https://mcp.excalidraw.com/mcp",
+              serverHeaders: { "X-Api-Key": "guest-key-1" },
+              oauthAccessToken: "guest-oauth-token-1",
+            }
+          : {
+              serverUrl: "https://mcp.learn.com/mcp",
+              serverHeaders: { "X-Api-Key": "guest-key-2" },
+              oauthAccessToken: "guest-oauth-token-2",
+            },
+    );
+
+    const { result, rerender } = renderHook(
+      ({ selectedServers }: { selectedServers: string[] }) =>
+        useChatSession({
+          selectedServers,
+        }),
+      {
+        initialProps: {
+          selectedServers: ["Excalidraw (App)"],
+        },
+      },
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    const initialChatSessionId = result.current.chatSessionId;
+    mockState.authFetch.mockClear();
+
+    act(() => {
+      result.current.sendMessage({ text: "first" });
+    });
+
+    await waitFor(() => {
+      expect(mockState.authFetch).toHaveBeenCalledTimes(1);
+    });
+
+    expect(
+      JSON.parse(
+        String(
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
+        ),
+      ),
+    ).toMatchObject({
+      chatSessionId: initialChatSessionId,
+      serverUrl: "https://mcp.excalidraw.com/mcp",
+      serverHeaders: { "X-Api-Key": "guest-key-1" },
+      oauthAccessToken: "guest-oauth-token-1",
+    });
+
+    rerender({
+      selectedServers: ["Learn (App)"],
+    });
+
+    expect(result.current.chatSessionId).toBe(initialChatSessionId);
+
+    act(() => {
+      result.current.sendMessage({ text: "second" });
+    });
+
+    await waitFor(() => {
+      expect(mockState.authFetch).toHaveBeenCalledTimes(2);
+    });
+
+    expect(
+      JSON.parse(
+        String(
+          (
+            mockState.authFetch.mock.calls.at(-1)?.[1] as
+              | RequestInit
+              | undefined
+          )?.body ?? "{}",
+        ),
+      ),
+    ).toMatchObject({
+      chatSessionId: initialChatSessionId,
+      serverUrl: "https://mcp.learn.com/mcp",
+      serverHeaders: { "X-Api-Key": "guest-key-2" },
+      oauthAccessToken: "guest-oauth-token-2",
+    });
+  });
+
   it("keeps plain hosted guest chat bodies when no server is selected", async () => {
     mockState.convexAuth.isAuthenticated = false;
 
@@ -382,7 +632,6 @@ describe("useChatSession hosted mode", () => {
     expect(result.current.selectedModel.id).toBe("anthropic/claude-haiku-4.5");
     unmount();
   });
-
   it("treats anonymous shared-chat viewers as guest users", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
@@ -406,6 +655,50 @@ describe("useChatSession hosted mode", () => {
       ),
     ).toEqual(["anthropic/claude-haiku-4.5"]);
     expect(result.current.isAuthReady).toBe(true);
+    unmount();
+  });
+
+  it("passes persisted widget snapshot tool call ids to the capture hook after loading history", async () => {
+    mockState.useSharedChatWidgetCapture.mockClear();
+    const { result, unmount } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        hostedWorkspaceId: "workspace-1",
+        hostedSelectedServerIds: ["server-id-1"],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isSessionBootstrapComplete).toBe(true);
+    });
+
+    await result.current.loadChatSession({
+      chatSessionId: "history-session-1",
+      messagesBlobUrl: null,
+      version: 3,
+      widgetSnapshots: [
+        {
+          toolCallId: "tool-call-1",
+          toolName: "search",
+          serverId: "server-id-1",
+          uiType: "mcp-apps",
+          widgetCsp: null,
+          widgetPermissions: null,
+          widgetPermissive: false,
+          prefersBorder: false,
+        },
+      ],
+    });
+
+    await waitFor(() => {
+      expect(mockState.useSharedChatWidgetCapture).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          chatSessionId: "history-session-1",
+          persistedSnapshotToolCallIds: ["tool-call-1"],
+        }),
+      );
+    });
+
     unmount();
   });
 

@@ -34,6 +34,11 @@ function makeSummary(
   };
 }
 
+function getMetricRunningSpinnerCount(container: ParentNode): number {
+  return container.querySelectorAll('[data-testid="metric-running-spinner"]')
+    .length;
+}
+
 describe("ModelCompareCardHeader", () => {
   it("renders nothing when comparison chrome is off and trace tabs are hidden", () => {
     const { container } = render(
@@ -130,10 +135,60 @@ describe("ModelCompareCardHeader", () => {
     expect(screen.getByText("Tokens")).toBeInTheDocument();
   });
 
-  it("shows status dot and Tools row when compactCompareHeader is false", () => {
-    const withTools = makeSummary({
-      toolCount: 2,
+  it("shows running spinners in the latency and tokens rows in compact mode", () => {
+    const runningSummary = makeSummary({
+      status: "running",
+      durationMs: null,
+      tokens: 0,
+      toolCount: 0,
+      hasMessages: false,
     });
+
+    const { container } = render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={runningSummary}
+        allSummaries={[runningSummary]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+      />,
+    );
+
+    expect(getMetricRunningSpinnerCount(container)).toBe(2);
+    expect(screen.queryByLabelText("Running")).not.toBeInTheDocument();
+    expect(screen.queryByText("Tools")).not.toBeInTheDocument();
+  });
+
+  it("does not render metric bar spinners for non-running summaries", () => {
+    const readySummary = makeSummary({});
+
+    const { container } = render(
+      <ModelCompareCardHeader
+        model={model}
+        summary={readySummary}
+        allSummaries={[readySummary]}
+        mode="chat"
+        onModeChange={vi.fn()}
+        showTraceTabs={false}
+        showComparisonChrome={true}
+      />,
+    );
+
+    expect(getMetricRunningSpinnerCount(container)).toBe(0);
+    expect(screen.queryByLabelText("Running")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Ready")).not.toBeInTheDocument();
+  });
+
+  it("shows status dot and Tools row when compactCompareHeader is false", () => {
+    const withTools: MultiModelCardSummary = {
+      ...idleSummary,
+      toolCount: 2,
+      hasMessages: true,
+      status: "ready",
+      durationMs: 1000,
+    };
     render(
       <ModelCompareCardHeader
         model={model}

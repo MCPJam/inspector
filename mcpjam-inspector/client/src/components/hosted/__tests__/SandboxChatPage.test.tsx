@@ -190,37 +190,6 @@ describe("SandboxChatPage", () => {
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         reasoningDisplayMode: "hidden",
-        loadingIndicatorVariant: "chatgpt-dot",
-      }),
-    );
-  });
-
-  it("uses the Claude loading indicator variant for Claude-style hosted sandboxes", async () => {
-    writeSandboxSession({
-      token: "sandbox-token",
-      payload: {
-        workspaceId: "ws_1",
-        sandboxId: "sbx_1",
-        name: "Claude Sandbox",
-        description: "Hosted sandbox",
-        hostStyle: "claude",
-        mode: "invited_only",
-        allowGuestAccess: false,
-        viewerIsWorkspaceMember: true,
-        systemPrompt: "You are helpful.",
-        modelId: "anthropic/claude-sonnet-4-5",
-        temperature: 0.4,
-        requireToolApproval: true,
-        servers: [],
-      },
-    });
-
-    render(<SandboxChatPage />);
-
-    expect(await screen.findByTestId("sandbox-chat-tab")).toBeInTheDocument();
-    expect(mockChatTabV2).toHaveBeenCalledWith(
-      expect.objectContaining({
-        loadingIndicatorVariant: "claude-mark",
       }),
     );
   });

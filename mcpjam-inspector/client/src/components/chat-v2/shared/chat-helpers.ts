@@ -340,3 +340,8 @@ export function buildSkillToolMessages(
 
   return messages;
 }
+
+/** Deep-clone UI messages for seeding compare columns or restoring threads. */
+export function cloneUiMessages(messages: UIMessage[]): UIMessage[] {
+  return structuredClone(messages);
+}
