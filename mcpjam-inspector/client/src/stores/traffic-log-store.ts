@@ -141,7 +141,6 @@ export function subscribeToRpcStream(): () => void {
         const { serverId, direction, message, timestamp } = data;
         useTrafficLogStore.getState().addMcpServerLog({
           serverId: typeof serverId === "string" ? serverId : "unknown",
-          serverName: undefined,
           direction:
             typeof direction === "string" ? direction.toUpperCase() : "",
           method: extractRpcMethod(message),

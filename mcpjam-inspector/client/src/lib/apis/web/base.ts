@@ -15,12 +15,12 @@ export class WebApiError extends Error {
 
 export async function webPost<TRequest, TResponse>(
   path: string,
-  requestBody: TRequest,
+  payload: TRequest,
 ): Promise<TResponse> {
   const response = await authFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(requestBody),
+    body: JSON.stringify(payload),
   });
 
   let body: any = null;
@@ -34,17 +34,18 @@ export async function webPost<TRequest, TResponse>(
   ingestHostedRpcLogsFromPayload(body);
 
   if (!response.ok) {
+    const errBody = sanitizedPayload as Record<string, unknown> | null;
     const code =
-      typeof (sanitizedPayload as any)?.code === "string"
-        ? (sanitizedPayload as any).code
-        : typeof (sanitizedPayload as any)?.error === "string"
-          ? (sanitizedPayload as any).error
+      typeof errBody?.code === "string"
+        ? errBody.code
+        : typeof errBody?.error === "string"
+          ? errBody.error
           : null;
     const message =
-      typeof (sanitizedPayload as any)?.message === "string"
-        ? (sanitizedPayload as any).message
-        : typeof (sanitizedPayload as any)?.error === "string"
-          ? (sanitizedPayload as any).error
+      typeof errBody?.message === "string"
+        ? errBody.message
+        : typeof errBody?.error === "string"
+          ? errBody.error
           : `Request failed (${response.status})`;
     throw new WebApiError(response.status, code, message);
   }

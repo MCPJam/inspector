@@ -169,7 +169,7 @@ export function LoggerView({
     return uiLogItems.map((item: UiLogEvent) => ({
       id: item.id,
       serverId: item.serverId,
-      serverName: undefined,
+      serverName: item.serverName,
       direction: item.direction === "ui-to-host" ? "UI→HOST" : "HOST→UI",
       method: item.method,
       timestamp: item.timestamp,
@@ -231,7 +231,7 @@ export function LoggerView({
       timestamp: item.timestamp,
       source: item.source,
       serverId: item.serverId,
-      ...(item.serverName ? { serverName: item.serverName } : {}),
+      serverName: item.serverName,
       direction: item.direction,
       method: item.method,
       payload: item.payload,
@@ -282,7 +282,6 @@ export function LoggerView({
       const queryLower = searchQuery.toLowerCase();
       result = result.filter((item) => {
         return (
-          item.serverId.toLowerCase().includes(queryLower) ||
           getDisplayServerLabel(item).toLowerCase().includes(queryLower) ||
           item.method.toLowerCase().includes(queryLower) ||
           item.direction.toLowerCase().includes(queryLower) ||
