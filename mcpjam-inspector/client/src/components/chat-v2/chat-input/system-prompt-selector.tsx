@@ -109,7 +109,7 @@ export function SystemPromptSelector({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
-      {renderTrigger ? (
+      {controlledOpen !== undefined ? null : renderTrigger ? (
         <DialogTrigger asChild>{renderTrigger}</DialogTrigger>
       ) : (
         <Tooltip>
