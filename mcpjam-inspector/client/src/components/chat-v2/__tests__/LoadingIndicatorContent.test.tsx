@@ -35,6 +35,21 @@ describe("LoadingIndicatorContent", () => {
     ).toHaveAttribute("hidden");
   });
 
+  it("renders animated Claude strips with explicit aspect ratios", () => {
+    render(<ClaudeLoadingIndicator />);
+
+    const strip900 = screen.getByTestId("loading-indicator-claude-strip-900");
+    const strip800 = screen.getByTestId("loading-indicator-claude-strip-800");
+
+    expect(strip900).not.toHaveAttribute("hidden");
+    expect(strip900).toHaveAttribute("preserveAspectRatio", "xMidYMin meet");
+    expect(strip900.getAttribute("style")).toContain("aspect-ratio: 1 / 9;");
+
+    expect(strip800).not.toHaveAttribute("hidden");
+    expect(strip800).toHaveAttribute("preserveAspectRatio", "xMidYMin meet");
+    expect(strip800.getAttribute("style")).toContain("aspect-ratio: 1 / 8;");
+  });
+
   it("renders the direct static Claude mode without animated strips", () => {
     render(<ClaudeLoadingIndicator mode="static" />);
 
