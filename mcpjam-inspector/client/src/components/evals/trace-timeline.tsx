@@ -19,6 +19,7 @@ import {
   MessageSquareQuote,
   Minus,
   Plus,
+  User,
   Wrench,
 } from "lucide-react";
 import type { EvalTraceSpan, EvalTraceSpanCategory } from "@/shared/eval-trace";
@@ -1026,7 +1027,7 @@ function CategoryGlyph({
   );
   switch (category) {
     case "prompt":
-      return <Layers className={iconClass} aria-hidden />;
+      return <User className={iconClass} aria-hidden />;
     case "llm":
       return <Bot className={iconClass} aria-hidden />;
     case "tool":

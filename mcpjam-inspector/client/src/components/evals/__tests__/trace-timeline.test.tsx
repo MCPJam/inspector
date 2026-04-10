@@ -204,6 +204,41 @@ describe("TraceTimeline detail pane", () => {
     expect(stepRow).toBeUndefined();
   });
 
+  it("uses a user icon for prompt rows", () => {
+    const spans = [
+      {
+        id: "p0-step0",
+        name: "Step 1",
+        category: "step" as const,
+        startMs: 0,
+        endMs: 120,
+        promptIndex: 0,
+        stepIndex: 0,
+        messageStartIndex: 0,
+        messageEndIndex: 1,
+      },
+    ];
+    const transcriptMessages = [
+      { role: "user", content: "Need docs" },
+      { role: "assistant", content: "Sure" },
+    ];
+
+    render(
+      <TraceTimeline
+        recordedSpans={spans}
+        transcriptMessages={transcriptMessages}
+      />,
+    );
+
+    const promptRow = screen
+      .getAllByTestId("trace-row")
+      .find((el) => el.textContent?.includes('User: "Need docs"'));
+
+    expect(promptRow).toBeTruthy();
+    expect(promptRow?.querySelector("svg.lucide-user")).toBeTruthy();
+    expect(promptRow?.querySelector("svg.lucide-layers")).toBeNull();
+  });
+
   it("marks tool spans as failed from transcript when persisted status is ok", async () => {
     const user = userEvent.setup();
     const spans: EvalTraceSpan[] = [
