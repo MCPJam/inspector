@@ -31,7 +31,11 @@ import {
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { ModelDefinition, type ModelProvider, isGPT5Model } from "@/shared/types";
+import {
+  ModelDefinition,
+  type ModelProvider,
+  isGPT5Model,
+} from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,

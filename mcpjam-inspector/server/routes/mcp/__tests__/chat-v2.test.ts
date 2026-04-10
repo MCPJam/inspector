@@ -854,9 +854,8 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
     it("uses a guest token for non-gated MCPJam guest requests", async () => {
-      const { getProductionGuestAuthHeader } = await import(
-        "../../../utils/guest-auth.js"
-      );
+      const { getProductionGuestAuthHeader } =
+        await import("../../../utils/guest-auth.js");
 
       const originalFetch = global.fetch;
       global.fetch = vi
@@ -916,9 +915,8 @@ describe("POST /api/mcp/chat-v2", () => {
     ])(
       "rejects gated MCPJam guest model $id before fetching guest auth",
       async ({ id, provider }) => {
-        const { getProductionGuestAuthHeader } = await import(
-          "../../../utils/guest-auth.js"
-        );
+        const { getProductionGuestAuthHeader } =
+          await import("../../../utils/guest-auth.js");
 
         const originalFetch = global.fetch;
         global.fetch = vi.fn();
@@ -934,7 +932,9 @@ describe("POST /api/mcp/chat-v2", () => {
           expect(data.error).toBe(
             "This MCPJam model is not available for guest access. Sign in to continue.",
           );
-          expect(vi.mocked(getProductionGuestAuthHeader)).not.toHaveBeenCalled();
+          expect(
+            vi.mocked(getProductionGuestAuthHeader),
+          ).not.toHaveBeenCalled();
           expect(global.fetch).not.toHaveBeenCalled();
         } finally {
           global.fetch = originalFetch;
