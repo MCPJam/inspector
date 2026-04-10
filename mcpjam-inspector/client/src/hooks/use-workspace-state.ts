@@ -80,12 +80,10 @@ export function useWorkspaceState({
   logger,
 }: UseWorkspaceStateParams) {
   const selectedOrganizationId = routeOrganizationId ?? activeOrganizationId;
-  const {
-    workspaces: allRemoteWorkspaces,
-    isLoading: isLoadingWorkspaces,
-  } = useWorkspaceQueries({
-    isAuthenticated,
-  });
+  const { workspaces: allRemoteWorkspaces, isLoading: isLoadingWorkspaces } =
+    useWorkspaceQueries({
+      isAuthenticated,
+    });
   const {
     createWorkspace: convexCreateWorkspace,
     ensureDefaultWorkspace: convexEnsureDefaultWorkspace,
@@ -131,11 +129,7 @@ export function useWorkspaceState({
       (a, b) => b.updatedAt - a.updatedAt,
     )[0];
     return mostRecentlyUpdatedWorkspace?.organizationId;
-  }, [
-    selectedOrganizationId,
-    allRemoteWorkspaces,
-    convexActiveWorkspaceId,
-  ]);
+  }, [selectedOrganizationId, allRemoteWorkspaces, convexActiveWorkspaceId]);
 
   const remoteWorkspaces = useMemo(() => {
     if (allRemoteWorkspaces === undefined) {

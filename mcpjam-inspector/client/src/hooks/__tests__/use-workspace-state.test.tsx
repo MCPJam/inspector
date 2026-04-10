@@ -335,7 +335,9 @@ describe("useWorkspaceState automatic workspace creation", () => {
       activeOrganizationId: "org-a",
     });
 
-    expect(Object.keys(result.current.effectiveWorkspaces)).toEqual(["remote-a"]);
+    expect(Object.keys(result.current.effectiveWorkspaces)).toEqual([
+      "remote-a",
+    ]);
     expect(result.current.effectiveActiveWorkspaceId).toBe("remote-a");
 
     await waitFor(() => {
