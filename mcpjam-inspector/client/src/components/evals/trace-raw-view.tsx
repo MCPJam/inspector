@@ -74,8 +74,9 @@ export function TraceRawView({
     [orderedEntries],
   );
   const latestEntry = orderedEntries.at(-1) ?? null;
-  const latestEntryKey =
-    latestEntry ? `${latestEntry.turnId}:${latestEntry.stepIndex}` : null;
+  const latestEntryKey = latestEntry
+    ? `${latestEntry.turnId}:${latestEntry.stepIndex}`
+    : null;
   const [selectedEntryKey, setSelectedEntryKey] = useState<string | null>(
     latestEntryKey,
   );

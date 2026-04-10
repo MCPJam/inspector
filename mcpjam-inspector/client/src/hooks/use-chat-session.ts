@@ -344,7 +344,8 @@ function upsertRequestPayloadEntry(
 ): LiveChatTraceRequestPayloadEntry[] {
   const existingIndex = entries.findIndex(
     (entry) =>
-      entry.turnId === nextEntry.turnId && entry.stepIndex === nextEntry.stepIndex,
+      entry.turnId === nextEntry.turnId &&
+      entry.stepIndex === nextEntry.stepIndex,
   );
 
   if (existingIndex < 0) {

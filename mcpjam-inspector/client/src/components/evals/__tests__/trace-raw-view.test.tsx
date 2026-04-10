@@ -41,12 +41,10 @@ vi.mock("@/components/ui/select", () => {
     }>) => {
       const childArray = React.Children.toArray(children);
       const trigger = childArray.find(
-        (child) =>
-          React.isValidElement(child) && child.type === SelectTrigger,
+        (child) => React.isValidElement(child) && child.type === SelectTrigger,
       );
       const content = childArray.find(
-        (child) =>
-          React.isValidElement(child) && child.type === SelectContent,
+        (child) => React.isValidElement(child) && child.type === SelectContent,
       ) as React.ReactElement | undefined;
       const options = React.Children.toArray(content?.props.children);
       const ariaLabel = React.isValidElement(trigger)
@@ -95,8 +93,9 @@ describe("TraceRawView", () => {
       />,
     );
 
-    expect(screen.getByRole("combobox", { name: "Select request payload" }))
-      .toBeTruthy();
+    expect(
+      screen.getByRole("combobox", { name: "Select request payload" }),
+    ).toBeTruthy();
     expect(screen.getByTestId("json-editor")).toHaveTextContent("System 2");
 
     rerender(
