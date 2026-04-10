@@ -215,57 +215,43 @@ describe("web routes — chat-v2 guest mode", () => {
     );
   });
 
-  it("allows hosted guests to use MCPJam free-tier models beyond the previous guest subset", async () => {
-    const { app } = createWebTestApp();
-    const { token } = issueGuestToken();
+  it.each([
+    {
+      id: "openai/gpt-oss-120b",
+      provider: "openai",
+      name: "GPT-OSS 120B (Free)",
+    },
+    {
+      id: "openai/gpt-4o-mini",
+      provider: "openai",
+      name: "GPT-4o Mini",
+    },
+  ])(
+    "rejects sign-in-only MCPJam guest model $id before forwarding",
+    async ({ id, provider, name }) => {
+      const { app } = createWebTestApp();
+      const { token } = issueGuestToken();
 
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      {
-        messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
-        model: {
-          id: "openai/gpt-oss-120b",
-          provider: "openai",
-          name: "GPT-OSS 120B (Free)",
+      const response = await postJson(
+        app,
+        "/api/web/chat-v2",
+        {
+          messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
+          model: { id, provider, name },
         },
-      },
-      token,
-    );
+        token,
+      );
 
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("ok");
-    expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        modelId: "openai/gpt-oss-120b",
-        authHeader: `Bearer ${token}`,
-      }),
-    );
-  });
-
-  it("does NOT reject MCPJam models outside the old guest-allowed list", async () => {
-    const { app } = createWebTestApp();
-    const { token } = issueGuestToken();
-
-    // openai/gpt-4o-mini is MCPJam-provided but NOT in GUEST_ALLOWED_MODEL_IDS
-    const response = await postJson(
-      app,
-      "/api/web/chat-v2",
-      {
-        messages: [{ role: "user", parts: [{ type: "text", text: "hey" }] }],
-        model: {
-          id: "openai/gpt-4o-mini",
-          provider: "openai",
-          name: "GPT-4o Mini",
-        },
-      },
-      token,
-    );
-
-    // Should succeed, not return 403
-    expect(response.status).toBe(200);
-    expect(await response.text()).toBe("ok");
-  });
+      const { status, data } = await expectJson<{
+        code: string;
+        message: string;
+      }>(response);
+      expect(status).toBe(403);
+      expect(data.code).toBe("FORBIDDEN");
+      expect(data.message).toContain("Sign in to continue.");
+      expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts a hosted guest token in development when local signing is disabled", async () => {
     process.env.NODE_ENV = "development";

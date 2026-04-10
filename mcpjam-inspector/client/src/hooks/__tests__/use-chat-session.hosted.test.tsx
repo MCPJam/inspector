@@ -33,6 +33,7 @@ const mockState = vi.hoisted(() => ({
     tokenCounts: null,
   })),
   countTextTokens: vi.fn(async () => null),
+  selectedModelId: "anthropic/claude-haiku-4.5",
 }));
 let lastTransportOptions: any;
 
@@ -90,9 +91,9 @@ vi.mock("@/hooks/use-custom-providers", () => ({
 
 vi.mock("@/hooks/use-persisted-model", () => ({
   usePersistedModel: () => ({
-    selectedModelId: "anthropic/claude-haiku-4.5",
+    selectedModelId: mockState.selectedModelId,
     setSelectedModelId: mockState.setSelectedModelId,
-    selectedModelIds: ["anthropic/claude-haiku-4.5"],
+    selectedModelIds: [mockState.selectedModelId],
     setSelectedModelIds: vi.fn(),
     multiModelEnabled: false,
     setMultiModelEnabled: vi.fn(),
@@ -170,6 +171,7 @@ describe("useChatSession hosted mode", () => {
     mockState.getAccessToken.mockResolvedValue("access-token");
     mockState.getGuestBearerToken.mockReset();
     mockState.getGuestBearerToken.mockResolvedValue("guest-token");
+    mockState.selectedModelId = "anthropic/claude-haiku-4.5";
   });
 
   it("includes chatSessionId in the hosted transport body", async () => {
@@ -312,7 +314,7 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("keeps only claude-haiku-4.5 available to anonymous hosted viewers", async () => {
+  it("shows all hosted models but only keeps claude-haiku-4.5 selectable for anonymous hosted viewers", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
 
@@ -329,16 +331,40 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
-    // Guests should only see the hosted model that remains guest-allowed.
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "anthropic/claude-sonnet-4.5",
+      "qwen/qwen3.6-plus",
+      "openai/gpt-4o-mini",
       "anthropic/claude-haiku-4.5",
     ]);
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-sonnet-4.5",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use this model",
+    });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "qwen/qwen3.6-plus",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use this model",
+    });
     unmount();
   });
 
-  it("hides newly added sign-in-only hosted models from anonymous viewers", async () => {
+  it("falls back to claude-haiku-4.5 when an anonymous hosted viewer has a sign-in-only model persisted", async () => {
     mockState.convexAuth.isAuthenticated = false;
     mockState.getAccessToken.mockRejectedValue(new Error("LoginRequiredError"));
+    mockState.selectedModelId = "qwen/qwen3.6-plus";
 
     const { result, unmount } = renderHook(() =>
       useChatSession({
@@ -353,9 +379,7 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
-    expect(result.current.availableModels.map((model) => model.id)).not.toContain(
-      "qwen/qwen3.6-plus",
-    );
+    expect(result.current.selectedModel.id).toBe("anthropic/claude-haiku-4.5");
     unmount();
   });
 
@@ -376,10 +400,11 @@ describe("useChatSession hosted mode", () => {
       expect(result.current.disableForAuthentication).toBe(false);
     });
 
-    // Shared-chat guests resolve to the same guest-visible hosted set.
-    expect(result.current.availableModels.map((model) => model.id)).toEqual([
-      "anthropic/claude-haiku-4.5",
-    ]);
+    expect(
+      result.current.availableModels.filter((model) => !model.disabled).map(
+        (model) => model.id,
+      ),
+    ).toEqual(["anthropic/claude-haiku-4.5"]);
     expect(result.current.isAuthReady).toBe(true);
     unmount();
   });
@@ -399,6 +424,11 @@ describe("useChatSession hosted mode", () => {
         "qwen/qwen3.6-plus",
       );
     });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "qwen/qwen3.6-plus",
+      )?.disabled,
+    ).toBeUndefined();
     unmount();
   });
 });

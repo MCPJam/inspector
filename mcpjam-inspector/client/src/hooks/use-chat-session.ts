@@ -44,7 +44,6 @@ import {
 import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
-  isMCPJamSignInRequiredModel,
 } from "@/shared/types";
 import {
   detectOllamaModels,
@@ -111,6 +110,8 @@ export interface TokenUsage {
   outputTokens: number;
   totalTokens: number;
 }
+
+const GUEST_LOCKED_MODEL_REASON = "Sign in to use this model";
 
 export interface UseChatSessionReturn {
   // Chat state
@@ -660,22 +661,26 @@ export function useChatSession({
       customProviders,
     });
     const visibleModels = !isAuthenticated
-      ? models.filter(
-          (model) =>
-            !isMCPJamProvidedModel(String(model.id)) ||
-            isMCPJamGuestAllowedModel(String(model.id)),
-        )
+      ? models.map((model) => {
+          const modelId = String(model.id);
+          if (
+            !isMCPJamProvidedModel(modelId) ||
+            isMCPJamGuestAllowedModel(modelId)
+          ) {
+            return model;
+          }
+
+          return {
+            ...model,
+            disabled: true,
+            disabledReason: GUEST_LOCKED_MODEL_REASON,
+          };
+        })
       : models;
     if (HOSTED_MODE) {
-      const hostedModels = visibleModels.filter((model) =>
+      return visibleModels.filter((model) =>
         isMCPJamProvidedModel(String(model.id)),
       );
-      if (!isAuthenticated) {
-        return hostedModels.filter(
-          (model) => !isMCPJamSignInRequiredModel(String(model.id)),
-        );
-      }
-      return hostedModels;
     }
     return visibleModels;
   }, [
@@ -697,18 +702,32 @@ export function useChatSession({
     multiModelEnabled,
     setMultiModelEnabled,
   } = usePersistedModel();
+  const selectableModels = useMemo(
+    () => availableModels.filter((model) => !model.disabled),
+    [availableModels],
+  );
   const selectedModel = useMemo<ModelDefinition>(() => {
-    const fallback = getDefaultModel(availableModels);
-    if (initialModelId) {
+    const fallback = getDefaultModel(
+      selectableModels.length > 0 ? selectableModels : availableModels,
+    );
+    const resolveSelectableModel = (modelId?: string | null) => {
+      if (!modelId) {
+        return null;
+      }
+
       return (
-        availableModels.find((model) => String(model.id) === initialModelId) ??
-        fallback
+        availableModels.find(
+          (model) => String(model.id) === modelId && !model.disabled,
+        ) ?? null
       );
+    };
+
+    if (initialModelId) {
+      return resolveSelectableModel(initialModelId) ?? fallback;
     }
     if (!selectedModelId) return fallback;
-    const found = availableModels.find((m) => String(m.id) === selectedModelId);
-    return found ?? fallback;
-  }, [availableModels, initialModelId, selectedModelId]);
+    return resolveSelectableModel(selectedModelId) ?? fallback;
+  }, [availableModels, initialModelId, selectableModels, selectedModelId]);
 
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {

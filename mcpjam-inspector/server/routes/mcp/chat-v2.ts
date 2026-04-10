@@ -9,7 +9,10 @@ import {
 } from "ai";
 import type { ChatV2Request } from "@/shared/chat-v2";
 import { createLlmModel } from "../../utils/chat-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import {
+  isMCPJamGuestAllowedModel,
+  isMCPJamProvidedModel,
+} from "@/shared/types";
 import type { ModelProvider } from "@/shared/types";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
@@ -448,6 +451,18 @@ chatV2.post("/", async (c) => {
 
     // MCPJam-provided models: delegate to stream handler
     if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
+      let authHeader = c.req.header("authorization");
+
+      if (!authHeader && !isMCPJamGuestAllowedModel(modelDefinition.id)) {
+        return c.json(
+          {
+            error:
+              "This MCPJam model is not available for guest access. Sign in to continue.",
+          },
+          403,
+        );
+      }
+
       if (!process.env.CONVEX_HTTP_URL) {
         return c.json(
           { error: "Server missing CONVEX_HTTP_URL configuration" },
@@ -457,8 +472,6 @@ chatV2.post("/", async (c) => {
 
       // Resolve auth header: use client-provided token (WorkOS) if present,
       // otherwise fetch a production guest token for guest-allowed models.
-      let authHeader = c.req.header("authorization");
-
       if (!authHeader) {
         try {
           authHeader = (await getProductionGuestAuthHeader()) ?? undefined;

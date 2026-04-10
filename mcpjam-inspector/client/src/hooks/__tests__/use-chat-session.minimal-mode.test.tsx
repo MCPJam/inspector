@@ -335,9 +335,13 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("keeps only claude-haiku-4.5 on the unauthenticated non-hosted path", async () => {
-    mockModelState.availableModels = [guestAllowedMcpJamModel];
-    mockModelState.selectedModelId = guestAllowedMcpJamModel.id;
+  it("shows sign-in-only MCPJam models but keeps them disabled on the unauthenticated non-hosted path", async () => {
+    mockModelState.availableModels = [
+      baseModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
+    mockModelState.selectedModelId = mcpJamModel.id;
     mockConvexAuth.isAuthenticated = false;
     mockGetAccessToken.mockResolvedValue(null);
     const selectedServers = ["server-1"];
@@ -361,8 +365,24 @@ describe("useChatSession minimal mode parity", () => {
     ).toBeUndefined();
     expect(result.current.disableForAuthentication).toBe(false);
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "gpt-4",
+      "openai/gpt-5-mini",
       "anthropic/claude-haiku-4.5",
     ]);
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "gpt-4",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5-mini",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use this model",
+    });
+    expect(result.current.selectedModel.id).toBe("gpt-4");
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 });

@@ -3,7 +3,6 @@ import {
   getModelById,
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
-  isMCPJamSignInRequiredModel,
 } from "../types.js";
 
 describe("MCPJam-provided model classification", () => {
@@ -11,22 +10,28 @@ describe("MCPJam-provided model classification", () => {
     expect(isMCPJamProvidedModel("openai/gpt-4o-mini")).toBe(true);
   });
 
-  it("marks newly added hosted models as sign-in required", () => {
-    expect(isMCPJamSignInRequiredModel("openai/gpt-5.4")).toBe(true);
-    expect(isMCPJamSignInRequiredModel("qwen/qwen3.6-plus")).toBe(true);
-    expect(isMCPJamSignInRequiredModel("openai/gpt-oss-120b")).toBe(true);
-    expect(isMCPJamSignInRequiredModel("anthropic/claude-haiku-4.5")).toBe(
-      false,
-    );
-  });
-
   it("keeps claude-haiku-4.5 as the only guest-allowed MCPJam model", () => {
     expect(isMCPJamGuestAllowedModel("anthropic/claude-haiku-4.5")).toBe(true);
+    expect(isMCPJamProvidedModel("anthropic/claude-haiku-4.5")).toBe(true);
+    expect(isMCPJamProvidedModel("openai/gpt-5.4")).toBe(true);
+    expect(isMCPJamProvidedModel("qwen/qwen3.6-plus")).toBe(true);
     expect(isMCPJamGuestAllowedModel("openai/gpt-oss-120b")).toBe(false);
+    expect(isMCPJamGuestAllowedModel("openai/gpt-5.4")).toBe(false);
+    expect(isMCPJamGuestAllowedModel("qwen/qwen3.6-plus")).toBe(false);
   });
 
   it("resolves provider metadata for new qwen and xAI hosted models", () => {
     expect(getModelById("qwen/qwen3.6-plus")?.provider).toBe("qwen");
     expect(getModelById("x-ai/grok-4-fast")?.provider).toBe("xai");
+  });
+
+  it("resolves exact hosted IDs that are allowlisted in the backend", () => {
+    expect(getModelById("google/gemini-3-pro-preview")).toBeUndefined();
+    expect(getModelById("openai/gpt-4o-mini")?.provider).toBe("openai");
+    expect(getModelById("openai/gpt-5.4-mini")?.provider).toBe("openai");
+    expect(getModelById("google/gemini-3.1-pro-preview")?.provider).toBe(
+      "google",
+    );
+    expect(getModelById("z-ai/glm-4.6")?.provider).toBe("z-ai");
   });
 });

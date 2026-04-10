@@ -122,6 +122,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "openai/gpt-5.1-codex-mini",
   "openai/gpt-5-mini",
   "openai/gpt-5.4",
+  "openai/gpt-5.4-mini",
   "openai/gpt-5.4-pro",
   "openai/gpt-5.4-nano",
   "openai/gpt-5.3-codex",
@@ -129,7 +130,7 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "moonshotai/kimi-k2-thinking",
   "moonshotai/kimi-k2-0905",
   "google/gemini-2.5-flash",
-  "google/gemini-3-pro-preview",
+  "z-ai/glm-4.6",
   "google/gemini-3.1-flash-lite-preview",
   "google/gemini-3.1-pro-preview",
   "google/gemma-4-31b-it",
@@ -164,12 +165,6 @@ export const isMCPJamProvidedModel = (modelId: string): boolean => {
 
 export const isMCPJamGuestAllowedModel = (modelId: string): boolean => {
   return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(modelId);
-};
-
-export const isMCPJamSignInRequiredModel = (modelId: string): boolean => {
-  return (
-    isMCPJamProvidedModel(modelId) && !isMCPJamGuestAllowedModel(modelId)
-  );
 };
 
 export const isGPT5Model = (modelId: string | Model): boolean => {
@@ -221,7 +216,6 @@ export enum Model {
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
   // Google Gemini models
-  GEMINI_3_PRO = "gemini-3-pro-preview",
   GEMINI_2_5_PRO = "gemini-2.5-pro",
   GEMINI_2_5_FLASH = "gemini-2.5-flash",
   GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite",
@@ -391,12 +385,6 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
   },
   // Google Gemini models (latest first)
   {
-    id: Model.GEMINI_3_PRO,
-    name: "Gemini 3 Pro (Preview)",
-    provider: "google",
-    contextLength: 1000000,
-  },
-  {
     id: Model.GEMINI_2_5_PRO,
     name: "Gemini 2.5 Pro",
     provider: "google",
@@ -419,6 +407,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "GPT-OSS 120B (Free)",
     provider: "openai",
     contextLength: 131072,
+  },
+  {
+    id: "openai/gpt-4o-mini",
+    name: "GPT-4o Mini (Free)",
+    provider: "openai",
+    contextLength: 128000,
   },
   {
     id: "openai/gpt-5-nano",
@@ -475,6 +469,11 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
   },
   {
+    id: "openai/gpt-5.4-mini",
+    name: "GPT-5.4 Mini (Free)",
+    provider: "openai",
+  },
+  {
     id: "openai/gpt-5.4-pro",
     name: "GPT-5.4 Pro (Free)",
     provider: "openai",
@@ -513,9 +512,10 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 1048576,
   },
   {
-    id: "google/gemini-3-pro-preview",
-    name: "Gemini 3 Pro Preview (Free)",
-    provider: "google",
+    id: "z-ai/glm-4.6",
+    name: "GLM 4.6 (Free)",
+    provider: "z-ai",
+    contextLength: 200000,
   },
   {
     id: "google/gemini-3.1-flash-lite-preview",
