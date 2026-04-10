@@ -204,7 +204,6 @@ describe("web routes — chat-v2 guest mode", () => {
       expect.objectContaining({
         selectedServers: [],
         requireToolApproval: undefined,
-        includeMcpToolInventory: true,
       }),
     );
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
