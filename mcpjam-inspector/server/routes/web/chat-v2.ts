@@ -164,7 +164,6 @@ chatV2.post("/", async (c) => {
             systemPrompt,
             temperature,
             requireToolApproval,
-            includeMcpToolInventory: true,
           });
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
@@ -289,7 +288,6 @@ chatV2.post("/", async (c) => {
           temperature,
           requireToolApproval,
           customProviders: body.customProviders,
-          includeMcpToolInventory: true,
         });
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

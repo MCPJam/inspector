@@ -459,7 +459,6 @@ chatV2.post("/", async (c) => {
         temperature,
         requireToolApproval,
         customProviders: body.customProviders,
-        includeMcpToolInventory: true,
       });
     } catch (error) {
       // prepareChatV2 throws on Anthropic validation errors — return 400.
