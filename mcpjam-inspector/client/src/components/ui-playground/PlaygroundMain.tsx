@@ -1381,17 +1381,20 @@ export function PlaygroundMain({
         <>
           <div
             className={cn(
-              "relative flex h-11 items-center justify-center px-3 border-b border-border text-xs text-muted-foreground flex-shrink-0",
+              "@container/playground-header relative flex h-11 min-w-0 w-full items-center justify-center border-b border-border px-3 text-xs text-muted-foreground flex-shrink-0",
               isMultiModelMode ? "bg-background" : "bg-background/50",
+              effectiveHasMessages && "pr-10 sm:pr-11",
             )}
             data-testid="playground-main-header"
           >
-            <DisplayContextHeader
-              protocol={selectedProtocol}
-              showThemeToggle
-              themeModeOverride={effectiveThreadTheme}
-              onThemeToggleOverride={toggleLocalThreadTheme}
-            />
+            <div className="flex min-w-0 max-w-full justify-center">
+              <DisplayContextHeader
+                protocol={selectedProtocol}
+                showThemeToggle
+                themeModeOverride={effectiveThreadTheme}
+                onThemeToggleOverride={toggleLocalThreadTheme}
+              />
+            </div>
 
             {effectiveHasMessages && (
               <div className="absolute right-3">
