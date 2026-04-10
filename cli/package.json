@@ -1,7 +1,6 @@
 {
   "name": "mcpjam",
   "version": "0.0.0",
-  "private": true,
   "description": "CLI for MCPJam SDK inspection commands and OAuth conformance",
   "main": "dist/index.js",
   "bin": {
@@ -13,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mcpjam/sdk": "file:../sdk",
+    "@mcpjam/sdk": "^0.8.16",
     "commander": "^12.1.0"
   },
   "devDependencies": {
