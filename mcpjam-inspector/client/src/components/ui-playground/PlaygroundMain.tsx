@@ -463,7 +463,7 @@ export function PlaygroundMain({
   const resolvedSelectedModels = useMemo(() => {
     const persistedModels = selectedModelIds
       .map((modelId) => multiModelAvailableModels.get(modelId))
-      .filter((model): model is ModelDefinition => !!model);
+      .filter((model): model is ModelDefinition => !!model && !model.disabled);
 
     if (persistedModels.length > 0) {
       return persistedModels.slice(0, 3);

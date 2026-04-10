@@ -31,7 +31,7 @@ import {
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { ModelDefinition, isGPT5Model } from "@/shared/types";
+import { ModelDefinition, type ModelProvider, isGPT5Model } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -42,7 +42,10 @@ import {
   buildAvailableModels,
   getDefaultModel,
 } from "@/components/chat-v2/shared/model-helpers";
-import { isMCPJamProvidedModel } from "@/shared/types";
+import {
+  isMCPJamGuestAllowedModel,
+  isMCPJamProvidedModel,
+} from "@/shared/types";
 import {
   detectOllamaModels,
   detectOllamaToolCapableModels,
@@ -62,7 +65,6 @@ import {
   snapshotsToTraceWidgetSnapshots,
   buildToolRenderOverridesFromSnapshots,
 } from "@/components/evals/trace-viewer-adapter";
-import { GUEST_ALLOWED_MODEL_IDS, isGuestAllowedModel } from "@/shared/types";
 import { useSharedChatWidgetCapture } from "@/hooks/useSharedChatWidgetCapture";
 import { buildHostedServerRequest } from "@/lib/apis/web/context";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
@@ -246,6 +248,45 @@ export interface UseChatSessionReturn {
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
+}
+
+const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
+
+function inferModelProviderFromId(modelId: string): ModelProvider {
+  const providerPrefix = modelId.split("/")[0];
+
+  switch (providerPrefix) {
+    case "anthropic":
+    case "azure":
+    case "openai":
+    case "ollama":
+    case "deepseek":
+    case "google":
+    case "mistral":
+    case "moonshotai":
+    case "openrouter":
+    case "z-ai":
+    case "minimax":
+    case "qwen":
+    case "custom":
+      return providerPrefix;
+    case "x-ai":
+      return "xai";
+    case "meta-llama":
+      return "meta";
+    default:
+      return "openrouter";
+  }
+}
+
+function createLockedInitialModel(modelId: string): ModelDefinition {
+  return {
+    id: modelId,
+    name: modelId,
+    provider: inferModelProviderFromId(modelId),
+    disabled: true,
+    disabledReason: GUEST_LOCKED_MODEL_REASON,
+  };
 }
 
 interface LiveTraceTurnState {
@@ -814,36 +855,35 @@ export function useChatSession({
       getAzureBaseUrl,
       customProviders,
     });
+    const visibleModels = !isAuthenticated
+      ? models.map((model) => {
+          const modelId = String(model.id);
+          if (
+            !isMCPJamProvidedModel(modelId) ||
+            isMCPJamGuestAllowedModel(modelId)
+          ) {
+            return model;
+          }
+
+          return {
+            ...model,
+            disabled: true,
+            disabledReason: GUEST_LOCKED_MODEL_REASON,
+          };
+        })
+      : models;
     if (HOSTED_MODE) {
-      const mcpjamModels = models.filter((model) =>
+      return visibleModels.filter((model) =>
         isMCPJamProvidedModel(String(model.id)),
       );
-      // Guests should see the same MCPJam-hosted free model set as signed-in
-      // free users. Shared billing/feature entitlements still require auth.
-      if (guestMode) {
-        return mcpjamModels.filter((m) =>
-          GUEST_ALLOWED_MODEL_IDS.includes(String(m.id)),
-        );
-      }
-      return mcpjamModels;
     }
-    // Non-hosted: filter out non-guest MCPJam models when unauthenticated
-    // (keep user-provided models + 3 free MCPJam models)
-    if (!isAuthenticated) {
-      return models.filter(
-        (m) =>
-          !isMCPJamProvidedModel(String(m.id)) ||
-          isGuestAllowedModel(String(m.id)),
-      );
-    }
-    return models;
+    return visibleModels;
   }, [
     hasToken,
     getOpenRouterSelectedModels,
     isOllamaRunning,
     ollamaModels,
     getAzureBaseUrl,
-    guestMode,
     isAuthenticated,
     customProviders,
   ]);
@@ -857,18 +897,44 @@ export function useChatSession({
     multiModelEnabled,
     setMultiModelEnabled,
   } = usePersistedModel();
+  const selectableModels = useMemo(
+    () => availableModels.filter((model) => !model.disabled),
+    [availableModels],
+  );
   const selectedModel = useMemo<ModelDefinition>(() => {
-    const fallback = getDefaultModel(availableModels);
+    const fallback = getDefaultModel(
+      selectableModels.length > 0 ? selectableModels : availableModels,
+    );
+    const resolveAvailableModel = (modelId?: string | null) => {
+      if (!modelId) {
+        return null;
+      }
+
+      return (
+        availableModels.find((model) => String(model.id) === modelId) ?? null
+      );
+    };
+    const resolveSelectableModel = (modelId?: string | null) => {
+      if (!modelId) {
+        return null;
+      }
+
+      return (
+        availableModels.find(
+          (model) => String(model.id) === modelId && !model.disabled,
+        ) ?? null
+      );
+    };
+
     if (initialModelId) {
       return (
-        availableModels.find((model) => String(model.id) === initialModelId) ??
-        fallback
+        resolveAvailableModel(initialModelId) ??
+        createLockedInitialModel(initialModelId)
       );
     }
     if (!selectedModelId) return fallback;
-    const found = availableModels.find((m) => String(m.id) === selectedModelId);
-    return found ?? fallback;
-  }, [availableModels, initialModelId, selectedModelId]);
+    return resolveSelectableModel(selectedModelId) ?? fallback;
+  }, [availableModels, initialModelId, selectableModels, selectedModelId]);
 
   const setSelectedModel = useCallback(
     (model: ModelDefinition) => {
@@ -1650,11 +1716,11 @@ export function useChatSession({
   // Shared chats are guest-capable even though they are scoped to a workspace,
   // while direct guests have no workspace at all.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
-  // In non-hosted mode: auth is only needed if a future MCPJam model opts out
-  // of guest access. Current free-tier MCPJam models run on guest auth.
+  // In non-hosted mode: auth is only needed for sign-in-only MCPJam models.
   const requiresAuthForChat = HOSTED_MODE
     ? true
-    : isMcpJamModel && !isGuestAllowedModel(String(selectedModel?.id ?? ""));
+    : isMcpJamModel &&
+      !isMCPJamGuestAllowedModel(String(selectedModel?.id ?? ""));
   const isAuthReady =
     !requiresAuthForChat || guestMode || (isAuthenticated && !!authHeaders);
   // Guest users don't need WorkOS auth — authFetch handles guest bearer tokens
