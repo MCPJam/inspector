@@ -17,6 +17,7 @@ import {
 import { UITools, ToolUIPart, DynamicToolUIPart } from "ai";
 
 import { usePostHog } from "posthog-js/react";
+import { standardEventProps } from "@/lib/PosthogUtils";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useWidgetDebugStore } from "@/stores/widget-debug-store";
@@ -114,6 +115,7 @@ export function ToolPart({
       hasTrackedSkillLoad.current = true;
       posthog.capture("skill_loaded", {
         skill_name: (part as any).input?.name ?? "unknown",
+        ...standardEventProps("chat_tool_part"),
       });
     }
   }, [state, label, posthog, toolCallId, part]);
