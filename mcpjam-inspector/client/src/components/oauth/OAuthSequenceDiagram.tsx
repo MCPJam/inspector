@@ -3,11 +3,9 @@ import type {
   OAuthProtocolVersion,
   OAuthFlowState,
   OAuthFlowStep,
-} from "@/lib/oauth/state-machines/types";
+} from "@mcpjam/sdk/browser";
+import { buildOAuthSequenceActions } from "@mcpjam/sdk/browser";
 import { OAuthSequenceDiagramContent } from "@/components/oauth/shared/OAuthSequenceDiagramContent";
-import { buildActions_2025_11_25 } from "@/lib/oauth/state-machines/debug-oauth-2025-11-25";
-import { buildActions_2025_06_18 } from "@/lib/oauth/state-machines/debug-oauth-2025-06-18";
-import { buildActions_2025_03_26 } from "@/lib/oauth/state-machines/debug-oauth-2025-03-26";
 import { Button } from "@/components/ui/button";
 import { Settings } from "lucide-react";
 
@@ -37,32 +35,12 @@ export const OAuthSequenceDiagram = memo((props: OAuthSequenceDiagramProps) => {
     onConfigure,
   } = props;
 
-  // Select the appropriate actions builder based on protocol version
   const actions = useMemo(() => {
-    switch (protocolVersion) {
-      case "2025-11-25":
-        return buildActions_2025_11_25(flowState, registrationStrategy);
-
-      case "2025-06-18":
-        // 2025-06-18 doesn't support CIMD, fallback to DCR
-        return buildActions_2025_06_18(
-          flowState,
-          registrationStrategy === "cimd" ? "dcr" : registrationStrategy,
-        );
-
-      case "2025-03-26":
-        // 2025-03-26 doesn't support CIMD, fallback to DCR
-        return buildActions_2025_03_26(
-          flowState,
-          registrationStrategy === "cimd" ? "dcr" : registrationStrategy,
-        );
-
-      default:
-        console.warn(
-          `Unknown protocol version: ${protocolVersion}. Defaulting to 2025-11-25.`,
-        );
-        return buildActions_2025_11_25(flowState, registrationStrategy);
-    }
+    return buildOAuthSequenceActions({
+      protocolVersion,
+      registrationStrategy,
+      flowState,
+    });
   }, [protocolVersion, flowState, registrationStrategy]);
 
   return (

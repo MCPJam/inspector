@@ -2,6 +2,8 @@
  * Shared types for OAuth state machines
  */
 
+export type MaybePromise<T> = T | Promise<T>;
+
 // OAuth flow steps based on MCP specification
 export type OAuthFlowStep =
   | "idle"
@@ -122,20 +124,58 @@ export type HttpHistoryEntry = {
   step: OAuthFlowStep;
   timestamp: number; // Request start time
   duration?: number; // Response time in milliseconds
-  request: {
-    method: string;
-    url: string;
-    headers: Record<string, string>;
-    body?: any;
-  };
-  response?: {
-    status: number;
-    statusText: string;
-    headers: Record<string, string>;
-    body: any;
-  };
+  request: OAuthHttpRequest;
+  response?: OAuthHttpResponse;
   error?: LogErrorDetails;
 };
+
+export interface OAuthHttpRequest {
+  method: string;
+  url: string;
+  headers: Record<string, string>;
+  body?: any;
+}
+
+export interface OAuthHttpResponse {
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: any;
+}
+
+export interface OAuthRequestResult extends OAuthHttpResponse {
+  ok: boolean;
+}
+
+export type OAuthRequestExecutor = (
+  request: OAuthHttpRequest,
+) => Promise<OAuthRequestResult>;
+
+export type OAuthAutoAdvanceScheduler = (
+  fn: () => void,
+  delayMs: number,
+) => void;
+
+export interface OAuthDynamicRegistrationMetadata {
+  client_name: string;
+  client_uri?: string;
+  logo_uri?: string;
+  redirect_uris?: string[];
+  grant_types?: string[];
+  response_types?: string[];
+  token_endpoint_auth_method?: string;
+  [key: string]: unknown;
+}
+
+export interface PreregisteredCredentials {
+  clientId?: string;
+  clientSecret?: string;
+}
+
+export type LoadPreregisteredCredentials = (input: {
+  serverName: string;
+  serverUrl: string;
+}) => MaybePromise<PreregisteredCredentials>;
 
 // Initial empty state
 export const EMPTY_OAUTH_FLOW_STATE: OAuthFlowState = {
@@ -162,8 +202,12 @@ export interface BaseOAuthStateMachineConfig {
   updateState: (updates: Partial<OAuthFlowState>) => void;
   serverUrl: string;
   serverName: string;
-  redirectUrl?: string;
-  fetchFn?: typeof fetch;
+  redirectUrl: string;
+  requestExecutor: OAuthRequestExecutor;
+  scheduleAutoAdvance?: OAuthAutoAdvanceScheduler;
+  loadPreregisteredCredentials?: LoadPreregisteredCredentials;
+  dynamicRegistration?: Partial<OAuthDynamicRegistrationMetadata>;
+  clientIdMetadataUrl?: string;
   customScopes?: string;
   customHeaders?: Record<string, string>;
 }

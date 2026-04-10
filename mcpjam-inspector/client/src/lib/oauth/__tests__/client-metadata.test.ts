@@ -10,7 +10,7 @@ vi.mock("@/lib/session-token", () => ({
   authFetch: vi.fn(),
 }));
 
-vi.mock("../state-machines/shared/helpers", () => ({
+vi.mock("../pkce", () => ({
   generateRandomString: vi.fn(() => "mock-random-string"),
 }));
 
