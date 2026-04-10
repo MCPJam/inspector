@@ -31,7 +31,7 @@ import {
 } from "ai";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
-import { ModelDefinition, isGPT5Model } from "@/shared/types";
+import { ModelDefinition, type ModelProvider, isGPT5Model } from "@/shared/types";
 import {
   ProviderTokens,
   useAiProviderKeys,
@@ -127,8 +127,6 @@ export interface TokenUsage {
   outputTokens: number;
   totalTokens: number;
 }
-
-const GUEST_LOCKED_MODEL_REASON = "Sign in to use this model";
 
 export interface UseChatSessionReturn {
   // Chat state
@@ -250,6 +248,45 @@ export interface UseChatSessionReturn {
   disableForAuthentication: boolean;
   submitBlocked: boolean;
   inputDisabled: boolean;
+}
+
+const GUEST_LOCKED_MODEL_REASON = "Sign in to use MCPJam provided models";
+
+function inferModelProviderFromId(modelId: string): ModelProvider {
+  const providerPrefix = modelId.split("/")[0];
+
+  switch (providerPrefix) {
+    case "anthropic":
+    case "azure":
+    case "openai":
+    case "ollama":
+    case "deepseek":
+    case "google":
+    case "mistral":
+    case "moonshotai":
+    case "openrouter":
+    case "z-ai":
+    case "minimax":
+    case "qwen":
+    case "custom":
+      return providerPrefix;
+    case "x-ai":
+      return "xai";
+    case "meta-llama":
+      return "meta";
+    default:
+      return "openrouter";
+  }
+}
+
+function createLockedInitialModel(modelId: string): ModelDefinition {
+  return {
+    id: modelId,
+    name: modelId,
+    provider: inferModelProviderFromId(modelId),
+    disabled: true,
+    disabledReason: GUEST_LOCKED_MODEL_REASON,
+  };
 }
 
 interface LiveTraceTurnState {
@@ -868,6 +905,15 @@ export function useChatSession({
     const fallback = getDefaultModel(
       selectableModels.length > 0 ? selectableModels : availableModels,
     );
+    const resolveAvailableModel = (modelId?: string | null) => {
+      if (!modelId) {
+        return null;
+      }
+
+      return (
+        availableModels.find((model) => String(model.id) === modelId) ?? null
+      );
+    };
     const resolveSelectableModel = (modelId?: string | null) => {
       if (!modelId) {
         return null;
@@ -881,7 +927,10 @@ export function useChatSession({
     };
 
     if (initialModelId) {
-      return resolveSelectableModel(initialModelId) ?? fallback;
+      return (
+        resolveAvailableModel(initialModelId) ??
+        createLockedInitialModel(initialModelId)
+      );
     }
     if (!selectedModelId) return fallback;
     return resolveSelectableModel(selectedModelId) ?? fallback;

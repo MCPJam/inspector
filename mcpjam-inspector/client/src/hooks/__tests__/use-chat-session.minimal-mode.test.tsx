@@ -37,6 +37,11 @@ const mcpJamModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
+const gatedMcpJamModel = {
+  id: "openai/gpt-5.4-pro",
+  name: "GPT-5.4 Pro",
+  provider: "openai" as const,
+};
 const guestAllowedMcpJamModel = {
   id: "anthropic/claude-haiku-4.5",
   name: "Claude Haiku 4.5",
@@ -358,9 +363,10 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
-  it("shows sign-in-only MCPJam models but keeps them disabled on the unauthenticated non-hosted path", async () => {
+  it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {
     mockModelState.availableModels = [
       baseModel,
+      gatedMcpJamModel,
       mcpJamModel,
       guestAllowedMcpJamModel,
     ];
@@ -390,6 +396,7 @@ describe("useChatSession minimal mode parity", () => {
     expect(result.current.disableForAuthentication).toBe(false);
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
       "gpt-4",
+      "openai/gpt-5.4-pro",
       "openai/gpt-5-mini",
       "anthropic/claude-haiku-4.5",
     ]);
@@ -400,14 +407,87 @@ describe("useChatSession minimal mode parity", () => {
     ).toBeUndefined();
     expect(
       result.current.availableModels.find(
-        (model) => model.id === "openai/gpt-5-mini",
+        (model) => model.id === "openai/gpt-5.4-pro",
       ),
     ).toMatchObject({
       disabled: true,
-      disabledReason: "Sign in to use this model",
+      disabledReason: "Sign in to use MCPJam provided models",
     });
-    expect(result.current.selectedModel.id).toBe("gpt-4");
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5-mini",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(result.current.selectedModel.id).toBe("openai/gpt-5-mini");
     expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps an initialModelId authoritative even when that model is guest-locked", async () => {
+    mockModelState.availableModels = [
+      baseModel,
+      gatedMcpJamModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+        initialModelId: gatedMcpJamModel.id,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      id: "openai/gpt-5.4-pro",
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(result.current.isAuthReady).toBe(false);
+    expect(result.current.disableForAuthentication).toBe(true);
+  });
+
+  it("creates a locked placeholder when initialModelId is missing from availableModels", async () => {
+    mockModelState.availableModels = [baseModel, mcpJamModel, guestAllowedMcpJamModel];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+        initialModelId: gatedMcpJamModel.id,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      id: "openai/gpt-5.4-pro",
+      name: "openai/gpt-5.4-pro",
+      provider: "openai",
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(result.current.isAuthReady).toBe(false);
+    expect(result.current.disableForAuthentication).toBe(true);
   });
 
   it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {

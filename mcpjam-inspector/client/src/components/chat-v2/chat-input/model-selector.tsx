@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
-import { useConvexAuth } from "convex/react";
 import { Button } from "@/components/ui/button";
 import {
   Popover,
@@ -150,7 +149,6 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const { isAuthenticated } = useConvexAuth();
 
   const selectedModelsData =
     selectedModels && selectedModels.length > 0
@@ -325,19 +323,16 @@ export function ModelSelector({
 
   const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
     group.models.map((model) => {
-      const isMcpJamProvided = isMCPJamProvidedModel(String(model.id));
       const isDisabled =
         !!model.disabled ||
-        (isMcpJamProvided && !isAuthenticated) ||
         (multiModelEnabled &&
           !selectedIds.has(String(model.id)) &&
           selectedLimitReached);
       const disabledReason =
-        isMcpJamProvided && !isAuthenticated
-          ? "Sign in to use MCPJam provided models"
-          : !selectedIds.has(String(model.id)) && selectedLimitReached
+        model.disabledReason ??
+        (!selectedIds.has(String(model.id)) && selectedLimitReached
             ? `You can compare up to ${maxSelectedModels} models at once`
-            : model.disabledReason;
+            : undefined);
       const isSelected = selectedIds.has(String(model.id));
 
       const row = (
@@ -391,7 +386,9 @@ export function ModelSelector({
       return disabledReason ? (
         <Tooltip key={String(model.id)}>
           <TooltipTrigger asChild>
-            <div>{row}</div>
+            <div className="rounded-sm transition-colors hover:bg-accent/60">
+              {row}
+            </div>
           </TooltipTrigger>
           <TooltipContent side="right">{disabledReason}</TooltipContent>
         </Tooltip>

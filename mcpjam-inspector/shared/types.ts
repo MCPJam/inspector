@@ -155,9 +155,16 @@ const MCPJAM_PROVIDED_MODEL_IDS: string[] = [
   "qwen/qwen3-max-thinking",
 ];
 
-const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] = [
-  "anthropic/claude-haiku-4.5",
-];
+const MCPJAM_GUEST_GATED_MODEL_IDS = [
+  "openai/gpt-5.4-pro",
+  "anthropic/claude-opus-4.6",
+  "google/gemini-3.1-pro-preview",
+] as const;
+
+const gatedGuestModelIds = new Set<string>(MCPJAM_GUEST_GATED_MODEL_IDS);
+
+const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
+  MCPJAM_PROVIDED_MODEL_IDS.filter((modelId) => !gatedGuestModelIds.has(modelId));
 
 export const isMCPJamProvidedModel = (modelId: string): boolean => {
   return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
@@ -242,6 +249,18 @@ export enum Model {
   GROK_4_FAST_NON_REASONING = "grok-4-fast-non-reasoning",
   GROK_4_FAST_REASONING = "grok-4-fast-reasoning",
 }
+
+const freeModel = (
+  id: string,
+  name: string,
+  provider: ModelProvider,
+  contextLength?: number,
+): ModelDefinition => ({
+  id,
+  name: `${name} (Free)`,
+  provider,
+  ...(contextLength !== undefined ? { contextLength } : {}),
+});
 
 export const SUPPORTED_MODELS: ModelDefinition[] = [
   {
@@ -408,12 +427,7 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 131072,
   },
-  {
-    id: "openai/gpt-4o-mini",
-    name: "GPT-4o Mini (Free)",
-    provider: "openai",
-    contextLength: 128000,
-  },
+  freeModel("openai/gpt-4o-mini", "GPT-4o Mini", "openai", 128000),
   {
     id: "openai/gpt-5-nano",
     name: "GPT-5 Nano (Free)",
@@ -426,31 +440,23 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "anthropic",
     contextLength: 200000,
   },
-  {
-    id: "anthropic/claude-opus-4.5",
-    name: "Claude Opus 4.5 (Free)",
-    provider: "anthropic",
-  },
-  {
-    id: "anthropic/claude-sonnet-4.5",
-    name: "Claude Sonnet 4.5 (Free)",
-    provider: "anthropic",
-  },
-  {
-    id: "anthropic/claude-opus-4.6-fast",
-    name: "Claude Opus 4.6 Fast (Free)",
-    provider: "anthropic",
-  },
-  {
-    id: "anthropic/claude-sonnet-4.6",
-    name: "Claude Sonnet 4.6 (Free)",
-    provider: "anthropic",
-  },
-  {
-    id: "anthropic/claude-opus-4.6",
-    name: "Claude Opus 4.6 (Free)",
-    provider: "anthropic",
-  },
+  freeModel("anthropic/claude-opus-4.5", "Claude Opus 4.5", "anthropic"),
+  freeModel(
+    "anthropic/claude-sonnet-4.5",
+    "Claude Sonnet 4.5",
+    "anthropic",
+  ),
+  freeModel(
+    "anthropic/claude-opus-4.6-fast",
+    "Claude Opus 4.6 Fast",
+    "anthropic",
+  ),
+  freeModel(
+    "anthropic/claude-sonnet-4.6",
+    "Claude Sonnet 4.6",
+    "anthropic",
+  ),
+  freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
   {
     id: "openai/gpt-5.1-codex-mini",
     name: "GPT-5.1 Codex Mini (Free)",
@@ -463,36 +469,12 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "openai",
     contextLength: 128000,
   },
-  {
-    id: "openai/gpt-5.4",
-    name: "GPT-5.4 (Free)",
-    provider: "openai",
-  },
-  {
-    id: "openai/gpt-5.4-mini",
-    name: "GPT-5.4 Mini (Free)",
-    provider: "openai",
-  },
-  {
-    id: "openai/gpt-5.4-pro",
-    name: "GPT-5.4 Pro (Free)",
-    provider: "openai",
-  },
-  {
-    id: "openai/gpt-5.4-nano",
-    name: "GPT-5.4 Nano (Free)",
-    provider: "openai",
-  },
-  {
-    id: "openai/gpt-5.3-codex",
-    name: "GPT-5.3 Codex (Free)",
-    provider: "openai",
-  },
-  {
-    id: "openai/gpt-5.3-chat",
-    name: "GPT-5.3 Chat (Free)",
-    provider: "openai",
-  },
+  freeModel("openai/gpt-5.4", "GPT-5.4", "openai"),
+  freeModel("openai/gpt-5.4-mini", "GPT-5.4 Mini", "openai"),
+  freeModel("openai/gpt-5.4-pro", "GPT-5.4 Pro", "openai"),
+  freeModel("openai/gpt-5.4-nano", "GPT-5.4 Nano", "openai"),
+  freeModel("openai/gpt-5.3-codex", "GPT-5.3 Codex", "openai"),
+  freeModel("openai/gpt-5.3-chat", "GPT-5.3 Chat", "openai"),
   {
     id: "moonshotai/kimi-k2-thinking",
     name: "Kimi K2 Thinking (Free)",
@@ -511,27 +493,18 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "google",
     contextLength: 1048576,
   },
-  {
-    id: "z-ai/glm-4.6",
-    name: "GLM 4.6 (Free)",
-    provider: "z-ai",
-    contextLength: 200000,
-  },
-  {
-    id: "google/gemini-3.1-flash-lite-preview",
-    name: "Gemini 3.1 Flash Lite Preview (Free)",
-    provider: "google",
-  },
-  {
-    id: "google/gemini-3.1-pro-preview",
-    name: "Gemini 3.1 Pro Preview (Free)",
-    provider: "google",
-  },
-  {
-    id: "google/gemma-4-31b-it",
-    name: "Gemma 4 31B Instruct (Free)",
-    provider: "google",
-  },
+  freeModel("z-ai/glm-4.6", "GLM 4.6", "z-ai", 200000),
+  freeModel(
+    "google/gemini-3.1-flash-lite-preview",
+    "Gemini 3.1 Flash Lite Preview",
+    "google",
+  ),
+  freeModel(
+    "google/gemini-3.1-pro-preview",
+    "Gemini 3.1 Pro Preview",
+    "google",
+  ),
+  freeModel("google/gemma-4-31b-it", "Gemma 4 31B Instruct", "google"),
   {
     id: "x-ai/grok-code-fast-1",
     name: "Grok Code Fast 1 (Free)",
@@ -568,16 +541,8 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "xai",
     contextLength: 2000000,
   },
-  {
-    id: "x-ai/grok-4-fast",
-    name: "Grok 4 Fast (Free)",
-    provider: "xai",
-  },
-  {
-    id: "x-ai/grok-4.20",
-    name: "Grok 4.20 (Free)",
-    provider: "xai",
-  },
+  freeModel("x-ai/grok-4-fast", "Grok 4 Fast", "xai"),
+  freeModel("x-ai/grok-4.20", "Grok 4.20", "xai"),
   {
     id: "z-ai/glm-4.7",
     name: "GLM 4.7 (Free)",
@@ -596,46 +561,14 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     provider: "minimax",
     contextLength: 128000,
   },
-  {
-    id: "minimax/minimax-m2.7",
-    name: "MiniMax M2.7 (Free)",
-    provider: "minimax",
-  },
-  {
-    id: "qwen/qwen3.6-plus",
-    name: "Qwen 3.6 Plus (Free)",
-    provider: "qwen",
-  },
-  {
-    id: "qwen/qwen3.5-9b",
-    name: "Qwen 3.5 9B (Free)",
-    provider: "qwen",
-  },
-  {
-    id: "qwen/qwen3.5-35b-a3b",
-    name: "Qwen 3.5 35B A3B (Free)",
-    provider: "qwen",
-  },
-  {
-    id: "qwen/qwen3.5-27b",
-    name: "Qwen 3.5 27B (Free)",
-    provider: "qwen",
-  },
-  {
-    id: "qwen/qwen3.5-122b-a10b",
-    name: "Qwen 3.5 122B A10B (Free)",
-    provider: "qwen",
-  },
-  {
-    id: "qwen/qwen3.5-flash-02-23",
-    name: "Qwen 3.5 Flash 02-23 (Free)",
-    provider: "qwen",
-  },
-  {
-    id: "qwen/qwen3-max-thinking",
-    name: "Qwen 3 Max Thinking (Free)",
-    provider: "qwen",
-  },
+  freeModel("minimax/minimax-m2.7", "MiniMax M2.7", "minimax"),
+  freeModel("qwen/qwen3.6-plus", "Qwen 3.6 Plus", "qwen"),
+  freeModel("qwen/qwen3.5-9b", "Qwen 3.5 9B", "qwen"),
+  freeModel("qwen/qwen3.5-35b-a3b", "Qwen 3.5 35B A3B", "qwen"),
+  freeModel("qwen/qwen3.5-27b", "Qwen 3.5 27B", "qwen"),
+  freeModel("qwen/qwen3.5-122b-a10b", "Qwen 3.5 122B A10B", "qwen"),
+  freeModel("qwen/qwen3.5-flash-02-23", "Qwen 3.5 Flash 02-23", "qwen"),
+  freeModel("qwen/qwen3-max-thinking", "Qwen 3 Max Thinking", "qwen"),
   // Mistral models
   {
     id: Model.MISTRAL_LARGE_LATEST,

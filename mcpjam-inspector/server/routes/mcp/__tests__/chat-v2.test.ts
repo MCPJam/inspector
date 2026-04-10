@@ -853,31 +853,94 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
-    it("rejects sign-in-only MCPJam guest models before fetching guest auth", async () => {
+    it("uses a guest token for non-gated MCPJam guest requests", async () => {
       const { getProductionGuestAuthHeader } = await import(
         "../../../utils/guest-auth.js"
       );
 
       const originalFetch = global.fetch;
-      global.fetch = vi.fn();
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
 
       try {
         const res = await postJson(app, "/api/mcp/chat-v2", {
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "openai/gpt-4o-mini", provider: "openai" },
         });
-        const { status, data } = await expectJson(res);
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
 
-        expect(status).toBe(403);
-        expect(data.error).toBe(
-          "This MCPJam model is not available for guest access. Sign in to continue.",
-        );
-        expect(vi.mocked(getProductionGuestAuthHeader)).not.toHaveBeenCalled();
-        expect(global.fetch).not.toHaveBeenCalled();
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+
+        expect(streamCall).toBeDefined();
+        const [, init] = streamCall!;
+        expect(init).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer guest-test-token",
+          }),
+        });
+        expect(vi.mocked(getProductionGuestAuthHeader)).toHaveBeenCalled();
       } finally {
         global.fetch = originalFetch;
       }
     });
+
+    it.each([
+      { id: "openai/gpt-5.4-pro", provider: "openai" },
+      { id: "anthropic/claude-opus-4.6", provider: "anthropic" },
+      { id: "google/gemini-3.1-pro-preview", provider: "google" },
+    ])(
+      "rejects gated MCPJam guest model $id before fetching guest auth",
+      async ({ id, provider }) => {
+        const { getProductionGuestAuthHeader } = await import(
+          "../../../utils/guest-auth.js"
+        );
+
+        const originalFetch = global.fetch;
+        global.fetch = vi.fn();
+
+        try {
+          const res = await postJson(app, "/api/mcp/chat-v2", {
+            messages: [{ role: "user", content: "Hello" }],
+            model: { id, provider },
+          });
+          const { status, data } = await expectJson(res);
+
+          expect(status).toBe(403);
+          expect(data.error).toBe(
+            "This MCPJam model is not available for guest access. Sign in to continue.",
+          );
+          expect(vi.mocked(getProductionGuestAuthHeader)).not.toHaveBeenCalled();
+          expect(global.fetch).not.toHaveBeenCalled();
+        } finally {
+          global.fetch = originalFetch;
+        }
+      },
+    );
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
