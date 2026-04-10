@@ -401,9 +401,8 @@ describe("useChatSession minimal mode parity", () => {
       "anthropic/claude-haiku-4.5",
     ]);
     expect(
-      result.current.availableModels.find(
-        (model) => model.id === "gpt-4",
-      )?.disabled,
+      result.current.availableModels.find((model) => model.id === "gpt-4")
+        ?.disabled,
     ).toBeUndefined();
     expect(
       result.current.availableModels.find(
@@ -461,7 +460,11 @@ describe("useChatSession minimal mode parity", () => {
   });
 
   it("creates a locked placeholder when initialModelId is missing from availableModels", async () => {
-    mockModelState.availableModels = [baseModel, mcpJamModel, guestAllowedMcpJamModel];
+    mockModelState.availableModels = [
+      baseModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
     mockModelState.selectedModelId = mcpJamModel.id;
     mockConvexAuth.isAuthenticated = false;
     mockGetAccessToken.mockResolvedValue(null);

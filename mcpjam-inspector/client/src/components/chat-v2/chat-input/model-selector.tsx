@@ -151,9 +151,9 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
-  const [hoveredLockedModelId, setHoveredLockedModelId] = useState<string | null>(
-    null,
-  );
+  const [hoveredLockedModelId, setHoveredLockedModelId] = useState<
+    string | null
+  >(null);
   const posthog = usePostHog();
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen && !isOpen) {
@@ -175,7 +175,9 @@ export function ModelSelector({
 
   const lockedRowHighlightId =
     hoveredLockedModelId ??
-    (!multiModelEnabled && currentModel.disabled ? String(currentModel.id) : null);
+    (!multiModelEnabled && currentModel.disabled
+      ? String(currentModel.id)
+      : null);
 
   const groupedModels = useMemo(
     () => groupModelsByProvider(availableModels),
@@ -353,8 +355,8 @@ export function ModelSelector({
       const disabledReason =
         model.disabledReason ??
         (!selectedIds.has(String(model.id)) && selectedLimitReached
-            ? `You can compare up to ${maxSelectedModels} models at once`
-            : undefined);
+          ? `You can compare up to ${maxSelectedModels} models at once`
+          : undefined);
       const isLockedRowHighlight =
         lockedRowHighlightId === String(model.id) && !!disabledReason;
       const isSelected = selectedIds.has(String(model.id));

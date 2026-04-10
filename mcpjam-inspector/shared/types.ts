@@ -164,7 +164,9 @@ const MCPJAM_GUEST_GATED_MODEL_IDS = [
 const gatedGuestModelIds = new Set<string>(MCPJAM_GUEST_GATED_MODEL_IDS);
 
 const MCPJAM_GUEST_ALLOWED_MODEL_IDS: string[] =
-  MCPJAM_PROVIDED_MODEL_IDS.filter((modelId) => !gatedGuestModelIds.has(modelId));
+  MCPJAM_PROVIDED_MODEL_IDS.filter(
+    (modelId) => !gatedGuestModelIds.has(modelId),
+  );
 
 export const isMCPJamProvidedModel = (modelId: string): boolean => {
   return MCPJAM_PROVIDED_MODEL_IDS.includes(modelId);
@@ -441,21 +443,13 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   freeModel("anthropic/claude-opus-4.5", "Claude Opus 4.5", "anthropic"),
-  freeModel(
-    "anthropic/claude-sonnet-4.5",
-    "Claude Sonnet 4.5",
-    "anthropic",
-  ),
+  freeModel("anthropic/claude-sonnet-4.5", "Claude Sonnet 4.5", "anthropic"),
   freeModel(
     "anthropic/claude-opus-4.6-fast",
     "Claude Opus 4.6 Fast",
     "anthropic",
   ),
-  freeModel(
-    "anthropic/claude-sonnet-4.6",
-    "Claude Sonnet 4.6",
-    "anthropic",
-  ),
+  freeModel("anthropic/claude-sonnet-4.6", "Claude Sonnet 4.6", "anthropic"),
   freeModel("anthropic/claude-opus-4.6", "Claude Opus 4.6", "anthropic"),
   {
     id: "openai/gpt-5.1-codex-mini",

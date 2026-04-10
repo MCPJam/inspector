@@ -682,9 +682,9 @@ describe("useChatSession hosted mode", () => {
     });
 
     expect(
-      result.current.availableModels.filter((model) => !model.disabled).map(
-        (model) => model.id,
-      ),
+      result.current.availableModels
+        .filter((model) => !model.disabled)
+        .map((model) => model.id),
     ).toEqual([
       "qwen/qwen3.6-plus",
       "openai/gpt-4o-mini",

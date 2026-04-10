@@ -77,7 +77,7 @@ describe("OAuth state machines use injected dynamic registration metadata", () =
           scope: "read write",
         },
       });
-    }
+    },
   );
 
   it.each([
@@ -112,12 +112,12 @@ describe("OAuth state machines use injected dynamic registration metadata", () =
           redirectUrl: REDIRECT_URI,
           requestExecutor: jest.fn(async () => {
             throw new Error(
-              "requestExecutor should not be called in this test"
+              "requestExecutor should not be called in this test",
             );
           }),
           clientIdMetadataUrl,
-        })
+        }),
       ).toThrow(expectedMessage);
-    }
+    },
   );
 });
