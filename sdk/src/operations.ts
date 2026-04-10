@@ -193,6 +193,10 @@ export async function withDisposableManager<T>(
   try {
     return await fn(manager);
   } finally {
-    await manager.disconnectAllServers();
+    try {
+      await manager.disconnectAllServers();
+    } catch {
+      // Best effort cleanup for the disposable manager lifecycle.
+    }
   }
 }

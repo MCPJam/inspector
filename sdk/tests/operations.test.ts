@@ -273,6 +273,35 @@ describe("withDisposableManager", () => {
     expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves the function error when disconnect cleanup fails", async () => {
+    const manager = createMockManager({
+      disconnectAllServers: jest
+        .fn()
+        .mockRejectedValue(new Error("disconnect failed")),
+    });
+
+    await expect(
+      withDisposableManager(manager, async () => {
+        throw new Error("boom");
+      }),
+    ).rejects.toThrow("boom");
+
+    expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores disconnect cleanup errors after success", async () => {
+    const manager = createMockManager({
+      disconnectAllServers: jest
+        .fn()
+        .mockRejectedValue(new Error("disconnect failed")),
+    });
+
+    const result = await withDisposableManager(manager, async () => "ok");
+
+    expect(result).toBe("ok");
+    expect(manager.disconnectAllServers).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves promise input", async () => {
     const manager = createMockManager();
 
