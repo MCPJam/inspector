@@ -153,7 +153,7 @@ export function ModelSelector({
   const posthog = usePostHog();
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen && !isOpen) {
-      posthog?.capture(
+      posthog.capture(
         "chat_model_selector_clicked",
         standardEventProps("chat_input"),
       );

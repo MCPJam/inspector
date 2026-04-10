@@ -209,7 +209,7 @@ export function ChatInput({
   const [plusPopoverOpen, setPlusPopoverOpen] = useState(false);
   const handlePlusPopoverOpenChange = (nextOpen: boolean) => {
     if (nextOpen && !plusPopoverOpen) {
-      posthog?.capture(
+      posthog.capture(
         "chat_options_plus_clicked",
         standardEventProps("chat_input"),
       );
@@ -738,7 +738,7 @@ export function ChatInput({
                           type="button"
                           className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-sm hover:bg-muted/60 cursor-pointer"
                           onClick={() => {
-                            posthog?.capture(
+                            posthog.capture(
                               "chat_attachment_button_clicked",
                               standardEventProps("chat_input"),
                             );

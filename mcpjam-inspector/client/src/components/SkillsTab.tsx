@@ -190,8 +190,8 @@ export function SkillsTab() {
     try {
       await deleteSkill(skillToDelete);
       posthog.capture("skill_deleted", {
-        skill_name: skillToDelete,
         ...standardEventProps("skills_tab"),
+        skill_name: skillToDelete,
       });
       // Refresh skills list
       await fetchSkills();
@@ -227,8 +227,8 @@ export function SkillsTab() {
     setRawMode(false);
     setDescriptionExpanded(false);
     posthog.capture("skill_viewed", {
-      skill_name: name,
       ...standardEventProps("skills_tab"),
+      skill_name: name,
     });
     fetchFileContent(name, "SKILL.md");
   };

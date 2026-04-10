@@ -241,7 +241,7 @@ export function TraceRawView({
             variant="ghost"
             size="icon"
             onClick={() => {
-              posthog?.capture(
+              posthog.capture(
                 "trace_raw_copied",
                 standardEventProps("trace_raw_view"),
               );

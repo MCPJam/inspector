@@ -598,12 +598,9 @@ export function MCPSidebar({
         setHasVisitedAppBuilder(true);
       }
       posthog.capture("sidebar_nav_clicked", {
-        section,
         ...standardEventProps("mcp_sidebar"),
+        section,
       });
-      if (section === "skills") {
-        posthog.capture("skills_tab_opened", standardEventProps("mcp_sidebar"));
-      }
       onNavigate(section);
     } else {
       window.open(url, "_blank");

@@ -27,9 +27,9 @@ export function TraceViewModeTabs({
   const posthog = usePostHog();
 
   const handleModeChange = (nextMode: TraceViewMode) => {
-    posthog?.capture("trace_view_mode_changed", {
-      mode: nextMode,
+    posthog.capture("trace_view_mode_changed", {
       ...standardEventProps("trace_view_mode_tabs"),
+      mode: nextMode,
     });
     onModeChange(nextMode);
   };

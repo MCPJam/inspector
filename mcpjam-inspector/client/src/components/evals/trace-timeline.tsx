@@ -2265,10 +2265,9 @@ export function TraceTimeline({
                       spanShowsFailure,
                     );
                     const selectRow = () => {
-                      posthog?.capture("trace_span_clicked", {
-                        span_kind: row.kind,
-                        span_key: row.key,
+                      posthog.capture("trace_span_clicked", {
                         ...standardEventProps("trace_timeline"),
+                        span_kind: row.kind,
                       });
                       setSelectedRowKey(row.key);
                     };
