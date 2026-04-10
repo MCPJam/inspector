@@ -200,7 +200,9 @@ describe("TestTemplateEditor openCompareFromRoute", () => {
   }
 
   function getMetricBar(card: HTMLElement, label: "Latency" | "Tokens") {
-    const row = within(card).getByText(label).closest("div.flex.items-center.gap-2");
+    const row = within(card)
+      .getByText(label)
+      .closest("div.flex.items-center.gap-2");
     expect(row).not.toBeNull();
     const bar = row!.querySelector("div[style]");
     expect(bar).not.toBeNull();
