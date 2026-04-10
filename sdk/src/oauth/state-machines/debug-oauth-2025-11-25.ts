@@ -30,7 +30,10 @@ import {
   mergeHeadersForResourceMetadataRequest,
   normalizeHeaders,
 } from "./shared/headers.js";
-import { generateRandomString, generateCodeChallenge } from "./shared/pkce.js";
+import {
+  generateRandomString,
+  generateCodeChallenge,
+} from "./shared/pkce.js";
 import {
   buildResourceMetadataUrl,
   canonicalizeResourceUrl,
@@ -41,7 +44,8 @@ export type { OAuthFlowStep, OAuthFlowState };
 export { EMPTY_OAUTH_FLOW_STATE };
 
 // Configuration for creating the state machine (2025-11-25 specific)
-export interface DebugOAuthStateMachineConfig extends BaseOAuthStateMachineConfig {
+export interface DebugOAuthStateMachineConfig
+  extends BaseOAuthStateMachineConfig {
   registrationStrategy?: RegistrationStrategy2025_11_25; // cimd | dcr | preregistered
 }
 
@@ -541,7 +545,9 @@ export const createDebugOAuthStateMachine = (
   }
 
   if (registrationStrategy === "cimd" && !cimdClientId) {
-    throw new Error("Client ID metadata URL is required for CIMD registration");
+    throw new Error(
+      "Client ID metadata URL is required for CIMD registration",
+    );
   }
 
   if (registrationStrategy === "cimd") {
@@ -1240,16 +1246,14 @@ export const createDebugOAuthStateMachine = (
 
               const clientMetadata: Record<string, any> = {
                 ...dynamicRegistrationDefaults,
-                redirect_uris: dynamicRegistrationDefaults.redirect_uris ?? [
-                  redirectUri,
-                ],
+                redirect_uris:
+                  dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
                 grant_types: dynamicRegistrationDefaults.grant_types ?? [
                   "authorization_code",
                   "refresh_token",
                 ],
-                response_types: dynamicRegistrationDefaults.response_types ?? [
-                  "code",
-                ],
+                response_types:
+                  dynamicRegistrationDefaults.response_types ?? ["code"],
                 token_endpoint_auth_method:
                   dynamicRegistrationDefaults.token_endpoint_auth_method ??
                   "none",

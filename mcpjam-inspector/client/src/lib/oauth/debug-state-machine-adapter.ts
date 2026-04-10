@@ -46,15 +46,12 @@ function serializeProxyBody(
   }
 
   const contentType =
-    Object.entries(headers).find(
-      ([key]) => key.toLowerCase() === "content-type",
-    )?.[1] ?? "";
+    Object.entries(headers).find(([key]) => key.toLowerCase() === "content-type")?.[1] ??
+    "";
 
   if (contentType.includes("application/x-www-form-urlencoded")) {
     const params =
-      typeof body === "string"
-        ? new URLSearchParams(body)
-        : new URLSearchParams();
+      typeof body === "string" ? new URLSearchParams(body) : new URLSearchParams();
     return Object.fromEntries(params.entries());
   }
 
