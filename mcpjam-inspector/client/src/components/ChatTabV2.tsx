@@ -1930,6 +1930,7 @@ export function ChatTabV2({
                 {showTopTraceViewTabs ? (
                   <ChatTraceViewModeHeaderBar
                     mode={activeTraceViewMode}
+                    activeVariant="sidebar"
                     onModeChange={(mode) => {
                       if (mode === "tools") {
                         return;
@@ -2143,6 +2144,7 @@ export function ChatTabV2({
                 {showTopTraceViewTabs ? (
                   <ChatTraceViewModeHeaderBar
                     mode={activeTraceViewMode}
+                    activeVariant="sidebar"
                     onModeChange={(mode) => {
                       if (mode === "tools") {
                         return;
