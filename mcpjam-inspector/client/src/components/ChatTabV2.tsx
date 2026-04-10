@@ -100,6 +100,14 @@ import {
 interface ChatTabProps {
   connectedOrConnectingServerConfigs: Record<string, ServerWithName>;
   selectedServerNames: string[];
+  /** All workspace servers (for the "+" dropdown server toggles). */
+  allServerConfigs?: Record<string, ServerWithName>;
+  /** Toggle a server on/off for multi-select. */
+  onServerToggle?: (serverName: string) => void;
+  /** Reconnect a disconnected server. */
+  onReconnectServer?: (serverName: string) => Promise<void>;
+  /** Add a new server (opens add-server modal). */
+  onAddServer?: (formData: import("@/shared/types").ServerFormData) => void;
   onSelectedServerNamesChange?: (names: string[]) => void;
   onHasMessagesChange?: (hasMessages: boolean) => void;
   enableMultiModelChat?: boolean;
@@ -137,6 +145,10 @@ const RESUMED_THREAD_REFRESH_RETRIES = 2;
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
   selectedServerNames,
+  allServerConfigs,
+  onServerToggle,
+  onReconnectServer,
+  onAddServer,
   onSelectedServerNamesChange,
   onHasMessagesChange,
   enableMultiModelChat = false,
@@ -1834,6 +1846,10 @@ export function ChatTabV2({
     requireToolApproval,
     onRequireToolApprovalChange: handleRequireToolApprovalChange,
     minimalMode,
+    allServerConfigs,
+    onServerToggle,
+    onReconnectServer,
+    onAddServer,
     sandboxAttachableServers:
       sandboxOptionalInventory && sandboxOptionalInventory.length > 0
         ? sandboxOptionalInventory

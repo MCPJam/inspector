@@ -214,13 +214,18 @@ export function AppBuilderTab({
     }
   }, [serverName, reset, setTools, setExecutionError]);
 
+  const serverConnectionStatus = serverName
+    ? servers[serverName]?.connectionStatus
+    : undefined;
+
   useEffect(() => {
-    if (serverConfig && serverName) {
+    if (serverConfig && serverName && serverConnectionStatus === "connected") {
       fetchTools();
     } else {
       reset();
+      setToolsMetadata({});
     }
-  }, [serverConfig, serverName, fetchTools, reset]);
+  }, [serverConfig, serverName, serverConnectionStatus, fetchTools, reset]);
 
   // Update form fields when tool is selected
   useEffect(() => {
