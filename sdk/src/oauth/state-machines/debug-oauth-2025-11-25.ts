@@ -30,10 +30,7 @@ import {
   mergeHeadersForResourceMetadataRequest,
   normalizeHeaders,
 } from "./shared/headers.js";
-import {
-  generateRandomString,
-  generateCodeChallenge,
-} from "./shared/pkce.js";
+import { generateRandomString, generateCodeChallenge } from "./shared/pkce.js";
 import {
   buildResourceMetadataUrl,
   canonicalizeResourceUrl,
@@ -44,9 +41,23 @@ export type { OAuthFlowStep, OAuthFlowState };
 export { EMPTY_OAUTH_FLOW_STATE };
 
 // Configuration for creating the state machine (2025-11-25 specific)
-export interface DebugOAuthStateMachineConfig
-  extends BaseOAuthStateMachineConfig {
+export interface DebugOAuthStateMachineConfig extends BaseOAuthStateMachineConfig {
   registrationStrategy?: RegistrationStrategy2025_11_25; // cimd | dcr | preregistered
+}
+
+function validateCimdClientIdMetadataUrl(clientIdMetadataUrl: string): string {
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(clientIdMetadataUrl);
+  } catch {
+    throw new Error("Client ID metadata URL must be a valid absolute URL");
+  }
+
+  if (parsedUrl.protocol !== "https:" || !parsedUrl.hostname) {
+    throw new Error("Client ID metadata URL must be an absolute HTTPS URL");
+  }
+
+  return parsedUrl.toString();
 }
 
 /**
@@ -56,7 +67,7 @@ export interface DebugOAuthStateMachineConfig
  */
 export function buildActions_2025_11_25(
   flowState: OAuthFlowState,
-  registrationStrategy: "cimd" | "dcr" | "preregistered",
+  registrationStrategy: "cimd" | "dcr" | "preregistered"
 ): DiagramAction[] {
   return [
     {
@@ -137,13 +148,13 @@ export function buildActions_2025_11_25(
             {
               label: "Token",
               value: new URL(
-                flowState.authorizationServerMetadata.token_endpoint,
+                flowState.authorizationServerMetadata.token_endpoint
               ).pathname,
             },
             {
               label: "Auth",
               value: new URL(
-                flowState.authorizationServerMetadata.authorization_endpoint,
+                flowState.authorizationServerMetadata.authorization_endpoint
               ).pathname,
             },
           ]
@@ -459,10 +470,10 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
   if (url.pathname === "/" || url.pathname === "") {
     // Root path - standard endpoints
     urls.push(
-      new URL("/.well-known/oauth-authorization-server", url.origin).toString(),
+      new URL("/.well-known/oauth-authorization-server", url.origin).toString()
     );
     urls.push(
-      new URL("/.well-known/openid-configuration", url.origin).toString(),
+      new URL("/.well-known/openid-configuration", url.origin).toString()
     );
   } else {
     // Path-aware discovery
@@ -475,20 +486,20 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
     urls.push(
       new URL(
         `/.well-known/oauth-authorization-server${pathname}`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
     urls.push(
       new URL(
         `/.well-known/openid-configuration${pathname}`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
     urls.push(
       new URL(
         `${pathname}/.well-known/openid-configuration`,
-        url.origin,
-      ).toString(),
+        url.origin
+      ).toString()
     );
   }
 
@@ -497,7 +508,7 @@ function buildAuthServerMetadataUrls(authServerUrl: string): string[] {
 
 // Factory function to create the 2025-11-25 state machine
 export const createDebugOAuthStateMachine = (
-  config: DebugOAuthStateMachineConfig,
+  config: DebugOAuthStateMachineConfig
 ): OAuthStateMachine => {
   const {
     state: initialState,
@@ -520,7 +531,7 @@ export const createDebugOAuthStateMachine = (
   const canonicalServerUrl = canonicalizeResourceUrl(serverUrl);
   const redirectUri = redirectUrl;
   const dynamicRegistrationDefaults = dynamicRegistration ?? {};
-  const cimdClientId = clientIdMetadataUrl ?? "";
+  let cimdClientId = clientIdMetadataUrl ?? "";
 
   if (
     registrationStrategy === "dcr" &&
@@ -530,9 +541,11 @@ export const createDebugOAuthStateMachine = (
   }
 
   if (registrationStrategy === "cimd" && !cimdClientId) {
-    throw new Error(
-      "Client ID metadata URL is required for CIMD registration",
-    );
+    throw new Error("Client ID metadata URL is required for CIMD registration");
+  }
+
+  if (registrationStrategy === "cimd") {
+    cimdClientId = validateCimdClientIdMetadataUrl(cimdClientId);
   }
 
   // Helper to get current state (use getState if provided, otherwise use initial state)
@@ -672,7 +685,7 @@ export const createDebugOAuthStateMachine = (
                       {
                         header: wwwAuthenticateHeader,
                         "Received from": state.serverUrl || "Unknown",
-                      },
+                      }
                     )
                   : state.infoLogs;
 
@@ -695,7 +708,7 @@ export const createDebugOAuthStateMachine = (
                   {
                     message: "Server allows anonymous access",
                     note: "Proceeding with OAuth discovery for authenticated features",
-                  },
+                  }
                 );
 
                 updateState({
@@ -713,12 +726,12 @@ export const createDebugOAuthStateMachine = (
                   httpHistory: updatedHistory,
                 });
                 throw new Error(
-                  `Expected 401 Unauthorized but got HTTP ${response.status}: ${response.body?.error?.message || response.statusText}`,
+                  `Expected 401 Unauthorized but got HTTP ${response.status}: ${response.body?.error?.message || response.statusText}`
                 );
               }
             } catch (error) {
               throw new Error(
-                `Failed to request MCP server: ${error instanceof Error ? error.message : String(error)}`,
+                `Failed to request MCP server: ${error instanceof Error ? error.message : String(error)}`
               );
             }
             break;
@@ -731,7 +744,7 @@ export const createDebugOAuthStateMachine = (
               // Parse WWW-Authenticate header to extract resource_metadata URL
               // Format: Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource"
               const resourceMetadataMatch = state.wwwAuthenticateHeader.match(
-                /resource_metadata="([^"]+)"/,
+                /resource_metadata="([^"]+)"/
               );
               if (resourceMetadataMatch) {
                 extractedResourceMetadataUrl = resourceMetadataMatch[1];
@@ -741,7 +754,7 @@ export const createDebugOAuthStateMachine = (
             // Fallback to building the URL if not found in header
             if (!extractedResourceMetadataUrl && state.serverUrl) {
               extractedResourceMetadataUrl = buildResourceMetadataUrl(
-                state.serverUrl,
+                state.serverUrl
               );
             }
 
@@ -803,7 +816,7 @@ export const createDebugOAuthStateMachine = (
                 serverUrl,
                 requestUrl,
                 customHeaders,
-                normalizeHeaders(init.headers as HeadersInit | undefined),
+                normalizeHeaders(init.headers as HeadersInit | undefined)
               );
 
               const historyEntry: HttpHistoryEntry = pendingHistoryEntry
@@ -873,7 +886,7 @@ export const createDebugOAuthStateMachine = (
                 await discoverOAuthProtectedResourceMetadata(
                   state.serverUrl,
                   metadataOptions,
-                  loggingFetch,
+                  loggingFetch
                 );
 
               const finalHistory = [...historyWithoutPlaceholder, ...attempts];
@@ -892,7 +905,7 @@ export const createDebugOAuthStateMachine = (
                   Resource: resourceMetadata.resource,
                   "Authorization Servers":
                     resourceMetadata.authorization_servers,
-                },
+                }
               );
 
               updateState({
@@ -910,7 +923,7 @@ export const createDebugOAuthStateMachine = (
             } catch (error) {
               const updatedHistory = markLatestHttpEntryAsError(
                 [...historyWithoutPlaceholder, ...attempts],
-                toLogErrorDetails(error),
+                toLogErrorDetails(error)
               );
 
               updateState({
@@ -919,7 +932,7 @@ export const createDebugOAuthStateMachine = (
               });
 
               throw new Error(
-                `Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`,
+                `Failed to request resource metadata: ${error instanceof Error ? error.message : String(error)}`
               );
             }
             break;
@@ -931,7 +944,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             const authServerUrls = buildAuthServerMetadataUrls(
-              state.authorizationServerUrl,
+              state.authorizationServerUrl
             );
 
             const authServerRequest = {
@@ -967,7 +980,7 @@ export const createDebugOAuthStateMachine = (
             }
 
             const urlsToTry = buildAuthServerMetadataUrls(
-              state.authorizationServerUrl,
+              state.authorizationServerUrl
             );
             let authServerMetadata = null;
             let lastError = null;
@@ -978,7 +991,7 @@ export const createDebugOAuthStateMachine = (
               try {
                 const requestHeaders = mergeHeadersForAuthServer(
                   customHeaders,
-                  {},
+                  {}
                 );
 
                 // Update request URL as we try different endpoints
@@ -1029,31 +1042,31 @@ export const createDebugOAuthStateMachine = (
 
             if (!authServerMetadata || !finalResponseData) {
               throw new Error(
-                `Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`,
+                `Could not discover authorization server metadata. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
               );
             }
 
             // Validate required AS metadata fields per RFC 8414
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field",
+                "Authorization server metadata missing required 'issuer' field"
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
               throw new Error(
-                "Authorization server metadata missing 'authorization_endpoint'",
+                "Authorization server metadata missing 'authorization_endpoint'"
               );
             }
             if (!authServerMetadata.token_endpoint) {
               throw new Error(
-                "Authorization server metadata missing 'token_endpoint'",
+                "Authorization server metadata missing 'token_endpoint'"
               );
             }
             if (
               !authServerMetadata.response_types_supported?.includes("code")
             ) {
               throw new Error(
-                "Authorization server does not support 'code' response type",
+                "Authorization server does not support 'code' response type"
               );
             }
 
@@ -1083,7 +1096,7 @@ export const createDebugOAuthStateMachine = (
               throw new Error(
                 "PKCE is REQUIRED for 2025-11-25 protocol, but authorization server " +
                   "does not advertise code_challenge_methods_supported. " +
-                  "Server is not compliant with 2025-11-25 spec.",
+                  "Server is not compliant with 2025-11-25 spec."
               );
             }
 
@@ -1120,13 +1133,13 @@ export const createDebugOAuthStateMachine = (
               "received_authorization_server_metadata",
               "as-metadata",
               "Authorization Server Metadata",
-              metadata,
+              metadata
             );
 
             if (!supportedMethods.includes("S256")) {
               console.warn(
                 "Authorization server may not support S256 PKCE method. Supported methods:",
-                supportedMethods,
+                supportedMethods
               );
               // Add warning to state but continue
               updateState({
@@ -1203,7 +1216,7 @@ export const createDebugOAuthStateMachine = (
                 "received_client_credentials",
                 "dcr",
                 "Pre-registered Client",
-                preregInfo,
+                preregInfo
               );
 
               updateState({
@@ -1227,14 +1240,16 @@ export const createDebugOAuthStateMachine = (
 
               const clientMetadata: Record<string, any> = {
                 ...dynamicRegistrationDefaults,
-                redirect_uris:
-                  dynamicRegistrationDefaults.redirect_uris ?? [redirectUri],
+                redirect_uris: dynamicRegistrationDefaults.redirect_uris ?? [
+                  redirectUri,
+                ],
                 grant_types: dynamicRegistrationDefaults.grant_types ?? [
                   "authorization_code",
                   "refresh_token",
                 ],
-                response_types:
-                  dynamicRegistrationDefaults.response_types ?? ["code"],
+                response_types: dynamicRegistrationDefaults.response_types ?? [
+                  "code",
+                ],
                 token_endpoint_auth_method:
                   dynamicRegistrationDefaults.token_endpoint_auth_method ??
                   "none",
@@ -1304,7 +1319,7 @@ export const createDebugOAuthStateMachine = (
                     "Content-Type": "application/json",
                   }),
                   body: JSON.stringify(state.lastRequest.body),
-                },
+                }
               );
 
               const registrationResponseData = {
@@ -1371,7 +1386,7 @@ export const createDebugOAuthStateMachine = (
                   "received_client_credentials",
                   "dcr",
                   "Dynamic Client Registration",
-                  dcrInfo,
+                  dcrInfo
                 );
 
                 updateState({
@@ -1447,7 +1462,7 @@ export const createDebugOAuthStateMachine = (
 
               if (!cimdResponse.ok) {
                 throw new Error(
-                  `CIMD endpoint returned HTTP ${cimdResponse.status}`,
+                  `CIMD endpoint returned HTTP ${cimdResponse.status}`
                 );
               }
 
@@ -1480,7 +1495,7 @@ export const createDebugOAuthStateMachine = (
 
               if (!cimdResponse.ok) {
                 throw new Error(
-                  `CIMD endpoint returned HTTP ${cimdResponse.status}`,
+                  `CIMD endpoint returned HTTP ${cimdResponse.status}`
                 );
               }
 
@@ -1519,7 +1534,7 @@ export const createDebugOAuthStateMachine = (
                 "received_client_credentials",
                 "cimd",
                 "Client ID Metadata Document",
-                cimdInfo,
+                cimdInfo
               );
 
               updateState({
@@ -1558,7 +1573,7 @@ export const createDebugOAuthStateMachine = (
                 code_challenge: codeChallenge,
                 method: "S256",
                 resource: canonicalServerUrl,
-              },
+              }
             );
 
             updateState({
@@ -1582,14 +1597,14 @@ export const createDebugOAuthStateMachine = (
             }
 
             const authUrl = new URL(
-              state.authorizationServerMetadata.authorization_endpoint,
+              state.authorizationServerMetadata.authorization_endpoint
             );
             authUrl.searchParams.set("response_type", "code");
             authUrl.searchParams.set("client_id", state.clientId);
             authUrl.searchParams.set("redirect_uri", redirectUri);
             authUrl.searchParams.set(
               "code_challenge",
-              state.codeChallenge || "",
+              state.codeChallenge || ""
             );
             authUrl.searchParams.set("code_challenge_method", "S256");
             authUrl.searchParams.set("state", state.state || "");
@@ -1628,7 +1643,7 @@ export const createDebugOAuthStateMachine = (
               "Authorization URL",
               {
                 url: authUrl.toString(),
-              },
+              }
             );
 
             updateState({
@@ -1737,7 +1752,7 @@ export const createDebugOAuthStateMachine = (
 
             if (!state.codeVerifier) {
               throw new Error(
-                "PKCE code_verifier is missing - cannot exchange token",
+                "PKCE code_verifier is missing - cannot exchange token"
               );
             }
 
@@ -1768,7 +1783,7 @@ export const createDebugOAuthStateMachine = (
                     "Content-Type": "application/x-www-form-urlencoded",
                   }),
                   body: tokenRequestBody.toString(),
-                },
+                }
               );
 
               const tokenResponseData = {
@@ -1810,7 +1825,7 @@ export const createDebugOAuthStateMachine = (
                 (log) =>
                   log.id !== "auth-code" &&
                   log.id !== "oauth-tokens" &&
-                  log.id !== "token",
+                  log.id !== "token"
               );
 
               let tokenInfoLogs = existingLogs;
@@ -1883,7 +1898,7 @@ export const createDebugOAuthStateMachine = (
                       : [formatted.aud];
 
                     const isValidAudience = audArray.some(
-                      (aud: string) => aud === expectedResource,
+                      (aud: string) => aud === expectedResource
                     );
 
                     audienceNote._validation = {
@@ -2031,7 +2046,7 @@ export const createDebugOAuthStateMachine = (
                 "Protocol Version": "2025-11-25",
                 Client: "MCPJam Inspector v1.0.0",
                 Endpoint: state.serverUrl,
-              },
+              }
             );
 
             // Update state with the request
@@ -2155,7 +2170,7 @@ export const createDebugOAuthStateMachine = (
                   "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
-                  protocolInfo,
+                  protocolInfo
                 );
               } else if (isSSE) {
                 // SSE streaming response but no MCP response parsed yet
@@ -2172,7 +2187,7 @@ export const createDebugOAuthStateMachine = (
                     Events: response.body?.events
                       ? `${response.body.events.length} events parsed`
                       : "No events parsed",
-                  },
+                  }
                 );
               } else if (mcpResponse?.result?.protocolVersion) {
                 // JSON response - extract protocol version from response body
@@ -2201,7 +2216,7 @@ export const createDebugOAuthStateMachine = (
                   "authenticated_mcp_request",
                   "mcp-protocol",
                   "MCP Server Information",
-                  protocolInfo,
+                  protocolInfo
                 );
               }
 
@@ -2265,11 +2280,11 @@ export const createDebugOAuthStateMachine = (
             response: currentState.lastResponse,
             error: errorDetails,
           },
-          { level: "error", error: errorDetails },
+          { level: "error", error: errorDetails }
         );
         const updatedHistory = markLatestHttpEntryAsError(
           currentState.httpHistory,
-          errorDetails,
+          errorDetails
         );
 
         const updates: Partial<OAuthFlowState> = {

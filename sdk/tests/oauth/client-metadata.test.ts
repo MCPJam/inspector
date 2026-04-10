@@ -77,6 +77,47 @@ describe("OAuth state machines use injected dynamic registration metadata", () =
           scope: "read write",
         },
       });
+    }
+  );
+
+  it.each([
+    {
+      clientIdMetadataUrl: "http://example.com/client-metadata.json",
+      expectedMessage: "Client ID metadata URL must be an absolute HTTPS URL",
     },
+    {
+      clientIdMetadataUrl: "/client-metadata.json",
+      expectedMessage: "Client ID metadata URL must be a valid absolute URL",
+    },
+  ])(
+    "rejects invalid custom CIMD metadata URLs: $clientIdMetadataUrl",
+    ({ clientIdMetadataUrl, expectedMessage }) => {
+      let state = {
+        ...EMPTY_OAUTH_FLOW_STATE,
+        httpHistory: [],
+        infoLogs: [],
+      };
+
+      expect(() =>
+        createOAuthStateMachine({
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "cimd",
+          state,
+          getState: () => state,
+          updateState: (updates) => {
+            state = { ...state, ...updates };
+          },
+          serverUrl: "https://mcp.example.com/mcp",
+          serverName: "Test Server",
+          redirectUrl: REDIRECT_URI,
+          requestExecutor: jest.fn(async () => {
+            throw new Error(
+              "requestExecutor should not be called in this test"
+            );
+          }),
+          clientIdMetadataUrl,
+        })
+      ).toThrow(expectedMessage);
+    }
   );
 });
