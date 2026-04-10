@@ -19,6 +19,8 @@ import {
   createInteractiveAuthorizationSession,
   type InteractiveAuthorizationSession,
 } from "./auth-strategies/interactive.js";
+import type { HttpServerConfig } from "../mcp-client-manager/index.js";
+import { withEphemeralClient, listTools } from "../operations.js";
 import type {
   ClientCredentialsResult,
   ConformanceResult,
@@ -26,6 +28,7 @@ import type {
   OAuthConformanceConfig,
   StepResult,
   TrackedRequestFn,
+  VerificationResult,
 } from "./types.js";
 import { normalizeOAuthConformanceConfig } from "./validation.js";
 
@@ -561,10 +564,111 @@ export class OAuthConformanceTest {
       await interactiveSession?.stop().catch(() => undefined);
     }
 
-    const durationMs = Date.now() - startedAt;
-    const passed =
+    let passed =
       state.currentStep === "complete" &&
       steps.every((step) => step.status !== "failed");
+
+    // ── Post-auth verification ────────────────────────────────────────
+    let verification: VerificationResult | undefined;
+
+    if (passed && this.config.verification.listTools && state.accessToken) {
+      verification = {};
+      const verifyConfig: HttpServerConfig = {
+        url: this.config.serverUrl,
+        accessToken: state.accessToken,
+        requestInit: this.config.customHeaders
+          ? { headers: this.config.customHeaders }
+          : undefined,
+        timeout: this.config.verification.timeout ?? 30_000,
+      };
+      try {
+        await withEphemeralClient(
+          verifyConfig,
+          async (manager, serverId) => {
+            // List tools
+            const listStart = Date.now();
+            try {
+              const toolsResult = await listTools(manager, { serverId });
+              const listDuration = Date.now() - listStart;
+              verification!.listTools = {
+                passed: true,
+                toolCount: toolsResult.tools.length,
+                durationMs: listDuration,
+              };
+              steps.push(
+                buildStepResult("verify_list_tools", "passed", listDuration, [], []),
+              );
+            } catch (error) {
+              const listDuration = Date.now() - listStart;
+              const message = error instanceof Error ? error.message : String(error);
+              verification!.listTools = {
+                passed: false,
+                durationMs: listDuration,
+                error: message,
+              };
+              steps.push(
+                buildStepResult("verify_list_tools", "failed", listDuration, [], [], {
+                  message,
+                }),
+              );
+              passed = false;
+              return;
+            }
+
+            // Call tool (optional)
+            const callToolConfig = this.config.verification.callTool;
+            if (callToolConfig) {
+              const callStart = Date.now();
+              try {
+                await manager.executeTool(
+                  serverId,
+                  callToolConfig.name,
+                  callToolConfig.params ?? {},
+                );
+                const callDuration = Date.now() - callStart;
+                verification!.callTool = {
+                  passed: true,
+                  toolName: callToolConfig.name,
+                  durationMs: callDuration,
+                };
+                steps.push(
+                  buildStepResult("verify_call_tool", "passed", callDuration, [], []),
+                );
+              } catch (error) {
+                const callDuration = Date.now() - callStart;
+                const message = error instanceof Error ? error.message : String(error);
+                verification!.callTool = {
+                  passed: false,
+                  toolName: callToolConfig.name,
+                  durationMs: callDuration,
+                  error: message,
+                };
+                steps.push(
+                  buildStepResult("verify_call_tool", "failed", callDuration, [], [], {
+                    message,
+                  }),
+                );
+                passed = false;
+              }
+            }
+          },
+          { serverId: "__conformance_verify__", timeout: this.config.verification.timeout ?? 30_000 },
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        verification.listTools = {
+          passed: false,
+          durationMs: 0,
+          error: message,
+        };
+        steps.push(
+          buildStepResult("verify_list_tools", "failed", 0, [], [], { message }),
+        );
+        passed = false;
+      }
+    }
+
+    const durationMs = Date.now() - startedAt;
 
     return {
       passed,
@@ -574,6 +678,7 @@ export class OAuthConformanceTest {
       steps,
       summary: buildSummary(this.config, steps, passed),
       durationMs,
+      verification,
     };
   }
 }

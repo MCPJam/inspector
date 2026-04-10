@@ -116,5 +116,10 @@ export function normalizeOAuthConformanceConfig(
     redirectUrl: config.redirectUrl,
     fetchFn: config.fetchFn ?? fetch,
     stepTimeout: config.stepTimeout ?? 30_000,
+    verification: {
+      listTools: config.verification?.listTools ?? false,
+      callTool: config.verification?.callTool,
+      timeout: config.verification?.timeout ?? 30_000,
+    },
   };
 }

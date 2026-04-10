@@ -1,4 +1,4 @@
-export type OutputFormat = "json" | "human";
+export type OutputFormat = "json" | "human" | "junit-xml";
 
 const DEFAULT_OUTPUT_FORMAT: OutputFormat = "json";
 
@@ -88,11 +88,13 @@ export function writeError(
 }
 
 export function parseOutputFormat(value: string): OutputFormat {
-  if (value === "json" || value === "human") {
+  if (value === "json" || value === "human" || value === "junit-xml") {
     return value;
   }
 
-  throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
+  throw usageError(
+    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`,
+  );
 }
 
 export function detectOutputFormatFromArgv(

@@ -1,5 +1,6 @@
 import { OAuthConformanceTest } from "../../src/oauth-conformance/index.js";
 import { DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL } from "../../src/oauth/client-identity.js";
+import * as operations from "../../src/operations.js";
 
 function jsonResponse(
   body: unknown,
@@ -376,5 +377,156 @@ describe("OAuthConformanceTest", () => {
     expect(result.passed).toBe(false);
     expect(tokenStep?.status).toBe("failed");
     expect(tokenStep?.error?.message).toContain("public client");
+  });
+
+  it("runs post-auth verification when verification.listTools is true", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+    const resourceMetadataUrl =
+      "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+    const authServerUrl = "https://auth.example.com";
+
+    const fetchFn: typeof fetch = jest.fn(async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+
+      if (url === serverUrl && !headers.get("Authorization")) {
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "WWW-Authenticate": `Bearer resource_metadata="${resourceMetadataUrl}"`,
+          },
+        });
+      }
+
+      if (url === resourceMetadataUrl) {
+        return jsonResponse({
+          resource: serverUrl,
+          authorization_servers: [authServerUrl],
+          scopes_supported: ["openid", "mcp"],
+        });
+      }
+
+      if (url === `${authServerUrl}/.well-known/oauth-authorization-server`) {
+        return jsonResponse({
+          issuer: authServerUrl,
+          authorization_endpoint: `${authServerUrl}/authorize`,
+          token_endpoint: `${authServerUrl}/token`,
+          registration_endpoint: `${authServerUrl}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          client_id_metadata_document_supported: true,
+        });
+      }
+
+      if (url === DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL) {
+        return jsonResponse({
+          client_id: DEFAULT_MCPJAM_CLIENT_ID_METADATA_URL,
+          client_name: "MCPJam SDK OAuth Conformance",
+          redirect_uris: ["http://127.0.0.1:3333/callback"],
+        });
+      }
+
+      if (url === `${authServerUrl}/token`) {
+        return jsonResponse({
+          access_token: "verify-access-token",
+          refresh_token: "refresh-token",
+          token_type: "Bearer",
+          expires_in: 3600,
+        });
+      }
+
+      if (
+        url === serverUrl &&
+        headers.get("Authorization") === "Bearer verify-access-token"
+      ) {
+        return createMcpInitializeResponse("2025-11-25");
+      }
+
+      return jsonResponse({ error: "not found" }, 404);
+    }) as typeof fetch;
+
+    // Mock withEphemeralClient to avoid real MCP connection
+    const withEphemeralClientSpy = jest
+      .spyOn(operations, "withEphemeralClient")
+      .mockImplementation(async (_config, fn) => {
+        // Simulate a successful manager callback
+        const mockManager = {
+          listTools: jest.fn().mockResolvedValue({
+            tools: [
+              { name: "tool_a", inputSchema: { type: "object" } },
+              { name: "tool_b", inputSchema: { type: "object" } },
+            ],
+          }),
+        } as any;
+        return fn(mockManager, "__conformance_verify__");
+      });
+
+    try {
+      const test = new OAuthConformanceTest(
+        {
+          serverUrl,
+          protocolVersion: "2025-11-25",
+          registrationStrategy: "cimd",
+          auth: { mode: "headless" },
+          fetchFn,
+          verification: { listTools: true },
+        },
+        {
+          completeHeadlessAuthorization: jest.fn(async () => ({
+            code: "auth-code",
+          })),
+        },
+      );
+
+      const result = await test.run();
+
+      expect(result.passed).toBe(true);
+      expect(result.verification).toBeDefined();
+      expect(result.verification!.listTools).toEqual({
+        passed: true,
+        toolCount: 2,
+        durationMs: expect.any(Number),
+      });
+      expect(result.steps.map((s) => s.step)).toContain("verify_list_tools");
+      expect(
+        result.steps.find((s) => s.step === "verify_list_tools")?.status,
+      ).toBe("passed");
+
+      // Verify withEphemeralClient was called with the access token
+      expect(withEphemeralClientSpy).toHaveBeenCalledWith(
+        expect.objectContaining({
+          url: serverUrl,
+          accessToken: "verify-access-token",
+        }),
+        expect.any(Function),
+        expect.any(Object),
+      );
+    } finally {
+      withEphemeralClientSpy.mockRestore();
+    }
+  });
+
+  it("skips verification when OAuth itself fails", async () => {
+    const serverUrl = "https://mcp.example.com/mcp";
+
+    const fetchFn: typeof fetch = jest.fn(async () =>
+      jsonResponse({ error: "server error" }, 500),
+    ) as typeof fetch;
+
+    const test = new OAuthConformanceTest({
+      serverUrl,
+      protocolVersion: "2025-06-18",
+      registrationStrategy: "dcr",
+      auth: { mode: "headless" },
+      fetchFn,
+      verification: { listTools: true },
+    });
+
+    const result = await test.run();
+
+    expect(result.passed).toBe(false);
+    expect(result.verification).toBeUndefined();
+    expect(result.steps.map((s) => s.step)).not.toContain("verify_list_tools");
   });
 });

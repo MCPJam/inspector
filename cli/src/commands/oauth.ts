@@ -1,5 +1,5 @@
-import type { OAuthConformanceConfig } from "@mcpjam/sdk";
-import { OAuthConformanceTest } from "@mcpjam/sdk";
+import type { OAuthConformanceConfig, OAuthVerificationConfig } from "@mcpjam/sdk";
+import { OAuthConformanceTest, OAuthConformanceSuite } from "@mcpjam/sdk";
 import { Command } from "commander";
 import {
   getGlobalOptions,
@@ -7,6 +7,8 @@ import {
   parsePositiveInteger,
 } from "../lib/server-config";
 import { setProcessExitCode, usageError, writeResult } from "../lib/output";
+import { loadSuiteConfig } from "../lib/config-file";
+import { singleResultToJUnitXml, suiteResultToJUnitXml } from "../lib/junit-xml";
 
 const DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
 const DYNAMIC_CLIENT_SECRET_PLACEHOLDER = "__dynamic_registration_secret__";
@@ -22,6 +24,8 @@ export interface OAuthCommandOptions {
   scopes?: string;
   stepTimeout?: number;
   header?: string[];
+  verifyTools?: boolean;
+  verifyCallTool?: string;
 }
 
 export function registerOAuthCommands(program: Command): void {
@@ -65,16 +69,70 @@ export function registerOAuthCommands(program: Command): void {
       (value: string) => parsePositiveInteger(value, "Step timeout"),
       30_000,
     )
+    .option(
+      "--verify-tools",
+      "After OAuth succeeds, verify the token by listing MCP tools",
+    )
+    .option(
+      "--verify-call-tool <name>",
+      "After listing tools, also call the named tool",
+    )
     .action(async (options, command) => {
-    const globalOptions = getGlobalOptions(command);
-    const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
-    const result = await new OAuthConformanceTest(config).run();
+      const globalOptions = getGlobalOptions(command);
+      const config = buildOAuthConformanceConfig(options as OAuthCommandOptions);
+      const result = await new OAuthConformanceTest(config).run();
 
-    writeResult(result, globalOptions.format);
-    if (!result.passed) {
-      setProcessExitCode(1);
-    }
-  });
+      if (globalOptions.format === "junit-xml") {
+        process.stdout.write(singleResultToJUnitXml(result));
+      } else {
+        writeResult(result, globalOptions.format);
+      }
+      if (!result.passed) {
+        setProcessExitCode(1);
+      }
+    });
+
+  oauth
+    .command("conformance-suite")
+    .description(
+      "Run a matrix of OAuth conformance flows from a JSON config file",
+    )
+    .requiredOption("--config <path>", "Path to JSON config file")
+    .option(
+      "--verify-tools",
+      "Enable post-auth tool listing verification on all flows",
+    )
+    .option(
+      "--verify-call-tool <name>",
+      "Also call the named tool after listing",
+    )
+    .action(async (options, command) => {
+      const globalOptions = getGlobalOptions(command);
+      const config = loadSuiteConfig(options.config as string);
+
+      if (options.verifyTools || options.verifyCallTool) {
+        const verification: OAuthVerificationConfig = {
+          ...config.defaults?.verification,
+          listTools: true,
+          ...(options.verifyCallTool
+            ? { callTool: { name: options.verifyCallTool as string } }
+            : {}),
+        };
+        config.defaults = { ...config.defaults, verification };
+      }
+
+      const suite = new OAuthConformanceSuite(config);
+      const result = await suite.run();
+
+      if (globalOptions.format === "junit-xml") {
+        process.stdout.write(suiteResultToJUnitXml(result));
+      } else {
+        writeResult(result, globalOptions.format);
+      }
+      if (!result.passed) {
+        setProcessExitCode(1);
+      }
+    });
 }
 
 export function buildOAuthConformanceConfig(
@@ -140,6 +198,16 @@ export function buildOAuthConformanceConfig(
     client.clientIdMetadataUrl = clientMetadataUrl;
   }
 
+  const verification: OAuthVerificationConfig | undefined =
+    options.verifyTools || options.verifyCallTool
+      ? {
+          listTools: options.verifyTools ?? !!options.verifyCallTool,
+          ...(options.verifyCallTool
+            ? { callTool: { name: options.verifyCallTool } }
+            : {}),
+        }
+      : undefined;
+
   return {
     serverUrl,
     protocolVersion,
@@ -149,6 +217,7 @@ export function buildOAuthConformanceConfig(
     scopes: options.scopes?.trim() || undefined,
     customHeaders,
     stepTimeout: options.stepTimeout ?? 30_000,
+    verification,
   };
 }
 

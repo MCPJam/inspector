@@ -3,6 +3,7 @@
 
 var commander = require('commander');
 var sdk = require('@mcpjam/sdk');
+var fs = require('fs');
 
 // src/lib/output.ts
 var DEFAULT_OUTPUT_FORMAT = "json";
@@ -63,10 +64,12 @@ function writeError(error, format = DEFAULT_OUTPUT_FORMAT) {
   return payload;
 }
 function parseOutputFormat(value) {
-  if (value === "json" || value === "human") {
+  if (value === "json" || value === "human" || value === "junit-xml") {
     return value;
   }
-  throw usageError(`Invalid output format "${value}". Use "json" or "human".`);
+  throw usageError(
+    `Invalid output format "${value}". Use "json", "human", or "junit-xml".`
+  );
 }
 function detectOutputFormatFromArgv(argv) {
   for (let index = 0; index < argv.length; index += 1) {
@@ -252,6 +255,166 @@ function parseEnvironmentOption(values) {
     })
   );
 }
+var VALID_PROTOCOL_VERSIONS = /* @__PURE__ */ new Set([
+  "2025-03-26",
+  "2025-06-18",
+  "2025-11-25"
+]);
+var VALID_REGISTRATION_STRATEGIES = /* @__PURE__ */ new Set([
+  "cimd",
+  "dcr",
+  "preregistered"
+]);
+var VALID_AUTH_MODES = /* @__PURE__ */ new Set([
+  "headless",
+  "interactive",
+  "client_credentials"
+]);
+function assertValidUrl(value, label) {
+  if (typeof value !== "string" || !value.trim()) {
+    throw usageError(`${label} is required and must be a non-empty string`);
+  }
+  try {
+    new URL(value);
+  } catch {
+    throw usageError(`Invalid ${label}: ${value}`);
+  }
+}
+function assertEnum(value, allowed, label) {
+  if (typeof value !== "string" || !allowed.has(value)) {
+    throw usageError(
+      `Invalid ${label} "${String(value)}". Allowed: ${[...allowed].join(", ")}`
+    );
+  }
+}
+function validateFlow(flow, defaults, index) {
+  const protocolVersion = flow.protocolVersion ?? defaults?.protocolVersion;
+  if (!protocolVersion) {
+    throw usageError(
+      `flows[${index}]: protocolVersion is required (not set in flow or defaults)`
+    );
+  }
+  assertEnum(protocolVersion, VALID_PROTOCOL_VERSIONS, `flows[${index}].protocolVersion`);
+  const registrationStrategy = flow.registrationStrategy ?? defaults?.registrationStrategy;
+  if (!registrationStrategy) {
+    throw usageError(
+      `flows[${index}]: registrationStrategy is required (not set in flow or defaults)`
+    );
+  }
+  assertEnum(
+    registrationStrategy,
+    VALID_REGISTRATION_STRATEGIES,
+    `flows[${index}].registrationStrategy`
+  );
+  const auth = flow.auth ?? defaults?.auth;
+  if (auth?.mode) {
+    assertEnum(auth.mode, VALID_AUTH_MODES, `flows[${index}].auth.mode`);
+  }
+}
+function loadSuiteConfig(filePath) {
+  let raw;
+  try {
+    raw = fs.readFileSync(filePath, "utf-8");
+  } catch (error) {
+    throw usageError(
+      `Cannot read config file "${filePath}": ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  let config;
+  try {
+    config = JSON.parse(raw);
+  } catch {
+    throw usageError(`Config file "${filePath}" is not valid JSON`);
+  }
+  if (typeof config !== "object" || config === null || Array.isArray(config)) {
+    throw usageError("Config file must be a JSON object");
+  }
+  assertValidUrl(config.serverUrl, "serverUrl");
+  const flows = config.flows;
+  if (!Array.isArray(flows) || flows.length === 0) {
+    throw usageError('Config file must have a non-empty "flows" array');
+  }
+  const defaults = config.defaults;
+  for (let i = 0; i < flows.length; i++) {
+    const flow = flows[i];
+    if (typeof flow !== "object" || flow === null || Array.isArray(flow)) {
+      throw usageError(`flows[${i}] must be an object`);
+    }
+    validateFlow(flow, defaults, i);
+  }
+  return config;
+}
+
+// src/lib/junit-xml.ts
+function escapeXml(value) {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+}
+function stepToTestCase(step, classname) {
+  const name = escapeXml(step.title || step.step);
+  const time = (step.durationMs / 1e3).toFixed(3);
+  const cls = escapeXml(classname);
+  if (step.status === "skipped") {
+    return `    <testcase name="${name}" classname="${cls}" time="${time}">
+      <skipped/>
+    </testcase>`;
+  }
+  if (step.status === "failed") {
+    const message = escapeXml(step.error?.message ?? "Unknown failure");
+    const details = step.httpAttempts.map((attempt) => {
+      const req = `${attempt.request.method} ${attempt.request.url}`;
+      const res = attempt.response ? `${attempt.response.status} ${attempt.response.statusText}` : "No response";
+      return `${req} \u2192 ${res}`;
+    }).join("\n");
+    const body = details ? escapeXml(details) : "";
+    return `    <testcase name="${name}" classname="${cls}" time="${time}">
+      <failure message="${message}">${body}</failure>
+    </testcase>`;
+  }
+  return `    <testcase name="${name}" classname="${cls}" time="${time}"/>`;
+}
+function flowToTestSuite(result) {
+  const name = escapeXml(result.label);
+  const tests = result.steps.length;
+  const failures = result.steps.filter((s) => s.status === "failed").length;
+  const skipped = result.steps.filter((s) => s.status === "skipped").length;
+  const time = (result.durationMs / 1e3).toFixed(3);
+  const classname = result.serverUrl;
+  const cases = result.steps.map((step) => stepToTestCase(step, classname)).join("\n");
+  return `  <testsuite name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">
+${cases}
+  </testsuite>`;
+}
+function suiteResultToJUnitXml(result) {
+  const name = escapeXml(result.name);
+  const tests = result.results.reduce((sum, r) => sum + r.steps.length, 0);
+  const failures = result.results.reduce(
+    (sum, r) => sum + r.steps.filter((s) => s.status === "failed").length,
+    0
+  );
+  const time = (result.durationMs / 1e3).toFixed(3);
+  const suites = result.results.map(flowToTestSuite).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="${name}" tests="${tests}" failures="${failures}" time="${time}">
+${suites}
+</testsuites>
+`;
+}
+function singleResultToJUnitXml(result, label) {
+  const suiteResult = {
+    name: "OAuth Conformance",
+    serverUrl: result.serverUrl,
+    passed: result.passed,
+    results: [
+      {
+        ...result,
+        label: `${result.protocolVersion}/${result.registrationStrategy}`
+      }
+    ],
+    summary: result.summary,
+    durationMs: result.durationMs
+  };
+  return suiteResultToJUnitXml(suiteResult);
+}
 
 // src/commands/oauth.ts
 var DYNAMIC_CLIENT_ID_PLACEHOLDER = "__dynamic_registration_client__";
@@ -281,11 +444,51 @@ function registerOAuthCommands(program) {
     "Per-step timeout in milliseconds",
     (value) => parsePositiveInteger(value, "Step timeout"),
     3e4
+  ).option(
+    "--verify-tools",
+    "After OAuth succeeds, verify the token by listing MCP tools"
+  ).option(
+    "--verify-call-tool <name>",
+    "After listing tools, also call the named tool"
   ).action(async (options, command) => {
     const globalOptions = getGlobalOptions(command);
     const config = buildOAuthConformanceConfig(options);
     const result = await new sdk.OAuthConformanceTest(config).run();
-    writeResult(result, globalOptions.format);
+    if (globalOptions.format === "junit-xml") {
+      process.stdout.write(singleResultToJUnitXml(result));
+    } else {
+      writeResult(result, globalOptions.format);
+    }
+    if (!result.passed) {
+      setProcessExitCode(1);
+    }
+  });
+  oauth.command("conformance-suite").description(
+    "Run a matrix of OAuth conformance flows from a JSON config file"
+  ).requiredOption("--config <path>", "Path to JSON config file").option(
+    "--verify-tools",
+    "Enable post-auth tool listing verification on all flows"
+  ).option(
+    "--verify-call-tool <name>",
+    "Also call the named tool after listing"
+  ).action(async (options, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const config = loadSuiteConfig(options.config);
+    if (options.verifyTools || options.verifyCallTool) {
+      const verification = {
+        ...config.defaults?.verification,
+        ...options.verifyTools ? { listTools: true } : {},
+        ...options.verifyCallTool ? { callTool: { name: options.verifyCallTool } } : {}
+      };
+      config.defaults = { ...config.defaults, verification };
+    }
+    const suite = new sdk.OAuthConformanceSuite(config);
+    const result = await suite.run();
+    if (globalOptions.format === "junit-xml") {
+      process.stdout.write(suiteResultToJUnitXml(result));
+    } else {
+      writeResult(result, globalOptions.format);
+    }
     if (!result.passed) {
       setProcessExitCode(1);
     }
@@ -293,7 +496,7 @@ function registerOAuthCommands(program) {
 }
 function buildOAuthConformanceConfig(options) {
   const serverUrl = options.url.trim();
-  assertValidUrl(serverUrl, "server URL");
+  assertValidUrl2(serverUrl, "server URL");
   const protocolVersion = parseProtocolVersion(options.protocolVersion);
   const registrationStrategy = parseRegistrationStrategy(options.registration);
   const authMode = parseAuthMode(options.authMode ?? "headless");
@@ -321,7 +524,7 @@ function buildOAuthConformanceConfig(options) {
     );
   }
   if (clientMetadataUrl) {
-    assertValidUrl(clientMetadataUrl, "client metadata URL");
+    assertValidUrl2(clientMetadataUrl, "client metadata URL");
   }
   const customHeaders = parseHeadersOption(options.header);
   const client = {};
@@ -334,6 +537,10 @@ function buildOAuthConformanceConfig(options) {
   if (clientMetadataUrl) {
     client.clientIdMetadataUrl = clientMetadataUrl;
   }
+  const verification = options.verifyTools || options.verifyCallTool ? {
+    listTools: options.verifyTools ?? !!options.verifyCallTool,
+    ...options.verifyCallTool ? { callTool: { name: options.verifyCallTool } } : {}
+  } : void 0;
   return {
     serverUrl,
     protocolVersion,
@@ -342,7 +549,8 @@ function buildOAuthConformanceConfig(options) {
     client,
     scopes: options.scopes?.trim() || void 0,
     customHeaders,
-    stepTimeout: options.stepTimeout ?? 3e4
+    stepTimeout: options.stepTimeout ?? 3e4,
+    verification
   };
 }
 function buildAuthConfig(authMode, registrationStrategy, clientId, clientSecret) {
@@ -361,7 +569,7 @@ function buildAuthConfig(authMode, registrationStrategy, clientId, clientSecret)
       throw usageError(`Unsupported auth mode "${authMode}".`);
   }
 }
-function assertValidUrl(value, label) {
+function assertValidUrl2(value, label) {
   try {
     new URL(value);
   } catch {

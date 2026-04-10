@@ -217,13 +217,17 @@ export { injectOpenAICompat } from "./widget-helpers.js";
 export { EXPLORE_TO_SDK_EVALS_SKILL_MD, SKILL_MD } from "./skill-reference.js";
 
 // OAuth conformance
-export { OAuthConformanceTest } from "./oauth-conformance/index.js";
+export { OAuthConformanceTest, OAuthConformanceSuite } from "./oauth-conformance/index.js";
 export type {
   ConformanceResult,
   OAuthConformanceAuthConfig,
   OAuthConformanceClientConfig,
   OAuthConformanceConfig,
+  OAuthConformanceSuiteConfig,
+  OAuthConformanceSuiteResult,
+  OAuthVerificationConfig,
   StepResult,
+  VerificationResult,
 } from "./oauth-conformance/index.js";
 
 // MCP Operations (pure functions for common MCP workflows)

@@ -27,7 +27,9 @@ export type OAuthFlowStep =
   | "token_request"
   | "received_access_token"
   | "authenticated_mcp_request"
-  | "complete";
+  | "complete"
+  | "verify_list_tools"
+  | "verify_call_tool";
 
 // State interface for OAuth flow
 export interface OAuthFlowState {
