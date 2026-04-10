@@ -1071,6 +1071,8 @@ export class MCPClientManager {
       command: config.command,
       args: config.args,
       env: { ...getDefaultEnvironment(), ...(config.env ?? {}) },
+      stderr: config.stderr,
+      cwd: config.cwd,
     });
 
     const logger = this.resolveRpcLogger(config);

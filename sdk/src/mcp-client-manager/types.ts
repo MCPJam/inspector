@@ -3,6 +3,7 @@
  */
 
 import type { ClientOptions } from "@modelcontextprotocol/sdk/client/index.js";
+import type { StdioServerParameters } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { StreamableHTTPClientTransportOptions } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { SSEClientTransportOptions } from "@modelcontextprotocol/sdk/client/sse.js";
 import type { RequestOptions } from "@modelcontextprotocol/sdk/shared/protocol.js";
@@ -64,6 +65,10 @@ export type StdioServerConfig = BaseServerConfig & {
   args?: string[];
   /** Environment variables */
   env?: Record<string, string>;
+  /** Child process stderr handling. Defaults to inherit when unspecified. */
+  stderr?: StdioServerParameters["stderr"];
+  /** Working directory for the stdio server process. */
+  cwd?: StdioServerParameters["cwd"];
 
   // Discriminator fields - these should never be set for stdio
   url?: never;
@@ -113,6 +118,8 @@ export type HttpServerConfig = BaseServerConfig & {
   command?: never;
   args?: never;
   env?: never;
+  stderr?: never;
+  cwd?: never;
 };
 
 /**
