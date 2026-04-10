@@ -37,10 +37,15 @@ const mcpJamModel = {
   name: "GPT-5 Mini",
   provider: "openai" as const,
 };
-const guestParityMcpJamModel = {
-  id: "openai/gpt-oss-120b",
-  name: "GPT OSS 120B",
+const gatedMcpJamModel = {
+  id: "openai/gpt-5.4-pro",
+  name: "GPT-5.4 Pro",
   provider: "openai" as const,
+};
+const guestAllowedMcpJamModel = {
+  id: "anthropic/claude-haiku-4.5",
+  name: "Claude Haiku 4.5",
+  provider: "anthropic" as const,
 };
 const mockModelState = {
   availableModels: [baseModel],
@@ -358,6 +363,133 @@ describe("useChatSession minimal mode parity", () => {
     expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 
+  it("keeps only the three premium MCPJam models gated on the unauthenticated non-hosted path", async () => {
+    mockModelState.availableModels = [
+      baseModel,
+      gatedMcpJamModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
+    mockModelState.selectedModelId = mcpJamModel.id;
+
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+    const selectedServers = ["server-1"];
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers,
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.isAuthReady).toBe(true);
+    });
+
+    const latestTransport = mockTransportInstances.at(-1)!;
+    expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
+    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
+      Authorization: "Bearer guest-token",
+    });
+    expect(result.current.disableForAuthentication).toBe(false);
+    expect(result.current.availableModels.map((model) => model.id)).toEqual([
+      "gpt-4",
+      "openai/gpt-5.4-pro",
+      "openai/gpt-5-mini",
+      "anthropic/claude-haiku-4.5",
+    ]);
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "gpt-4",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5.4-pro",
+      ),
+    ).toMatchObject({
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "openai/gpt-5-mini",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(
+      result.current.availableModels.find(
+        (model) => model.id === "anthropic/claude-haiku-4.5",
+      )?.disabled,
+    ).toBeUndefined();
+    expect(result.current.selectedModel.id).toBe("openai/gpt-5-mini");
+    expect(mockAuthFetch).not.toHaveBeenCalled();
+  });
+
+  it("keeps an initialModelId authoritative even when that model is guest-locked", async () => {
+    mockModelState.availableModels = [
+      baseModel,
+      gatedMcpJamModel,
+      mcpJamModel,
+      guestAllowedMcpJamModel,
+    ];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+        initialModelId: gatedMcpJamModel.id,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      id: "openai/gpt-5.4-pro",
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(result.current.isAuthReady).toBe(false);
+    expect(result.current.disableForAuthentication).toBe(true);
+  });
+
+  it("creates a locked placeholder when initialModelId is missing from availableModels", async () => {
+    mockModelState.availableModels = [baseModel, mcpJamModel, guestAllowedMcpJamModel];
+    mockModelState.selectedModelId = mcpJamModel.id;
+    mockConvexAuth.isAuthenticated = false;
+    mockGetAccessToken.mockResolvedValue(null);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: ["server-1"],
+        minimalMode: true,
+        initialSystemPrompt: "Prompt",
+        initialModelId: gatedMcpJamModel.id,
+      }),
+    );
+
+    await waitFor(() => {
+      expect(result.current.selectedModel.id).toBe("openai/gpt-5.4-pro");
+    });
+
+    expect(result.current.selectedModel).toMatchObject({
+      id: "openai/gpt-5.4-pro",
+      name: "openai/gpt-5.4-pro",
+      provider: "openai",
+      disabled: true,
+      disabledReason: "Sign in to use MCPJam provided models",
+    });
+    expect(result.current.isAuthReady).toBe(false);
+    expect(result.current.disableForAuthentication).toBe(true);
+  });
+
   it("uses the latest selectedServers on the next non-hosted send without changing chatSessionId", async () => {
     const { result, rerender } = renderHook(
       ({ selectedServers }: { selectedServers: string[] }) =>
@@ -415,33 +547,5 @@ describe("useChatSession minimal mode parity", () => {
       selectedServers: ["server-2"],
       chatSessionId: initialChatSessionId,
     });
-  });
-
-  it("keeps guest-parity MCPJam models on the unauthenticated non-hosted path", async () => {
-    mockModelState.availableModels = [guestParityMcpJamModel];
-    mockModelState.selectedModelId = guestParityMcpJamModel.id;
-    mockConvexAuth.isAuthenticated = false;
-    mockGetAccessToken.mockResolvedValue(null);
-    const selectedServers = ["server-1"];
-
-    const { result } = renderHook(() =>
-      useChatSession({
-        selectedServers,
-        minimalMode: true,
-        initialSystemPrompt: "Prompt",
-      }),
-    );
-
-    await waitFor(() => {
-      expect(result.current.isAuthReady).toBe(true);
-    });
-
-    const latestTransport = mockTransportInstances.at(-1)!;
-    expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
-      Authorization: "Bearer guest-token",
-    });
-    expect(result.current.disableForAuthentication).toBe(false);
-    expect(mockAuthFetch).not.toHaveBeenCalled();
   });
 });

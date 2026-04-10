@@ -49,7 +49,6 @@ const MODEL_ID_MAPPINGS: Record<string, string> = {
   "deepseek/deepseek-v3.2": "deepseek/deepseek-v3.2-exp",
 
   // Google Gemini models
-  "gemini-3-pro-preview": "google/gemini-3-pro-preview",
   "gemini-2.5-pro": "google/gemini-2.5-pro",
   "gemini-2.5-flash": "google/gemini-2.5-flash",
   "gemini-2.5-flash-lite": "google/gemini-2.5-flash-lite",

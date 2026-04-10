@@ -63,6 +63,7 @@ const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
   "openrouter",
   "z-ai",
   "minimax",
+  "qwen",
   "custom",
 ];
 

@@ -154,11 +154,15 @@ vi.mock("../../../utils/chat-helpers", async () => {
 });
 
 // Mock shared types
-vi.mock("@/shared/types", () => ({
-  isGPT5Model: vi.fn().mockReturnValue(false),
-  isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
-  isGuestAllowedModel: vi.fn().mockReturnValue(true),
-}));
+vi.mock("@/shared/types", async () => {
+  const actual =
+    await vi.importActual<typeof import("@/shared/types")>("@/shared/types");
+  return {
+    ...actual,
+    isGPT5Model: vi.fn().mockReturnValue(false),
+    isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
+  };
+});
 
 vi.mock("../../../utils/guest-auth.js", () => ({
   getProductionGuestAuthHeader: vi
@@ -183,6 +187,16 @@ vi.mock("../../../utils/skill-tools", () => ({
 describe("POST /api/mcp/chat-v2", () => {
   let manager: MockMCPClientManager;
   let app: Hono;
+
+  const postAuthenticatedJson = (body: Record<string, unknown>) =>
+    app.request("/api/mcp/chat-v2", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer signed-in-test-token",
+      },
+      body: JSON.stringify(body),
+    });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -750,7 +764,7 @@ describe("POST /api/mcp/chat-v2", () => {
         });
 
       try {
-        const res = await postJson(app, "/api/mcp/chat-v2", {
+        const res = await postAuthenticatedJson({
           messages: [{ role: "user", content: "Hello" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
           chatSessionId: "chat-session-1",
@@ -770,7 +784,7 @@ describe("POST /api/mcp/chat-v2", () => {
 
         expect(init).toMatchObject({
           headers: expect.objectContaining({
-            authorization: "Bearer guest-test-token",
+            authorization: "Bearer signed-in-test-token",
           }),
         });
         expect(body).toMatchObject({
@@ -788,7 +802,7 @@ describe("POST /api/mcp/chat-v2", () => {
       }
     });
 
-    it("uses a guest token for MCPJam free-tier models that no longer require sign-in", async () => {
+    it("uses a guest token for claude-haiku-4.5 guest requests", async () => {
       const originalFetch = global.fetch;
       global.fetch = vi
         .fn()
@@ -818,7 +832,7 @@ describe("POST /api/mcp/chat-v2", () => {
       try {
         const res = await postJson(app, "/api/mcp/chat-v2", {
           messages: [{ role: "user", content: "Hello" }],
-          model: { id: "openai/gpt-oss-120b", provider: "openai" },
+          model: { id: "anthropic/claude-haiku-4.5", provider: "anthropic" },
         });
 
         expect(res.status).toBe(200);
@@ -839,6 +853,94 @@ describe("POST /api/mcp/chat-v2", () => {
         global.fetch = originalFetch;
       }
     });
+    it("uses a guest token for non-gated MCPJam guest requests", async () => {
+      const { getProductionGuestAuthHeader } = await import(
+        "../../../utils/guest-auth.js"
+      );
+
+      const originalFetch = global.fetch;
+      global.fetch = vi
+        .fn()
+        .mockImplementation(async (input: RequestInfo | URL) => {
+          const url = String(input);
+          if (url === "https://test-convex.example.com/stream") {
+            return createSseResponse([
+              {
+                type: "finish",
+                finishReason: "stop",
+                messageMetadata: {
+                  inputTokens: 1,
+                  outputTokens: 1,
+                  totalTokens: 2,
+                },
+              },
+            ]);
+          }
+
+          if (url === "https://test-convex.example.com/ingest-chat") {
+            return new Response(null, { status: 200 });
+          }
+
+          throw new Error(`Unexpected fetch URL: ${url}`);
+        });
+
+      try {
+        const res = await postJson(app, "/api/mcp/chat-v2", {
+          messages: [{ role: "user", content: "Hello" }],
+          model: { id: "openai/gpt-4o-mini", provider: "openai" },
+        });
+        expect(res.status).toBe(200);
+        await lastStreamExecution;
+
+        const streamCall = vi
+          .mocked(global.fetch)
+          .mock.calls.find(([url]) => String(url).endsWith("/stream"));
+
+        expect(streamCall).toBeDefined();
+        const [, init] = streamCall!;
+        expect(init).toMatchObject({
+          headers: expect.objectContaining({
+            authorization: "Bearer guest-test-token",
+          }),
+        });
+        expect(vi.mocked(getProductionGuestAuthHeader)).toHaveBeenCalled();
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it.each([
+      { id: "openai/gpt-5.4-pro", provider: "openai" },
+      { id: "anthropic/claude-opus-4.6", provider: "anthropic" },
+      { id: "google/gemini-3.1-pro-preview", provider: "google" },
+    ])(
+      "rejects gated MCPJam guest model $id before fetching guest auth",
+      async ({ id, provider }) => {
+        const { getProductionGuestAuthHeader } = await import(
+          "../../../utils/guest-auth.js"
+        );
+
+        const originalFetch = global.fetch;
+        global.fetch = vi.fn();
+
+        try {
+          const res = await postJson(app, "/api/mcp/chat-v2", {
+            messages: [{ role: "user", content: "Hello" }],
+            model: { id, provider },
+          });
+          const { status, data } = await expectJson(res);
+
+          expect(status).toBe(403);
+          expect(data.error).toBe(
+            "This MCPJam model is not available for guest access. Sign in to continue.",
+          );
+          expect(vi.mocked(getProductionGuestAuthHeader)).not.toHaveBeenCalled();
+          expect(global.fetch).not.toHaveBeenCalled();
+        } finally {
+          global.fetch = originalFetch;
+        }
+      },
+    );
   });
 
   describe("unresolved tool calls from aborted requests (MCPJam models)", () => {
@@ -902,7 +1004,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async () => createSseResponse(finishEvents));
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Continue" },
             {
@@ -986,7 +1088,7 @@ describe("POST /api/mcp/chat-v2", () => {
       );
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Continue" },
             {
@@ -1084,7 +1186,7 @@ describe("POST /api/mcp/chat-v2", () => {
         .mockImplementation(async () => createSseResponse(finishEvents));
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Do two things" },
             {
@@ -1227,7 +1329,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [
             { role: "user", content: "Search stops Berryessa and Montgomery" },
           ],
@@ -1327,7 +1429,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           // No inherited tool calls - clean message history
           messages: [{ role: "user", content: "Do something" }],
           model: { id: "google/gemini-2.5-flash", provider: "google" },
@@ -1434,7 +1536,7 @@ describe("POST /api/mcp/chat-v2", () => {
       });
 
       try {
-        await postJson(app, "/api/mcp/chat-v2", {
+        await postAuthenticatedJson({
           messages: [{ role: "user", content: "Do two create_view calls" }],
           model: { id: "google/gemini-2.5-flash-preview", provider: "google" },
         });

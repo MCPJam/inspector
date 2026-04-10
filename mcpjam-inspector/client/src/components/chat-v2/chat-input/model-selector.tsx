@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { Check, X } from "lucide-react";
-import { useConvexAuth } from "convex/react";
 import { usePostHog } from "posthog-js/react";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { Button } from "@/components/ui/button";
@@ -105,6 +104,8 @@ const getProviderDisplayName = (groupKey: GroupKey): string => {
       return "Zhipu AI";
     case "minimax":
       return "MiniMax";
+    case "qwen":
+      return "Qwen";
     default:
       return groupKey;
   }
@@ -150,6 +151,9 @@ export function ModelSelector({
   maxSelectedModels = 3,
 }: ModelSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [hoveredLockedModelId, setHoveredLockedModelId] = useState<string | null>(
+    null,
+  );
   const posthog = usePostHog();
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen && !isOpen) {
@@ -159,13 +163,19 @@ export function ModelSelector({
       );
     }
     setIsOpen(nextOpen);
+    if (!nextOpen) {
+      setHoveredLockedModelId(null);
+    }
   };
-  const { isAuthenticated } = useConvexAuth();
 
   const selectedModelsData =
     selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
+
+  const lockedRowHighlightId =
+    hoveredLockedModelId ??
+    (!multiModelEnabled && currentModel.disabled ? String(currentModel.id) : null);
 
   const groupedModels = useMemo(
     () => groupModelsByProvider(availableModels),
@@ -335,19 +345,18 @@ export function ModelSelector({
 
   const renderGroupModelItems = (group: (typeof modelGroups)[number]) =>
     group.models.map((model) => {
-      const isMcpJamProvided = isMCPJamProvidedModel(String(model.id));
       const isDisabled =
         !!model.disabled ||
-        (isMcpJamProvided && !isAuthenticated) ||
         (multiModelEnabled &&
           !selectedIds.has(String(model.id)) &&
           selectedLimitReached);
       const disabledReason =
-        isMcpJamProvided && !isAuthenticated
-          ? "Sign in to use MCPJam provided models"
-          : !selectedIds.has(String(model.id)) && selectedLimitReached
+        model.disabledReason ??
+        (!selectedIds.has(String(model.id)) && selectedLimitReached
             ? `You can compare up to ${maxSelectedModels} models at once`
-            : model.disabledReason;
+            : undefined);
+      const isLockedRowHighlight =
+        lockedRowHighlightId === String(model.id) && !!disabledReason;
       const isSelected = selectedIds.has(String(model.id));
 
       const row = (
@@ -365,7 +374,11 @@ export function ModelSelector({
             }
           }}
           disabled={isDisabled}
-          className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+          className={cn(
+            "cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed",
+            lockedRowHighlightId &&
+              "data-[selected=true]:bg-transparent data-[selected=true]:text-inherit",
+          )}
         >
           <ProviderLogo
             provider={getLogoProvider(group.provider)}
@@ -401,7 +414,16 @@ export function ModelSelector({
       return disabledReason ? (
         <Tooltip key={String(model.id)}>
           <TooltipTrigger asChild>
-            <div>{row}</div>
+            <div
+              className={cn(
+                "rounded-sm transition-colors",
+                isLockedRowHighlight ? "bg-accent/60" : "hover:bg-accent/60",
+              )}
+              onMouseEnter={() => setHoveredLockedModelId(String(model.id))}
+              onMouseLeave={() => setHoveredLockedModelId(null)}
+            >
+              {row}
+            </div>
           </TooltipTrigger>
           <TooltipContent side="right">{disabledReason}</TooltipContent>
         </Tooltip>

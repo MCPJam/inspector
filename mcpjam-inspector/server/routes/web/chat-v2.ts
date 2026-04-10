@@ -5,7 +5,10 @@ import type { ChatV2Request } from "@/shared/chat-v2";
 import { isMCPAuthError, MCPClientManager } from "@mcpjam/sdk";
 import type { HttpServerConfig } from "@mcpjam/sdk";
 import { handleMCPJamFreeChatModel } from "../../utils/mcpjam-stream-handler.js";
-import { isMCPJamProvidedModel, isGuestAllowedModel } from "@/shared/types";
+import {
+  isMCPJamGuestAllowedModel,
+  isMCPJamProvidedModel,
+} from "@/shared/types";
 import { WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { prepareChatV2 } from "../../utils/chat-v2-orchestration.js";
 import { validateUrl, OAuthProxyError } from "../../utils/oauth-proxy.js";
@@ -82,10 +85,10 @@ chatV2.post("/", async (c) => {
       }
 
       if (modelDefinition.id && isMCPJamProvidedModel(modelDefinition.id)) {
-        if (!isGuestAllowedModel(String(modelDefinition.id))) {
+        if (!isMCPJamGuestAllowedModel(modelDefinition.id)) {
           throw new WebRouteError(
             403,
-            ErrorCode.UNAUTHORIZED,
+            ErrorCode.FORBIDDEN,
             "This MCPJam model is not available for guest access. Sign in to continue.",
           );
         }
