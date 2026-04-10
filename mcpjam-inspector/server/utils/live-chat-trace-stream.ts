@@ -8,6 +8,7 @@ import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type {
   LiveChatTraceEvent,
+  LiveChatTraceRequestPayloadEntry,
   LiveChatTraceSnapshot,
   LiveChatTraceToolCall,
   LiveChatTraceUsage,
@@ -86,6 +87,19 @@ export function writeTraceEvent(
     data: event,
     transient: true,
   } as unknown as UIMessageChunk);
+}
+
+export function emitRequestPayload(
+  writer: LiveTraceEventWriter,
+  entry: LiveChatTraceRequestPayloadEntry,
+): void {
+  writeTraceEvent(writer, {
+    type: "request_payload",
+    turnId: entry.turnId,
+    promptIndex: entry.promptIndex,
+    stepIndex: entry.stepIndex,
+    payload: cloneTraceValue(entry.payload),
+  });
 }
 
 export function collectActualToolCalls(

@@ -1,7 +1,5 @@
 import { TraceRawView } from "./trace-raw-view";
-import { SAMPLE_CHAT_RAW_XRAY_PAYLOAD } from "./sample-chat-raw-payload";
-
-const noopRefetch = () => {};
+import { SAMPLE_CHAT_RAW_REQUEST_PAYLOAD } from "./sample-chat-raw-payload";
 
 /**
  * Raw tab placeholder: sample model request JSON (system, tools, messages) before the
@@ -25,11 +23,16 @@ export function LiveTraceRawEmptyState({ testId }: { testId: string }) {
         data-testid={`${testId}-sample-preview`}
       >
         <TraceRawView
-          xRayMirror={{
-            payload: SAMPLE_CHAT_RAW_XRAY_PAYLOAD,
-            loading: false,
-            error: null,
-            refetch: noopRefetch,
+          trace={null}
+          requestPayloadHistory={{
+            entries: [
+              {
+                turnId: "sample-turn-1",
+                promptIndex: 0,
+                stepIndex: 0,
+                payload: SAMPLE_CHAT_RAW_REQUEST_PAYLOAD,
+              },
+            ],
             hasUiMessages: true,
           }}
           growWithContent
